@@ -23,7 +23,7 @@ ARG DEFAULT_TMDB_API_KEY
 ARG DEFAULT_SC_API_KEY
 ARG ENCRYPTION_KEY
 # 构建可执行文件
-RUN GOOS=linux GOARCH=${TARGETARCH} go build -ldflags "-s -w -X main.Version=${VERSION} -X 'main.PublishDate=${BUILD_DATE}' -X main.FANART_API_KEY=${FANART_API_KEY} -X main.DEFAULT_TMDB_ACCESS_TOKEN=${DEFAULT_TMDB_ACCESS_TOKEN} -X main.DEFAULT_TMDB_API_KEY=${DEFAULT_TMDB_API_KEY} -X main.DEFAULT_SC_API_KEY=${DEFAULT_SC_API_KEY} -X main.ENCRYPTION_KEY=${ENCRYPTION_KEY}" -o QMediaSync .
+RUN GOOS=linux GOARCH=${TARGETARCH} go build -ldflags "-s -w -X main.Version=${VERSION} -X 'main.PublishDate=${BUILD_DATE}' -X main.FANART_API_KEY=${FANART_API_KEY} -X main.DEFAULT_TMDB_ACCESS_TOKEN=${DEFAULT_TMDB_ACCESS_TOKEN} -X main.DEFAULT_TMDB_API_KEY=${DEFAULT_TMDB_API_KEY} -X main.DEFAULT_SC_API_KEY=${DEFAULT_SC_API_KEY} -X main.ENCRYPTION_KEY=${ENCRYPTION_KEY}" -o DIY-STRM .
 
 # 运行阶段
 FROM qicfan/qms-build-base:latest
@@ -49,17 +49,17 @@ RUN mkdir -p /dev/shm && chmod 1777 /dev/shm
 # 设置工作目录
 WORKDIR /app
 # # 从构建阶段复制文件
-COPY --from=builder /app/QMediaSync .
+COPY --from=builder /app/DIY-STRM .
 COPY --from=builder /app/web_statics ./web_statics/
 COPY --from=builder /app/scripts ./scripts/
 # COPY --from=builder /app/icon.ico .
-# COPY QMediaSync .
+# COPY DIY-STRM .
 # COPY web_statics ./web_statics/
 # COPY scripts ./scripts/
 # COPY icon.ico .
 RUN chmod +x /app/scripts/docker-entrypoint.sh
 RUN chmod +x /app/scripts/watch_update.sh
-RUN chmod +x /app/QMediaSync
+RUN chmod +x /app/DIY-STRM
 
 VOLUME ["/app/config", "/media"]
 # web ui端口

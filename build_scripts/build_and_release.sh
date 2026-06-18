@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# QMediaSync Build and Release Shell Script
-# 切换到工作目录
-cd ../
+# DIY-STRM Build and Release Shell Script
+# DIY-STRM Build and Release Shell Script
+# 切换到工作目�?cd ../
 echo "已切换工作目录：$(pwd)"
 # Function to print colored output
 print_colored() {
@@ -44,7 +44,7 @@ while getopts "v:gh" opt; do
 done
 
 print_colored "green" "========================================"
-print_colored "green" "QMediaSync Build and Release Script"
+print_colored "green" "DIY-STRM Build and Release Script"
 print_colored "green" "========================================"
 
 # Check if in Git repository
@@ -108,7 +108,7 @@ if [ -d "temp_build" ]; then
 fi
 mkdir -p "temp_build"
 
-echo "安装所有项目依赖"
+echo "安装所有项目依�?
 go mod tidy
 
 # Supported platforms and architectures
@@ -150,11 +150,11 @@ for platform in "${PLATFORMS[@]}"; do
         
         # Determine executable name and link flags
         if [ "$platform" = "windows" ]; then
-            EXE_NAME="QMediaSync.exe"
+            EXE_NAME="DIY-STRM.exe"
             LDFLAGS="-H=windowsgui -s -w -X main.Version=$TAG -X 'main.PublishDate=$PUBLISH_DATE' -X main.FANART_API_KEY=$FANART_API_KEY -X main.DEFAULT_TMDB_ACCESS_TOKEN=$DEFAULT_TMDB_ACCESS_TOKEN -X main.DEFAULT_TMDB_API_KEY=$DEFAULT_TMDB_API_KEY -X main.DEFAULT_SC_API_KEY=$DEFAULT_SC_API_KEY -X main.ENCRYPTION_KEY=$ENCRYPTION_KEY"
             # LDFLAGS="-s -w -X main.Version=$TAG -X 'main.PublishDate=$PUBLISH_DATE' -X main.FANART_API_KEY=$FANART_API_KEY -X main.DEFAULT_TMDB_ACCESS_TOKEN=$DEFAULT_TMDB_ACCESS_TOKEN -X main.DEFAULT_TMDB_API_KEY=$DEFAULT_TMDB_API_KEY -X main.DEFAULT_SC_API_KEY=$DEFAULT_SC_API_KEY -X main.ENCRYPTION_KEY=$ENCRYPTION_KEY"
         else
-            EXE_NAME="QMediaSync"
+            EXE_NAME="DIY-STRM"
             LDFLAGS="-s -w -X main.Version=$TAG -X 'main.PublishDate=$PUBLISH_DATE' -X main.FANART_API_KEY=$FANART_API_KEY -X main.DEFAULT_TMDB_ACCESS_TOKEN=$DEFAULT_TMDB_ACCESS_TOKEN -X main.DEFAULT_TMDB_API_KEY=$DEFAULT_TMDB_API_KEY -X main.DEFAULT_SC_API_KEY=$DEFAULT_SC_API_KEY -X main.ENCRYPTION_KEY=$ENCRYPTION_KEY"
         fi
         
@@ -173,9 +173,9 @@ for platform in "${PLATFORMS[@]}"; do
         
         # Create archive name
         if [ "$arch" = "amd64" ]; then
-            ARCHIVE_NAME="QMediaSync_${platform}_x86_64"
+            ARCHIVE_NAME="DIY-STRM_${platform}_x86_64"
         else
-            ARCHIVE_NAME="QMediaSync_${platform}_${arch}"
+            ARCHIVE_NAME="DIY-STRM_${platform}_${arch}"
         fi
         
         # Create release directory
@@ -223,12 +223,11 @@ for platform in "${PLATFORMS[@]}"; do
         # rm -f "temp_build/$EXE_NAME" 2>/dev/null || true
         # 如果是linux，将可执行文件按照平台架构重命名，方便后续docker打包
         if [ "$platform" = "linux" ]; then
-            mv "temp_build/$EXE_NAME" "temp_build/QMediaSync_${platform}_${arch}_exe"
+            mv "temp_build/$EXE_NAME" "temp_build/DIY-STRM_${platform}_${arch}_exe"
         else
-           # 删除windows下的可执行文件
-           rm -f "temp_build/$EXE_NAME" 2>/dev/null || true
+           # 删除windows下的可执行文�?           rm -f "temp_build/$EXE_NAME" 2>/dev/null || true
         fi
-        print_colored "green" "✓ Completed $platform/$arch version"
+        print_colored "green" "�?Completed $platform/$arch version"
     done
 done
 
@@ -249,55 +248,54 @@ if [ ! -d "FNOS" ]; then
     print_colored "yellow" "Please create FNOS directory structure first"
 else
     # 创建app目录
-    mkdir -p "FNOS/qmediasync-arm64/app"
+    mkdir -p "FNOS/DIY-STRM-arm64/app"
     
-    # 更新manifest文件中的version字段（去掉v前缀）
-    FNOS_VERSION="${TAG#v}"
-    if [ -f "FNOS/qmediasync-arm64/manifest" ]; then
-        sed -i "s/^version\s*=.*/version = $FNOS_VERSION/g" "FNOS/qmediasync-arm64/manifest"
-        print_colored "green" "✓ Updated version in FNOS/qmediasync-arm64/manifest to $FNOS_VERSION"
+    # 更新manifest文件中的version字段（去掉v前缀�?    FNOS_VERSION="${TAG#v}"
+    if [ -f "FNOS/DIY-STRM-arm64/manifest" ]; then
+        sed -i "s/^version\s*=.*/version = $FNOS_VERSION/g" "FNOS/DIY-STRM-arm64/manifest"
+        print_colored "green" "�?Updated version in FNOS/DIY-STRM-arm64/manifest to $FNOS_VERSION"
     else
-        print_colored "yellow" "Warning: FNOS/qmediasync-arm64/manifest not found"
+        print_colored "yellow" "Warning: FNOS/DIY-STRM-arm64/manifest not found"
     fi
     
     # 清理目标目录中的文件
-    if [ -f "FNOS/qmediasync-arm64/app/QMediaSync" ]; then
-        rm "FNOS/qmediasync-arm64/app/QMediaSync"
-        print_colored "yellow" "✓ Removed existing arm64 executable"
+    if [ -f "FNOS/DIY-STRM-arm64/app/DIY-STRM" ]; then
+        rm "FNOS/DIY-STRM-arm64/app/DIY-STRM"
+        print_colored "yellow" "�?Removed existing arm64 executable"
     fi
     
-    if [ -d "FNOS/qmediasync-arm64/app/web_statics" ]; then
-        rm -rf "FNOS/qmediasync-arm64/app/web_statics"
-        print_colored "yellow" "✓ Removed existing web_statics directory"
+    if [ -d "FNOS/DIY-STRM-arm64/app/web_statics" ]; then
+        rm -rf "FNOS/DIY-STRM-arm64/app/web_statics"
+        print_colored "yellow" "�?Removed existing web_statics directory"
     fi
     
     # 复制arm64可执行文件和web_statics目录
-    if [ -f "temp_build/QMediaSync_linux_arm64_exe" ]; then
-        cp "temp_build/QMediaSync_linux_arm64_exe" "FNOS/qmediasync-arm64/app/QMediaSync"
-        print_colored "green" "✓ Copied arm64 executable to FNOS/qmediasync-arm64/app/QMediaSync"
+    if [ -f "temp_build/DIY-STRM_linux_arm64_exe" ]; then
+        cp "temp_build/DIY-STRM_linux_arm64_exe" "FNOS/DIY-STRM-arm64/app/DIY-STRM"
+        print_colored "green" "�?Copied arm64 executable to FNOS/DIY-STRM-arm64/app/DIY-STRM"
     else
         print_colored "red" "Error: arm64 executable not found"
     fi
     
     if [ -d "web_statics" ]; then
-        cp -r "web_statics" "FNOS/qmediasync-arm64/app/"
-        print_colored "green" "✓ Copied web_statics directory to FNOS/qmediasync-arm64/app/"
+        cp -r "web_statics" "FNOS/DIY-STRM-arm64/app/"
+        print_colored "green" "�?Copied web_statics directory to FNOS/DIY-STRM-arm64/app/"
     else
         print_colored "yellow" "Warning: web_statics directory not found"
     fi
     
     # 切换到qmediasync-arm64目录并执行fnpack build
-    cd "FNOS/qmediasync-arm64"
+    cd "FNOS/DIY-STRM-arm64"
     if command -v "fnpack" >/dev/null 2>&1; then
         print_colored "cyan" "Executing fnpack build for arm64..."
         fnpack build
         if [ $? -eq 0 ]; then
-            print_colored "green" "✓ FPK build completed for arm64"
+            print_colored "green" "�?FPK build completed for arm64"
             
             # 复制fpk文件回qmediasync目录
-            if [ -f "qmediasync.fpk" ]; then
-                cp "qmediasync.fpk" "../../QMediaSync_arm64.fpk"
-                print_colored "green" "✓ Copied arm64 FPK file back to qmediasync directory"
+            if [ -f "DIY-STRM.fpk" ]; then
+                cp "DIY-STRM.fpk" "../../DIY-STRM_arm64.fpk"
+                print_colored "green" "�?Copied arm64 FPK file back to DIY-STRM directory"
             else
                 print_colored "red" "Error: FPK file not generated for arm64"
             fi
@@ -321,55 +319,54 @@ if [ ! -d "FNOS" ]; then
     print_colored "yellow" "Please create FNOS directory structure first"
 else
     # 创建app目录
-    mkdir -p "FNOS/qmediasync-amd64/app"
+    mkdir -p "FNOS/DIY-STRM-amd64/app"
     
-    # 更新manifest文件中的version字段（去掉v前缀）
-    FNOS_VERSION="${TAG#v}"
-    if [ -f "FNOS/qmediasync-amd64/manifest" ]; then
-        sed -i "s/^version\s*=.*/version = $FNOS_VERSION/g" "FNOS/qmediasync-amd64/manifest"
-        print_colored "green" "✓ Updated version in FNOS/qmediasync-amd64/manifest to $FNOS_VERSION"
+    # 更新manifest文件中的version字段（去掉v前缀�?    FNOS_VERSION="${TAG#v}"
+    if [ -f "FNOS/DIY-STRM-amd64/manifest" ]; then
+        sed -i "s/^version\s*=.*/version = $FNOS_VERSION/g" "FNOS/DIY-STRM-amd64/manifest"
+        print_colored "green" "�?Updated version in FNOS/DIY-STRM-amd64/manifest to $FNOS_VERSION"
     else
-        print_colored "yellow" "Warning: FNOS/qmediasync-amd64/manifest not found"
+        print_colored "yellow" "Warning: FNOS/DIY-STRM-amd64/manifest not found"
     fi
     
     # 清理目标目录中的文件
-    if [ -f "FNOS/qmediasync-amd64/app/QMediaSync" ]; then
-        rm "FNOS/qmediasync-amd64/app/QMediaSync"
-        print_colored "yellow" "✓ Removed existing amd64 executable"
+    if [ -f "FNOS/DIY-STRM-amd64/app/DIY-STRM" ]; then
+        rm "FNOS/DIY-STRM-amd64/app/DIY-STRM"
+        print_colored "yellow" "�?Removed existing amd64 executable"
     fi
     
-    if [ -d "FNOS/qmediasync-amd64/app/web_statics" ]; then
-        rm -rf "FNOS/qmediasync-amd64/app/web_statics"
-        print_colored "yellow" "✓ Removed existing web_statics directory"
+    if [ -d "FNOS/DIY-STRM-amd64/app/web_statics" ]; then
+        rm -rf "FNOS/DIY-STRM-amd64/app/web_statics"
+        print_colored "yellow" "�?Removed existing web_statics directory"
     fi
     
     # 复制amd64可执行文件和web_statics目录
-    if [ -f "temp_build/QMediaSync_linux_amd64_exe" ]; then
-        cp "temp_build/QMediaSync_linux_amd64_exe" "FNOS/qmediasync-amd64/app/QMediaSync"
-        print_colored "green" "✓ Copied amd64 executable to FNOS/qmediasync-amd64/app/QMediaSync"
+    if [ -f "temp_build/DIY-STRM_linux_amd64_exe" ]; then
+        cp "temp_build/DIY-STRM_linux_amd64_exe" "FNOS/DIY-STRM-amd64/app/DIY-STRM"
+        print_colored "green" "�?Copied amd64 executable to FNOS/DIY-STRM-amd64/app/DIY-STRM"
     else
         print_colored "red" "Error: amd64 executable not found"
     fi
     
     if [ -d "web_statics" ]; then
-        cp -r "web_statics" "FNOS/qmediasync-amd64/app/"
-        print_colored "green" "✓ Copied web_statics directory to FNOS/qmediasync-amd64/app/"
+        cp -r "web_statics" "FNOS/DIY-STRM-amd64/app/"
+        print_colored "green" "�?Copied web_statics directory to FNOS/DIY-STRM-amd64/app/"
     else
         print_colored "yellow" "Warning: web_statics directory not found"
     fi
     
     # 切换到qmediasync-amd64目录并执行fnpack build
-    cd "FNOS/qmediasync-amd64"
+    cd "FNOS/DIY-STRM-amd64"
     if command -v "fnpack" >/dev/null 2>&1; then
         print_colored "cyan" "Executing fnpack build for amd64..."
         fnpack build
         if [ $? -eq 0 ]; then
-            print_colored "green" "✓ FPK build completed for amd64"
+            print_colored "green" "�?FPK build completed for amd64"
             
             # 复制fpk文件回qmediasync目录
-            if [ -f "qmediasync.fpk" ]; then
-                cp "qmediasync.fpk" "../../QMediaSync_amd64.fpk"
-                print_colored "green" "✓ Copied amd64 FPK file back to qmediasync directory"
+            if [ -f "DIY-STRM.fpk" ]; then
+                cp "DIY-STRM.fpk" "../../DIY-STRM_amd64.fpk"
+                print_colored "green" "�?Copied amd64 FPK file back to DIY-STRM directory"
             else
                 print_colored "red" "Error: FPK file not generated for amd64"
             fi
@@ -420,7 +417,7 @@ else
         BUILD_AND_RELEASE_CALL=1 ./docker_build_and_push.sh -v "$TAG"
         cd ..
         
-        print_colored "green" "✓ Docker image build completed"
+        print_colored "green" "�?Docker image build completed"
     else
         print_colored "yellow" "Warning: docker_build_and_push.sh not found in build_scripts/"
     fi
@@ -428,7 +425,7 @@ else
     # Cleanup temp files after Docker build
     print_colored "yellow" "Cleaning up temporary build files..."
     # rm -rf "temp_build"
-    print_colored "green" "✓ Temporary files cleaned up"
+    print_colored "green" "�?Temporary files cleaned up"
 fi
 else
     print_colored "yellow" "Gitee-only mode: skipping Docker build"
@@ -442,7 +439,7 @@ print_colored "green" "Creating GitHub Release..."
 if ! command_exists "gh"; then
     print_colored "yellow" "Warning: GitHub CLI (gh) not installed"
 print_colored "yellow" "Please manually upload these files to GitHub Release:"
-ls QMediaSync_*.zip QMediaSync_*.tar.gz QMediaSync_*.fpk 2>/dev/null || true
+ls DIY-STRM_*.zip DIY-STRM_*.tar.gz DIY-STRM_*.fpk 2>/dev/null || true
 echo
 print_colored "yellow" "Or install GitHub CLI: https://cli.github.com/"
     
@@ -455,15 +452,15 @@ print_colored "yellow" "Or install GitHub CLI: https://cli.github.com/"
     print_colored "green" "========================================"
     echo
     print_colored "cyan" "Release files:"
-    ls QMediaSync_*.zip QMediaSync_*.tar.gz QMediaSync_*.fpk 2>/dev/null || true
+    ls DIY-STRM_*.zip DIY-STRM_*.tar.gz DIY-STRM_*.fpk 2>/dev/null || true
     
     # Ask user if they want to clean up build files
     echo
     read -p "Do you want to clean up build files? (y/n): " cleanup
     if [ "$cleanup" = "y" ] || [ "$cleanup" = "Y" ]; then
         print_colored "yellow" "Cleaning up build files..."
-        rm -f QMediaSync_*.zip QMediaSync_*.tar.gz QMediaSync_*.fpk 2>/dev/null || true
-        print_colored "green" "✓ Build files cleaned up"
+        rm -f DIY-STRM_*.zip DIY-STRM_*.tar.gz DIY-STRM_*.fpk 2>/dev/null || true
+        print_colored "green" "�?Build files cleaned up"
     else
         print_colored "yellow" "Build files preserved"
     fi
@@ -482,15 +479,15 @@ fi
 
 # Create GitHub Release
 if gh release create "$TAG" \
-    --repo "qicfan/qmediasync" \
+    --repo "qicfan/DIY-STRM" \
     --title "Release $TAG" \
     --notes-file "release_body.txt" \
-    QMediaSync_*.zip \
-    QMediaSync_*.tar.gz \
-    QMediaSync_*.fpk; then
+    DIY-STRM_*.zip \
+    DIY-STRM_*.tar.gz \
+    DIY-STRM_*.fpk; then
     
     echo
-    print_colored "green" "✓ GitHub Release created successfully in qicfan/qmediasync!"
+    print_colored "green" "�?GitHub Release created successfully in qicfan/DIY-STRM!"
     
     # Send Telegram notification after successful release
     print_colored "cyan" "Sending release notes to Telegram..."
@@ -510,7 +507,7 @@ if gh release create "$TAG" \
         }")
     
     if echo "$TELEGRAM_RESPONSE" | grep -q '"ok":true'; then
-        print_colored "green" "✓ Release notes sent to Telegram successfully"
+        print_colored "green" "�?Release notes sent to Telegram successfully"
     else
         print_colored "yellow" "Warning: Failed to send message to Telegram"
         print_colored "yellow" "Response: $TELEGRAM_RESPONSE"
@@ -528,7 +525,7 @@ if gh release create "$TAG" \
         -d "${MEOW_MESSAGE}")
     
     if echo "$MEOW_RESPONSE" | grep -q '"success":true'; then
-        print_colored "green" "✓ Release notes sent to MeoW successfully"
+        print_colored "green" "�?Release notes sent to MeoW successfully"
     else
         print_colored "yellow" "Warning: Failed to send message to MeoW"
         print_colored "yellow" "Response: $MEOW_RESPONSE"
@@ -545,7 +542,7 @@ echo
 print_colored "green" "Creating Gitee Release..."
 
 GITEE_ACCESS_TOKEN="${GITEE_ACCESS_TOKEN:-}"
-GITEE_REPO="qicfan/qmediasync"
+GITEE_REPO="qicfan/DIY-STRM"
 GITEE_API_BASE="https://gitee.com/api/v5"
 
 if [ -z "$GITEE_ACCESS_TOKEN" ]; then
@@ -580,13 +577,12 @@ else
                 print_colored "yellow" "  Failed to delete release (id: $RID)"
             fi
         done
-        print_colored "green" "✓ Cleaned up $DELETED old releases"
+        print_colored "green" "�?Cleaned up $DELETED old releases"
     fi
 
     print_colored "cyan" "Creating Gitee release $TAG..."
 
-    # 检查Gitee上是否已存在该标签
-    print_colored "cyan" "Checking if tag $TAG exists on Gitee..."
+    # 检查Gitee上是否已存在该标�?    print_colored "cyan" "Checking if tag $TAG exists on Gitee..."
     TAG_EXISTS=$(curl -s -X GET \
         "${GITEE_API_BASE}/repos/${GITEE_REPO}/tags?access_token=${GITEE_ACCESS_TOKEN}&page=1&per_page=100" \
         | grep -c "\"name\":\"${TAG}\""
@@ -613,13 +609,13 @@ else
     GITEE_RELEASE_ID=$(echo "$GITEE_RELEASE_RESPONSE" | grep -o '"id":[0-9]*' | head -1 | sed 's/"id"://')
 
     if [ -n "$GITEE_RELEASE_ID" ]; then
-        print_colored "green" "✓ Gitee Release created successfully (id: $GITEE_RELEASE_ID)"
+        print_colored "green" "�?Gitee Release created successfully (id: $GITEE_RELEASE_ID)"
 
         print_colored "cyan" "Uploading attachments to Gitee Release..."
 
         UPLOAD_SUCCESS=0
         UPLOAD_FAIL=0
-        for FILE in QMediaSync_*.zip QMediaSync_*.tar.gz QMediaSync_*.fpk; do
+        for FILE in DIY-STRM_*.zip DIY-STRM_*.tar.gz DIY-STRM_*.fpk; do
             if [ -f "$FILE" ]; then
                 FILE_SIZE=$(stat -c%s "$FILE" 2>/dev/null || stat -f%z "$FILE" 2>/dev/null || echo "0")
                 print_colored "cyan" "  Uploading $FILE (${FILE_SIZE} bytes)..."
@@ -630,10 +626,10 @@ else
                     -F "file=@${FILE}")
 
                 if echo "$UPLOAD_RESPONSE" | grep -q '"id"'; then
-                    print_colored "green" "  ✓ Uploaded $FILE"
+                    print_colored "green" "  �?Uploaded $FILE"
                     UPLOAD_SUCCESS=$((UPLOAD_SUCCESS + 1))
                 else
-                    print_colored "yellow" "  ✗ Failed to upload $FILE"
+                    print_colored "yellow" "  �?Failed to upload $FILE"
                     print_colored "yellow" "  Response: $UPLOAD_RESPONSE"
                     UPLOAD_FAIL=$((UPLOAD_FAIL + 1))
                 fi
@@ -641,7 +637,7 @@ else
         done
 
         echo
-        print_colored "green" "✓ Gitee Release upload completed: $UPLOAD_SUCCESS succeeded, $UPLOAD_FAIL failed"
+        print_colored "green" "�?Gitee Release upload completed: $UPLOAD_SUCCESS succeeded, $UPLOAD_FAIL failed"
     else
         print_colored "red" "Error: Failed to create Gitee Release"
         print_colored "yellow" "Response: $GITEE_RELEASE_RESPONSE"
@@ -658,15 +654,15 @@ print_colored "green" "All operations completed!"
 print_colored "green" "========================================"
 echo
 print_colored "cyan" "Release files:"
-ls QMediaSync_*.zip QMediaSync_*.tar.gz QMediaSync_*.fpk 2>/dev/null || true
+ls DIY-STRM_*.zip DIY-STRM_*.tar.gz DIY-STRM_*.fpk 2>/dev/null || true
 
 # Ask user if they want to clean up build files
 echo
 read -p "Do you want to clean up build files? (y/n): " cleanup
 if [ "$cleanup" = "y" ] || [ "$cleanup" = "Y" ]; then
     print_colored "yellow" "Cleaning up build files..."
-    rm -f QMediaSync_*.zip QMediaSync_*.tar.gz QMediaSync_*.fpk 2>/dev/null || true
-    print_colored "green" "✓ Build files cleaned up"
+    rm -f DIY-STRM_*.zip DIY-STRM_*.tar.gz DIY-STRM_*.fpk 2>/dev/null || true
+    print_colored "green" "�?Build files cleaned up"
 else
     print_colored "yellow" "Build files preserved"
 fi
