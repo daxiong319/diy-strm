@@ -1,1 +1,0 @@
-function e(e,t,n,r){if(r)return e.delete(t),!0;let i=e.get(t)||0;return n&&n<=i?!1:(n&&e.set(t,n),!0)}function t(e){e.clear()}export{e as n,t};

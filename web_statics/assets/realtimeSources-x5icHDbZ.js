@@ -1,1 +1,0 @@
-var e=new Set;function t(t){let n=!0;return e.add(t),()=>{n&&(n=!1,e.delete(t))}}function n(){let t=[...e];e.clear(),t.forEach(e=>e())}export{t as n,n as t};

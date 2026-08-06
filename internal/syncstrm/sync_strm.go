@@ -107,7 +107,7 @@ func (s *SyncStrm) CompareStrm(st *SyncFileCache) int {
 			return 0
 		}
 	}
-	if st.SourceType == models.SourceType115 || st.SourceType == models.SourceTypeBaiduPan {
+	if st.SourceType == models.SourceType115 || st.SourceType == models.SourceTypeBaiduPan || st.SourceType == models.SourceType123 {
 		// 比较路径是否相同
 		expectedPath := expectedStrmPathForSyncFile(s.Config.StrmUrlNeedPath, st)
 		if expectedPath != "" {

@@ -1,1 +1,0 @@
-function e(){return typeof window<`u`&&window.innerWidth<=768}function t(t){let n=e(),r=()=>{let r=e();r!==n&&(n=r,t(r))};return window.addEventListener(`resize`,r),()=>{window.removeEventListener(`resize`,r)}}export{t as n,e as t};

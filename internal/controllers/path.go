@@ -62,6 +62,8 @@ func GetPathList(c *gin.Context) {
 		pathes, err = Get115PathList(req.ParentID, req.AccountID)
 	case models.SourceTypeBaiduPan:
 		pathes, err = GetBaiduPanPathList(req.ParentID, req.AccountID)
+	case models.SourceType123:
+		pathes, err = GetPan123PathList(req.ParentID, req.AccountID)
 	default:
 		// 报错
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "未知的同步源类型", Data: nil})
@@ -254,6 +256,35 @@ func GetBaiduPanPathList(parentId string, accountId uint) ([]DirResp, error) {
 	return items, nil
 }
 
+// GetPan123PathList 获取 123 云盘目录列表
+func GetPan123PathList(parentId string, accountId uint) ([]DirResp, error) {
+	account, err := models.GetAccountById(accountId)
+	if err != nil {
+		return nil, err
+	}
+	client := account.Get123Client()
+	ctx := context.Background()
+	if parentId == "" {
+		parentId = "0"
+	}
+	files, err := client.GetFiles(ctx, parentId)
+	if err != nil {
+		helpers.AppLogger.Warnf("获取 123 云盘目录列表失败：父目录=%s，错误=%v", parentId, err)
+		return nil, err
+	}
+	folders := make([]DirResp, 0)
+	for _, item := range files {
+		if item.IsDir() {
+			folders = append(folders, DirResp{
+				Id:   item.GetID(),
+				Name: item.FileName,
+				Path: item.FileName,
+			})
+		}
+	}
+	return folders, nil
+}
+
 type FileItem struct {
 	Id          string `json:"id"`
 	IsDirectory bool   `json:"is_directory"`
@@ -439,6 +470,8 @@ func fetchNetFileBatch(ctx context.Context, account *models.Account, parentID st
 		return fetchBaiduNetFileBatch(ctx, account, parentID, start, size, sortBy, sortOrder)
 	case models.SourceTypeOpenList:
 		return fetchOpenListNetFileBatch(ctx, account, parentID, start, size, refresh)
+	case models.SourceType123:
+		return fetchPan123NetFileBatch(ctx, account, parentID, start, size)
 	default:
 		return netFileBatch{}, fmt.Errorf("未知的网盘类型")
 	}
@@ -563,35 +596,38 @@ func fetchOpenListNetFileBatch(ctx context.Context, account *models.Account, par
 	}, nil
 }
 
-func getOpenlistDirs(parentPath string, account *models.Account, page, pageSize int) (netFileListPage, error) {
-	// 去掉 parentPath 末尾的 /
-	parentPath = strings.TrimSuffix(parentPath, "/")
-	parentPath = strings.TrimSuffix(parentPath, "\\")
-	helpers.AppLogger.Infof("开始获取 OpenList 目录列表，父目录路径：%s", parentPath)
-	client := account.GetOpenListClient()
-	resp, err := client.FileList(context.Background(), parentPath, page, pageSize)
-	if err != nil {
-		return netFileListPage{}, err
+// fetchPan123NetFileBatch 获取 123 云盘文件列表分页数据
+// 123 云盘每页固定 100 条（limit=100），Page 从 1 开始
+func fetchPan123NetFileBatch(ctx context.Context, account *models.Account, parentID string, start int, size int) (netFileBatch, error) {
+	if parentID == "" {
+		parentID = "0"
 	}
-	// 只返回文件夹列表
-	items := make([]*FileItem, 0)
-	for _, item := range resp.Content {
-		t, err := time.Parse(time.RFC3339, item.Modified)
-		var mtime int64
-		if err != nil {
-			mtime = 0 // 错误时使用默认值
-		} else {
-			mtime = t.Unix() // 转换为 Unix 时间戳（秒）
-		}
+	const perPage = 100
+	client := account.Get123Client()
+	page := start/perPage + 1
+	resp, err := client.ListFiles(ctx, parentID, page)
+	if err != nil {
+		helpers.AppLogger.Warnf("获取 123 云盘文件列表失败：父目录=%s，错误=%v", parentID, err)
+		return netFileBatch{}, err
+	}
+	items := make([]*FileItem, 0, len(resp.Data.InfoList))
+	for _, item := range resp.Data.InfoList {
 		items = append(items, &FileItem{
-			Id:          parentPath + "/" + item.Name,
-			IsDirectory: item.IsDir,
-			Name:        item.Name,
+			Id:          item.GetID(),
+			IsDirectory: item.IsDir(),
+			Name:        item.FileName,
 			Size:        item.Size,
-			ModifiedAt:  mtime,
+			ModifiedAt:  item.UpdateAt.Unix(),
 		})
 	}
-	return netFileListPage{list: items, total: resp.Total}, nil
+	total := int64(resp.Data.Total)
+	hasMore := resp.Data.Next != "-1" && resp.Data.Next != ""
+	return netFileBatch{
+		Items:      items,
+		Total:      total,
+		TotalExact: true,
+		HasMore:    hasMore && int64(start+size) < total,
+	}, nil
 }
 
 func get115Dirs(parentId string, account *models.Account, page, pageSize int) (netFileListPage, error) {
@@ -666,6 +702,8 @@ func CreateDir(c *gin.Context) {
 		pathId, err = make115PathList(req.ParentID, req.ParentPath, req.Name, req.AccountID)
 	case models.SourceTypeBaiduPan:
 		pathId, err = makeBaiduPanPathList(req.ParentID, req.Name, req.AccountID)
+	case models.SourceType123:
+		pathId, err = makePan123PathList(req.ParentID, req.Name, req.AccountID)
 	default:
 		// 报错
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "未知的同步源类型", Data: nil})
@@ -775,6 +813,23 @@ func makeBaiduPanPathList(parentId string, folderName string, accountId uint) (s
 	return newDir, nil
 }
 
+// makePan123PathList 创建 123 云盘目录
+func makePan123PathList(parentId string, folderName string, accountId uint) (string, error) {
+	if parentId == "" {
+		parentId = "0"
+	}
+	account, err := models.GetAccountById(accountId)
+	if err != nil {
+		return "", fmt.Errorf("获取账号失败：%v", err)
+	}
+	client := account.Get123Client()
+	newPathId, err := client.CreateDir(context.Background(), parentId, folderName)
+	if err != nil {
+		return "", fmt.Errorf("创建 123 云盘目录失败：%s，错误：%v", folderName, err)
+	}
+	return newPathId, nil
+}
+
 // 更新飞牛有权限的目录
 // 飞牛执行目录授权操作后，会触发该接口调用
 func UpdateFNPath(c *gin.Context) {
@@ -843,6 +898,9 @@ func DeleteDir(c *gin.Context) {
 			return
 		}
 		err = client.Del(invalidateParentID, names)
+	case models.SourceType123:
+		client := account.Get123Client()
+		err = client.Delete(context.Background(), []string{req.FileID})
 	default:
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "不支持的文件系统", Data: nil})
 		return

@@ -11,6 +11,7 @@ import (
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/notificationmanager"
 	"diy-strm/internal/openlist"
+	"diy-strm/internal/pan123"
 	"diy-strm/internal/v115auth"
 	"diy-strm/internal/v115open"
 )
@@ -128,6 +129,39 @@ func (account *Account) GetOpenListClient() *openlist.Client {
 
 func (account *Account) GetBaiDuPanClient() *baidupan.Client {
 	return baidupan.NewBaiDuPanClient(account.ID, account.Token)
+}
+
+// Get123Client 创建 123 云盘逆向 API 客户端
+// 使用保存的用户名/密码用于 401 自动重新登录，Token 用于恢复会话
+func (account *Account) Get123Client() *pan123.Client {
+	client := pan123.NewClient(account.ID, account.Username, account.Password)
+	if account.Token != "" {
+		client.SetAccessToken(account.Token)
+	}
+	if account.UserId != "" {
+		client.SetUserID(account.UserId)
+	}
+	return client
+}
+
+// Update123Login 更新 123 云盘账号登录凭据（用户名/密码/访问令牌）
+func (account *Account) Update123Login(username string, password string, token string) bool {
+	account.Username = username
+	account.Password = password
+	account.Token = token
+	account.TokenFailedReason = ""
+	updateData := map[string]any{
+		"username":            username,
+		"password":            password,
+		"token":               token,
+		"token_failed_reason": "",
+	}
+	err := db.Db.Model(account).Where("id = ?", account.ID).Updates(updateData).Error
+	if err != nil {
+		helpers.AppLogger.Errorf("更新 123 云盘账号登录凭据失败：%v", err)
+		return false
+	}
+	return true
 }
 
 func (account *Account) Delete() error {

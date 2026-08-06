@@ -182,6 +182,9 @@ func GetAccountList(c *gin.Context) {
 				a.AuthType = "token"
 			}
 		}
+		if account.SourceType == models.SourceType123 {
+			a.AuthType = "password"
+		}
 		resp = append(resp, a)
 	}
 

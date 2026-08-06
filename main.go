@@ -603,6 +603,7 @@ func setRouter(r *gin.Engine) {
 	r.GET("/115/url/*filename", controllers.Get115UrlByPickCode)           // 查询 115 直链，按 PickCode 查询，支持 ISO，路径最后一部分为 .扩展名格式
 	r.GET("/115/newurl", controllers.Get115UrlByPickCode)                  // 查询 115 直链，按 PickCode 查询
 	r.GET("/baidupan/url/*filename", controllers.GetBaiduPanUrlByPickCode) // 查询百度网盘直链，按 fs_id 查询，支持 ISO，路径最后一部分为 .扩展名格式
+	r.GET("/pan123/url/*filename", controllers.GetPan123UrlByPickCode)       // 查询 123 云盘直链，按文件 ID 查询，支持 ISO，路径最后一部分为 .扩展名格式
 
 	r.GET("/openlist/url", controllers.GetOpenListFileUrl) // 查询 OpenList 直链
 
@@ -651,6 +652,10 @@ func setRouter(r *gin.Engine) {
 		api.GET("/baidupan/oauth-url", controllers.GetBaiDuPanOAuthUrl)           // 获取百度网盘 OAuth 登录地址
 		api.POST("/baidupan/oauth-confirm", controllers.ConfirmBaiDuPanOAuthCode) // 确认百度网盘 OAuth 登录
 		api.GET("/baidupan/status", controllers.GetBaiDuPanStatus)                // 查询百度网盘状态
+
+		// 123 云盘相关路由
+		api.POST("/pan123/login", controllers.Pan123Login)   // 123 云盘账号登录（邮箱/手机号 + 密码）
+		api.GET("/pan123/status", controllers.GetPan123Status) // 查询 123 云盘状态
 
 		api.GET("/update/last", controllers.GetLastRelease)         // 获取最新版本
 		api.POST("/update/to-version", controllers.UpdateToVersion) // 获取更新版本

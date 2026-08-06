@@ -24,6 +24,7 @@ func (r CreateAccountRequest) Validate() error {
 	if err := validation.OneOfString("source_type", string(r.SourceType), []string{
 		string(models.SourceType115),
 		string(models.SourceTypeBaiduPan),
+		string(models.SourceType123),
 	}); err != nil {
 		return err
 	}
@@ -44,6 +45,27 @@ func (r CreateAccountRequest) Validate() error {
 		}
 	}
 	return nil
+}
+
+// Pan123LoginRequest 123 云盘账号登录请求。
+type Pan123LoginRequest struct {
+	AccountID uint   `json:"account_id" form:"account_id"`
+	Username  string `json:"username" form:"username"`
+	Password  string `json:"password" form:"password"`
+}
+
+// Validate 校验 123 云盘账号登录请求。
+func (r Pan123LoginRequest) Validate() error {
+	if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+		return err
+	}
+	if err := validation.NonBlank("username", r.Username); err != nil {
+		return err
+	}
+	if err := validation.NonBlank("password", r.Password); err != nil {
+		return err
+	}
+	return validation.Length("password", r.Password, 1, 128)
 }
 
 // UpdateAccountInfoRequest 更新账号资料请求。

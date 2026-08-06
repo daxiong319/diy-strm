@@ -80,6 +80,8 @@ func getNetFileSourceCapability(sourceType models.SourceType, sortBy string, sor
 			return netFileSourceCapability{}, fmt.Errorf("OpenList 暂不支持排序")
 		}
 		return netFileSourceCapability{BatchSize: 500, TotalExact: true}, nil
+	case models.SourceType123:
+		return netFileSourceCapability{BatchSize: 100, TotalExact: true}, nil
 	default:
 		return netFileSourceCapability{}, fmt.Errorf("未知的网盘类型")
 	}
@@ -153,7 +155,7 @@ func normalizeNetFileSort(sourceType models.SourceType, sortBy string) string {
 
 func normalizeNetFileCachePath(sourceType models.SourceType, value string) string {
 	switch sourceType {
-	case models.SourceType115:
+	case models.SourceType115, models.SourceType123:
 		value = strings.TrimSpace(value)
 		if value == "" {
 			return "0"

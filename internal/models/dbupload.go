@@ -427,6 +427,10 @@ func (task *DbUploadTask) Upload() {
 		if !task.UploadBaiduPanFile() {
 			return
 		}
+	case SourceType123:
+		if !task.Upload123File() {
+			return
+		}
 	default:
 		task.Fail(fmt.Errorf("未知的上传来源类型 %s", task.SourceType))
 		return
@@ -642,6 +646,55 @@ func (task *DbUploadTask) UploadBaiduPanFile() bool {
 			return false
 		}
 	}
+	return true
+}
+
+// Upload123File 123 云盘上传文件
+// 上传完成后记录远端文件 ID（123 的 PickCode 即文件 ID），供 STRM 生成任务使用
+func (task *DbUploadTask) Upload123File() bool {
+	// 检查账户是否存在
+	account := task.GetAccount()
+	if account == nil {
+		task.Fail(fmt.Errorf("账户 %d 不存在", task.AccountId))
+		return false
+	}
+	// 上传文件
+	client := account.Get123Client()
+	if client == nil {
+		task.Fail(fmt.Errorf("账户 %s 123 云盘客户端不存在", account.Name))
+		return false
+	}
+	task.Uploading()
+	// 上传文件，回调中更新上传进度
+	resp, err := client.UploadFile(context.Background(), task.LocalFullPath, task.RemoteFileId, func(done, total int64) {
+		if total > 0 {
+			task.FileSize = total
+		}
+		task.UploadedBytes = done
+		if err := db.Db.Model(task).Update("uploaded_bytes", done).Error; err != nil {
+			helpers.AppLogger.Warnf("[上传] 保存 123 云盘上传进度失败：%s", err.Error())
+		}
+		publishUploadQueueChanged(task, "progress")
+	})
+	if err != nil {
+		task.Fail(fmt.Errorf("123 云盘上传文件 %s 失败：%v", task.FileName, err))
+		return false
+	}
+	// 记录上传结果
+	fileId := fmt.Sprintf("%d", resp.Data.FileId)
+	task.CompletedRemoteFileId = fileId
+	task.CompletedPickCode = fileId // 123 云盘的 PickCode 即文件 ID
+	if resp.Data.Reuse {
+		task.UploadResult = UploadResultRapidUpload
+	} else {
+		task.UploadResult = UploadResultMultipartUploaded
+	}
+	if fileInfo, statErr := os.Stat(task.LocalFullPath); statErr == nil {
+		task.FileSize = fileInfo.Size()
+		task.UploadedBytes = fileInfo.Size()
+	}
+	task.applyUploadQueueDisplayFields(nil)
+	publishUploadQueueChanged(task, "progress")
 	return true
 }
 

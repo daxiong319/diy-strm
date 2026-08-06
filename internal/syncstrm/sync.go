@@ -108,6 +108,8 @@ func newSyncStrm(account *models.Account, syncPathId uint, sourcePath, sourcePat
 		syncDriver = NewLocalDriver()
 	case models.SourceTypeBaiduPan:
 		syncDriver = NewBaiduPanDriver(account.GetBaiDuPanClient())
+	case models.SourceType123:
+		syncDriver = NewPan123Driver(account.Get123Client())
 	}
 	pathWorkerMax := int64(models.SettingsGlobal.FileDetailThreads)
 	switch account.SourceType {
@@ -118,6 +120,8 @@ func newSyncStrm(account *models.Account, syncPathId uint, sourcePath, sourcePat
 	case models.SourceType115:
 		pathWorkerMax = int64(models.SettingsGlobal.FileDetailThreads)
 	case models.SourceTypeBaiduPan:
+		pathWorkerMax = int64(models.SettingsGlobal.FileDetailThreads)
+	case models.SourceType123:
 		pathWorkerMax = int64(models.SettingsGlobal.FileDetailThreads)
 	}
 	if pathWorkerMax <= 1 {
@@ -248,8 +252,8 @@ func newSyncStrmFromSyncPath(syncPath *models.SyncPath, account *models.Account,
 	}
 	// 重新加载设置
 	models.LoadSettings()
-	if (account.SourceType == models.SourceType115 || account.SourceType == models.SourceTypeBaiduPan) && syncPath.GetStrmBaseUrl() == "" {
-		helpers.AppLogger.Errorf("115 或百度网盘同步路径 %s 未配置 STRM 直连地址", syncPath.RemotePath)
+	if (account.SourceType == models.SourceType115 || account.SourceType == models.SourceTypeBaiduPan || account.SourceType == models.SourceType123) && syncPath.GetStrmBaseUrl() == "" {
+		helpers.AppLogger.Errorf("115、百度网盘或 123 云盘同步路径 %s 未配置 STRM 直连地址", syncPath.RemotePath)
 		return nil
 	}
 	videoExt := syncPath.GetVideoExt()
