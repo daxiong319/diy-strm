@@ -1,4 +1,4 @@
-package emby
+﻿package emby
 
 import (
 	"net/http"

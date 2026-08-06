@@ -11,9 +11,16 @@ import (
 	"strings"
 )
 
-// AES-256-CBC 加密（URL安全）
+// AES-256-CBC 加密（URL 安全）
 func Encrypt(plaintext string) (string, error) {
-	keyHash := sha256.Sum256([]byte(ENCRYPTION_KEY))
+	return EncryptWithKey(plaintext, OAuthRelayEncryptionKey)
+}
+
+func EncryptWithKey(plaintext string, keyText string) (string, error) {
+	if keyText == "" {
+		return "", errors.New("加密密钥不能为空")
+	}
+	keyHash := sha256.Sum256([]byte(keyText))
 	key := keyHash[:]
 
 	block, err := aes.NewCipher(key)
@@ -39,7 +46,7 @@ func Encrypt(plaintext string) (string, error) {
 	mode := cipher.NewCBCEncrypter(block, iv)
 	mode.CryptBlocks(ciphertext[aes.BlockSize:], padtext)
 
-	// URL安全的base64编码
+	// URL 安全的 Base64 编码
 	encoded := base64.StdEncoding.EncodeToString(ciphertext)
 	encoded = strings.ReplaceAll(encoded, "+", "-")
 	encoded = strings.ReplaceAll(encoded, "/", "_")
@@ -48,12 +55,19 @@ func Encrypt(plaintext string) (string, error) {
 	return encoded, nil
 }
 
-// AES-256-CBC 解密（URL安全）
+// AES-256-CBC 解密（URL 安全）
 func Decrypt(encrypted string) (string, error) {
-	keyHash := sha256.Sum256([]byte(ENCRYPTION_KEY))
+	return DecryptWithKey(encrypted, OAuthRelayEncryptionKey)
+}
+
+func DecryptWithKey(encrypted string, keyText string) (string, error) {
+	if keyText == "" {
+		return "", errors.New("加密密钥不能为空")
+	}
+	keyHash := sha256.Sum256([]byte(keyText))
 	key := keyHash[:]
 
-	// URL安全的base64解码
+	// URL 安全的 Base64 解码
 	encoded := strings.ReplaceAll(encrypted, "-", "+")
 	encoded = strings.ReplaceAll(encoded, "_", "/")
 	// 补齐=
@@ -84,7 +98,7 @@ func Decrypt(encrypted string) (string, error) {
 	mode := cipher.NewCBCDecrypter(block, iv)
 	mode.CryptBlocks(ciphertext, ciphertext)
 
-	// 去除PKCS7填充
+	// 去除 PKCS7 填充
 	paddingLen := int(ciphertext[len(ciphertext)-1])
 	if paddingLen > len(ciphertext) || paddingLen > aes.BlockSize {
 		return "", errors.New("invalid padding")

@@ -1,4 +1,4 @@
-package notificationmanager
+﻿package notificationmanager
 
 import (
 	"context"
@@ -16,11 +16,12 @@ import (
 
 // EnhancedNotificationManager 增强的通知管理器
 type EnhancedNotificationManager struct {
-	handlers    map[uint]*channelInfo // key: ChannelID, value: handler + config
-	rules       map[string][]uint     // key: EventType, value: ChannelIDs
-	mu          sync.RWMutex
-	db          *gorm.DB
-	getProxyURL func() string // 获取代理URL的回调函数
+	handlers         map[uint]*channelInfo // key：ChannelID，value：handler + config
+	rules            map[string][]uint     // key：EventType，value：ChannelIDs
+	telegramCommands map[string]func([]string) helpers.CommandResponse
+	mu               sync.RWMutex
+	db               *gorm.DB
+	getProxyURL      func() string // 获取代理 URL 的回调函数
 }
 
 type channelInfo struct {
@@ -32,7 +33,7 @@ type channelInfo struct {
 var GlobalEnhancedNotificationManager *EnhancedNotificationManager
 
 // NewEnhancedNotificationManager 创建增强的通知管理器
-// getProxyURL: 获取系统代理URL的回调函数，返回空字符串表示不使用代理
+// getProxyURL：获取系统代理 URL 的回调函数，返回空字符串表示不使用代理
 func NewEnhancedNotificationManager(db *gorm.DB, getProxyURL func() string) *EnhancedNotificationManager {
 	return &EnhancedNotificationManager{
 		handlers:    make(map[uint]*channelInfo),
@@ -48,12 +49,11 @@ func (m *EnhancedNotificationManager) LoadChannels() error {
 	defer m.mu.Unlock()
 
 	m.handlers = make(map[uint]*channelInfo)
-	m.rules = make(map[string][]uint)
 
 	// 加载所有启用的通知渠道
 	var channels []notification.NotificationChannel
 	if err := m.db.Where("is_enabled = ?", true).Find(&channels).Error; err != nil {
-		helpers.AppLogger.Errorf("加载通知渠道失败: %v", err)
+		helpers.AppLogger.Errorf("加载通知渠道失败：%v", err)
 		return err
 	}
 
@@ -61,7 +61,7 @@ func (m *EnhancedNotificationManager) LoadChannels() error {
 	for _, channel := range channels {
 		handler, err := m.createChannelHandler(&channel)
 		if err != nil {
-			helpers.AppLogger.Warnf("创建渠道处理器失败 [%s]: %v", channel.ChannelType, err)
+			helpers.AppLogger.Warnf("创建渠道处理器失败 [%s]：%v", channel.ChannelType, err)
 			continue
 		}
 
@@ -71,18 +71,29 @@ func (m *EnhancedNotificationManager) LoadChannels() error {
 		}
 	}
 
-	// 加载通知规则
-	var rules []notification.NotificationRule
-	if err := m.db.Where("is_enabled = ?", true).Find(&rules).Error; err != nil {
-		helpers.AppLogger.Warnf("加载通知规则失败: %v", err)
-	} else {
-		for _, rule := range rules {
-			m.rules[rule.EventType] = append(m.rules[rule.EventType], rule.ChannelID)
-		}
-	}
+	m.loadEnabledRulesLocked()
 
 	helpers.AppLogger.Infof("已加载 %d 个通知渠道", len(m.handlers))
 	return nil
+}
+
+func (m *EnhancedNotificationManager) loadEnabledRulesLocked() {
+	m.rules = make(map[string][]uint)
+	var rules []notification.NotificationRule
+	err := m.db.
+		Model(&notification.NotificationRule{}).
+		Joins("JOIN notification_channels ON notification_channels.id = notification_rules.channel_id").
+		Where("notification_rules.is_enabled = ? AND notification_channels.is_enabled = ?", true, true).
+		Find(&rules).Error
+	if err != nil {
+		helpers.AppLogger.Warnf("加载通知规则失败：%v", err)
+		return
+	}
+	for _, rule := range rules {
+		if _, ok := m.handlers[rule.ChannelID]; ok {
+			m.rules[rule.EventType] = append(m.rules[rule.EventType], rule.ChannelID)
+		}
+	}
 }
 
 // StartAll 启动所有支持后台运行的渠道处理器
@@ -90,7 +101,7 @@ func (m *EnhancedNotificationManager) StartAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	helpers.AppLogger.Info("正在启动所有通知渠道监听器...")
+	helpers.AppLogger.Info("正在启动所有通知渠道监听器…")
 
 	count := 0
 	for _, info := range m.handlers {
@@ -109,49 +120,59 @@ func (m *EnhancedNotificationManager) createChannelHandler(channel *notification
 	case "telegram":
 		var config notification.TelegramChannelConfig
 		if err := m.db.Where("channel_id = ?", channel.ID).First(&config).Error; err != nil {
-			return nil, fmt.Errorf("Telegram配置不存在: %v", err)
+			return nil, fmt.Errorf("Telegram 配置不存在：%v", err)
 		}
-		// 通过回调函数获取代理URL
+		// 通过回调函数获取代理 URL
 		var proxyURL string
 		if m.getProxyURL != nil {
 			proxyURL = m.getProxyURL()
 		}
-		helpers.AppLogger.Infof("为Telegram渠道使用代理: %s", proxyURL)
+		helpers.AppLogger.Infof("为 Telegram 渠道使用代理：%s", proxyURL)
+		var handler *TelegramChannelHandler
 		if proxyURL != "" {
-			return NewTelegramChannelHandlerWithProxy(&config, proxyURL), nil
+			handler = NewTelegramChannelHandlerWithProxy(&config, proxyURL)
+		} else {
+			handler = NewTelegramChannelHandler(&config)
 		}
-		return NewTelegramChannelHandler(&config), nil
+		m.applyTelegramCommands(handler)
+		return handler, nil
 
 	case "meow":
 		var config notification.MeoWChannelConfig
 		if err := m.db.Where("channel_id = ?", channel.ID).First(&config).Error; err != nil {
-			return nil, fmt.Errorf("MeoW配置不存在: %v", err)
+			return nil, fmt.Errorf("MeoW 配置不存在：%v", err)
 		}
 		return NewMeoWChannelHandler(&config), nil
 
 	case "bark":
 		var config notification.BarkChannelConfig
 		if err := m.db.Where("channel_id = ?", channel.ID).First(&config).Error; err != nil {
-			return nil, fmt.Errorf("Bark配置不存在: %v", err)
+			return nil, fmt.Errorf("Bark 配置不存在：%v", err)
 		}
 		return NewBarkChannelHandler(&config), nil
 
 	case "serverchan":
 		var config notification.ServerChanChannelConfig
 		if err := m.db.Where("channel_id = ?", channel.ID).First(&config).Error; err != nil {
-			return nil, fmt.Errorf("Server酱配置不存在: %v", err)
+			return nil, fmt.Errorf("Server酱配置不存在：%v", err)
 		}
 		return NewServerChanChannelHandler(&config), nil
 
 	case "webhook":
 		var config notification.CustomWebhookChannelConfig
 		if err := m.db.Where("channel_id = ?", channel.ID).First(&config).Error; err != nil {
-			return nil, fmt.Errorf("Webhook配置不存在: %v", err)
+			return nil, fmt.Errorf("Webhook 配置不存在：%v", err)
 		}
 		return NewCustomWebhookChannelHandler(&config), nil
 
 	default:
-		return nil, fmt.Errorf("未知的渠道类型: %s", channel.ChannelType)
+		return nil, fmt.Errorf("未知的渠道类型：%s", channel.ChannelType)
+	}
+}
+
+func (m *EnhancedNotificationManager) applyTelegramCommands(handler ChannelHandler) {
+	if tg, ok := handler.(*TelegramChannelHandler); ok && m.telegramCommands != nil {
+		tg.SetCommands(m.telegramCommands)
 	}
 }
 
@@ -160,10 +181,14 @@ func (m *EnhancedNotificationManager) SendNotification(ctx context.Context, noti
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	if len(m.handlers) == 0 {
+		return nil
+	}
+
 	// 获取此事件类型启用的渠道
-	channelIDs, exists := m.rules[string(notification.Type)]
-	if !exists {
-		helpers.AppLogger.Warnf("未找到事件类型 %s 的通知规则", notification.Type)
+	channelIDs := m.rules[string(notification.Type)]
+	if len(channelIDs) == 0 {
+		helpers.AppLogger.Debugf("事件类型 %s 没有启用的通知规则，跳过发送", notification.Type)
 		return nil
 	}
 
@@ -174,12 +199,12 @@ func (m *EnhancedNotificationManager) SendNotification(ctx context.Context, noti
 			continue
 		}
 
-		// 为每个通知发送创建子context，超时15秒
+		// 为每个通知发送创建子 context，超时 15 秒
 		sendCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
 		if err := info.handler.Send(sendCtx, notification); err != nil {
-			helpers.AppLogger.Errorf("渠道 [%s] 发送失败: %v", info.config.ChannelType, err)
+			helpers.AppLogger.Errorf("渠道 [%s] 发送失败：%v", info.config.ChannelType, err)
 			errs = append(errs, err)
 		} else {
 			helpers.AppLogger.Debugf("渠道 [%s] 发送成功", info.config.ChannelType)
@@ -187,7 +212,7 @@ func (m *EnhancedNotificationManager) SendNotification(ctx context.Context, noti
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("部分渠道发送失败: %v", errs)
+		return fmt.Errorf("部分渠道发送失败：%v", errs)
 	}
 	return nil
 }
@@ -199,23 +224,28 @@ func (m *EnhancedNotificationManager) ReloadChannel(channelID uint) error {
 
 	if oldInfo, exists := m.handlers[channelID]; exists {
 		if bg, ok := oldInfo.handler.(BackgroundHandler); ok {
-			helpers.AppLogger.Infof("停止旧的后台渠道: %d", channelID)
+			helpers.AppLogger.Infof("停止旧的后台渠道：%d", channelID)
 			bg.Stop()
 		}
 	}
 
 	var channel notification.NotificationChannel
 	if err := m.db.Where("id = ?", channelID).First(&channel).Error; err != nil {
-		return fmt.Errorf("渠道不存在: %v", err)
+		delete(m.handlers, channelID)
+		m.loadEnabledRulesLocked()
+		return fmt.Errorf("渠道不存在：%v", err)
 	}
 
 	if !channel.IsEnabled {
 		delete(m.handlers, channelID)
+		m.loadEnabledRulesLocked()
 		return nil
 	}
 
 	handler, err := m.createChannelHandler(&channel)
 	if err != nil {
+		delete(m.handlers, channelID)
+		m.loadEnabledRulesLocked()
 		return err
 	}
 
@@ -228,8 +258,32 @@ func (m *EnhancedNotificationManager) ReloadChannel(channelID uint) error {
 		bg.Start(context.Background())
 	}
 
-	helpers.AppLogger.Infof("已重新加载渠道: %s", channel.ChannelName)
+	m.loadEnabledRulesLocked()
+	helpers.AppLogger.Infof("已重新加载渠道：%s", channel.ChannelName)
 	return nil
+}
+
+// ReloadRules 重新加载通知规则，不重建渠道处理器
+func (m *EnhancedNotificationManager) ReloadRules() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.loadEnabledRulesLocked()
+}
+
+// RemoveChannel 卸载单个通知渠道
+func (m *EnhancedNotificationManager) RemoveChannel(channelID uint) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if oldInfo, exists := m.handlers[channelID]; exists {
+		if bg, ok := oldInfo.handler.(BackgroundHandler); ok {
+			helpers.AppLogger.Infof("停止后台渠道：%d", channelID)
+			bg.Stop()
+		}
+		delete(m.handlers, channelID)
+	}
+	m.loadEnabledRulesLocked()
 }
 
 // GetChannels 获取所有渠道
@@ -249,6 +303,7 @@ func (m *EnhancedNotificationManager) RegisterTelegramCommands(cmds map[string]f
 	m.mu.Lock() // 修改内部状态，加写锁
 	defer m.mu.Unlock()
 
+	m.telegramCommands = cmds
 	for _, info := range m.handlers {
 		// 类型断言：检查这个 handler 是不是 TelegramChannelHandler
 		if tg, ok := info.handler.(*TelegramChannelHandler); ok {

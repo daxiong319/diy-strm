@@ -1,4 +1,4 @@
-package models
+﻿package models
 
 import (
 	"diy-strm/internal/db"

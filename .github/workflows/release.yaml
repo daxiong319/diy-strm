@@ -1,0 +1,360 @@
+name: release
+run-name: ${{ github.event.head_commit.message || inputs.tag || github.ref_name }}
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to release"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      build_date: ${{ steps.meta.outputs.build_date }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          build_date="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "build_date=${build_date}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release target
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          git rev-parse --verify "refs/tags/${TAG}"
+          if [ ! -f ".changes/${TAG}.md" ]; then
+            echo "::error::.changes/${TAG}.md does not exist"
+            exit 1
+          fi
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "::error::GitHub Release ${TAG} already exists"
+            exit 1
+          fi
+
+  frontend:
+    runs-on: ubuntu-latest
+    needs: metadata
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+          run_install: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Include standalone backend assets
+        run: |
+          cp backend/assets/db_config.html frontend/dist/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-statics
+          path: frontend/dist
+          if-no-files-found: error
+
+  packages:
+    runs-on: ubuntu-latest
+    needs:
+      - metadata
+      - frontend
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            binary: QMediaSync.exe
+          - goos: windows
+            goarch: arm64
+            binary: QMediaSync.exe
+          - goos: linux
+            goarch: amd64
+            binary: QMediaSync
+          - goos: linux
+            goarch: arm64
+            binary: QMediaSync
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.mod
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-statics
+          path: backend/web_statics
+
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          GOSUMDB: "off"
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          BUILD_DATE: ${{ needs.metadata.outputs.build_date }}
+          FANART_API_KEY: ${{ secrets.FANART_API_KEY }}
+          TMDB_ACCESS_TOKEN: ${{ secrets.TMDB_ACCESS_TOKEN }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          SC_API_KEY: ${{ secrets.SC_API_KEY }}
+        run: |
+          mkdir -p dist release-assets linux-binaries
+
+          extra_ldflags=""
+          if [ "$GOOS" = "windows" ]; then
+            extra_ldflags="-H=windowsgui "
+          fi
+
+          ldflags="${extra_ldflags}-s -w -X main.Version=${TAG} -X 'main.PublishDate=${BUILD_DATE}' -X main.FANART_API_KEY=${FANART_API_KEY} -X main.TMDB_ACCESS_TOKEN=${TMDB_ACCESS_TOKEN} -X main.TMDB_API_KEY=${TMDB_API_KEY} -X main.SC_API_KEY=${SC_API_KEY}"
+          output="dist/QMediaSync_${GOOS}_${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            output="${output}.exe"
+          fi
+
+          cd backend
+          go mod download
+          go build -trimpath -tags=nomsgpack -ldflags "$ldflags" -o "$GITHUB_WORKSPACE/$output" .
+          cd "$GITHUB_WORKSPACE"
+
+          scripts/release/package-release-asset.sh "$TAG" "$GOOS" "$GOARCH" "$output" backend/web_statics release-assets
+
+          if [ "$GOOS" = "linux" ]; then
+            cp "$output" "linux-binaries/QMediaSync_linux_${GOARCH}_exe"
+            chmod +x "linux-binaries/QMediaSync_linux_${GOARCH}_exe"
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-asset-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: release-assets/*
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.goos == 'linux'
+        with:
+          name: linux-binary-${{ matrix.goarch }}
+          path: linux-binaries/QMediaSync_linux_${{ matrix.goarch }}_exe
+          if-no-files-found: error
+
+  docker:
+    runs-on: ubuntu-latest
+    needs:
+      - metadata
+      - frontend
+      - packages
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-statics
+          path: docker-context/backend/web_statics
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-binary-amd64
+          path: docker-context/temp_build
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-binary-arm64
+          path: docker-context/temp_build
+
+      - name: Prepare Docker context
+        run: |
+          mkdir -p docker-context/docker docker-context/backend/assets
+          cp docker/release.Dockerfile docker-context/docker/release.Dockerfile
+          cp docker/entrypoint.sh docker-context/docker/entrypoint.sh
+          cp docker/watch-update.sh docker-context/docker/watch-update.sh
+          cp backend/assets/db_config.html docker-context/backend/assets/
+          cp backend/icon.ico docker-context/backend/icon.ico
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          cache-image: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: docker-context
+          file: docker-context/docker/release.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/qmediasync:${{ needs.metadata.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/qmediasync:latest
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  fpk:
+    runs-on: ubuntu-latest
+    needs:
+      - metadata
+      - frontend
+      - packages
+    permissions:
+      contents: read
+    outputs:
+      has_assets: ${{ steps.fpk_assets.outputs.has_assets }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-statics
+          path: backend/web_statics
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-binary-amd64
+          path: temp_build
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-binary-arm64
+          path: temp_build
+
+      - name: Install fnpack from URL
+        env:
+          FNPACK_DOWNLOAD_URL: ${{ secrets.FNPACK_DOWNLOAD_URL }}
+        run: |
+          if [ -z "$FNPACK_DOWNLOAD_URL" ]; then
+            echo "FNPACK_DOWNLOAD_URL is not set, fnpack installation skipped"
+            exit 0
+          fi
+          curl -fsSL "$FNPACK_DOWNLOAD_URL" -o /tmp/fnpack
+          chmod +x /tmp/fnpack
+          sudo mv /tmp/fnpack /usr/local/bin/fnpack
+
+      - name: Build FNOS packages
+        env:
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          mkdir -p release-assets
+          scripts/release/package-fnos.sh "$TAG" amd64 temp_build/QMediaSync_linux_amd64_exe backend/web_statics release-assets
+          scripts/release/package-fnos.sh "$TAG" arm64 temp_build/QMediaSync_linux_arm64_exe backend/web_statics release-assets
+
+      - name: Detect FNOS packages
+        id: fpk_assets
+        run: |
+          shopt -s nullglob
+          assets=(release-assets/*.fpk)
+          if [ "${#assets[@]}" -gt 0 ]; then
+            printf 'has_assets=true\n' >> "$GITHUB_OUTPUT"
+            printf 'Generated %s FNOS package(s):\n' "${#assets[@]}"
+            printf '%s\n' "${assets[@]}"
+          else
+            printf 'has_assets=false\n' >> "$GITHUB_OUTPUT"
+            printf 'No FNOS packages generated; skipping fpk-assets artifact.\n'
+          fi
+
+      - uses: actions/upload-artifact@v7
+        if: steps.fpk_assets.outputs.has_assets == 'true'
+        with:
+          name: fpk-assets
+          path: release-assets/*.fpk
+          if-no-files-found: error
+
+  github-release:
+    runs-on: ubuntu-latest
+    needs:
+      - metadata
+      - packages
+      - docker
+      - fpk
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-asset-*
+          path: release-assets
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v8
+        if: needs.fpk.outputs.has_assets == 'true'
+        with:
+          name: fpk-assets
+          path: release-assets
+
+      - name: Prepare release notes
+        env:
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          cp ".changes/${TAG}.md" release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.metadata.outputs.tag }}
+          name: Release ${{ needs.metadata.outputs.tag }}
+          body_path: release_notes.md
+          files: release-assets/*
+          fail_on_unmatched_files: false

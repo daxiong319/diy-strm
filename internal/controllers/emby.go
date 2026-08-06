@@ -1,14 +1,9 @@
-package controllers
+﻿package controllers
 
 import (
-	"diy-strm/internal/emby"
-	embyclientrestgo "diy-strm/internal/embyclient-rest-go"
-	"diy-strm/internal/helpers"
-	"diy-strm/internal/models"
-	"diy-strm/internal/notification"
-	"diy-strm/internal/notificationmanager"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,8 +15,17 @@ import (
 	"sync"
 	"time"
 
+	"diy-strm/internal/emby"
+	embyclientrestgo "diy-strm/internal/embyclient-rest-go"
+	"diy-strm/internal/helpers"
+	"diy-strm/internal/models"
+	"diy-strm/internal/notification"
+	"diy-strm/internal/notificationmanager"
+
 	"github.com/gin-gonic/gin"
 )
+
+const embyTempImagePrefix = "qms_emby_"
 
 type EmbyEvent struct {
 	Title    string `json:"Title"`
@@ -53,13 +57,10 @@ type EmbyEvent struct {
 	} `json:"Item"`
 }
 
-var refreshLibraryLock bool = false
-var refreshLibraryLockMu = sync.Mutex{}
-
 type newSeries struct {
-	ID          string        // 剧的ID
+	ID          string        // 剧的 ID
 	Name        string        // 剧的名称
-	Seasons     map[int][]int // 季的集ID列表
+	Seasons     map[int][]int // 季的集 ID 列表
 	LastUpdated time.Time     // 最后更新时间
 }
 
@@ -78,21 +79,21 @@ var playbackEventCacheMu = sync.Mutex{}
 var newSeriesBufferTickerStarted bool = false
 var newSeriesBufferTickerStartedMu = sync.Mutex{}
 
-// Webhook Emby事件回调（公开接口）
+// Webhook Emby 事件回调（公开接口）
 // @Summary Emby Webhook
-// @Description 接收Emby的事件回调（library.new）并触发通知/元数据提取
-// @Tags Emby管理
+// @Description 接收 Emby 的事件回调（library.new）并触发通知或元数据提取
+// @Tags Emby 管理
 // @Accept json
 // @Produce json
 // @Success 200 {object} object
 // @Failure 200 {object} object
 // @Router /emby/webhook [post]
 func Webhook(ctx *gin.Context) {
-	// 将请求的body内容完整打印到日志
+	// 将请求的 body 内容完整打印到日志
 	var body []byte
 	if ctx.Request.Body != nil {
 		body, _ = io.ReadAll(ctx.Request.Body)
-		helpers.AppLogger.Infof("emby webhook body: %s", string(body))
+		helpers.AppLogger.Infof("Emby Webhook body：%s", string(body))
 	}
 	if body == nil || (models.GlobalEmbyConfig != nil && (models.GlobalEmbyConfig.EmbyUrl == "" || models.GlobalEmbyConfig.EmbyApiKey == "")) {
 		ctx.JSON(http.StatusOK, gin.H{
@@ -103,32 +104,32 @@ func Webhook(ctx *gin.Context) {
 
 	// 检查是否启用鉴权
 	if models.GlobalEmbyConfig.EnableAuth == 1 {
-		// 从query参数获取api_key
-		apiKey := ctx.Query("api_key")
+		// 优先从 X-API-Key 请求头读取，保留 api_key 查询参数兼容 Emby Webhook 配置。
+		apiKey := apiKeyFromRequest(ctx)
 		if apiKey == "" {
 			ctx.JSON(http.StatusUnauthorized, gin.H{
-				"message": "Unauthorized: api_key is required",
+				"message": "缺少 API Key",
 			})
 			return
 		}
 
-		// 验证API Key
+		// 验证 API Key。
 		_, err := models.ValidateAPIKey(apiKey)
 		if err != nil {
-			helpers.AppLogger.Errorf("emby webhook api_key验证失败: %v", err)
+			helpers.AppLogger.Errorf("Emby Webhook API Key 验证失败：%v", err)
 			ctx.JSON(http.StatusUnauthorized, gin.H{
-				"message": "Unauthorized: invalid api_key",
+				"message": "API Key 无效",
 			})
 			return
 		}
 	}
 
-	// 处理 body内容，解析成json
+	// 处理 body 内容，解析成 JSON。
 	var event EmbyEvent
 	// 如果解析失败，记录错误日志并返回
 	err := json.Unmarshal(body, &event)
 	if err != nil {
-		helpers.AppLogger.Errorf("emby webhook bind json error: %v", err)
+		helpers.AppLogger.Errorf("Emby Webhook 解析 JSON 失败：%v", err)
 		ctx.JSON(http.StatusOK, gin.H{
 			"message": "webhook",
 		})
@@ -136,7 +137,7 @@ func Webhook(ctx *gin.Context) {
 	}
 	if event.Event == "library.new" {
 		// 新入库通知
-		// 如果是Episode就先存起来，等待10s，如果后续有通series的library.new事件就合并通知
+		// 如果是 Episode 就先存起来，等待 10 秒；如果后续有同 series 的 library.new 事件，就合并通知。
 		// 触发通知
 		go func() {
 			if event.Item.Type == "Episode" {
@@ -152,39 +153,32 @@ func Webhook(ctx *gin.Context) {
 			// 触发媒体信息提取
 			if models.GlobalEmbyConfig != nil && models.GlobalEmbyConfig.EnableExtractMediaInfo == 1 {
 				go func() {
-					// 获取Emby地址和Emby Api Key
+					// 获取 Emby 地址和 Emby API Key。
 					url := fmt.Sprintf("%s/emby/Items/%s/PlaybackInfo?api_key=%s", models.GlobalEmbyConfig.EmbyUrl, event.Item.ID, models.GlobalEmbyConfig.EmbyApiKey)
 					models.AddDownloadTaskFromEmbyMedia(url, event.Item.ID, event.Item.Name)
 					if err != nil {
-						helpers.AppLogger.Errorf("触发Emby信息提取失败 错误: %v", err)
+						helpers.AppLogger.Errorf("触发 Emby 信息提取失败：%v", err)
 					}
 				}()
 			} else {
-				helpers.AppLogger.Infof("Emby媒体信息提取功能未启用，跳过媒体信息提取")
+				helpers.AppLogger.Infof("Emby 媒体信息提取功能未启用，跳过媒体信息提取")
 			}
 		}
-		// 1分钟后同步一次Emby媒体库
+	}
+	if event.Event == "library.new" || event.Event == "library.modified" {
+		// 同步 Emby 条目到本地，用于更新 QMediaSync 本地索引。
 		go func() {
-			refreshLibraryLockMu.Lock()
-			if refreshLibraryLock {
-				refreshLibraryLockMu.Unlock()
-				return
+			if changed, err := emby.SyncEmbyItemByID(event.Item.ID); err != nil {
+				helpers.AppLogger.Warnf("Webhook 单条同步 Emby 条目失败，Item ID=%s，错误=%v", event.Item.ID, err)
+			} else if changed {
+				helpers.AppLogger.Infof("Webhook 单条同步 Emby 条目完成，Item ID=%s", event.Item.ID)
 			}
-			refreshLibraryLock = true
-			refreshLibraryLockMu.Unlock()
-			defer func() {
-				refreshLibraryLockMu.Lock()
-				refreshLibraryLock = false
-				refreshLibraryLockMu.Unlock()
-			}()
-			time.Sleep(1 * time.Minute)
-			emby.IncrementalSyncEmbyMediaItems(event.Item.ID)
 		}()
 	}
 	if event.Event == "library.deleted" {
 		// 删除媒体通知
 		if helpers.IsRelease {
-			helpers.AppLogger.Infof("Emby媒体已删除 %+v", event.Item)
+			helpers.AppLogger.Infof("Emby 媒体已删除 %+v", event.Item)
 		}
 		// 触发通知
 		// 删除消息也应该按照新入库消息一样对剧集进行分组
@@ -202,28 +196,31 @@ func Webhook(ctx *gin.Context) {
 			if models.GlobalEmbyConfig != nil && models.GlobalEmbyConfig.EnableDeleteNetdisk == 1 {
 				// 检查是否允许删除媒体库
 				// if !models.IsDeleteNetdiskLibraryEnabled(event.) {
-				// 	helpers.AppLogger.Infof("Emby媒体库 %s 未配置允许删除，跳过删除", event.Item.LibraryId)
+				// 	helpers.AppLogger.Infof("Emby 媒体库 %s 未配置允许删除，跳过删除", event.Item.LibraryId)
 				// 	return
 				// }
 				switch event.Item.Type {
 				case "Movie":
 					// 电影：在网盘中将视频文件的父目录一起删除
-					// 查找Item.Id对应的SyncFileId
+					// 查找 Item.ID 对应的 SyncFileID。
 					models.DeleteNetdiskMovieByEmbyItemId(event.Item.ID)
 				case "Episode":
-					// 集：删除视频文件+元数据（nfo、封面)
-					// 查找Item.Id对应的SyncFileId
+					// 集：删除视频文件和元数据（NFO、封面）。
+					// 查找 Item.ID 对应的 SyncFileID。
 					models.DeleteNetdiskEpisodeByEmbyItemId(event.Item.ID)
 				case "Season":
-					// 季：先检查视频文件的父目录，如果父目录是季文件夹则删除该文件夹；如果父目录是有tvshow的目录则仅删除季下所有集对应的视频文件+元数据（nfo、封面)
-					// 查找EmbyMediaItem.SeasonId = item.Id的记录，取其中一条的ItemId对应的SyncFileId的SyncFile.Path作为季目录来处理
+					// 季：先检查视频文件的父目录。如果父目录是季文件夹，则删除该文件夹；如果父目录有 tvshow.nfo，则只删除该季所有集对应的视频文件和元数据（NFO、封面）。
+					// 查找 EmbyMediaItem.SeasonID = Item.ID 的记录，取其中一条记录的 SyncFile.Path 作为季目录来处理。
 					models.DeleteNetdiskSeasonByItemId(event.Item.ID)
 				case "Series":
-					// 剧：在网盘中将tvshow.nfo的父目录删除
-					// 查找EmbyMediaItem.SeriesId = item.Id的记录，取其中一条的ItemId对应的SyncFileId的SyncFile.Path作为季目录来处理
+					// 剧：在网盘中删除 tvshow.nfo 的父目录。
+					// 查找 EmbyMediaItem.SeriesID = Item.ID 的记录，取其中一条记录的 SyncFile.Path 作为剧目录来处理。
 					models.DeleteNetdiskTvshowByItemId(event.Item.ID)
 				default:
 				}
+			}
+			if err := deleteLocalEmbyItemForWebhook(event.Item.Type, event.Item.ID); err != nil {
+				helpers.AppLogger.Warnf("Webhook 删除本地 Emby 条目索引失败，Item ID=%s，类型=%s，错误=%v", event.Item.ID, event.Item.Type, err)
 			}
 		}
 	}
@@ -235,6 +232,71 @@ func Webhook(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{
 		"message": "webhook",
 	})
+}
+
+func deleteLocalEmbyItemForWebhook(itemType string, itemID string) error {
+	switch itemType {
+	case "Movie", "Video", "Episode":
+		return models.DeleteLocalEmbyItemByID(itemID)
+	case "Season":
+		return models.DeleteLocalEmbyItemsBySeasonID(itemID)
+	case "Series":
+		return models.DeleteLocalEmbyItemsBySeriesID(itemID)
+	default:
+		return nil
+	}
+}
+
+func createEmbyTempImagePath(itemID string) (string, error) {
+	sum := sha256.Sum256([]byte(itemID))
+	pattern := fmt.Sprintf("%s%x_*.jpg", embyTempImagePrefix, sum)
+	file, err := os.CreateTemp(os.TempDir(), pattern)
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
+}
+
+func removeEmbyTempImage(imagePath string) error {
+	if strings.TrimSpace(imagePath) == "" {
+		return nil
+	}
+	tempDir, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return err
+	}
+	absPath, err := filepath.Abs(imagePath)
+	if err != nil {
+		return err
+	}
+	if filepath.Dir(absPath) != tempDir {
+		return fmt.Errorf("拒绝删除临时目录外的 Emby 图片: %s", imagePath)
+	}
+	if !isEmbyTempImageName(filepath.Base(absPath)) {
+		return fmt.Errorf("拒绝删除非受控 Emby 临时图片: %s", imagePath)
+	}
+	return os.Remove(absPath)
+}
+
+func isEmbyTempImageName(name string) bool {
+	if !strings.HasPrefix(name, embyTempImagePrefix) || !strings.HasSuffix(name, ".jpg") {
+		return false
+	}
+	body := strings.TrimSuffix(strings.TrimPrefix(name, embyTempImagePrefix), ".jpg")
+	if len(body) <= 65 || body[64] != '_' {
+		return false
+	}
+	for _, r := range body[:64] {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return len(body[65:]) > 0
 }
 
 func addItemToEpisodeBuffer(seriesId string, seasonNumber, episodeNumber int) {
@@ -254,7 +316,7 @@ func addItemToEpisodeBuffer(seriesId string, seasonNumber, episodeNumber int) {
 	series.Seasons[seasonNumber] = append(series.Seasons[seasonNumber], episodeNumber)
 	series.LastUpdated = time.Now()
 	newSeriesBuffer[seriesId] = series
-	helpers.AppLogger.Infof("已将剧集添加到新剧集缓冲区 seriesID=%s season=%d episode=%d", seriesId, seasonNumber, episodeNumber)
+	helpers.AppLogger.Infof("已将剧集添加到新剧集缓冲区，seriesID=%s，season=%d，episode=%d", seriesId, seasonNumber, episodeNumber)
 	// 启动轮询协程
 	newSeriesBufferTickerStartedMu.Lock()
 	defer newSeriesBufferTickerStartedMu.Unlock()
@@ -282,7 +344,7 @@ func addItemToDeletedEpisodeBuffer(seriesId string, seasonNumber, episodeNumber 
 	series.Seasons[seasonNumber] = append(series.Seasons[seasonNumber], episodeNumber)
 	series.LastUpdated = time.Now()
 	deletedSeriesBuffer[seriesId] = series
-	helpers.AppLogger.Infof("已将剧集添加到删除剧集缓冲区 seriesID=%s season=%d episode=%d", seriesId, seasonNumber, episodeNumber)
+	helpers.AppLogger.Infof("已将剧集添加到删除剧集缓冲区，seriesID=%s，season=%d，episode=%d", seriesId, seasonNumber, episodeNumber)
 	// 启动轮询协程
 	newSeriesBufferTickerStartedMu.Lock()
 	defer newSeriesBufferTickerStartedMu.Unlock()
@@ -292,7 +354,7 @@ func addItemToDeletedEpisodeBuffer(seriesId string, seasonNumber, episodeNumber 
 	}
 }
 
-// TestAddItemToEpisodeBuffer 测试addItemToEpisodeBuffer函数
+// TestAddItemToEpisodeBuffer 测试 addItemToEpisodeBuffer 函数
 func TestAddItemToEpisodeBuffer() {
 	// 清空缓冲区
 	newSeriesBufferMu.Lock()
@@ -323,31 +385,31 @@ func startNewSeriesBufferTicker() {
 
 		// 处理新增缓冲区
 		for _, series := range newSeriesBuffer {
-			helpers.AppLogger.Infof("检查新增剧集 seriesID=%s 最后更新时间=%s", series.ID, series.LastUpdated.Format("2006-01-02 15:04:05"))
+			helpers.AppLogger.Infof("检查新增剧集，seriesID=%s，最后更新时间=%s", series.ID, series.LastUpdated.Format("2006-01-02 15:04:05"))
 			if now.Sub(series.LastUpdated) >= 10*time.Second {
-				helpers.AppLogger.Infof("新剧集缓冲区达到触发时间，发送入库通知 seriesID=%s 季数=%d", series.ID, len(series.Seasons))
+				helpers.AppLogger.Infof("新剧集缓冲区达到触发时间，发送入库通知，seriesID=%s，季数=%d", series.ID, len(series.Seasons))
 				// 触发通知
 				go sendNewSeriesNotification(series.ID, series.Seasons)
 				// 从缓冲区删除，锁定
 				delete(newSeriesBuffer, series.ID)
 			} else {
 				// 还没到时间，继续等待
-				helpers.AppLogger.Infof("等待更多剧集入库通知 seriesID=%s 已缓存季数=%d", series.ID, len(series.Seasons))
+				helpers.AppLogger.Infof("等待更多剧集入库通知，seriesID=%s，已缓存季数=%d", series.ID, len(series.Seasons))
 			}
 		}
 
 		// 处理删除缓冲区
 		for _, series := range deletedSeriesBuffer {
-			helpers.AppLogger.Infof("检查删除剧集 seriesID=%s 最后更新时间=%s", series.ID, series.LastUpdated.Format("2006-01-02 15:04:05"))
+			helpers.AppLogger.Infof("检查删除剧集，seriesID=%s，最后更新时间=%s", series.ID, series.LastUpdated.Format("2006-01-02 15:04:05"))
 			if now.Sub(series.LastUpdated) >= 10*time.Second {
-				helpers.AppLogger.Infof("删除剧集缓冲区达到触发时间，发送删除通知 seriesID=%s 季数=%d", series.ID, len(series.Seasons))
+				helpers.AppLogger.Infof("删除剧集缓冲区达到触发时间，发送删除通知，seriesID=%s，季数=%d", series.ID, len(series.Seasons))
 				// 触发通知
 				go sendDeletedSeriesNotification(series.ID, series.Name, series.Seasons)
 				// 从缓冲区删除，锁定
 				delete(deletedSeriesBuffer, series.ID)
 			} else {
 				// 还没到时间，继续等待
-				helpers.AppLogger.Infof("等待更多剧集删除通知 seriesID=%s 已缓存季数=%d", series.ID, len(series.Seasons))
+				helpers.AppLogger.Infof("等待更多剧集删除通知，seriesID=%s，已缓存季数=%d", series.ID, len(series.Seasons))
 			}
 		}
 
@@ -365,10 +427,10 @@ func startNewSeriesBufferTicker() {
 var notificationTemplate = `
 {{title}} ({{year}})
 
-🆔 评分: {{rate}}
-🎬 类型: {{genes}}
-👤 主演: {{actors}}
-⏰ 入库时间: {{addedTime}}
+🆔 评分：{{rate}}
+🎬 类型：{{genes}}
+👤 主演：{{actors}}
+⏰ 入库时间：{{addedTime}}
 
 📝 简介
 {{overview}}
@@ -378,7 +440,7 @@ var notificationTemplate = `
 func sendNewMovieNotification(itemId string) {
 	detail := emby.GetEmbyItemDetail(itemId)
 	if detail == nil {
-		helpers.AppLogger.Errorf("获取Emby媒体 %s 详情失败，无法发送新电影通知", itemId)
+		helpers.AppLogger.Errorf("获取 Emby 媒体 %s 详情失败，无法发送新电影通知", itemId)
 		return
 	}
 	// 使用变量格式化通知内容
@@ -412,7 +474,7 @@ func sendNewMovieNotification(itemId string) {
 		actors = "暂无数据"
 	}
 	content = strings.ReplaceAll(content, "{{actors}}", actors)
-	// 通过格式化detail.DateCreated字段得到入库时间，格式：2025-12-10T16:00:00.0000000Z
+	// 通过格式化 detail.DateCreated 字段得到入库时间，格式：2025-12-10T16:00:00.0000000Z
 	addedTime := time.Now().Format("2006-01-02 15:04:05")
 	if detail.DateCreated != "" {
 		if parsedTime, err := time.Parse(time.RFC3339, detail.DateCreated); err == nil {
@@ -426,16 +488,16 @@ func sendNewMovieNotification(itemId string) {
 		overview = "暂无简介"
 	}
 	content = strings.ReplaceAll(content, "{{overview}}", overview)
-	// seasonepisodes占位符替换为空
+	// 将 seasonEpisodes 占位符替换为空
 	content = strings.ReplaceAll(content, "{{seasonepisodes}}", "")
-	helpers.AppLogger.Infof("已格式化完成通知内容 movieId=%s\n%s", itemId, content)
+	helpers.AppLogger.Infof("已格式化完成通知内容，movieID=%s\n%s", itemId, content)
 	sendNewItemNotification(content, detail, "电影")
 }
 
 func sendNewSeriesNotification(seriesId string, seasons map[int][]int) {
 	detail := emby.GetEmbyItemDetail(seriesId)
 	if detail == nil {
-		helpers.AppLogger.Errorf("获取Emby媒体 %s 详情失败，无法发送新剧集通知", seriesId)
+		helpers.AppLogger.Errorf("获取 Emby 媒体 %s 详情失败，无法发送新剧集通知", seriesId)
 		return
 	}
 	// 使用变量格式化通知内容
@@ -484,12 +546,12 @@ func sendNewSeriesNotification(seriesId string, seasons map[int][]int) {
 		overview = "暂无简介"
 	}
 	content = strings.ReplaceAll(content, "{{overview}}", overview)
-	// 拼接季集信息,格式：S1E1-E3; S2E1,E5
+	// 拼接季集信息，格式：S1E1-E3; S2E1,E5。
 	seasonEpisodes := formatSeasonEpisodes(seasons)
 	if seasonEpisodes != "" {
-		seasonEpisodes = fmt.Sprintf("📺 入库季集: %s\n", seasonEpisodes)
+		seasonEpisodes = fmt.Sprintf("📺 入库季集：%s\n", seasonEpisodes)
 	}
-	content = strings.ReplaceAll(content, "⏰ 入库时间:", fmt.Sprintf("%s\n⏰ 入库时间: ", seasonEpisodes))
+	content = strings.ReplaceAll(content, "⏰ 入库时间：", fmt.Sprintf("%s\n⏰ 入库时间：", seasonEpisodes))
 	sendNewItemNotification(content, detail, "电视剧")
 }
 
@@ -497,20 +559,25 @@ func sendNewItemNotification(content string, detail *embyclientrestgo.BaseItemDt
 	imagePath := ""
 	if detail.ImageTags != nil {
 		imageUrl := ""
-		// 检查是否有backdrop或者banner
+		// 检查是否有 backdrop 或 banner。
 		if tag, ok := detail.ImageTags["backdrop"]; ok {
 			imageUrl = fmt.Sprintf("%s/emby/Items/%s/Images/Backdrop?tag=%s&api_key=%s", models.GlobalEmbyConfig.EmbyUrl, detail.Id, tag, models.GlobalEmbyConfig.EmbyApiKey)
 		} else if tag, ok := detail.ImageTags["Primary"]; ok {
 			imageUrl = fmt.Sprintf("%s/emby/Items/%s/Images/Primary?tag=%s&api_key=%s", models.GlobalEmbyConfig.EmbyUrl, detail.Id, tag, models.GlobalEmbyConfig.EmbyApiKey)
 		}
 		if imageUrl != "" {
-			// 将图片下载/tmp目录，作为通知图片
-			posterPath := filepath.Join(os.TempDir(), fmt.Sprintf("%s.jpg", detail.Id))
-			derr := helpers.DownloadFile(imageUrl, posterPath, "diy-strm")
-			if derr != nil {
-				helpers.AppLogger.Errorf("下载Emby海报失败: %v", derr)
+			// 将图片下载到 /tmp 目录，作为通知图片。
+			posterPath, perr := createEmbyTempImagePath(detail.Id)
+			if perr != nil {
+				helpers.AppLogger.Errorf("创建 Emby 海报临时文件失败：%v", perr)
 			} else {
-				imagePath = posterPath
+				derr := helpers.DownloadFile(imageUrl, posterPath, "QMediaSync")
+				if derr != nil {
+					_ = removeEmbyTempImage(posterPath)
+					helpers.AppLogger.Errorf("下载 Emby 海报失败：%v", derr)
+				} else {
+					imagePath = posterPath
+				}
 			}
 		}
 	}
@@ -526,48 +593,50 @@ func sendNewItemNotification(content string, detail *embyclientrestgo.BaseItemDt
 	}
 	if notificationmanager.GlobalEnhancedNotificationManager != nil {
 		if err := notificationmanager.GlobalEnhancedNotificationManager.SendNotification(context.Background(), notif); err != nil {
-			helpers.AppLogger.Errorf("发送媒体入库通知失败: %v", err)
+			helpers.AppLogger.Errorf("发送媒体入库通知失败：%v", err)
 		}
 	}
 	// 删除临时图片文件
 	if imagePath != "" {
-		os.Remove(imagePath)
+		if err := removeEmbyTempImage(imagePath); err != nil && !os.IsNotExist(err) {
+			helpers.AppLogger.Warnf("删除 Emby 海报临时文件失败：%v", err)
+		}
 	}
 }
 
 // 发送删除电影通知
 func sendDeletedMovieNotification(itemId, itemName string) {
-	content := fmt.Sprintf("电影名称：%s\n⏰ 删除时间: %s", itemName, time.Now().Format("2006-01-02 15:04:05"))
+	content := fmt.Sprintf("电影名称：%s\n⏰ 删除时间：%s", itemName, time.Now().Format("2006-01-02 15:04:05"))
 	notif := &models.Notification{
 		Type:      models.MediaRemoved,
-		Title:     "🗑️ Emby媒体删除通知",
+		Title:     "🗑️ Emby 媒体删除通知",
 		Content:   content,
 		Timestamp: time.Now(),
 		Priority:  models.NormalPriority,
 	}
 	if notificationmanager.GlobalEnhancedNotificationManager != nil {
 		if err := notificationmanager.GlobalEnhancedNotificationManager.SendNotification(context.Background(), notif); err != nil {
-			helpers.AppLogger.Errorf("发送媒体删除 %s => %s通知失败: %v", itemId, itemName, err)
+			helpers.AppLogger.Errorf("发送媒体删除通知失败：%s => %s，错误：%v", itemId, itemName, err)
 		}
 	}
 }
 
 // 发送删除剧集分组通知
 func sendDeletedSeriesNotification(seriesId string, seriesName string, seasons map[int][]int) {
-	// 拼接季集信息,格式：S1E1-E3; S2E1,E5
+	// 拼接季集信息，格式：S1E1-E3; S2E1,E5。
 	seasonEpisodes := formatSeasonEpisodes(seasons)
 
-	content := fmt.Sprintf("电视剧名称：%s\n删除季集：%s\n⏰ 删除时间: %s", seriesName, seasonEpisodes, time.Now().Format("2006-01-02 15:04:05"))
+	content := fmt.Sprintf("电视剧名称：%s\n删除季集：%s\n⏰ 删除时间：%s", seriesName, seasonEpisodes, time.Now().Format("2006-01-02 15:04:05"))
 	notif := &models.Notification{
 		Type:      models.MediaRemoved,
-		Title:     "🗑️ Emby媒体删除通知",
+		Title:     "🗑️ Emby 媒体删除通知",
 		Content:   content,
 		Timestamp: time.Now(),
 		Priority:  models.NormalPriority,
 	}
 	if notificationmanager.GlobalEnhancedNotificationManager != nil {
 		if err := notificationmanager.GlobalEnhancedNotificationManager.SendNotification(context.Background(), notif); err != nil {
-			helpers.AppLogger.Errorf("发送媒体删除通知失败: %s (%s) 错误:%v", seriesId, seriesName, err)
+			helpers.AppLogger.Errorf("发送媒体删除通知失败：%s（%s），错误：%v", seriesId, seriesName, err)
 		}
 	}
 }
@@ -638,11 +707,11 @@ func handlePlaybackEvent(body []byte, event EmbyEvent) {
 	// 解析完整的播放事件数据
 	var playbackWebhook models.EmbyPlaybackWebhook
 	if err := json.Unmarshal(body, &playbackWebhook); err != nil {
-		helpers.AppLogger.Errorf("解析播放事件失败: %v", err)
+		helpers.AppLogger.Errorf("解析播放事件失败：%v", err)
 		return
 	}
 
-	// 检查去重（1分钟内不重复通知）
+	// 检查去重，1 分钟内不重复通知。
 	cacheKey := fmt.Sprintf("%s_%s_%s_%s_%s",
 		playbackWebhook.GetUserID(),
 		playbackWebhook.Item.Type,
@@ -654,14 +723,14 @@ func handlePlaybackEvent(body []byte, event EmbyEvent) {
 	playbackEventCacheMu.Lock()
 	if lastTime, exists := playbackEventCache[cacheKey]; exists {
 		if time.Since(lastTime) < 1*time.Minute {
-			helpers.AppLogger.Infof("播放事件去重跳过: %s (%v前)", cacheKey, time.Since(lastTime))
+			helpers.AppLogger.Infof("播放事件去重跳过：%s（%v 前）", cacheKey, time.Since(lastTime))
 			playbackEventCacheMu.Unlock()
 			return
 		}
 	}
 	playbackEventCache[cacheKey] = time.Now()
 
-	// 清理过期的缓存项（清理超过5分钟的缓存）
+	// 清理超过 5 分钟的缓存项。
 	for key, timestamp := range playbackEventCache {
 		if time.Since(timestamp) > 5*time.Minute {
 			delete(playbackEventCache, key)
@@ -674,13 +743,15 @@ func handlePlaybackEvent(body []byte, event EmbyEvent) {
 	imagePath := notif.Image // 保存图片路径以便后续清理
 	if notificationmanager.GlobalEnhancedNotificationManager != nil {
 		if err := notificationmanager.GlobalEnhancedNotificationManager.SendNotification(context.Background(), notif); err != nil {
-			helpers.AppLogger.Errorf("发送播放通知失败: %v", err)
+			helpers.AppLogger.Errorf("发送播放通知失败：%v", err)
 		}
 	}
 
 	// 删除临时图片文件
 	if imagePath != "" {
-		os.Remove(imagePath)
+		if err := removeEmbyTempImage(imagePath); err != nil && !os.IsNotExist(err) {
+			helpers.AppLogger.Warnf("删除 Emby 海报临时文件失败：%v", err)
+		}
 	}
 }
 
@@ -699,12 +770,17 @@ func createPlaybackNotification(webhook *models.EmbyPlaybackWebhook) *notificati
 				webhook.Item.ID,
 				tag,
 				models.GlobalEmbyConfig.EmbyApiKey)
-			posterPath := filepath.Join(os.TempDir(), fmt.Sprintf("%s_playback.jpg", webhook.Item.ID))
-			derr := helpers.DownloadFile(imageUrl, posterPath, "QMediaSync")
-			if derr != nil {
-				helpers.AppLogger.Errorf("下载Emby海报失败: %v", derr)
+			posterPath, perr := createEmbyTempImagePath(webhook.Item.ID)
+			if perr != nil {
+				helpers.AppLogger.Errorf("创建 Emby 海报临时文件失败：%v", perr)
 			} else {
-				imagePath = posterPath
+				derr := helpers.DownloadFile(imageUrl, posterPath, "QMediaSync")
+				if derr != nil {
+					_ = removeEmbyTempImage(posterPath)
+					helpers.AppLogger.Errorf("下载 Emby 海报失败：%v", derr)
+				} else {
+					imagePath = posterPath
+				}
 			}
 		}
 	}
@@ -757,7 +833,7 @@ func formatPlaybackNotificationContent(webhook *models.EmbyPlaybackWebhook) stri
 			fmt.Fprintf(&buf, "播放进度：%s / %s (%.0f%%)\n", positionStr, runtimeStr, percentage)
 			helpers.AppLogger.Infof("通知中需要显示播放进度 %s / %s (%.0f%%)", positionStr, runtimeStr, percentage)
 		} else if runtimeTicks > 0 {
-			// start事件没有position，显示总时长
+			// start 事件没有 position，显示总时长。
 			runtimeStr := formatTicksToTime(runtimeTicks)
 			fmt.Fprintf(&buf, "时长：%s\n", runtimeStr)
 			helpers.AppLogger.Infof("通知中需要显示时长 %s", runtimeStr)
@@ -775,7 +851,7 @@ func formatPlaybackNotificationContent(webhook *models.EmbyPlaybackWebhook) stri
 			overview := detail.Overview
 			runes := []rune(overview)
 			if len(runes) > 100 {
-				overview = string(runes[:100]) + "..."
+				overview = string(runes[:100]) + "…"
 			}
 			fmt.Fprintf(&buf, "简介：%s\n", overview)
 		}
@@ -784,7 +860,7 @@ func formatPlaybackNotificationContent(webhook *models.EmbyPlaybackWebhook) stri
 	return buf.String()
 }
 
-// formatTicksToTime 将Emby Ticks（100纳秒单位）转换为 HH:MM:SS 格式
+// formatTicksToTime 将 Emby Ticks（100 纳秒单位）转换为 HH:MM:SS 格式
 func formatTicksToTime(ticks int64) string {
 	totalSeconds := ticks / 10000000 // ticks to seconds
 	hours := totalSeconds / 3600

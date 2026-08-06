@@ -1,7 +1,6 @@
-package database
+﻿package database
 
 import (
-	"diy-strm/internal/helpers"
 	"context"
 	"database/sql"
 	"fmt"
@@ -11,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"diy-strm/internal/helpers"
 
 	_ "gorm.io/driver/postgres"
 )
@@ -54,7 +55,7 @@ func NewEmbeddedManager(config *Config) *EmbeddedManager {
 }
 
 func (m *EmbeddedManager) Start(ctx context.Context) error {
-	helpers.AppLogger.Info("启动内嵌 PostgreSQL...")
+	helpers.AppLogger.Info("启动内嵌 PostgreSQL…")
 	// 初始化目录和权限
 	if err := m.InitDataDir(); err != nil {
 		return err
@@ -83,7 +84,7 @@ func (m *EmbeddedManager) Start(ctx context.Context) error {
 }
 
 func (m *EmbeddedManager) Stop() error {
-	helpers.AppLogger.Info("停止内嵌的 PostgreSQL...")
+	helpers.AppLogger.Info("停止内嵌的 PostgreSQL…")
 
 	postgresPath := "pg_ctl"
 	if runtime.GOOS == "windows" {
@@ -92,19 +93,19 @@ func (m *EmbeddedManager) Stop() error {
 		cmd := exec.Command(postgresPath, "stop", "-m", "fast")
 		outout, err := cmd.CombinedOutput()
 		if err != nil {
-			helpers.AppLogger.Errorf("pg_ctl stop 执行失败: %v", err)
+			helpers.AppLogger.Errorf("pg_ctl stop 执行失败：%v", err)
 			return err
 		}
-		helpers.AppLogger.Infof("pg_ctl stop 输出: %s", string(outout))
+		helpers.AppLogger.Infof("pg_ctl stop 输出：%s", string(outout))
 
 	} else {
-		// 使用 pg_ctl 优雅停止，使用qms用户执行
+		// 使用 pg_ctl 优雅停止，并通过 qms 用户执行
 		output, err := m.userSwitcher.RunCommandAsUser(postgresPath, "stop", "-D", m.config.DataDir, "-m", "fast")
 		if err != nil {
-			helpers.AppLogger.Errorf("pg_ctl stop 执行失败: %v", err)
+			helpers.AppLogger.Errorf("pg_ctl stop 执行失败：%v", err)
 			return err
 		}
-		helpers.AppLogger.Infof("pg_ctl stop 输出: %s", output)
+		helpers.AppLogger.Infof("pg_ctl stop 输出：%s", output)
 	}
 
 	time.Sleep(2 * time.Second)
@@ -116,24 +117,24 @@ func (m *EmbeddedManager) InitDataDir() error {
 	// 先重建目录
 	postgresRoot := filepath.Dir(m.config.DataDir)
 	if !helpers.PathExists(postgresRoot) {
-		// 如果没有config/postgres目录则创建
+		// 如果没有 config/postgres 目录则创建
 		if err := os.MkdirAll(postgresRoot, 4750); err != nil {
 			return err
 		}
-		helpers.AppLogger.Infof("创建Postgres目录 %s 成功", postgresRoot)
+		helpers.AppLogger.Infof("创建 PostgreSQL 目录 %s 成功", postgresRoot)
 	}
 	if !helpers.PathExists(m.config.DataDir) {
 		if err := os.MkdirAll(m.config.DataDir, 4750); err != nil {
 			return err
 		}
-		helpers.AppLogger.Infof("创建Postgres数据目录 %s 成功", m.config.DataDir)
+		helpers.AppLogger.Infof("创建 PostgreSQL 数据目录 %s 成功", m.config.DataDir)
 	}
 	postmasterFile := filepath.Join(m.config.DataDir, "postmaster.pid")
 	if helpers.PathExists(postmasterFile) {
 		if err := os.Remove(postmasterFile); err != nil {
 			return err
 		}
-		helpers.AppLogger.Infof("删除Postgres postmaster.pid 文件 %s 成功", postmasterFile)
+		helpers.AppLogger.Infof("删除 PostgreSQL postmaster.pid 文件 %s 成功", postmasterFile)
 	}
 	logDir := filepath.Join(postgresRoot, "log")
 	if helpers.PathExists(logDir) {
@@ -141,41 +142,92 @@ func (m *EmbeddedManager) InitDataDir() error {
 		if err := os.RemoveAll(logDir); err != nil {
 			return err
 		}
-		helpers.AppLogger.Infof("删除Postgres日志目录 %s 成功", logDir)
+		helpers.AppLogger.Infof("删除 PostgreSQL 日志目录 %s 成功", logDir)
 		if err := os.MkdirAll(logDir, 4750); err != nil {
 			return err
 		}
-		helpers.AppLogger.Infof("创建Postgres日志目录 %s 成功", logDir)
+		helpers.AppLogger.Infof("创建 PostgreSQL 日志目录 %s 成功", logDir)
 	}
 	tmpDir := filepath.Join(postgresRoot, "tmp")
 	if !helpers.PathExists(tmpDir) {
 		if err := os.MkdirAll(tmpDir, 4750); err != nil {
 			return err
 		}
-		helpers.AppLogger.Infof("创建Postgres临时目录 %s 成功", tmpDir)
+		helpers.AppLogger.Infof("创建 PostgreSQL 临时目录 %s 成功", tmpDir)
 	}
 	// 再修改权限
 	if (helpers.Guid != "" && helpers.Guid != "0") || runtime.GOOS == "windows" {
-		// 如果是非root用户启动，postgres用guid启动即可，无需修改权限
-		// windows无需修改权限
+		// 如果是非 root 用户启动，PostgreSQL 使用 guid 启动即可，无需修改权限
+		// Windows 无需修改权限
 		return nil
 	}
-	exec.Command("chown", "-R", fmt.Sprintf("%s:%s", m.UserName, m.GroupName), postgresRoot).Run() // 设置目录所有者为qms:qms
-	helpers.AppLogger.Infof("设置Postgres目录 %s 所有者为%s:%s成功", postgresRoot, m.UserName, m.GroupName)
+	exec.Command("chown", "-R", fmt.Sprintf("%s:%s", m.UserName, m.GroupName), postgresRoot).Run() // 设置目录所有者为 qms:qms
+	helpers.AppLogger.Infof("设置 PostgreSQL 目录 %s 所有者为 %s:%s 成功", postgresRoot, m.UserName, m.GroupName)
 	exec.Command("chown", "-R", fmt.Sprintf("%s:%s", m.UserName, m.GroupName), m.config.DataDir).Run()
-	helpers.AppLogger.Infof("设置Postgres数据目录 %s 所有者为%s:%s成功", m.config.DataDir, m.UserName, m.GroupName)
+	helpers.AppLogger.Infof("设置 PostgreSQL 数据目录 %s 所有者为 %s:%s 成功", m.config.DataDir, m.UserName, m.GroupName)
 	exec.Command("chown", "-R", fmt.Sprintf("%s:%s", m.UserName, m.GroupName), logDir).Run()
-	helpers.AppLogger.Infof("设置Postgres日志目录 %s 所有者为%s:%s成功", logDir, m.UserName, m.GroupName)
+	helpers.AppLogger.Infof("设置 PostgreSQL 日志目录 %s 所有者为 %s:%s 成功", logDir, m.UserName, m.GroupName)
 	exec.Command("chown", "-R", fmt.Sprintf("%s:%s", m.UserName, m.GroupName), tmpDir).Run()
-	helpers.AppLogger.Infof("设置Postgres临时目录 %s 所有者为%s:%s成功", tmpDir, m.UserName, m.GroupName)
+	helpers.AppLogger.Infof("设置 PostgreSQL 临时目录 %s 所有者为 %s:%s 成功", tmpDir, m.UserName, m.GroupName)
 	return nil
+}
+
+// asciiShareDir 返回 initdb 使用的 share 目录。
+// 在 Windows 非 ASCII 代码页环境下，若 share 路径包含中文等非 ASCII 字符，
+// initdb 引导阶段会报 "invalid byte sequence for encoding UTF8" 错误。
+// 此时将 share 目录复制到纯 ASCII 临时路径后返回，initdb 通过 -L 参数使用。
+func asciiShareDir(binaryPath string) (string, error) {
+	shareDir := filepath.Join(filepath.Dir(binaryPath), "share")
+	if isAsciiPath(shareDir) {
+		return shareDir, nil
+	}
+	dst := filepath.Join(os.TempDir(), "diy-strm-pgshare")
+	if !helpers.PathExists(dst) {
+		if err := copyDirRecursive(shareDir, dst); err != nil {
+			return "", fmt.Errorf("复制 share 目录到临时路径失败：%v", err)
+		}
+		helpers.AppLogger.Infof("share 路径包含非 ASCII 字符，已复制到：%s", dst)
+	}
+	return dst, nil
+}
+
+// isAsciiPath 判断路径是否全部为 ASCII 字符
+func isAsciiPath(path string) bool {
+	for _, r := range path {
+		if r > 127 {
+			return false
+		}
+	}
+	return true
+}
+
+// copyDirRecursive 递归复制目录
+func copyDirRecursive(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode())
+	})
 }
 
 func (m *EmbeddedManager) prepareDataDir() error {
 	// 检查是否已经初始化
 	pgVersionFile := filepath.Join(m.config.DataDir, "PG_VERSION")
 	if helpers.PathExists(pgVersionFile) {
-		helpers.AppLogger.Infof("Postgres数据文件 %s 已存在， 跳过初始化过程", pgVersionFile)
+		helpers.AppLogger.Infof("PostgreSQL 数据文件 %s 已存在，跳过初始化过程", pgVersionFile)
 		return nil
 	}
 
@@ -184,10 +236,14 @@ func (m *EmbeddedManager) prepareDataDir() error {
 	if runtime.GOOS == "windows" {
 		initdbPath = filepath.Join(m.config.BinaryPath, "initdb.exe")
 	}
-	output, err := m.userSwitcher.RunCommandAsUser(initdbPath, "-D", m.config.DataDir, "-U", m.config.User, "--encoding=UTF8", "--locale=C", "--auth=trust")
+	shareDir, err := asciiShareDir(m.config.BinaryPath)
 	if err != nil {
-		helpers.AppLogger.Errorf("数据库用户初始化失败: %v, 输出: %s", err, output)
-		return fmt.Errorf("数据库用户初始化失败: %v, 输出: %s", err, output)
+		return err
+	}
+	output, err := m.userSwitcher.RunCommandAsUser(initdbPath, "-D", m.config.DataDir, "-U", m.config.User, "--encoding=UTF8", "--locale=C", "--auth=trust", "-L", shareDir)
+	if err != nil {
+		helpers.AppLogger.Errorf("数据库用户初始化失败：%v，输出：%s", err, output)
+		return fmt.Errorf("数据库用户初始化失败：%v，输出：%s", err, output)
 	}
 	helpers.AppLogger.Info("数据库初始化完成")
 	return nil
@@ -200,10 +256,10 @@ func (m *EmbeddedManager) formatPathForPostgres(path string) string {
 		// 将路径转换为 Windows 可识别的格式
 		path = filepath.Clean(path)
 
-		// 方法1: 使用正斜杠（推荐，跨平台兼容）
+		// 方法 1：使用正斜杠（推荐，跨平台兼容）
 		path = strings.ReplaceAll(path, "\\", "/")
 
-		// 或者方法2: 使用双反斜杠
+		// 或者方法 2：使用双反斜杠
 		// path = strings.ReplaceAll(path, "\\", "\\\\")
 
 		// 如果路径包含空格，确保正确转义
@@ -219,6 +275,11 @@ func (m *EmbeddedManager) initDatabase() error {
 	sharedMemoryType := m.getSharedMemoryType()
 	// 配置 postgresql.conf
 	confPath := filepath.Join(m.config.DataDir, "postgresql.conf")
+	unixSocketDir := m.formatPathForPostgres(m.config.DataDir)
+	if runtime.GOOS == "windows" {
+		// Windows 不支持 Unix 域套接字，置空禁用，避免启动时创建套接字失败
+		unixSocketDir = ""
+	}
 	confContent := fmt.Sprintf(`
 # 基本配置
 listen_addresses = '%s'
@@ -253,15 +314,15 @@ effective_cache_size = 1GB
 max_worker_processes = 8
 max_parallel_workers_per_gather = 2
 max_parallel_workers = 8
-`, m.config.Host, m.config.Port, sharedMemoryType, m.formatPathForPostgres(m.config.DataDir))
+`, m.config.Host, m.config.Port, sharedMemoryType, unixSocketDir)
 
 	if err := os.WriteFile(confPath, []byte(strings.TrimSpace(confContent)), 4750); err != nil {
-		return fmt.Errorf("写入 postgresql.conf 失败: %v", err)
+		return fmt.Errorf("写入 postgresql.conf 失败：%v", err)
 	}
 	if runtime.GOOS != "windows" && m.UserName != "" {
 		// 改变所有者
 		exec.Command("chown", "-R", fmt.Sprintf("%s:%s", m.UserName, m.GroupName), confPath).Run()
-		helpers.AppLogger.Infof("设置Postgres配置文件 %s 所有者为%s:%s成功", confPath, m.UserName, m.GroupName)
+		helpers.AppLogger.Infof("设置 PostgreSQL 配置文件 %s 所有者为 %s:%s 成功", confPath, m.UserName, m.GroupName)
 	}
 	// 配置 pg_hba.conf（保持不变）
 	hbaPath := filepath.Join(m.config.DataDir, "pg_hba.conf")
@@ -272,15 +333,15 @@ host    all             all             127.0.0.1/32            trust
 host    all             all             ::1/128                 trust
 `
 	if err := os.WriteFile(hbaPath, []byte(strings.TrimSpace(hbaContent)), 4750); err != nil {
-		return fmt.Errorf("写入 pg_hba.conf 失败: %v", err)
+		return fmt.Errorf("写入 pg_hba.conf 失败：%v", err)
 	}
 	if runtime.GOOS != "windows" && m.UserName != "" {
 		// 改变所有者
 		exec.Command("chown", "-R", fmt.Sprintf("%s:%s", m.UserName, m.GroupName), hbaPath).Run()
-		helpers.AppLogger.Infof("设置Postgres HBA文件 %s 所有者为%s:%s成功", hbaPath, m.UserName, m.GroupName)
+		helpers.AppLogger.Infof("设置 PostgreSQL HBA 文件 %s 所有者为 %s:%s 成功", hbaPath, m.UserName, m.GroupName)
 	}
 
-	helpers.AppLogger.Infof("PostgreSQL 配置完成，共享内存类型: %s", sharedMemoryType)
+	helpers.AppLogger.Infof("PostgreSQL 配置完成，共享内存类型：%s", sharedMemoryType)
 	return nil
 }
 
@@ -305,7 +366,8 @@ func (m *EmbeddedManager) startPostgresProcess() error {
 		os.Setenv("PGDATA", m.config.DataDir)
 		os.Setenv("PGPORT", fmt.Sprintf("%d", m.config.Port))
 		if runtime.GOOS == "windows" {
-			cmd = exec.Command(postgresPath, "-D", m.config.DataDir, "-h", m.config.Host, "-p", fmt.Sprintf("%d", m.config.Port), "-k", tmpPath)
+			// Windows 不支持 Unix 域套接字，不能传 -k 参数，否则启动失败
+			cmd = exec.Command(postgresPath, "-D", m.config.DataDir, "-h", m.config.Host, "-p", fmt.Sprintf("%d", m.config.Port))
 			cmd.Stdout = os.Stdout
 		} else {
 			cmd = exec.Command(postgresPath, "start", "-D", m.config.DataDir, "-o", fmt.Sprintf("-k %s -c unix_socket_directories='%s'", tmpPath, tmpPath))
@@ -316,17 +378,17 @@ func (m *EmbeddedManager) startPostgresProcess() error {
 		err = cmd.Start()
 	}
 	if err != nil {
-		helpers.AppLogger.Errorf("启动 PostgreSQL 失败: %v", err)
-		return fmt.Errorf("启动 PostgreSQL 失败: %v", err)
+		helpers.AppLogger.Errorf("启动 PostgreSQL 失败：%v", err)
+		return fmt.Errorf("启动 PostgreSQL 失败：%v", err)
 	}
 	m.process = cmd.Process
-	helpers.AppLogger.Infof("PostgreSQL 进程已启动 (PID: %d)", m.process.Pid)
+	helpers.AppLogger.Infof("PostgreSQL 进程已启动（PID：%d）", m.process.Pid)
 
 	return nil
 }
 
 func (m *EmbeddedManager) waitForPostgres(ctx context.Context) error {
-	helpers.AppLogger.Infof("等待 PostgreSQL 在 %s:%d 启动...", m.config.Host, m.config.Port)
+	helpers.AppLogger.Infof("等待 PostgreSQL 在 %s:%d 启动…", m.config.Host, m.config.Port)
 
 	timeout := time.After(30 * time.Second)
 	ticker := time.NewTicker(1 * time.Second)
@@ -345,14 +407,14 @@ func (m *EmbeddedManager) waitForPostgres(ctx context.Context) error {
 			}
 			cmd := exec.Command(pgIsReadyPath, "-h", m.config.Host, "-p",
 				fmt.Sprintf("%d", m.config.Port), "-U", m.config.User)
-			helpers.AppLogger.Infof("执行命令: %s", cmd.String())
+			helpers.AppLogger.Infof("执行命令：%s", cmd.String())
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err == nil {
 				helpers.AppLogger.Info("PostgreSQL 已就绪")
 				return nil
 			} else {
-				helpers.AppLogger.Infof("PostgreSQL 启动中... 错误: %v", err)
+				helpers.AppLogger.Infof("PostgreSQL 启动中… 错误：%v", err)
 			}
 		}
 	}
@@ -424,7 +486,7 @@ func (m *EmbeddedManager) connectToDB() error {
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-		return fmt.Errorf("连接数据库失败: %v", err)
+		return fmt.Errorf("连接数据库失败：%v", err)
 	} else {
 		helpers.AppLogger.Info("成功连接到 PostgreSQL 数据库")
 	}
@@ -432,8 +494,8 @@ func (m *EmbeddedManager) connectToDB() error {
 	// 测试连接
 	if derr := db.Ping(); derr != nil {
 		db.Close()
-		helpers.AppLogger.Errorf("数据库连接测试失败: %v", derr)
-		return fmt.Errorf("数据库连接测试失败: %v", derr)
+		helpers.AppLogger.Errorf("数据库连接测试失败：%v", derr)
+		return fmt.Errorf("数据库连接测试失败：%v", derr)
 	} else {
 		helpers.AppLogger.Info("数据库连接测试成功")
 	}
@@ -453,7 +515,7 @@ func (m *EmbeddedManager) connectToDB() error {
 
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
-		return fmt.Errorf("连接到应用数据库失败: %v", err)
+		return fmt.Errorf("连接到应用数据库失败：%v", err)
 	} else {
 		helpers.AppLogger.Info("成功连接到应用数据库")
 	}
@@ -465,6 +527,11 @@ func (m *EmbeddedManager) connectToDB() error {
 }
 
 func (m *EmbeddedManager) createAppDatabase() error {
+	quotedDBName, qerr := QuotePostgresIdentifier(m.config.DBName)
+	if qerr != nil {
+		return qerr
+	}
+
 	var exists bool
 	err := m.db.QueryRow(`
 		SELECT EXISTS(
@@ -472,14 +539,14 @@ func (m *EmbeddedManager) createAppDatabase() error {
 		)`, m.config.DBName).Scan(&exists)
 
 	if err != nil {
-		return fmt.Errorf("检查数据库存在性失败: %v", err)
+		return fmt.Errorf("检查数据库存在性失败：%v", err)
 	}
 
 	if !exists {
-		helpers.AppLogger.Infof("创建数据库: %s", m.config.DBName)
-		_, err = m.db.Exec(fmt.Sprintf("CREATE DATABASE %s", m.config.DBName))
+		helpers.AppLogger.Infof("创建数据库：%s", m.config.DBName)
+		_, err = m.db.Exec("CREATE DATABASE " + quotedDBName)
 		if err != nil {
-			helpers.AppLogger.Errorf("创建数据库失败: %v\n", err)
+			helpers.AppLogger.Errorf("创建数据库失败：%v", err)
 		}
 		helpers.AppLogger.Info("数据库创建成功")
 	}

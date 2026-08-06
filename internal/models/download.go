@@ -1,23 +1,28 @@
-package models
+﻿package models
 
 import (
-	"diy-strm/internal/db"
-	"diy-strm/internal/helpers"
 	"context"
 	"sync"
 	"time"
+
+	"diy-strm/internal/db"
+	"diy-strm/internal/helpers"
+	"diy-strm/internal/realtime"
 
 	"golang.org/x/time/rate"
 )
 
 // DownloadQueue 下载队列
 type DQ struct {
-	tasks      chan *DbDownloadTask // 所有待下载任务
-	numWorkers int                  // 工作线程数
-	mutex      sync.RWMutex         // 读写锁，保护TaskMap
-	running    bool                 // 队列是否正在运行
-	limiter    *rate.Limiter        // 限速器，控制QPS
+	tasks          chan *DbDownloadTask // 所有待下载任务
+	numWorkers     int                  // 工作线程数
+	mutex          sync.RWMutex         // 读写锁，保护 TaskMap
+	running        bool                 // 队列是否正在运行
+	limiter        *rate.Limiter        // 限速器，控制 QPS
+	retryTriggered bool                 // 当前空闲周期是否已触发失败重试
 }
+
+const DefaultQueueRetryMax = 1
 
 // String 返回状态的字符串表示
 func (s DownloadStatus) String() string {
@@ -63,7 +68,7 @@ func NewDq(maxConcurrency int) *DQ {
 
 // 启动下载队列的工作协程
 func (dq *DQ) Start() {
-	// 重新创建tasks通道
+	// 重新创建 tasks 通道
 	dq.mutex.Lock()
 	dq.tasks = make(chan *DbDownloadTask, dq.numWorkers*10)
 	dq.mutex.Unlock()
@@ -77,6 +82,7 @@ func (dq *DQ) Start() {
 	}
 	dq.running = true
 	dq.mutex.Unlock()
+	realtime.BroadcastQueueStatusChanged(realtime.EventDownloadQueueStatusChanged, true)
 
 	// 启动工作协程
 	for i := 0; i < dq.numWorkers; i++ {
@@ -97,8 +103,9 @@ func (dq *DQ) Stop() {
 	}
 	dq.running = false
 	dq.mutex.Unlock()
+	realtime.BroadcastQueueStatusChanged(realtime.EventDownloadQueueStatusChanged, false)
 
-	// 关闭tasks通道
+	// 关闭 tasks 通道
 	close(dq.tasks)
 
 	helpers.AppLogger.Info("下载队列已停止")
@@ -114,7 +121,7 @@ func (dq *DQ) Restart() {
 // UpdateConcurrency 更新并发数
 func (dq *DQ) UpdateConcurrency(newConcurrency int) {
 	if newConcurrency <= 0 {
-		helpers.AppLogger.Errorf("无效的并发数: %d", newConcurrency)
+		helpers.AppLogger.Errorf("无效的并发数：%d", newConcurrency)
 		return
 	}
 
@@ -149,8 +156,8 @@ func (dq *DQ) GetConcurrency() int {
 	return dq.numWorkers
 }
 
-// 任务调度器，定期将TaskMap中的任务加入到tasks通道
-// taskScheduler 定时将TaskMap中的任务移动到tasks通道
+// 任务调度器，定期将 TaskMap 中的任务加入到 tasks 通道
+// taskScheduler 定时将 TaskMap 中的任务移动到 tasks 通道
 func (dq *DQ) taskScheduler() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -170,7 +177,7 @@ func (dq *DQ) taskScheduler() {
 	}
 }
 
-// 将TaskMap中的任务移动到tasks通道
+// 将 TaskMap 中的任务移动到 tasks 通道
 func (dq *DQ) moveTasksToChannel() {
 	// 检查队列是否正在运行
 	dq.mutex.RLock()
@@ -197,14 +204,27 @@ func (dq *DQ) moveTasksToChannel() {
 	var total int64
 	db.Db.Model(&DbDownloadTask{}).Where("status = ?", DownloadStatusPending).Count(&total)
 	if total == 0 {
+		if dq.retryTriggered {
+			return
+		}
+		if GetDownloadingCount() > 0 {
+			return
+		}
+		if err := RetryFailedDownloadTasks(DefaultQueueRetryMax); err != nil {
+			helpers.AppLogger.Errorf("下载队列自动重试失败任务失败：%v", err)
+			return
+		}
+		TriggerEmbyLibraryRefreshCheck()
+		dq.retryTriggered = true
 		return
 	}
+	dq.retryTriggered = false
 	// 计算需要移动的任务数量
 	availableSpace := cap(dq.tasks) - len(dq.tasks)
 	tasksToMove := min(availableSpace, int(total))
 	// helpers.AppLogger.Infof("任务调度器：队列容量 %d，当前队列长度 %d，可用空间 %d，待移动任务数 %d", cap(dq.tasks), len(dq.tasks), availableSpace, tasksToMove)
 	// 移动任务到通道
-	// 从数据库中查询tasksToMove条待下载的记录
+	// 从数据库中查询 tasksToMove 条待下载的记录
 	tasks := GetPendingDownloadTasks(tasksToMove)
 	if len(tasks) == 0 {
 		return
@@ -241,9 +261,9 @@ func (dq *DQ) worker() {
 			break
 		}
 
-		// 等待限速器令牌（所有worker共享同一个limiter）
+		// 等待限速器令牌（所有 worker 共享同一个 limiter）
 		if err := dq.limiter.Wait(context.Background()); err != nil {
-			helpers.AppLogger.Errorf("等待限速器失败: %v", err)
+			helpers.AppLogger.Errorf("等待限速器失败：%v", err)
 			continue
 		}
 
@@ -255,7 +275,7 @@ func (dq *DQ) worker() {
 		}
 		// 执行下载任务
 		task.Download()
-		time.Sleep(10 * time.Millisecond) // 等待10毫秒，防止CPU占用过高，也给其他协程流出数据库写入时间
+		time.Sleep(10 * time.Millisecond) // 等待 10 毫秒，防止 CPU 占用过高，也给其他协程留出数据库写入时间
 	}
 }
 

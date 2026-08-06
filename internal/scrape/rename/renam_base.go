@@ -1,8 +1,9 @@
-package rename
+﻿package rename
 
 import (
-	"diy-strm/internal/models"
 	"context"
+
+	"diy-strm/internal/models"
 )
 
 type RenameBase struct {

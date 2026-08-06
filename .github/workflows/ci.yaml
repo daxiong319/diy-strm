@@ -1,0 +1,63 @@
+name: ci
+run-name: ${{ github.event.head_commit.message || github.event.pull_request.title || github.ref_name }}
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - "main"
+      - "dev"
+      - "feature/**"
+    tags-ignore:
+      - "*"
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+          run_install: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Test and build frontend
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run test
+          pnpm run build
+          pnpm run check:build
+
+  backend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.mod
+
+      - name: Test and build backend
+        working-directory: backend
+        env:
+          GOSUMDB: "off"
+          CGO_ENABLED: "0"
+        run: |
+          go mod download
+          go vet ./...
+          go test ./...
+          go build -trimpath -tags=nomsgpack -ldflags="-s -w" -o /tmp/QMediaSync .

@@ -1,4 +1,4 @@
-package config
+﻿package config
 
 import "diy-strm/emby302/util/logs/colors"
 

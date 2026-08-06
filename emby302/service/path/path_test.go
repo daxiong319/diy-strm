@@ -1,4 +1,4 @@
-package path_test
+﻿package path_test
 
 import (
 	"log"

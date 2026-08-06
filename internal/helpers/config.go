@@ -2,10 +2,13 @@ package helpers
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v2"
 )
@@ -29,13 +32,18 @@ const (
 )
 
 type ConfigLog struct {
-	File       string `yaml:"file"`
+	File       string `yaml:"file,omitempty"` // 兼容旧 log.file，保存新配置时不再推荐使用
+	Level      string `yaml:"level"`
+	MaxSizeMB  int    `yaml:"maxSizeMB"`
+	MaxBackups int    `yaml:"maxBackups"`
+	MaxAgeDays int    `yaml:"maxAgeDays"`
+	App        string `yaml:"app"`
 	V115       string `yaml:"v115"`
 	OpenList   string `yaml:"openList"`
 	TMDB       string `yaml:"tmdb"`
 	BaiduPan   string `yaml:"baiduPan"`
 	Web        string `yaml:"web"`
-	SyncLogDir string `yaml:"syncLogDir"` // 同步任务的日志目录，每个同步任务会生成一个日志文件，文件名为任务ID
+	SyncLogDir string `yaml:"syncLogDir"` // 同步任务的日志目录，每个同步任务会生成一个日志文件，文件名为任务 ID
 }
 
 type PostgresConfig struct {
@@ -51,9 +59,9 @@ type PostgresConfig struct {
 
 type ConfigDb struct {
 	Engine         DbEngine       `yaml:"engine"`         // 使用的数据库引擎，可选值：sqlite, postgres
-	SqliteFile     string         `yaml:"sqliteFile"`     // SQLite数据库文件路径
-	PostgresType   PostgresType   `yaml:"postgresType"`   // PostgreSQL数据库类型，可选值：embedded, external
-	PostgresConfig PostgresConfig `yaml:"postgresConfig"` // PostgreSQL数据库配置
+	SqliteFile     string         `yaml:"sqliteFile"`     // SQLite 数据库文件路径
+	PostgresType   PostgresType   `yaml:"postgresType"`   // PostgreSQL 数据库类型，可选值：embedded, external
+	PostgresConfig PostgresConfig `yaml:"postgresConfig"` // PostgreSQL 数据库配置
 }
 
 type ConfigStrm struct {
@@ -63,22 +71,28 @@ type ConfigStrm struct {
 	Cron         string   `yaml:"cron"` // 定时任务表达式
 }
 
+// ConfigEmby302 表示 Emby 302 代理配置。
+type ConfigEmby302 struct {
+	InsecureSkipVerify bool `yaml:"insecure_skip_verify"` // 是否跳过 Emby 302 出站 HTTPS 证书校验
+}
+
 type Config struct {
-	Log           ConfigLog  `yaml:"log"`
-	Db            ConfigDb   `yaml:"db"`
-	CacheSize     int        `yaml:"cacheSize"` // 数据库缓存大小，单位字节
-	JwtSecret     string     `yaml:"jwtSecret"`
-	HttpHost      string     `yaml:"httpHost"`  // HTTP主机地址
-	HttpsHost     string     `yaml:"httpsHost"` // HTTPS主机地址
-	Strm          ConfigStrm `yaml:"strm"`
-	AuthServer    string     `yaml:"authServer"`
-	NewAuthServer string     `yaml:"newAuthServer"`
-	BaiDuPanAppId string     `yaml:"baiDuPanAppId"`
-	AdminUsername string     `yaml:"adminUsername"`
-	AdminPassword string     `yaml:"adminPassword"`
+	Log            ConfigLog     `yaml:"log"`
+	Db             ConfigDb      `yaml:"db"`
+	CacheSize      int           `yaml:"cacheSize"` // 数据库缓存大小，单位字节
+	JwtSecret      string        `yaml:"jwtSecret"`
+	HttpHost       string        `yaml:"httpHost"`       // HTTP 主机地址
+	HttpsHost      string        `yaml:"httpsHost"`      // HTTPS 主机地址
+	TrustedOrigins []string      `yaml:"trustedOrigins"` // 允许携带浏览器登录凭证的跨源前端来源
+	Strm           ConfigStrm    `yaml:"strm"`
+	Emby302        ConfigEmby302 `yaml:"emby302"`
+	AuthServer     string        `yaml:"authServer"`
+	NewAuthServer  string        `yaml:"newAuthServer"`
+	BaiDuPanAppId  string        `yaml:"baiDuPanAppId"`
 }
 
 var GlobalConfig Config
+var logConfigMu sync.RWMutex
 var RootDir string
 var ConfigDir string
 
@@ -88,19 +102,51 @@ var AccessiblePathes string
 var IsFnOS bool
 var IsRelease bool
 var Guid string
-var FANART_API_KEY = ""
+var FANART_API_KEY = "" // 生效值：Fanart 客户端读取，由 ScrapeSettings.ApplyKeyOverrides 按“UI > 默认”刷新
+var HTTP_PROXY = ""     // 生效的通用刮削代理：由 ScrapeSettings.ApplyKeyOverrides 按代理开关刷新；Fanart 等直读 helpers 的客户端使用（空=直连）
 var DEFAULT_TMDB_ACCESS_TOKEN = ""
 var DEFAULT_TMDB_API_KEY = ""
 var DEFAULT_SC_API_KEY = ""
-var ENCRYPTION_KEY = ""
+var OAuthRelayEncryptionKey = "" // 生效值：网盘 OAuth 中转共享 AES 密钥，环境变量优先于 ldflags 注入
+var DEFAULT_FANART_API_KEY = ""  // 默认基线：环境变量 > ldflags
+
+const (
+	ConfigFileName         = "config.yaml"
+	legacyConfigFileName   = "config.yml"
+	DefaultJWTSecret       = "QMediaSync-JWT-TOKEN-250706"
+	legacyDefaultJWTSecret = "Q115-STRM-JWT-TOKEN-250706"
+	defaultLogMaxSizeMB    = 10
+	defaultLogMaxBackups   = 3
+	defaultLogMaxAgeDays   = 7
+)
+
+func ConfigFilePath() string {
+	return filepath.Join(ConfigDir, ConfigFileName)
+}
+
+func ExistingConfigFilePath() string {
+	configPath := ConfigFilePath()
+	if PathExists(configPath) {
+		return configPath
+	}
+	legacyConfigPath := filepath.Join(ConfigDir, legacyConfigFileName)
+	if PathExists(legacyConfigPath) {
+		return legacyConfigPath
+	}
+	return configPath
+}
+
+func HasConfigFile() bool {
+	return PathExists(ConfigFilePath()) || PathExists(filepath.Join(ConfigDir, legacyConfigFileName))
+}
 
 func InitConfig() error {
-	configPath := filepath.Join(ConfigDir, "config.yml")
+	configPath := ExistingConfigFilePath()
 	// 从配置文件加载
 	if err := loadYaml(configPath, &GlobalConfig); err != nil {
 		return err
 	}
-	// 给strm填充默认值
+	// 给 STRM 填充默认值
 	if len(GlobalConfig.Strm.VideoExt) == 0 {
 		GlobalConfig.Strm.VideoExt = []string{".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".3gp", ".ts"}
 	}
@@ -108,16 +154,48 @@ func InitConfig() error {
 		GlobalConfig.Strm.MetaExt = []string{".jpg", ".jpeg", ".png", ".webp", ".nfo", ".srt", ".ass", ".svg", ".sup", ".lrc"}
 	}
 	// if GlobalConfig.Strm.MinVideoSize == 0 {
-	GlobalConfig.Strm.MinVideoSize = 100 // 100MB
+	GlobalConfig.Strm.MinVideoSize = 100 // 100 MB
 	// }
 	// if GlobalConfig.Strm.Cron == "" {
-	GlobalConfig.Strm.Cron = "30 * * * *" // 每小时30分执行
+	GlobalConfig.Strm.Cron = "30 * * * *" // 每小时 30 分执行
 	// }
 	if GlobalConfig.AuthServer == "" {
 		GlobalConfig.AuthServer = "https://api.mqfamily.top"
 	}
 	if GlobalConfig.NewAuthServer == "" {
 		GlobalConfig.NewAuthServer = "https://oauth.qmediasync.cn"
+	}
+	normalizeLogConfig(&GlobalConfig.Log)
+	logLevel, _ := ParseLogLevel(GlobalConfig.Log.Level)
+	SetGlobalLogLevel(logLevel)
+	if err := EnsureJWTSecret(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func generateRandomJWTSecret() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("生成 JWT 密钥失败：%w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func EnsureJWTSecret() error {
+	if GlobalConfig.JwtSecret != "" && GlobalConfig.JwtSecret != DefaultJWTSecret && GlobalConfig.JwtSecret != legacyDefaultJWTSecret {
+		return nil
+	}
+	secret, err := generateRandomJWTSecret()
+	if err != nil {
+		return err
+	}
+	GlobalConfig.JwtSecret = secret
+	if err := SaveConfig(&GlobalConfig); err != nil {
+		return fmt.Errorf("保存自动生成的 JWT 密钥失败：%w", err)
+	}
+	if AppLogger != nil {
+		AppLogger.Warnf("检测到 jwtSecret 为空或为公开默认值，已自动生成强随机密钥并写回配置")
 	}
 	return nil
 }
@@ -126,7 +204,7 @@ func LoadEnvFromFile(envPath string) error {
 	f, err := os.Open(envPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Printf("环境变量配置文件不存在: %s\n", envPath)
+			fmt.Printf("环境变量配置文件不存在：%s\n", envPath)
 			return nil
 		}
 		return err
@@ -159,11 +237,11 @@ func LoadEnvFromFile(envPath string) error {
 func loadYaml(configPath string, cfg interface{}) error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return fmt.Errorf("读取配置文件失败: %w", err)
+		return fmt.Errorf("读取配置文件失败：%w", err)
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return fmt.Errorf("解析配置文件失败: %w", err)
+		return fmt.Errorf("解析配置文件失败：%w", err)
 	}
 
 	return nil
@@ -196,7 +274,7 @@ func MakeOldConfig() error {
 }
 
 func SaveConfig(config *Config) error {
-	configPath := filepath.Join(ConfigDir, "config.yml")
+	configPath := ConfigFilePath()
 	configData, err := yaml.Marshal(config)
 	if err != nil {
 		return err
@@ -208,10 +286,102 @@ func SaveConfig(config *Config) error {
 	return nil
 }
 
+// LogSetting 表示可运行时更新的日志设置。
+type LogSetting struct {
+	Level      LogLevel
+	MaxSizeMB  int
+	MaxBackups int
+	MaxAgeDays int
+}
+
+// LogConfigSnapshot 返回当前日志配置的并发安全快照。
+func LogConfigSnapshot() ConfigLog {
+	logConfigMu.RLock()
+	defer logConfigMu.RUnlock()
+	return GlobalConfig.Log
+}
+
+func normalizeLogConfig(logConfig *ConfigLog) {
+	defaultLog := MakeDefaultConfig().Log
+	logConfig.Level = NormalizeLogLevel(logConfig.Level)
+	if logConfig.App == "" {
+		if logConfig.File != "" {
+			logConfig.App = logConfig.File
+		} else {
+			logConfig.App = defaultLog.App
+		}
+	}
+	logConfig.File = ""
+	if logConfig.V115 == "" {
+		logConfig.V115 = defaultLog.V115
+	}
+	if logConfig.OpenList == "" {
+		logConfig.OpenList = defaultLog.OpenList
+	}
+	if logConfig.TMDB == "" {
+		logConfig.TMDB = defaultLog.TMDB
+	}
+	if logConfig.BaiduPan == "" {
+		logConfig.BaiduPan = defaultLog.BaiduPan
+	}
+	if logConfig.Web == "" {
+		logConfig.Web = defaultLog.Web
+	}
+	if logConfig.SyncLogDir == "" {
+		logConfig.SyncLogDir = defaultLog.SyncLogDir
+	}
+	if logConfig.MaxSizeMB < 1 || logConfig.MaxSizeMB > 1024 {
+		logConfig.MaxSizeMB = defaultLogMaxSizeMB
+	}
+	if logConfig.MaxBackups < 1 || logConfig.MaxBackups > 100 {
+		logConfig.MaxBackups = defaultLogMaxBackups
+	}
+	if logConfig.MaxAgeDays < 1 || logConfig.MaxAgeDays > 365 {
+		logConfig.MaxAgeDays = defaultLogMaxAgeDays
+	}
+}
+
+// SaveLogSetting 保存日志设置并更新运行时日志器。
+func SaveLogSetting(setting LogSetting) error {
+	logConfigMu.Lock()
+	nextConfig := GlobalConfig
+	nextConfig.Log.File = ""
+	nextConfig.Log.Level = setting.Level.String()
+	nextConfig.Log.MaxSizeMB = setting.MaxSizeMB
+	nextConfig.Log.MaxBackups = setting.MaxBackups
+	nextConfig.Log.MaxAgeDays = setting.MaxAgeDays
+	normalizeLogConfig(&nextConfig.Log)
+	if err := SaveConfig(&nextConfig); err != nil {
+		logConfigMu.Unlock()
+		return err
+	}
+	GlobalConfig.Log = nextConfig.Log
+	SetGlobalLogLevel(setting.Level)
+	logConfigMu.Unlock()
+
+	ApplyGlobalLogRotationConfig()
+	return nil
+}
+
+// SaveLogLevel 保存日志等级配置并更新运行时日志等级。
+func SaveLogLevel(level LogLevel) error {
+	logConfig := LogConfigSnapshot()
+	return SaveLogSetting(LogSetting{
+		Level:      level,
+		MaxSizeMB:  logConfig.MaxSizeMB,
+		MaxBackups: logConfig.MaxBackups,
+		MaxAgeDays: logConfig.MaxAgeDays,
+	})
+}
+
 func MakeDefaultConfig() *Config {
 	return &Config{
 		Log: ConfigLog{
-			File:       "logs/app.log",
+			Level:      LogLevelInfo.String(),
+			MaxSizeMB:  defaultLogMaxSizeMB,
+			MaxBackups: defaultLogMaxBackups,
+			MaxAgeDays: defaultLogMaxAgeDays,
+			App:        "logs/app.log",
 			V115:       "logs/115.log",
 			OpenList:   "logs/openList.log",
 			TMDB:       "logs/tmdb.log",
@@ -233,20 +403,22 @@ func MakeDefaultConfig() *Config {
 				MaxIdleConns: 25,
 			},
 		},
-		CacheSize:     20971520,
-		JwtSecret:     "diy-strm-JWT-TOKEN-250706",
-		HttpHost:      ":12333",
-		HttpsHost:     ":12332",
-		AuthServer:    "https://api.mqfamily.top",
-		NewAuthServer: "https://oauth.qmediasync.cn",
-		BaiDuPanAppId: "QMediaSync",
-		AdminUsername: "admin",
-		AdminPassword: "admin123",
+		CacheSize:      20971520,
+		JwtSecret:      DefaultJWTSecret,
+		HttpHost:       ":12333",
+		HttpsHost:      ":12332",
+		TrustedOrigins: []string{},
+		AuthServer:     "https://api.mqfamily.top",
+		NewAuthServer:  "https://oauth.qmediasync.cn",
+		BaiDuPanAppId:  "QMediaSync",
 		Strm: ConfigStrm{
 			VideoExt:     []string{".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".3gp", ".ts"},
 			MetaExt:      []string{".jpg", ".jpeg", ".png", ".webp", ".nfo", ".srt", ".ass", ".svg", ".sup", ".lrc"},
-			MinVideoSize: 100,          // 100MB
-			Cron:         "30 * * * *", // 每小时30分执行
+			MinVideoSize: 100,          // 100 MB
+			Cron:         "30 * * * *", // 每小时 30 分执行
+		},
+		Emby302: ConfigEmby302{
+			InsecureSkipVerify: false,
 		},
 	}
 }

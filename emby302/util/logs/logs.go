@@ -1,49 +1,43 @@
-package logs
+﻿package logs
 
-import (
-	"diy-strm/emby302/util/logs/colors"
-	"diy-strm/internal/helpers"
-	"fmt"
-	"time"
-)
+import "diy-strm/internal/helpers"
 
-// Info 输出蓝色 Info 日志
+// Info 输出 Info 日志。
 func Info(format string, v ...any) {
-	s := fmt.Sprintf("[INFO] "+format, v...)
-	helpers.AppLogger.Infof(colors.ToBlue(s))
+	helpers.AppLogger.Infof(format, v...)
 }
 
-// Success 输出绿色 Success 日志
+// Success 输出成功信息日志。
 func Success(format string, v ...any) {
-	s := fmt.Sprintf("[SUCCESS] "+format, v...)
-	helpers.AppLogger.Infof(colors.ToGreen(s))
+	helpers.AppLogger.Infof(format, v...)
 }
 
-// Warn 输出黄色 Warn 日志
+// Warn 输出 Warn 日志。
 func Warn(format string, v ...any) {
-	s := fmt.Sprintf("[WARN] "+format, v...)
-	helpers.AppLogger.Warnf(colors.ToYellow(s))
+	helpers.AppLogger.Warnf(format, v...)
 }
 
-// Error 输出红色 Error 日志
+// Debug 输出 Debug 日志。
+func Debug(format string, v ...any) {
+	helpers.AppLogger.Debugf(format, v...)
+}
+
+// SensitiveDebug 输出可能包含敏感信息的 Debug 日志。
+func SensitiveDebug(format string, v ...any) {
+	helpers.AppLogger.SensitiveDebugf(format, v...)
+}
+
+// Error 输出 Error 日志。
 func Error(format string, v ...any) {
-	s := fmt.Sprintf("[ERROR] "+format, v...)
-	helpers.AppLogger.Errorf(colors.ToRed(s))
+	helpers.AppLogger.Errorf(format, v...)
 }
 
-// Tip 输出灰色 Tip 日志
+// Tip 输出 Info 日志。
 func Tip(format string, v ...any) {
-	s := fmt.Sprintf(format, v...)
-	fmt.Println(now() + colors.ToGray(s))
+	helpers.AppLogger.Infof(format, v...)
 }
 
-// Progress 输出紫色 Progress 日志
+// Progress 输出 Info 日志。
 func Progress(format string, v ...any) {
-	s := fmt.Sprintf(format, v...)
-	fmt.Println(now() + colors.ToPurple(s))
-}
-
-// now 返回当前时间戳
-func now() string {
-	return time.Now().Format("2006-01-02 15:04:05") + " "
+	helpers.AppLogger.Infof(format, v...)
 }

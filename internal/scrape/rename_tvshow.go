@@ -1,15 +1,16 @@
-package scrape
+﻿package scrape
 
 import (
+	"context"
+	"errors"
+	"fmt"
+
 	"diy-strm/internal/baidupan"
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/models"
 	"diy-strm/internal/openlist"
 	"diy-strm/internal/scrape/rename"
 	"diy-strm/internal/v115open"
-	"context"
-	"errors"
-	"fmt"
 )
 
 // 重命名电视剧文件
@@ -40,8 +41,8 @@ func NewRenameTvShowImpl(scrapePath *models.ScrapePath, ctx context.Context, v11
 
 func (r *renameTvShowImpl) RenameAndMove(mediaFile *models.ScrapeMediaFile, destPath, destPathId, newName string) error {
 	if mediaFile.NewPathId == "" {
-		helpers.AppLogger.Errorf("新目录ID为空，无法改名和移动文件")
-		return errors.New("新目录ID为空")
+		helpers.AppLogger.Errorf("新目录 ID 为空，无法改名和移动文件")
+		return errors.New("新目录 ID 为空")
 	}
 	if newName == "" {
 		newName = fmt.Sprintf("%s%s", mediaFile.NewVideoBaseName, mediaFile.VideoExt)

@@ -1,0 +1,158 @@
+// 渠道类型
+export type ChannelType = 'telegram' | 'meow' | 'bark' | 'serverchan' | 'webhook'
+
+// 事件类型
+export type EventType =
+  | 'sync_finish'
+  | 'sync_error'
+  | 'scrape_finish'
+  | 'scrape_error'
+  | 'system_alert'
+  | 'media_added'
+  | 'media_removed'
+  | 'playback_start'
+  | 'playback_pause'
+  | 'playback_stop'
+
+// 通知渠道接口
+export interface NotificationChannel {
+  id: number
+  channel_type: ChannelType
+  channel_name: string
+  is_enabled: boolean
+  created_at: number
+  updated_at: number
+  config?: NotificationConfig
+  rules?: NotificationRule[]
+}
+
+// 通知配置接口（不同类型的配置）
+export interface NotificationConfig {
+  // Telegram
+  bot_token?: string
+  chat_id?: string
+  proxy_url?: string
+
+  // MeoW
+  nickname?: string
+  endpoint?: string
+
+  // Bark
+  device_key?: string
+  server_url?: string
+  sound?: string
+  icon?: string
+
+  // Server酱
+  sc_key?: string
+
+  // Webhook
+  method?: string
+  format?: string
+  template?: string
+  query_param?: string
+  auth_type?: string
+  auth_token?: string
+  auth_user?: string
+  auth_pass?: string
+  auth_header_key?: string
+  auth_query_key?: string
+  headers?: Record<string, string>
+  description?: string
+}
+
+export interface WebhookHeaderRow {
+  id: number
+  key: string
+  value: string
+}
+
+export function webhookHeaderRecordToRows(
+  headers?: Record<string, string> | null,
+): WebhookHeaderRow[] {
+  return Object.entries(headers ?? {}).map(([key, value], index) => ({
+    id: index + 1,
+    key,
+    value,
+  }))
+}
+
+export function webhookHeaderRowsToRecord(rows: WebhookHeaderRow[]): Record<string, string> {
+  return rows.reduce<Record<string, string>>((headers, row) => {
+    const key = row.key.trim()
+    if (key) {
+      headers[key] = row.value
+    }
+    return headers
+  }, {})
+}
+
+// 通知规则接口
+export interface NotificationRule {
+  id: number
+  channel_id: number
+  event_type: EventType
+  is_enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+// 获取渠道类型名称
+export function getChannelTypeName(type: ChannelType): string {
+  const nameMap: Record<ChannelType, string> = {
+    telegram: 'Telegram',
+    meow: 'MeoW',
+    bark: 'Bark',
+    serverchan: 'Server酱',
+    webhook: 'Webhook',
+  }
+  return nameMap[type] || type
+}
+
+// 获取渠道类型颜色
+export function getChannelTypeColor(
+  type: ChannelType,
+): 'primary' | 'success' | 'info' | 'warning' | 'danger' {
+  const colorMap: Record<ChannelType, 'primary' | 'success' | 'info' | 'warning' | 'danger'> = {
+    telegram: 'primary',
+    meow: 'success',
+    bark: 'warning',
+    serverchan: 'info',
+    webhook: 'danger',
+  }
+  return colorMap[type] || 'info'
+}
+
+// 获取事件类型名称
+export function getEventTypeName(type: EventType): string {
+  const nameMap: Record<EventType, string> = {
+    sync_finish: 'STRM 同步完成',
+    sync_error: 'STRM 同步错误',
+    scrape_finish: '刮削完成',
+    scrape_error: '刮削错误',
+    system_alert: '系统警告',
+    media_added: 'Emby 媒体添加',
+    media_removed: 'Emby 媒体移除',
+    playback_start: 'Emby 播放开始',
+    playback_pause: 'Emby 播放暂停',
+    playback_stop: 'Emby 播放停止',
+  }
+  return nameMap[type] || type
+}
+
+// 获取事件类型描述
+export function getEventTypeDescription(type: EventType): string {
+  const descMap: Record<EventType, string> = {
+    sync_finish: '同步任务成功完成时发送通知',
+    sync_error: '同步任务出现错误时发送通知',
+    scrape_finish: '刮削任务完成时发送通知',
+    scrape_error: '刮削任务出现错误时发送通知',
+    system_alert: '系统出现重要警告时发送通知',
+    media_added: '新媒体添加到媒体库时发送通知',
+    media_removed: '媒体从媒体库移除时发送通知',
+    playback_start: '用户开始播放内容时发送通知',
+    playback_pause: '用户暂停播放时发送通知',
+    playback_stop: '用户停止播放时发送通知',
+  }
+  return descMap[type] || ''
+}

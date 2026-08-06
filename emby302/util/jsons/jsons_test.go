@@ -1,4 +1,4 @@
-package jsons_test
+﻿package jsons_test
 
 import (
 	"encoding/json"
@@ -35,7 +35,7 @@ func TestUnmarshal(t *testing.T) {
 	}
 	log.Println("反序列化成功")
 
-	log.Println("当前 json 类型: ", item.Type())
+	log.Println("当前 JSON 类型: ", item.Type())
 	item.Attr("Test").Set("This val has modified by test program")
 
 	item.Attr("MediaSources").Idx(0).Attr("DefaultAudioStreamIndex").Set("😁")
@@ -50,7 +50,7 @@ func TestMap(t *testing.T) {
 }
 
 func TestNativeUnmarshal(t *testing.T) {
-	str := `aaa`
+	str := `"aaa"`
 	var dest string
 	if err := json.Unmarshal([]byte(str), &dest); err != nil {
 		t.Fatal(err)

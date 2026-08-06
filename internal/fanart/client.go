@@ -1,10 +1,11 @@
-package fanart
+﻿package fanart
 
 import (
-	"diy-strm/internal/helpers"
 	"fmt"
 	"net/http"
 	"time"
+
+	"diy-strm/internal/helpers"
 
 	"resty.dev/v3"
 )
@@ -32,8 +33,14 @@ func NewClient() *Client {
 	client.SetHeader("Content-Type", "application/json")
 
 	// Set User-Agent
-	client.SetHeader("User-Agent", "q115-strm-go/1.0")
+	client.SetHeader("User-Agent", "qmediasync-go/1.0")
 	client.SetBaseURL(FANART_API_URL)
+
+	// 通用刮削代理：与 TMDB 共用「刮削设置 - 是否启用代理」开关 + 全局代理地址（空=直连）
+	if helpers.HTTP_PROXY != "" {
+		client.SetProxy(helpers.HTTP_PROXY)
+	}
+
 	return &Client{
 		apiKey:      helpers.FANART_API_KEY,
 		baseURL:     FANART_API_URL,

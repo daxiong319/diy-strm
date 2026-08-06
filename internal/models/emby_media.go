@@ -1,21 +1,21 @@
-package models
+﻿package models
 
 import (
+	"context"
+	"path/filepath"
+	"strings"
+
 	"diy-strm/internal/baidupan"
 	"diy-strm/internal/db"
 	embyclientrestgo "diy-strm/internal/embyclient-rest-go"
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/openlist"
 	"diy-strm/internal/v115open"
-	"context"
-	"path/filepath"
-	"strings"
-	"time"
 
 	"gorm.io/gorm"
 )
 
-// EmbyMediaItem 同步下来的Emby媒体项
+// EmbyMediaItem 同步下来的 Emby 媒体项
 type EmbyMediaItem struct {
 	BaseModel
 	ItemId            string `json:"item_id" gorm:"uniqueIndex:idx_emby_item_id"`
@@ -41,6 +41,8 @@ type EmbyMediaItem struct {
 	DateModified      string `json:"date_modified"`
 	DateModifiedTime  int64  `json:"date_modified_time"`
 	IsFolder          bool   `json:"is_folder"`
+	LastSeenSyncRun   string `json:"last_seen_sync_run" gorm:"index;type:varchar(64)"`
+	LastSeenAt        int64  `json:"last_seen_at" gorm:"index"`
 }
 
 func (*EmbyMediaItem) TableName() string {
@@ -60,7 +62,7 @@ func (*EmbyMediaSyncFile) TableName() string {
 	return "emby_media_sync_files"
 }
 
-// EmbyLibrarySyncPath 媒体库与SyncPath关联（多对多允许重复库对应多个路径）
+// EmbyLibrarySyncPath 媒体库与 SyncPath 关联（多对多允许重复库对应多个路径）
 type EmbyLibrarySyncPath struct {
 	BaseModel
 	LibraryId   string `json:"library_id" gorm:"uniqueIndex:idx_lib_sync_path,priority:1"`
@@ -77,7 +79,7 @@ type EmbyLibrary struct {
 	BaseModel
 	Name       string `json:"name"`
 	LibraryId  string `json:"library_id"`
-	SyncPathId uint   `json:"sync_path_id"` // 媒体库对应的同步目录ID，如果时0则表示没有关联同步目录
+	SyncPathId uint   `json:"sync_path_id"` // 媒体库对应的同步目录 ID，如果为 0 则表示没有关联同步目录
 }
 
 func (*EmbyLibrary) TableName() string {
@@ -109,7 +111,7 @@ func UpsertEmbyLibraries(libs []embyclientrestgo.EmbyLibrary) error {
 	return nil
 }
 
-// CleanupDeletedEmbyLibraries 清理已不在Emby中存在的媒体库记录
+// CleanupDeletedEmbyLibraries 清理已不在 Emby 中存在的媒体库记录
 func CleanupDeletedEmbyLibraries(activeLibraryIds []string) error {
 	if len(activeLibraryIds) == 0 {
 		return nil
@@ -145,29 +147,29 @@ func CleanupOrphanedEmbyMediaItems(validItemIds []string) error {
 		return db.Db.Where("1 = 1").Delete(&EmbyMediaItem{}).Error
 	}
 
-	// 当validItemIds很多时，分批处理以避免SQL语句过长
-	// 每批处理1000个ID，这是一个安全的数量
+	// 当 validItemIds 很多时，分批处理以避免 SQL 语句过长
+	// 每批处理 1000 个 ID，这是一个安全的数量
 	const batchSize = 1000
 
 	if len(validItemIds) <= batchSize {
-		// 数量不多，直接使用IN操作符
+		// 数量不多，直接使用 IN 操作符
 		return db.Db.Where("item_id NOT IN ?", validItemIds).Delete(&EmbyMediaItem{}).Error
 	}
 
 	// 数量很多，使用分批删除逻辑
-	// 先获取所有的item_id，然后分批删除不在validItemIds中的记录
+	// 先获取所有 item_id，然后分批删除不在 validItemIds 中的记录
 	validItemSet := make(map[string]bool)
 	for _, itemId := range validItemIds {
 		validItemSet[itemId] = true
 	}
 
-	// 获取数据库中所有的item_id，然后找出需要删除的
+	// 获取数据库中所有 item_id，然后找出需要删除的
 	var allItems []string
 	if err := db.Db.Model(&EmbyMediaItem{}).Pluck("item_id", &allItems).Error; err != nil {
 		return err
 	}
 
-	// 找出需要删除的item_id
+	// 找出需要删除的 item_id
 	var itemsToDelete []string
 	for _, itemId := range allItems {
 		if !validItemSet[itemId] {
@@ -193,6 +195,106 @@ func CleanupOrphanedEmbyMediaItems(validItemIds []string) error {
 	}
 
 	return nil
+}
+
+// CleanupStaleEmbyMediaItemsByLibrarySyncRun 按全量同步批次清理指定媒体库内未出现的旧条目。
+func CleanupStaleEmbyMediaItemsByLibrarySyncRun(libraryID string, syncRunID string) error {
+	if libraryID == "" || syncRunID == "" {
+		return nil
+	}
+
+	tx := db.Db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	var staleItemIDs []int64
+	if err := tx.Model(&EmbyMediaItem{}).
+		Where("library_id = ? AND (last_seen_sync_run IS NULL OR last_seen_sync_run != ?)", libraryID, syncRunID).
+		Pluck("item_id_int", &staleItemIDs).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	if len(staleItemIDs) == 0 {
+		tx.Rollback()
+		return nil
+	}
+
+	if err := tx.Where("emby_item_id IN ?", staleItemIDs).Delete(&EmbyMediaSyncFile{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Where("library_id = ? AND (last_seen_sync_run IS NULL OR last_seen_sync_run != ?)", libraryID, syncRunID).
+		Delete(&EmbyMediaItem{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit().Error
+}
+
+// DeleteLocalEmbyItemByID 删除本地单个 Emby 条目索引及关联。
+func DeleteLocalEmbyItemByID(itemID string) error {
+	if itemID == "" {
+		return nil
+	}
+	itemIDInt := helpers.StringToInt64(itemID)
+	tx := db.Db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+	if err := tx.Where("emby_item_id = ?", itemIDInt).Delete(&EmbyMediaSyncFile{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Where("item_id = ?", itemID).Delete(&EmbyMediaItem{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit().Error
+}
+
+// DeleteLocalEmbyItemsBySeasonID 删除本地指定季下的 Emby 条目索引及关联。
+func DeleteLocalEmbyItemsBySeasonID(seasonID string) error {
+	return deleteLocalEmbyItemsByField("season_id", seasonID)
+}
+
+// DeleteLocalEmbyItemsBySeriesID 删除本地指定剧下的 Emby 条目索引及关联。
+func DeleteLocalEmbyItemsBySeriesID(seriesID string) error {
+	return deleteLocalEmbyItemsByField("series_id", seriesID)
+}
+
+func deleteLocalEmbyItemsByField(field string, value string) error {
+	if value == "" {
+		return nil
+	}
+	tx := db.Db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	var itemIDs []int64
+	if err := tx.Model(&EmbyMediaItem{}).Where(field+" = ?", value).Pluck("item_id_int", &itemIDs).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	if len(itemIDs) > 0 {
+		if err := tx.Where("emby_item_id IN ?", itemIDs).Delete(&EmbyMediaSyncFile{}).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	if err := tx.Where(field+" = ?", value).Delete(&EmbyMediaItem{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit().Error
 }
 
 // CreateEmbyMediaSyncFile 创建关联（存在则跳过）
@@ -231,12 +333,12 @@ func DeleteEmbyLibrarySyncPathsBySyncPathID(syncPathId uint) error {
 	return db.Db.Where("sync_path_id = ?", syncPathId).Delete(&EmbyLibrarySyncPath{}).Error
 }
 
-// DeleteEmbyMediaSyncFilesBySyncFileID 按SyncFile删除关联
+// DeleteEmbyMediaSyncFilesBySyncFileID 按 SyncFile 删除关联
 func DeleteEmbyMediaSyncFilesBySyncFileID(syncFileId uint) error {
 	return db.Db.Where("sync_file_id = ?", syncFileId).Delete(&EmbyMediaSyncFile{}).Error
 }
 
-// DeleteEmbyMediaSyncFilesByPickCode 按PickCode删除关联
+// DeleteEmbyMediaSyncFilesByPickCode 按 PickCode 删除关联
 func DeleteEmbyMediaSyncFilesByPickCode(pickCode string) error {
 	if pickCode == "" {
 		return nil
@@ -250,10 +352,14 @@ func UpdateLastSyncTime() error {
 	if err := db.Db.First(config).Error; err != nil {
 		return err
 	}
-	return db.Db.Model(config).Update("last_sync_time", time.Now().Unix()).Error
+	if err := db.Db.Model(config).Update("last_sync_time", helpers.NowUnix()).Error; err != nil {
+		return err
+	}
+	_, err := GetEmbyConfigFromDB()
+	return err
 }
 
-// 使用SyncPath查询关联的Emby LibraryId->LibraryName列表
+// 使用 SyncPath 查询关联的 Emby LibraryId -> LibraryName 列表
 func GetEmbyLibraryIdsBySyncPathId(syncPathId uint) map[string]string {
 	var relations []EmbyLibrarySyncPath
 	if err := db.Db.Where("sync_path_id = ?", syncPathId).Find(&relations).Error; err != nil {
@@ -266,10 +372,10 @@ func GetEmbyLibraryIdsBySyncPathId(syncPathId uint) map[string]string {
 	return libraryIds
 }
 
-// 刷新Emby媒体库通过SyncPathId
+// 通过 SyncPathId 刷新 Emby 媒体库
 func RefreshEmbyLibraryBySyncPathId(syncPathId uint) error {
 	if GlobalEmbyConfig == nil || GlobalEmbyConfig.EmbyUrl == "" || GlobalEmbyConfig.EmbyApiKey == "" || GlobalEmbyConfig.EnableRefreshLibrary == 0 {
-		helpers.AppLogger.Infof("Emby未配置或未启用刷新媒体库，跳过刷新")
+		helpers.AppLogger.Infof("Emby 未配置或未启用刷新媒体库，跳过刷新")
 		return nil
 	}
 	// 创建一个新的 Emby 客户端
@@ -293,19 +399,19 @@ func DeleteNetdiskMovieByEmbyItemId(itemId string) error {
 	}
 	syncFile := SyncFile{}
 	if err := db.Db.Where("id = ?", embyItem.SyncFileId).Find(&syncFile).Error; err != nil {
-		helpers.AppLogger.Errorf("查询Emby Item %s 关联的网盘文件 %d 失败: %v", itemId, embyItem.SyncFileId, err)
+		helpers.AppLogger.Errorf("查询 Emby Item %s 关联的网盘文件 %d 失败：%v", itemId, embyItem.SyncFileId, err)
 		return err
 	}
-	// 查找syncFile.Path下是否只有一个视频文件
+	// 查找 syncFile.Path 下是否只有一个视频文件
 	files := []SyncFile{}
 	if err := db.Db.Where("parent_id = ?", syncFile.ParentId).Find(&files).Error; err != nil {
-		helpers.AppLogger.Errorf("查询网盘路径 %s 下的文件失败: %v", syncFile.Path, err)
+		helpers.AppLogger.Errorf("查询网盘路径 %s 下的文件失败：%v", syncFile.Path, err)
 		return err
 	}
-	helpers.AppLogger.Infof("准备删除Emby Item %s 关联的网盘文件 %s", itemId, syncFile.Path+"/"+syncFile.FileName)
+	helpers.AppLogger.Infof("准备删除 Emby Item %s 关联的网盘文件 %s", itemId, syncFile.Path+"/"+syncFile.FileName)
 	// 检查是否只有一个视频文件
 	videoFileCount := 0
-	// 顺便遍历出视频文件对应的元数据文件，以视频文件basename开头的元数据文件
+	// 顺便遍历出视频文件对应的元数据文件，以视频文件 basename 开头的元数据文件
 	ext := filepath.Ext(syncFile.FileName)
 	baseName := strings.TrimSuffix(syncFile.FileName, ext)
 	metaFiles := []SyncFile{}
@@ -321,14 +427,14 @@ func DeleteNetdiskMovieByEmbyItemId(itemId string) error {
 	// 调用网盘接口删除文件
 	account, err := GetAccountById(syncFile.AccountId)
 	if err != nil {
-		helpers.AppLogger.Errorf("获取网盘账号 %d 失败: %v", syncFile.AccountId, err)
+		helpers.AppLogger.Errorf("获取网盘账号 %d 失败：%v", syncFile.AccountId, err)
 		return err
 	}
 	success := false
 	delErr := error(nil)
 	switch syncFile.SourceType {
 	case SourceType115:
-		// 执行115网盘删除逻辑
+		// 执行 115 网盘删除逻辑
 		client := account.Get115Client()
 		if videoFileCount == 1 {
 			// 删除目录
@@ -338,7 +444,7 @@ func DeleteNetdiskMovieByEmbyItemId(itemId string) error {
 			success, delErr = delete115Files(client, syncFile, metaFiles)
 		}
 	case SourceTypeOpenList:
-		// 执行OpenList网盘删除逻辑
+		// 执行 OpenList 网盘删除逻辑
 		client := account.GetOpenListClient()
 		if videoFileCount == 1 {
 			// 删除目录
@@ -348,7 +454,7 @@ func DeleteNetdiskMovieByEmbyItemId(itemId string) error {
 			success, delErr = deleteOpenListFiles(client, syncFile, metaFiles)
 		}
 	case SourceTypeBaiduPan:
-		// 执行BaiduPan网盘删除逻辑
+		// 执行百度网盘删除逻辑
 		client := account.GetBaiDuPanClient()
 		if videoFileCount == 1 {
 			// 删除目录
@@ -359,17 +465,17 @@ func DeleteNetdiskMovieByEmbyItemId(itemId string) error {
 		}
 	}
 	if delErr != nil {
-		helpers.AppLogger.Errorf("删除Emby Item %s 关联的网盘视频文件+元数据失败: %v", itemId, delErr)
+		helpers.AppLogger.Errorf("删除 Emby Item %s 关联的网盘视频文件+元数据失败：%v", itemId, delErr)
 		return delErr
 	}
 	if success {
-		helpers.AppLogger.Infof("删除Emby Item %s 关联的网盘视频文件+元数据成功: %v", itemId, success)
+		helpers.AppLogger.Infof("删除 Emby Item %s 关联的网盘视频文件+元数据成功：%v", itemId, success)
 		if err := db.Db.Where("emby_item_id = ?", itemIdUint).Delete(&EmbyMediaSyncFile{}).Error; err != nil {
-			helpers.AppLogger.Errorf("删除Emby Item %s 关联的EmbyMediaSyncFile记录失败: %v", itemId, err)
+			helpers.AppLogger.Errorf("删除 Emby Item %s 关联的 EmbyMediaSyncFile 记录失败：%v", itemId, err)
 			return err
 		}
 		if err := db.Db.Where("item_id = ?", itemId).Delete(&EmbyMediaItem{}).Error; err != nil {
-			helpers.AppLogger.Errorf("删除Emby Item %s 关联的EmbyMediaItem记录失败: %v", itemId, err)
+			helpers.AppLogger.Errorf("删除 Emby Item %s 关联的 EmbyMediaItem 记录失败：%v", itemId, err)
 			return err
 		}
 	}
@@ -386,16 +492,16 @@ func DeleteNetdiskEpisodeByEmbyItemId(itemId string) error {
 	}
 	syncFile := SyncFile{}
 	if err := db.Db.Where("id = ?", embyItem.SyncFileId).Find(&syncFile).Error; err != nil {
-		helpers.AppLogger.Errorf("查询Emby Item %s 关联的网盘文件 %d 失败: %v", itemId, embyItem.SyncFileId, err)
+		helpers.AppLogger.Errorf("查询 Emby Item %s 关联的网盘文件 %d 失败：%v", itemId, embyItem.SyncFileId, err)
 		return err
 	}
 	files := []SyncFile{}
 	if err := db.Db.Where("path = ?", syncFile.Path).Find(&files).Error; err != nil {
-		helpers.AppLogger.Errorf("查询网盘路径 %s 下的文件失败: %v", syncFile.Path, err)
+		helpers.AppLogger.Errorf("查询网盘路径 %s 下的文件失败：%v", syncFile.Path, err)
 		return err
 	}
-	helpers.AppLogger.Infof("准备删除Emby Item %s 关联的网盘文件 %s", itemId, syncFile.Path+"/"+syncFile.FileName)
-	// 顺便遍历出视频文件对应的元数据文件，以视频文件basename开头的元数据文件
+	helpers.AppLogger.Infof("准备删除 Emby Item %s 关联的网盘文件 %s", itemId, syncFile.Path+"/"+syncFile.FileName)
+	// 顺便遍历出视频文件对应的元数据文件，以视频文件 basename 开头的元数据文件
 	ext := filepath.Ext(syncFile.FileName)
 	baseName := strings.TrimSuffix(syncFile.FileName, ext)
 	filesToDelete := make([]SyncFile, 0)
@@ -408,39 +514,39 @@ func DeleteNetdiskEpisodeByEmbyItemId(itemId string) error {
 	// 调用网盘接口删除文件
 	account, err := GetAccountById(syncFile.AccountId)
 	if err != nil {
-		helpers.AppLogger.Errorf("获取网盘账号 %d 失败: %v", syncFile.AccountId, err)
+		helpers.AppLogger.Errorf("获取网盘账号 %d 失败：%v", syncFile.AccountId, err)
 		return err
 	}
 	success := false
 	delErr := error(nil)
 	switch syncFile.SourceType {
 	case SourceType115:
-		// 执行115网盘删除逻辑
+		// 执行 115 网盘删除逻辑
 		client := account.Get115Client()
 		success, delErr = delete115Files(client, syncFile, filesToDelete)
 	case SourceTypeOpenList:
-		// 执行OpenList网盘删除逻辑
+		// 执行 OpenList 网盘删除逻辑
 		client := account.GetOpenListClient()
 		success, delErr = deleteOpenListFiles(client, syncFile, filesToDelete)
 	case SourceTypeBaiduPan:
-		// 执行BaiduPan网盘删除逻辑
+		// 执行百度网盘删除逻辑
 		client := account.GetBaiDuPanClient()
 		success, delErr = deleteBaiduPanFiles(client, syncFile, filesToDelete)
 	}
 	if delErr != nil {
-		helpers.AppLogger.Errorf("删除Emby Item %s 关联的网盘集视频文件+元数据失败: %v", itemId, delErr)
+		helpers.AppLogger.Errorf("删除 Emby Item %s 关联的网盘集视频文件+元数据失败：%v", itemId, delErr)
 		return delErr
 	}
-	helpers.AppLogger.Infof("删除Emby Item %s 关联的网盘集视频文件+元数据成功: %v", itemId, success)
-	// 删除EmbyMediaSyncFile数据
-	// 删除EmbyMediaItem数据
+	helpers.AppLogger.Infof("删除 Emby Item %s 关联的网盘集视频文件+元数据成功：%v", itemId, success)
+	// 删除 EmbyMediaSyncFile 数据
+	// 删除 EmbyMediaItem 数据
 	if success {
 		if err := db.Db.Where("emby_item_id = ?", itemIdUint).Delete(&EmbyMediaSyncFile{}).Error; err != nil {
-			helpers.AppLogger.Errorf("删除Emby Item %s 关联的EmbyMediaSyncFile记录失败: %v", itemId, err)
+			helpers.AppLogger.Errorf("删除 Emby Item %s 关联的 EmbyMediaSyncFile 记录失败：%v", itemId, err)
 			return err
 		}
 		if err := db.Db.Where("item_id = ?", itemId).Delete(&EmbyMediaItem{}).Error; err != nil {
-			helpers.AppLogger.Errorf("删除Emby Item %s 关联的EmbyMediaItem记录失败: %v", itemId, err)
+			helpers.AppLogger.Errorf("删除 Emby Item %s 关联的 EmbyMediaItem 记录失败：%v", itemId, err)
 			return err
 		}
 	}
@@ -449,32 +555,32 @@ func DeleteNetdiskEpisodeByEmbyItemId(itemId string) error {
 
 // 联动删除网盘的季
 func DeleteNetdiskSeasonByItemId(itemId string) error {
-	// 根据itemId先查找到所有的EmbyMediaItem记录
+	// 根据 itemId 先查找所有 EmbyMediaItem 记录
 	var embyItems []EmbyMediaItem
 	if err := db.Db.Where("season_id = ?", itemId).Find(&embyItems).Error; err != nil {
-		helpers.AppLogger.Errorf("查询SeasonId %s 关联的EmbyMediaItem记录失败: %v", itemId, err)
+		helpers.AppLogger.Errorf("查询 SeasonId %s 关联的 EmbyMediaItem 记录失败：%v", itemId, err)
 		return err
 	}
-	// 拿到所有关联的SyncFileId
+	// 拿到所有关联的 SyncFileId
 	syncFileIds := []uint{}
 	for _, embyItem := range embyItems {
 		var embyMediaSyncFiles []EmbyMediaSyncFile
 		if err := db.Db.Where("emby_item_id = ?", embyItem.ID).Find(&embyMediaSyncFiles).Error; err != nil {
-			helpers.AppLogger.Errorf("查询Emby Item %s 关联的EmbyMediaSyncFile记录失败: %v", embyItem.ItemId, err)
+			helpers.AppLogger.Errorf("查询 Emby Item %s 关联的 EmbyMediaSyncFile 记录失败：%v", embyItem.ItemId, err)
 			continue
 		}
 		for _, rel := range embyMediaSyncFiles {
 			syncFileIds = append(syncFileIds, rel.SyncFileId)
 		}
 	}
-	// 取第一个SyncFileId对应的SyncFile.Path作为季目录来处理
+	// 取第一个 SyncFileId 对应的 SyncFile.Path 作为季目录来处理
 	if len(syncFileIds) == 0 {
 		helpers.AppLogger.Infof("SeasonId %s 没有关联的网盘文件", itemId)
 		return nil
 	}
 	syncFile := SyncFile{}
 	if err := db.Db.Where("id = ?", syncFileIds[0]).Find(&syncFile).Error; err != nil {
-		helpers.AppLogger.Errorf("查询SeasonId %s 关联的网盘文件 %d 失败: %v", itemId, syncFileIds[0], err)
+		helpers.AppLogger.Errorf("查询 SeasonId %s 关联的网盘文件 %d 失败：%v", itemId, syncFileIds[0], err)
 		return err
 	}
 	seasonPath := syncFile.Path
@@ -482,10 +588,10 @@ func DeleteNetdiskSeasonByItemId(itemId string) error {
 	seasonNumber := helpers.ExtractSeasonsFromSeasonPath(filepath.Base(seasonPath))
 	if seasonNumber >= 0 {
 		// 是单独的季目录，删除整个目录
-		// 调用115接口删除文件
+		// 调用 115 接口删除文件
 		account, err := GetAccountById(syncFile.AccountId)
 		if err != nil {
-			helpers.AppLogger.Errorf("获取网盘账号 %d 失败: %v", syncFile.AccountId, err)
+			helpers.AppLogger.Errorf("获取网盘账号 %d 失败：%v", syncFile.AccountId, err)
 			return err
 		}
 		var delErr error
@@ -501,28 +607,28 @@ func DeleteNetdiskSeasonByItemId(itemId string) error {
 			_, delErr = deleteBaiduPanFolders(client, seasonPath)
 		}
 		if delErr != nil {
-			helpers.AppLogger.Errorf("删除Emby Item %s 关联的网盘电视剧 季目录 %s失败: %v", itemId, seasonPath, delErr)
+			helpers.AppLogger.Errorf("删除 Emby Item %s 关联的网盘电视剧季目录 %s 失败：%v", itemId, seasonPath, delErr)
 			return delErr
 		}
-		helpers.AppLogger.Infof("删除Emby Item %s 关联的网盘电视剧 季目录 %s 成功", itemId, seasonPath)
+		helpers.AppLogger.Infof("删除 Emby Item %s 关联的网盘电视剧 季目录 %s 成功", itemId, seasonPath)
 	} else {
-		// 不是单独的季目录，仅删除季下所有集对应的视频文件+元数据（nfo、封面)
+		// 不是单独的季目录，仅删除季下所有集对应的视频文件和元数据（NFO、封面）
 		for _, embyItem := range embyItems {
 			if err := DeleteNetdiskEpisodeByEmbyItemId(embyItem.ItemId); err != nil {
 				continue
 			}
 		}
-		helpers.AppLogger.Infof("删除Emby Item %s 关联的网盘电视剧 季下的所有集成功", itemId)
+		helpers.AppLogger.Infof("删除 Emby Item %s 关联的网盘电视剧 季下的所有集成功", itemId)
 	}
-	// 删除EmbyMediaItem数据
+	// 删除 EmbyMediaItem 数据
 	if err := db.Db.Where("season_id = ?", itemId).Delete(&EmbyMediaItem{}).Error; err != nil {
-		helpers.AppLogger.Errorf("删除SeasonId %s 关联的EmbyMediaItem记录失败: %v", itemId, err)
+		helpers.AppLogger.Errorf("删除 SeasonId %s 关联的 EmbyMediaItem 记录失败：%v", itemId, err)
 		return err
 	}
-	// 删除EmbyMediaSyncFile数据
+	// 删除 EmbyMediaSyncFile 数据
 	for _, syncFileId := range syncFileIds {
 		if err := db.Db.Where("sync_file_id = ?", syncFileId).Delete(&EmbyMediaSyncFile{}).Error; err != nil {
-			helpers.AppLogger.Errorf("删除SeasonId %s 关联的EmbyMediaSyncFile记录失败: %v", itemId, err)
+			helpers.AppLogger.Errorf("删除 SeasonId %s 关联的 EmbyMediaSyncFile 记录失败：%v", itemId, err)
 			return err
 		}
 	}
@@ -531,32 +637,32 @@ func DeleteNetdiskSeasonByItemId(itemId string) error {
 
 // 联动删除网盘的剧
 func DeleteNetdiskTvshowByItemId(itemId string) error {
-	// 根据itemId先查找到所有的EmbyMediaItem记录
+	// 根据 itemId 先查找所有 EmbyMediaItem 记录
 	var embyItems []EmbyMediaItem
 	if err := db.Db.Where("series_id = ?", itemId).Find(&embyItems).Error; err != nil {
-		helpers.AppLogger.Errorf("查询SeriesId %s 关联的EmbyMediaItem记录失败: %v", itemId, err)
+		helpers.AppLogger.Errorf("查询 SeriesId %s 关联的 EmbyMediaItem 记录失败：%v", itemId, err)
 		return err
 	}
-	// 拿到所有关联的SyncFileId
+	// 拿到所有关联的 SyncFileId
 	syncFileIds := []uint{}
 	for _, embyItem := range embyItems {
 		var embyMediaSyncFiles []EmbyMediaSyncFile
 		if err := db.Db.Where("emby_item_id = ?", embyItem.ItemId).Find(&embyMediaSyncFiles).Error; err != nil {
-			helpers.AppLogger.Errorf("查询Emby Item %s 关联的EmbyMediaSyncFile记录失败: %v", embyItem.ItemId, err)
+			helpers.AppLogger.Errorf("查询 Emby Item %s 关联的 EmbyMediaSyncFile 记录失败：%v", embyItem.ItemId, err)
 			continue
 		}
 		for _, rel := range embyMediaSyncFiles {
 			syncFileIds = append(syncFileIds, rel.SyncFileId)
 		}
 	}
-	// 取第一个SyncFileId对应的SyncFile.Path作为剧目录来处理
+	// 取第一个 SyncFileId 对应的 SyncFile.Path 作为剧目录来处理
 	if len(syncFileIds) == 0 {
 		helpers.AppLogger.Infof("SeriesId %s 没有关联的网盘文件", itemId)
 		return nil
 	}
 	syncFile := SyncFile{}
 	if err := db.Db.Where("id = ?", syncFileIds[0]).Find(&syncFile).Error; err != nil {
-		helpers.AppLogger.Errorf("查询SeriesId %s 关联的网盘文件 %d 失败: %v", itemId, syncFileIds[0], err)
+		helpers.AppLogger.Errorf("查询 SeriesId %s 关联的网盘文件 %d 失败：%v", itemId, syncFileIds[0], err)
 		return err
 	}
 	// 检查目录是否为季目录
@@ -568,7 +674,7 @@ func DeleteNetdiskTvshowByItemId(itemId string) error {
 		tvshowPath = filepath.ToSlash(filepath.Dir(syncFile.Path))
 		tvshowSyncFile := SyncFile{}
 		if err := db.Db.Where("path = ?", tvshowPath).Find(&tvshowSyncFile).Error; err != nil {
-			helpers.AppLogger.Errorf("查询剧目录 %s 关联的网盘文件ID 失败: %v", tvshowPath, err)
+			helpers.AppLogger.Errorf("查询剧目录 %s 关联的网盘文件 ID 失败：%v", tvshowPath, err)
 			return err
 		}
 		tvshowPathId = tvshowSyncFile.ParentId
@@ -577,10 +683,10 @@ func DeleteNetdiskTvshowByItemId(itemId string) error {
 		tvshowPath = syncFile.Path
 		tvshowPathId = syncFile.ParentId
 	}
-	// 调用115接口删除文件
+	// 调用 115 接口删除文件
 	account, err := GetAccountById(syncFile.AccountId)
 	if err != nil {
-		helpers.AppLogger.Errorf("获取网盘账号 %d 失败: %v", syncFile.AccountId, err)
+		helpers.AppLogger.Errorf("获取网盘账号 %d 失败：%v", syncFile.AccountId, err)
 		return err
 	}
 	var delErr error
@@ -596,19 +702,19 @@ func DeleteNetdiskTvshowByItemId(itemId string) error {
 		_, delErr = deleteBaiduPanFolders(client, tvshowPath)
 	}
 	if delErr != nil {
-		helpers.AppLogger.Errorf("删除Emby Item %s 关联的网盘电视剧 目录 %s=>%s失败: %v", itemId, tvshowPathId, tvshowPath, delErr)
+		helpers.AppLogger.Errorf("删除 Emby Item %s 关联的网盘电视剧目录 %s => %s 失败：%v", itemId, tvshowPathId, tvshowPath, delErr)
 		return delErr
 	}
-	helpers.AppLogger.Infof("删除Emby Item %s 关联的网盘电视剧 目录 %s=>%s 成功", itemId, tvshowPathId, tvshowPath)
-	// 删除EmbyMediaItem数据
+	helpers.AppLogger.Infof("删除 Emby Item %s 关联的网盘电视剧目录 %s => %s 成功", itemId, tvshowPathId, tvshowPath)
+	// 删除 EmbyMediaItem 数据
 	if err := db.Db.Where("series_id = ?", itemId).Delete(&EmbyMediaItem{}).Error; err != nil {
-		helpers.AppLogger.Errorf("删除SeriesId %s 关联的EmbyMediaItem记录失败: %v", itemId, err)
+		helpers.AppLogger.Errorf("删除 SeriesId %s 关联的 EmbyMediaItem 记录失败：%v", itemId, err)
 		return err
 	}
-	// 删除EmbyMediaSyncFile数据
+	// 删除 EmbyMediaSyncFile 数据
 	for _, syncFileId := range syncFileIds {
 		if err := db.Db.Where("sync_file_id = ?", syncFileId).Delete(&EmbyMediaSyncFile{}).Error; err != nil {
-			helpers.AppLogger.Errorf("删除SeriesId %s 关联的EmbyMediaSyncFile记录失败: %v", itemId, err)
+			helpers.AppLogger.Errorf("删除 SeriesId %s 关联的 EmbyMediaSyncFile 记录失败：%v", itemId, err)
 			return err
 		}
 	}
@@ -618,30 +724,30 @@ func DeleteNetdiskTvshowByItemId(itemId string) error {
 // 删除 115 文件（视频 + 元数据），增加详细调试日志
 func delete115Files(client *v115open.OpenClient, syncFile SyncFile, metaFiles []SyncFile) (bool, error) {
 	// 记录主视频文件信息
-	helpers.AppLogger.Infof("[DEBUG-DELETE] 准备删除主视频文件 - 路径：%s, 文件名：%s, FileId: %s, ParentId: %s",
+	helpers.AppLogger.Infof("[DEBUG-DELETE] 准备删除主视频文件 - 路径：%s，文件名：%s，File ID：%s，Parent ID：%s",
 		syncFile.Path, syncFile.FileName, syncFile.FileId, syncFile.ParentId)
 
 	// 记录元数据文件信息
 	for i, mf := range metaFiles {
-		helpers.AppLogger.Infof("[DEBUG-DELETE] 准备删除元数据文件 [%d] - 路径：%s, 文件名：%s, FileId: %s",
+		helpers.AppLogger.Infof("[DEBUG-DELETE] 准备删除元数据文件 [%d] - 路径：%s，文件名：%s，File ID：%s",
 			i+1, mf.Path, mf.FileName, mf.FileId)
 	}
 
-	// 收集所有要删除的 FileId
+	// 收集所有要删除的 File ID
 	fileIdsToDelete := []string{syncFile.FileId}
 	for _, mf := range metaFiles {
 		fileIdsToDelete = append(fileIdsToDelete, mf.FileId)
 	}
 
-	// 记录总删除文件数和 FileId 列表
-	helpers.AppLogger.Infof("[DEBUG-DELETE] 总共准备删除 %d 个文件，FileId 列表：%v",
+	// 记录总删除文件数和 File ID 列表
+	helpers.AppLogger.Infof("[DEBUG-DELETE] 总共准备删除 %d 个文件，File ID 列表：%v",
 		len(fileIdsToDelete), fileIdsToDelete)
 
 	// 调用 115 删除 API
 	success, delErr := client.Del(context.Background(), fileIdsToDelete, syncFile.ParentId)
 
 	// 记录删除结果
-	helpers.AppLogger.Infof("[DEBUG-DELETE] 115 网盘文件删除%s - 成功：%v, FileId 列表：%v",
+	helpers.AppLogger.Infof("[DEBUG-DELETE] 115 网盘文件删除%s - 成功：%v，File ID 列表：%v",
 		map[bool]string{true: "成功", false: "失败"}[success], success, fileIdsToDelete)
 
 	if delErr != nil {
@@ -654,7 +760,7 @@ func delete115Files(client *v115open.OpenClient, syncFile SyncFile, metaFiles []
 // 删除 115 文件夹，增加详细调试日志
 func delete115Folders(client *v115open.OpenClient, delPath string, delPathId string, syncPathId uint, itemId string) (bool, error) {
 	// 记录基本信息
-	helpers.AppLogger.Infof("[DEBUG-DELETE] 准备删除目录 - Emby ItemId: %s, 删除路径：%s, SyncPathId: %d",
+	helpers.AppLogger.Infof("[DEBUG-DELETE] 准备删除目录 - Emby Item ID：%s，删除路径：%s，SyncPath ID：%d",
 		itemId, delPath, syncPathId)
 
 	// 删除整个目录
@@ -670,7 +776,7 @@ func delete115Folders(client *v115open.OpenClient, delPath string, delPathId str
 
 	if pathParent == "" || pathParent == "." || pathParent == "/" {
 		// 到了根目录，取 SyncPath.SourcePathId
-		helpers.AppLogger.Infof("[DEBUG-DELETE] 已到达根目录，使用 SyncPath 的 BaseCid - SyncPathId: %d", syncPathId)
+		helpers.AppLogger.Infof("[DEBUG-DELETE] 已到达根目录，使用 SyncPath 的 BaseCid - SyncPath ID：%d", syncPathId)
 
 		syncPath := GetSyncPathById(syncPathId)
 		if syncPath == nil {
@@ -681,7 +787,7 @@ func delete115Folders(client *v115open.OpenClient, delPath string, delPathId str
 		pathParentId = syncPath.BaseCid
 		pathParentStr = syncPath.RemotePath
 
-		helpers.AppLogger.Infof("[DEBUG-DELETE] 使用 SyncPath 信息 - ParentId: %s, ParentPath: %s",
+		helpers.AppLogger.Infof("[DEBUG-DELETE] 使用 SyncPath 信息 - Parent ID：%s，Parent Path：%s",
 			pathParentId, pathParentStr)
 	} else {
 		// 查询 pathParent 的 file_id
@@ -696,7 +802,7 @@ func delete115Folders(client *v115open.OpenClient, delPath string, delPathId str
 		pathParentId = parentPath.FileId
 		pathParentStr = parentPath.Path
 
-		helpers.AppLogger.Infof("[DEBUG-DELETE] 父目录查询成功 - ParentId: %s, ParentPath: %s",
+		helpers.AppLogger.Infof("[DEBUG-DELETE] 父目录查询成功 - Parent ID：%s，Parent Path：%s",
 			pathParentId, pathParentStr)
 	}
 
@@ -705,12 +811,12 @@ func delete115Folders(client *v115open.OpenClient, delPath string, delPathId str
 
 	// 记录删除结果
 	if delErr != nil {
-		helpers.AppLogger.Errorf("[DEBUG-DELETE] 115 网盘目录删除失败 - FileId: %s, ParentId: %s, 错误：%v",
+		helpers.AppLogger.Errorf("[DEBUG-DELETE] 115 网盘目录删除失败 - File ID：%s，Parent ID：%s，错误：%v",
 			delPathId, pathParentId, delErr)
 		return success, delErr
 	}
 
-	helpers.AppLogger.Infof("[DEBUG-DELETE] 115 网盘目录删除成功 - FileId: %s, ParentId: %s, ParentPath: %s, Emby ItemId: %s",
+	helpers.AppLogger.Infof("[DEBUG-DELETE] 115 网盘目录删除成功 - File ID：%s，Parent ID：%s，Parent Path：%s，Emby Item ID：%s",
 		delPathId, pathParentId, pathParentStr, itemId)
 
 	helpers.AppLogger.Infof("删除 Emby Item %s 关联的网盘电影目录 %s=>%s 成功", itemId, delPathId, delPath)
@@ -734,7 +840,7 @@ func deleteOpenListFolders(client *openlist.Client, path string) (bool, error) {
 	pathParent := filepath.Dir(path)
 	if path == "" || path == "." || path == "/" {
 		// 到了根目录，不能删除
-		helpers.AppLogger.Errorf("删除网盘目录失败: 已到达根目录 %s", path)
+		helpers.AppLogger.Errorf("删除网盘目录失败：已到达根目录 %s", path)
 		return false, nil
 	}
 	folerName := filepath.Base(path)
@@ -748,7 +854,7 @@ func deleteOpenListFolders(client *openlist.Client, path string) (bool, error) {
 func deleteBaiduPanFolders(client *baidupan.Client, path string) (bool, error) {
 	if path == "" || path == "." || path == "/" {
 		// 到了根目录，不能删除
-		helpers.AppLogger.Errorf("删除网盘目录失败: 已到达根目录 %s", path)
+		helpers.AppLogger.Errorf("删除网盘目录失败：已到达根目录 %s", path)
 		return false, nil
 	}
 	err := client.Del(context.Background(), []string{path})
@@ -779,14 +885,14 @@ func GetLastItemDateCreatedTimeByLibraryID(libraryID string) int64 {
 	return lastItem.DateCreatedTime
 }
 
-// GetAllEmbyLibraries 获取所有Emby媒体库
+// GetAllEmbyLibraries 获取所有 Emby 媒体库
 func GetAllEmbyLibraries() ([]EmbyLibrary, error) {
 	var libraries []EmbyLibrary
 	err := db.Db.Find(&libraries).Error
 	return libraries, err
 }
 
-// CleanupAllEmbyLibraryData 清理所有Emby媒体库数据
+// CleanupAllEmbyLibraryData 清理所有 Emby 媒体库数据
 func CleanupAllEmbyLibraryData() error {
 	tx := db.Db.Begin()
 	defer func() {
@@ -831,7 +937,7 @@ func CleanupUnselectedEmbyLibraryData(selectedLibIds []string) error {
 		}
 	}()
 
-	// 获取未选中的媒体库ID列表
+	// 获取未选中的媒体库 ID 列表
 	var unselectedLibIds []string
 	if err := tx.Model(&EmbyLibrary{}).Where("library_id NOT IN ?", selectedLibIds).Pluck("library_id", &unselectedLibIds).Error; err != nil {
 		tx.Rollback()

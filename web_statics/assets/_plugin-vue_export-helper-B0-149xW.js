@@ -1,0 +1,1 @@
+var e=((e,t)=>{let n=e?.trim();return!n||n===`undefined`||n===`null`?t:n.replace(/\/+$/,``)})(`/api`,`/api`),t=(e,t)=>{let n=e.__vccOpts||e;for(let[e,r]of t)n[e]=r;return n};export{e as n,t};

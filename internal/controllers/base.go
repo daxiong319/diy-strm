@@ -1,25 +1,22 @@
-package controllers
+﻿package controllers
 
 import (
-	"diy-strm/internal/helpers"
-	"diy-strm/internal/models"
-	"diy-strm/internal/v115open"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
-)
+	"diy-strm/internal/helpers"
+	"diy-strm/internal/models"
+	"diy-strm/internal/requests"
+	"diy-strm/internal/v115open"
+	"diy-strm/internal/validation"
 
-type LoginUser struct {
-	ID       uint   `json:"id"`
-	Username string `json:"username"`
-	jwt.RegisteredClaims
-}
+	"github.com/gin-gonic/gin"
+)
 
 type APIResponseCode int
 
@@ -34,110 +31,110 @@ type APIResponse[T any] struct {
 	Data    T               `json:"data"`
 }
 
-// JWTAuthMiddleware 基于JWT的认证中间件--验证用户是否登录
+var runAuthBackgroundTask = func(fn func()) {
+	go fn()
+}
+
+// JWTAuthMiddleware 基于 JWT 的认证中间件，用于验证用户是否登录。
 func JWTAuthMiddleware() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		// 优先检查 API Key（GET 参数 api_key）
-		apiKey := c.Query("api_key")
+		apiKey := apiKeyFromRequest(c)
 		if apiKey != "" {
-			// 验证 API Key
-			apiKeyModel, err := models.ValidateAPIKey(apiKey)
-			if err == nil && apiKeyModel != nil {
-				// API Key 验证成功
-				// 获取关联的用户信息
-				user, err := models.GetUserById(apiKeyModel.UserID)
-				if err == nil && user != nil {
-					LoginedUser = user
-					// 将用户名保存到上下文
-					c.Set("username", user.Username)
-					// 异步更新最后使用时间
-					go func() {
-						apiKeyModel.UpdateLastUsedAt()
-					}()
-					c.Next()
-					return
-				}
+			if !authenticateAPIKey(c, apiKey) {
+				c.Abort()
+				return
 			}
+			c.Next()
+			return
 		}
 
-		// 回退到 JWT Token 验证
-		// 1. 优先从 Cookie 获取 token
-		var tokenString string
-		cookie, err := c.Request.Cookie("auth_token")
-		if err == nil && cookie.Value != "" {
-			tokenString = cookie.Value
-			// helpers.AppLogger.Debugf("从 Cookie 获取 token")
-		} else {
-			// 2. Cookie 不存在时，从 Authorization Header 获取
-			authHeader := c.Request.Header.Get("Authorization")
-			if authHeader == "" {
-				c.JSON(http.StatusUnauthorized, APIResponse[any]{Code: BadRequest, Message: "Token不存在", Data: nil})
-				c.Abort()
-				return
-			}
-			// 按空格分割
-			parts := strings.Split(authHeader, ".")
-			if len(parts) != 3 {
-				c.JSON(http.StatusUnauthorized, APIResponse[any]{Code: BadRequest, Message: "Token格式有误", Data: nil})
-				c.Abort()
-				return
-			}
-			tokenString = strings.Replace(authHeader, "Bearer ", "", 1)
-			// helpers.AppLogger.Debugf("从 Authorization Header 获取 token")
-		}
-		// helpers.AppLogger.Debugf("tokenString: %s", tokenString)
-		loginUser, err := ValidateJWT(tokenString)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, APIResponse[any]{Code: BadRequest, Message: fmt.Sprintf("Token无效：%v", err), Data: nil})
+		if !authenticateCookieSession(c) {
 			c.Abort()
 			return
 		}
-		// helpers.AppLogger.Debugf("Authenticated user: %s", loginUser.Username)
-		LoginedUser, err = models.GetUserById(loginUser.ID)
-		if err != nil {
-			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: fmt.Sprintf("获取用户信息失败：%v", err), Data: nil})
+		if !validateCSRF(c) {
 			c.Abort()
 			return
-		} else {
-			// helpers.AppLogger.Debugf("获取用户信息成功: %+v", LoginedUser)
 		}
-		// 将当前请求的username信息保存到请求的上下文c上
-		c.Set("username", loginUser.Username)
-		c.Next() // 后续的处理函数可以用过c.Get("username")来获取当前请求的用户信息
+		c.Next()
 	}
 }
 
-// ValidateJWT 校验JWT
-func ValidateJWT(tokenString string) (*LoginUser, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &LoginUser{}, func(token *jwt.Token) (any, error) {
-		return []byte(helpers.GlobalConfig.JwtSecret), nil
-	})
-	// helpers.AppLogger.Debugf("%+v", token)
-	if err != nil || !token.Valid {
-		return nil, fmt.Errorf("登录凭证校验失败: %v", err)
+func apiKeyFromRequest(c *gin.Context) string {
+	apiKey := c.Request.Header.Get(apiKeyHeaderName)
+	if apiKey == "" {
+		apiKey = c.Query("api_key")
 	}
-	claims := token.Claims.(*LoginUser)
-	if claims.Username == "" {
-		return nil, fmt.Errorf("登录凭证中无法获取用户名")
-	}
+	return apiKey
+}
 
-	return claims, nil
+func authenticateAPIKey(c *gin.Context, apiKey string) bool {
+	apiKeyModel, err := models.ValidateAPIKey(apiKey)
+	if err != nil || apiKeyModel == nil {
+		c.JSON(http.StatusUnauthorized, APIResponse[any]{Code: BadRequest, Message: "API Key 无效", Data: nil})
+		return false
+	}
+	user, err := models.GetUserById(apiKeyModel.UserID)
+	if err != nil || user == nil || user.ID == 0 {
+		c.JSON(http.StatusUnauthorized, APIResponse[any]{Code: BadRequest, Message: "API Key 用户不存在", Data: nil})
+		return false
+	}
+	SetCurrentUser(c, user, authMethodAPIKey)
+	runAuthBackgroundTask(func() {
+		_ = apiKeyModel.UpdateLastUsedAt()
+	})
+	return true
+}
+
+func authenticateCookieSession(c *gin.Context) bool {
+	cookie, err := c.Request.Cookie(authCookieName)
+	if err != nil || cookie.Value == "" {
+		c.JSON(http.StatusUnauthorized, APIResponse[any]{Code: BadRequest, Message: "登录凭证不存在", Data: nil})
+		return false
+	}
+	loginUser, err := ValidateJWT(cookie.Value)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, APIResponse[any]{Code: BadRequest, Message: "登录凭证无效", Data: nil})
+		return false
+	}
+	now := time.Now().Unix()
+	session, err := models.GetActiveUserSession(loginUser.SessionID, now)
+	if err != nil || session.UserID != loginUser.ID {
+		c.JSON(http.StatusUnauthorized, APIResponse[any]{Code: BadRequest, Message: "登录会话已失效", Data: nil})
+		return false
+	}
+	user, err := models.GetUserById(loginUser.ID)
+	if err != nil || user == nil || user.ID == 0 {
+		c.JSON(http.StatusUnauthorized, APIResponse[any]{Code: BadRequest, Message: "登录用户不存在", Data: nil})
+		return false
+	}
+	SetCurrentUser(c, user, authMethodSession)
+	SetCurrentSession(c, session)
+	if now-session.LastSeenAt >= 60 {
+		runAuthBackgroundTask(func() {
+			_ = models.TouchUserSession(session.SessionID, now)
+		})
+	}
+	return true
 }
 
 func Proxy115(c *gin.Context) {
-	// 获取原始url参数
-	target := c.Request.URL.Query().Get("url")
-	baidupan := c.Request.URL.Query().Get("baidupan")
-	if target == "" {
-		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "缺少url参数", Data: nil})
+	var proxyReq requests.Proxy115Request
+	if err := c.ShouldBindQuery(&proxyReq); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "请求参数错误：" + err.Error(), Data: nil})
 		return
 	}
-	helpers.AppLogger.Infof("反代网盘下载链接: %s", target)
-	// // 只允许反代 cdnfhnfile.115cdn.net 域名
-	// if !strings.HasPrefix(target, "https://cdnfhnfile.115cdn.net/") {
-	// 	c.JSON(http.StatusForbidden, APIResponse[any]{Code: BadRequest, Message: "只允许反代115CDN链接", Data: nil})
-	// 	return
-	// }
+	if proxyReq.URL == "" {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "缺少 URL 参数", Data: nil})
+		return
+	}
+	if err := proxyReq.Validate(); err != nil {
+		helpers.AppLogger.Warnf("拒绝反代非 115/百度网盘下载链接，url=%s，err=%v", proxyReq.URL, err)
+		c.JSON(http.StatusForbidden, APIResponse[any]{Code: BadRequest, Message: "只允许反代 115 或百度网盘下载链接", Data: nil})
+		return
+	}
+	target := proxyReq.URL
+	helpers.AppLogger.Infof("反代网盘下载链接：%s", target)
 	// 创建请求
 	req, err := http.NewRequest("GET", target, nil)
 	if err != nil {
@@ -147,20 +144,26 @@ func Proxy115(c *gin.Context) {
 	// 复制客户端的 Range、Cookie、Referer 等头部
 	for k, v := range c.Request.Header {
 		if k == "Range" || k == "Cookie" || k == "Referer" {
-			// helpers.AppLogger.Infof("响应头: %s=%s", k, v)
+			// helpers.AppLogger.Infof("响应头：%s=%s", k, v)
 			req.Header[k] = v
 		}
 	}
-	if baidupan != "" {
+	if proxyReq.BaiduPan != "" {
 		req.Header.Set("User-Agent", "pan.baidu.com")
 	} else {
 		req.Header.Set("User-Agent", v115open.DEFAULTUA)
 	}
-	// 发起请求
-	client := &http.Client{Timeout: 60 * time.Second}
+	// 发起请求，重定向后的 URL 仍需保持在网盘下载域名白名单内。
+	client := &http.Client{
+		Timeout:       60 * time.Second,
+		CheckRedirect: validateProxy115Redirect,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, APIResponse[any]{Code: BadRequest, Message: "反代请求失败: " + err.Error(), Data: nil})
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		c.JSON(http.StatusBadGateway, APIResponse[any]{Code: BadRequest, Message: "反代请求失败：" + err.Error(), Data: nil})
 		return
 	}
 	defer resp.Body.Close()
@@ -175,11 +178,33 @@ func Proxy115(c *gin.Context) {
 	_, _ = io.Copy(c.Writer, resp.Body)
 }
 
+func validateProxy115Redirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("重定向次数过多")
+	}
+	if err := validation.DownloadProxyURL("url", req.URL.String()); err != nil {
+		return fmt.Errorf("拒绝重定向到非 115/百度网盘下载链接：%w", err)
+	}
+	return nil
+}
+
+func validateProxy115Target(target string) (bool, string) {
+	parsedURL, err := url.Parse(target)
+	if err != nil || parsedURL.Host == "" {
+		return false, ""
+	}
+	host := strings.ToLower(strings.TrimSuffix(parsedURL.Hostname(), "."))
+	if err := validation.DownloadProxyURL("url", target); err != nil {
+		return false, host
+	}
+	return true, host
+}
+
 func Cors() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		method := c.Request.Method               //请求方法
-		origin := c.Request.Header.Get("Origin") //请求头部
-		// var headerKeys []string                  // 声明请求头keys
+		method := c.Request.Method               // 请求方法
+		origin := c.Request.Header.Get("Origin") // 请求头部
+		// var headerKeys []string                  // 声明请求头 keys
 		// for k := range c.Request.Header {
 		// 	headerKeys = append(headerKeys, k)
 		// }
@@ -190,24 +215,26 @@ func Cors() gin.HandlerFunc {
 		// 	headerStr = "access-control-allow-origin, access-control-allow-headers"
 		// }
 		if origin != "" {
-			origin := c.Request.Header.Get("Origin")
-			c.Header("Access-Control-Allow-Origin", origin)                                    // 这是允许访问所有域
-			c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE,UPDATE") //服务器支持的所有跨域请求的方法,为了避免浏览次请求的多次'预检'请求
-			//  header的类型
-			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Length, X-CSRF-Token, Token,session,X_Requested_With,Accept, Origin, Host, Connection, Accept-Encoding, Accept-Language,DNT, X-CustomHeader, Keep-Alive, User-Agent, X-Requested-With, If-Modified-Since, Cache-Control, Content-Type, Pragma")
-			//              允许跨域设置                                                                                                      可以返回其他子段
-			c.Header("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers,Cache-Control,Content-Language,Content-Type,Expires,Last-Modified,Pragma,FooBar") // 跨域关键设置 让浏览器可以解析
-			c.Header("Access-Control-Max-Age", "172800")                                                                                                                                                           // 缓存请求信息 单位为秒
-			c.Header("Access-Control-Allow-Credentials", "false")                                                                                                                                                  //  跨域请求是否需要带cookie信息 默认设置为true
-			c.Set("content-type", "application/json")                                                                                                                                                              // 设置返回格式是json
+			c.Header("Vary", "Origin")
+		}
+		if origin != "" && originAllowed(c, origin) {
+			c.Header("Access-Control-Allow-Origin", origin)                                    // 允许访问当前请求来源
+			c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE,UPDATE") // 服务器支持的跨域请求方法，避免浏览器重复预检。
+			// Header 类型
+			c.Header("Access-Control-Allow-Headers", "Authorization, X-API-Key, Content-Length, X-CSRF-Token, Token, session, X_Requested_With, Accept, Origin, Host, Connection, Accept-Encoding, Accept-Language, DNT, X-CustomHeader, Keep-Alive, User-Agent, X-Requested-With, If-Modified-Since, Cache-Control, Content-Type, Pragma")
+			// 允许浏览器读取这些跨域响应头。
+			c.Header("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers,Cache-Control,Content-Language,Content-Type,Expires,Last-Modified,Pragma,FooBar") // 跨域关键设置，让浏览器可以解析。
+			c.Header("Access-Control-Max-Age", "172800")                                                                                                                                                           // 缓存预检请求信息，单位为秒。
+			c.Header("Access-Control-Allow-Credentials", "true")                                                                                                                                                   // 允许前端开发环境携带 Cookie。
+			c.Set("content-type", "application/json")                                                                                                                                                              // 设置返回格式为 JSON 。
 		}
 
-		// 放行所有OPTIONS方法
+		// 放行所有 OPTIONS 方法
 		if method == "OPTIONS" {
 			c.JSON(http.StatusOK, "Options Request!")
 		}
 		// 处理请求
-		c.Next() //  处理请求
+		c.Next() // 处理请求
 	}
 }
 
@@ -216,30 +243,30 @@ func IsFnOS(c *gin.Context) {
 }
 
 func RepairDB(c *gin.Context) {
-	// 修复数据库，重建所有表
+	// 修复数据库，补齐缺失的表、字段和索引
 	err := models.BatchCreateTable()
 	if err != nil {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "修复数据库失败: " + err.Error(), Data: nil})
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "修复数据库失败：" + err.Error(), Data: nil})
 		return
 	}
-	// 修复数据库表的主键序列
+	// PostgreSQL 下修复数据库表的主键序列
 	err = models.BatchRepairTableSeq()
 	if err != nil {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "修复数据库表的主键序列失败: " + err.Error(), Data: nil})
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "修复数据库表的主键序列失败：" + err.Error(), Data: nil})
 		return
 	}
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "已重建全部数据表并修复所有表的主键序列成功", Data: nil})
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "已补齐数据库表结构，并完成主键序列检查", Data: nil})
 }
 
 func GetAnnounce(c *gin.Context) {
-	// 从https://api.mqfamily.top/desc.json获取公告
+	// 从 https://api.mqfamily.top/desc.json 获取公告
 	bytes, err := helpers.ReadFromUrl("https://api.mqfamily.top/desc.json", v115open.DEFAULTUA)
 	if err != nil {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取公告失败: " + err.Error(), Data: nil})
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取公告失败：" + err.Error(), Data: nil})
 		return
 	}
-	// helpers.AppLogger.Infof("获取到的公告: %s", string(bytes))
-	// 解析json
+	// helpers.AppLogger.Infof("获取到的公告：%s", string(bytes))
+	// 解析 JSON
 	type announce struct {
 		ID      int    `json:"id"`
 		Title   string `json:"title"`
@@ -249,7 +276,7 @@ func GetAnnounce(c *gin.Context) {
 	var announces []announce
 	err = json.Unmarshal(bytes, &announces)
 	if err != nil {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "解析公告失败: " + err.Error(), Data: nil})
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "解析公告失败：" + err.Error(), Data: nil})
 		return
 	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "获取公告成功", Data: announces})
@@ -259,8 +286,8 @@ func DeleteAllTabble(c *gin.Context) {
 	// 重置数据库，删除所有表，重新初始化数据库
 	err := models.BatchDropTable()
 	if err != nil {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "删除数据库所有表失败: " + err.Error(), Data: nil})
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "删除数据库所有表失败：" + err.Error(), Data: nil})
 		return
 	}
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "删除数据库所有表成功", Data: nil})
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "已删除数据库所有表", Data: nil})
 }

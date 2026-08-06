@@ -1,8 +1,9 @@
-package scrape
+﻿package scrape
 
 import (
-	"diy-strm/internal/models"
 	"context"
+
+	"diy-strm/internal/models"
 )
 
 type IdBase struct {

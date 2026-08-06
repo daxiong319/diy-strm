@@ -1,76 +1,37 @@
-# DIY-STRM
+# DIY-STRM (QMediaSync 融合版)
 
-![GitHub release (latest by date)](https://img.shields.io/github/v/release/qicfan/diy-strm)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/qicfan/diy-strm)
+DIY-STRM 是一个媒体同步和刮削系统，用于管理 115 网盘、百度网盘、OpenList 等云存储与 Emby 媒体服务器之间的文件同步、STRM 生成和媒体刮削等流程。
 
-## 讨论方式
+本仓库在 [qicfan/qmediasync](https://github.com/qicfan/qmediasync)（v0.14.23）基础上，融合了以下二改项目的全部改进（v0.15.x）：
 
-- 电报群：[http://t.me/q115_strm](https://t.me/q115_strm)
-- QQ群：1057459156
-- Meow官方频道：使用鸿蒙系统手机扫描下方二维码来关注频道（请用官方浏览器打开）
-  
-  <img src="https://s.mqfamily.top/meow.png" width="200" />
+- [chen8945/QMediaSync](https://github.com/chen8945/QMediaSync)（v0.15.13）：STRM Webhook、目录监控 115 上传、断点续传分片上传、SSE 实时推送、Cookie 会话/CSRF/TOTP 两步验证、Emby 增量同步、日志轮转等
+- [rong28694/qmediasync-fixed](https://github.com/rong28694/qmediasync-fixed)：季集解析支持 4 位集数（S01E0001~E9999）
 
-### 开源版本不包含115开放平台账号，需要自备
+## 主要新增特性
 
-### 本项目接受除了资源（搜索、订阅、下载）、逆向接口的一切功能PR
+- **STRM Webhook**：`POST /api/strm/webhook`（API Key 鉴权），支持 file / batch_files / directory_scan 三种动作，外部程序可触发 STRM 生成
+- **目录监控 115 上传**：fsnotify/polling/auto 监控模式，稳定性队列、断点续传、源文件清理
+- **安全加固**：Cookie 会话 + CSRF、可撤销登录会话、TOTP 两步验证、登录设备管理、日志脱敏
+- **SSE 实时推送**：替代 WebSocket，结构化事件 + 共享日志 tailer
+- **Emby 增强**：增量同步、刷新任务合并、每日首次全量同步、Webhook 单条同步
+- **UI 深色侧边栏**：参考 AutoFilm WebUI 风格定制
 
-#### PR以后如果没有动静可以邮件、TG、QQ联系作者
+## Docker 镜像
 
-## 介绍
-
-- **默认用户名 admin,密码 admin123**
-- 默认端口：http-12333   https-12332
-- emby代理端口默认：http-8095  https-8094
-- 其他见 [wiki](https://github.com/qicfan/diy-strm/wiki)
-
-## 调试启动
+本地构建：
 
 ```bash
-go run .
+docker build -t diy-strm:latest .
+# 或
+docker compose up -d
 ```
 
-## 退出
+## 文档
 
-- linux: ```ctrl + c```
-- windows: 系统托盘找到DIY-STRM图标，右键退出
+完整文档见 [文档索引](docs/README.md)。
 
-## 编译且发布新版本
+## 原项目地址
 
-```bash
-cd build_scripts
-sudo ./build_and_release.sh -v vx.xx.xx
-```
-
-编译要求具有github命令行gh权限，且已经登录
-如果要发布docker镜像，需要提前登录docker hub
-该命令会编译打包所有平台的二进制文件，生成release版本，并且发布到github release页面，推送到docker hub（如果要推送到自己的仓库，请修改编译脚本中的用户名和仓库名）
-
-## 数据库
-
-开源版本不包含postgres数据库二进制文件，需要自己安装，建议版本15.x，然后配置环境变量使用。详见wiki中的[安装](https://github.com/qicfan/diy-strm/wiki/Linux-%E5%AE%89%E8%A3%85%E4%BD%BF%E7%94%A8)
-
-## 需要自备的密钥
-
-- 115开放平台 AppID，现在改为使用OAuth授权方式，开发者需要根据代码自己实现OAUTH服务端来和115通信，或者改为二维码扫码登录授权。
-- TMDB API KEY，可在web页面设置
-- OpenAI兼容的 API KEY，目前用的硅基流动，可在web页面设置
-- Fanart.tv API KEY
-
-全部都在main.go文件中开头的变量中设置，也可以在编译时通过ldflags传入
-
-## 配套前端
-
-- [DIY-STRM-Frontend](https://github.com/qicfan/q115-strm-frontend)
-
-## 贡献者
-
-![Contributors](https://contrib.rocks/image?repo=qicfan/diy-strm)
-
-## Star
-
-![Star History](https://api.star-history.com/svg?repos=qicfan/diy-strm&type=Date)
-
-## 请作者喝杯咖啡
-
-![请作者喝杯咖啡](http://s.mqfamily.top/alipay_wechat.jpg)
+- 上游：[qicfan/qmediasync](https://github.com/qicfan/qmediasync)
+- 前端：[qicfan/q115-strm-frontend](https://github.com/qicfan/q115-strm-frontend)
+- Wiki：[qicfan/qmediasync/wiki](https://github.com/qicfan/qmediasync/wiki)

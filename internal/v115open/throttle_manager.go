@@ -1,13 +1,14 @@
-package v115open
+﻿package v115open
 
 import (
-	"diy-strm/internal/helpers"
 	"context"
 	"sync"
 	"time"
+
+	"diy-strm/internal/helpers"
 )
 
-// ThrottleManager 全局限流管理器，用于管理API访问频率限制
+// ThrottleManager 全局限流管理器，用于管理 API 访问频率限制
 type ThrottleManager struct {
 	sync.RWMutex
 	// 是否处于限流状态
@@ -16,7 +17,7 @@ type ThrottleManager struct {
 	throttleStartTime time.Time
 	// 限流通知通道
 	throttleNotify chan struct{}
-	// 限流暂停时长（硬编码1分钟）
+	// 限流暂停时长（硬编码 1 分钟）
 	throttleDuration time.Duration
 }
 
@@ -60,7 +61,7 @@ func (tm *ThrottleManager) MarkThrottled(stats *RequestStats) {
 	tm.isThrottled = true
 	tm.throttleStartTime = time.Now()
 
-	helpers.V115Log.Warnf("检测到限流，将在 %v 秒后恢复", tm.throttleDuration.Seconds())
+	helpers.V115Log.Warnf("检测到限流，将在 %.0f 秒后恢复", tm.throttleDuration.Seconds())
 
 	// 记录限流事件
 	if stats != nil {
@@ -123,6 +124,7 @@ func (tm *ThrottleManager) GetThrottleStatus() ThrottleStatus {
 
 	if tm.isThrottled {
 		elapsed := time.Since(tm.throttleStartTime)
+		status.WaitTime = tm.throttleDuration
 		status.ElapsedTime = elapsed
 		status.RemainingTime = tm.throttleDuration - elapsed
 		if status.RemainingTime < 0 {
@@ -143,6 +145,7 @@ func (tm *ThrottleManager) ClearThrottled() {
 // ThrottleStatus 限流状态详情
 type ThrottleStatus struct {
 	IsThrottled   bool          // 是否处于限流状态
+	WaitTime      time.Duration // 本次限流总等待时长
 	ElapsedTime   time.Duration // 已经限流的时长
 	RemainingTime time.Duration // 剩余限流时长
 }

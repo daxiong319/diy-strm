@@ -1,10 +1,6 @@
-package syncstrm
+﻿package syncstrm
 
 import (
-	"diy-strm/internal/baidupan"
-	"diy-strm/internal/helpers"
-	"diy-strm/internal/models"
-	"diy-strm/internal/v115open"
 	"context"
 	"fmt"
 	"os"
@@ -12,6 +8,11 @@ import (
 	"runtime"
 	"strings"
 	"sync/atomic"
+
+	"diy-strm/internal/baidupan"
+	"diy-strm/internal/helpers"
+	"diy-strm/internal/models"
+	"diy-strm/internal/v115open"
 )
 
 type localDriver struct {
@@ -44,14 +45,16 @@ func (d *localDriver) GetNetFileFiles(ctx context.Context, parentPath, parentPat
 	fileloop:
 		for _, file := range fileList {
 			atomic.AddInt64(&d.s.TotalFile, 1)
+			d.s.PublishProgress(false)
 			filePath := filepath.ToSlash(filepath.Join(parentPath, file.Name()))
 			// 检查视频大小是否合规
 			stat, err := os.Stat(filePath)
 			if err != nil {
-				d.s.Sync.Logger.Errorf("获取文件 %s 信息失败，跳过，错误: %v", filePath, err)
+				d.s.Sync.Logger.Errorf("获取文件 %s 信息失败，跳过，错误：%v", filePath, err)
 				continue fileloop
 			}
 			atomic.AddInt64(&d.s.TotalFile, 1)
+			d.s.PublishProgress(false)
 			fileItem := SyncFileCache{
 				ParentId:   parentPathId,
 				FileName:   file.Name(),
@@ -74,11 +77,11 @@ func (d *localDriver) GetNetFileFiles(ctx context.Context, parentPath, parentPat
 func (d *localDriver) CreateDirRecursively(ctx context.Context, path string) (pathId, remotePath string, err error) {
 	relPath, err := filepath.Rel(d.s.TargetPath, path)
 	if err != nil {
-		return "", "", fmt.Errorf("计算相对路径失败: %s 错误：%v", path, err)
+		return "", "", fmt.Errorf("计算相对路径失败：%s，错误：%v", path, err)
 	}
 	targetPath := filepath.Join(d.s.SourcePath, relPath)
 	if err := os.MkdirAll(targetPath, 0755); err != nil {
-		return "", "", fmt.Errorf("创建目录失败: %s 错误：%v", targetPath, err)
+		return "", "", fmt.Errorf("创建目录失败：%s，错误：%v", targetPath, err)
 	}
 	// 将新添加的目录加入同步缓存
 	syncFileCache := &SyncFileCache{
@@ -104,7 +107,7 @@ func (d *localDriver) GetPathIdByPath(ctx context.Context, path string) (string,
 func (d *localDriver) MakeStrmContent(sf *SyncFileCache) string {
 	fullPath := sf.GetFileId()
 	if runtime.GOOS == "windows" {
-		// windows要将分隔换成\
+		// Windows 需要将分隔符换成 \。
 		fullPath = strings.ReplaceAll(fullPath, "/", "\\")
 	}
 	return fullPath
@@ -131,7 +134,7 @@ func (d *localDriver) DetailByFileId(ctx context.Context, fileId string) (*SyncF
 func (d *localDriver) DeleteFile(ctx context.Context, parentId string, fileIds []string) error {
 	for _, fileId := range fileIds {
 		if err := os.Remove(fileId); err != nil {
-			d.s.Sync.Logger.Errorf("删除文件 %s 失败，错误: %v", fileId, err)
+			d.s.Sync.Logger.Errorf("删除文件 %s 失败，错误：%v", fileId, err)
 			continue
 		}
 	}

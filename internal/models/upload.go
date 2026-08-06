@@ -1,17 +1,21 @@
-package models
+﻿package models
 
 import (
-	"diy-strm/internal/helpers"
 	"sync"
 	"time"
+
+	"diy-strm/internal/db"
+	"diy-strm/internal/helpers"
+	"diy-strm/internal/realtime"
 )
 
 // UploadQueue 上传队列
 type UQ struct {
-	tasks      chan *DbUploadTask // 所有待上传任务
-	numWorkers int                // 工作线程数
-	mutex      sync.RWMutex       // 读写锁，保护TaskMap
-	running    bool               // 队列是否正在运行
+	tasks          chan *DbUploadTask // 所有待上传任务
+	numWorkers     int                // 工作线程数
+	mutex          sync.RWMutex       // 读写锁，保护 TaskMap
+	running        bool               // 队列是否正在运行
+	retryTriggered bool               // 当前空闲周期是否已触发失败重试
 }
 
 // 全局上传队列实例
@@ -46,9 +50,10 @@ func (uq *UQ) Start() {
 		return
 	}
 	uq.running = true
-	// 重新创建tasks通道和results通道
+	// 重新创建 tasks 通道和 results 通道
 	uq.tasks = make(chan *DbUploadTask, uq.numWorkers)
 	uq.mutex.Unlock()
+	realtime.BroadcastQueueStatusChanged(realtime.EventUploadQueueStatusChanged, true)
 	// 启动工作协程
 	for i := 0; i < uq.numWorkers; i++ {
 		go uq.worker()
@@ -79,7 +84,7 @@ func (uq *UQ) worker() {
 				// helpers.AppLogger.Debug("任务通道已关闭，工作协程退出")
 				return
 			}
-			// 在新的goroutine中处理任务
+			// 在新的 goroutine 中处理任务
 			task.Upload()
 		case <-time.After(100 * time.Millisecond):
 			// 超时检查，避免无限阻塞
@@ -87,8 +92,8 @@ func (uq *UQ) worker() {
 	}
 }
 
-// 任务调度器，定期将TaskMap中的任务加入到tasks通道
-// 将TaskMap中的任务移动到tasks通道
+// 任务调度器，定期将 TaskMap 中的任务加入到 tasks 通道
+// 将 TaskMap 中的任务移动到 tasks 通道
 func (uq *UQ) moveTasksToChannel() {
 	// 检查队列是否正在运行
 	uq.mutex.RLock()
@@ -111,10 +116,30 @@ func (uq *UQ) moveTasksToChannel() {
 	uq.mutex.Lock()
 	defer uq.mutex.Unlock()
 
+	var total int64
+	db.Db.Model(&DbUploadTask{}).
+		Where("status IN ?", []UploadStatus{UploadStatusPending, UploadStatusRemoteCompletedPendingFinalize}).
+		Count(&total)
+	if total == 0 {
+		if uq.retryTriggered {
+			return
+		}
+		if GetUploadingCount() > 0 {
+			return
+		}
+		if err := RetryFailedUploadTasks(DefaultQueueRetryMax); err != nil {
+			helpers.AppLogger.Errorf("上传队列自动重试失败任务失败：%v", err)
+			return
+		}
+		uq.retryTriggered = true
+		return
+	}
+	uq.retryTriggered = false
+
 	// 计算需要移动的任务数量
 	availableSpace := cap(uq.tasks) - len(uq.tasks)
-	tasksToMove := availableSpace
-	// 从数据库中查询tasksToMove条待上传的记录
+	tasksToMove := min(availableSpace, int(total))
+	// 从数据库中查询 tasksToMove 条待上传的记录
 	tasks := GetPendingUploadTasks(tasksToMove)
 	if len(tasks) == 0 {
 		return
@@ -139,7 +164,7 @@ outer:
 	// }
 }
 
-// taskScheduler 定时将TaskMap中的任务移动到tasks通道
+// taskScheduler 定时将 TaskMap 中的任务移动到 tasks 通道
 func (uq *UQ) taskScheduler() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -170,8 +195,9 @@ func (uq *UQ) Stop() {
 	}
 	uq.running = false
 	uq.mutex.Unlock()
+	realtime.BroadcastQueueStatusChanged(realtime.EventUploadQueueStatusChanged, false)
 
-	// 关闭tasks通道
+	// 关闭 tasks 通道
 	close(uq.tasks)
 
 	helpers.AppLogger.Info("上传队列已停止")

@@ -1,4 +1,4 @@
-package music_test
+﻿package music_test
 
 import (
 	"os"
@@ -6,11 +6,26 @@ import (
 
 	"diy-strm/emby302/service/lib/ffmpeg"
 	"diy-strm/emby302/service/music"
+	"diy-strm/internal/helpers"
 )
 
 const host = "http://0.0.0.0:12345"
 
+func requireIntegration(t *testing.T) {
+	t.Helper()
+	if os.Getenv("QMS_INTEGRATION_TESTS") != "1" {
+		t.Skip("设置 QMS_INTEGRATION_TESTS=1 后运行音乐集成测试")
+	}
+	helpers.ConfigDir = t.TempDir()
+	helpers.AppLogger = helpers.NewLogger("test.log", true, false)
+	t.Cleanup(func() {
+		helpers.AppLogger.Close()
+		helpers.AppLogger = nil
+	})
+}
+
 func TestWriteFakeMP3(t *testing.T) {
+	requireIntegration(t)
 	if err := ffmpeg.AutoDownloadExec("../../.."); err != nil {
 		t.Fatal(err)
 		return

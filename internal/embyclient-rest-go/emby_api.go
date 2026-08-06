@@ -1,15 +1,18 @@
-package embyclientrestgo
+﻿package embyclientrestgo
 
 import (
-	"diy-strm/internal/helpers"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"slices"
+	"strconv"
 	"time"
+
+	"diy-strm/internal/helpers"
 )
 
 // Client 是与 Emby API 交互的客户端。
@@ -41,13 +44,13 @@ type EmbyLibrariesResponse struct {
 	Items []EmbyLibrary `json:"Items"`
 }
 
-// UserPolicy represents the policy settings for a user.
+// UserPolicy 表示 Emby 用户策略配置。
 type UserPolicy struct {
-	// Gets or sets a value indicating whether [enable all folders].
+	// 是否允许访问所有文件夹。
 	EnableAllFolders bool `json:"EnableAllFolders"`
 }
 
-// UserDto represents a user in Emby.
+// UserDto 表示 Emby 用户。
 type UserDto struct {
 	Name   string     `json:"Name"`
 	ID     string     `json:"Id"`
@@ -63,7 +66,7 @@ type PersonDto struct {
 
 type BaseItemDtoV2 struct {
 	Name string `json:"Name,omitempty"`
-	// The id.
+	// Emby 项目 ID。
 	Id                string            `json:"Id,omitempty"`
 	MediaStreams      []MediaStreamV2   `json:"MediaStreams,omitempty"`
 	Type              string            `json:"Type,omitempty"`
@@ -94,7 +97,7 @@ type MediaSource struct {
 }
 
 type MediaStreamV2 struct {
-	// The codec.    Probe Field: `codec_name`    Applies to: `MediaBrowser.Model.Entities.MediaStreamType.Video`, `MediaBrowser.Model.Entities.MediaStreamType.Audio`, `MediaBrowser.Model.Entities.MediaStreamType.Subtitle`    Related Enums: `T:Emby.Media.Model.Enums.VideoMediaTypes`, `Emby.Media.Model.Enums.AudioMediaTypes`, `Emby.Media.Model.Enums.SubtitleMediaTypes`.
+	// 编码格式，对应探测字段 codec_name，适用于视频、音频和字幕流。
 	Codec string `json:"Codec,omitempty"`
 	Type  string `json:"Type,omitempty"`
 }
@@ -102,6 +105,23 @@ type MediaStreamV2 struct {
 type QueryResultBaseItemDto struct {
 	Items            []BaseItemDtoV2 `json:"Items,omitempty"`
 	TotalRecordCount int32           `json:"TotalRecordCount,omitempty"`
+}
+
+const embyRefreshLookupItemTypes = "Movie,Video,Episode,Folder,Series"
+
+// EmbyItemsQuery 表示查询 Emby 媒体条目的分页参数。
+type EmbyItemsQuery struct {
+	LibraryID         string
+	UserID            string
+	StartIndex        int
+	Limit             int
+	MinDateLastSaved  string
+	SortBy            string
+	SortOrder         string
+	IncludeItemTypes  string
+	Fields            string
+	IDs               string
+	LastDateCreatedAt int64
 }
 
 type AncestorDto struct {
@@ -133,7 +153,7 @@ func (c *Client) GetAllMediaLibraries() ([]EmbyLibrary, error) {
 	// 创建一个新的 HTTP 请求
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("创建请求时出错: %w", err)
+		return nil, fmt.Errorf("创建请求时出错：%w", err)
 	}
 
 	// 设置请求头
@@ -142,19 +162,19 @@ func (c *Client) GetAllMediaLibraries() ([]EmbyLibrary, error) {
 	// 发送请求
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("发送请求时出错: %w", err)
+		return nil, fmt.Errorf("发送请求时出错：%w", err)
 	}
 	defer resp.Body.Close()
 
 	// 检查响应状态码
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("错误: 收到非 200 状态码: %d", resp.StatusCode)
+		return nil, fmt.Errorf("收到非 200 状态码：%d", resp.StatusCode)
 	}
 
 	// 读取响应体
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("读取响应体时出错: %w", err)
+		return nil, fmt.Errorf("读取响应体时出错：%w", err)
 	}
 
 	// 解析 JSON 响应
@@ -165,197 +185,248 @@ func (c *Client) GetAllMediaLibraries() ([]EmbyLibrary, error) {
 		if err2 := json.Unmarshal(body, &singleLibrary); err2 == nil && singleLibrary.Name != "" {
 			return []EmbyLibrary{singleLibrary}, nil
 		}
-		return nil, fmt.Errorf("解析 json 时出错: %w", err)
+		return nil, fmt.Errorf("解析 JSON 时出错：%w", err)
 	}
 
 	return librariesResponse.Items, nil
 }
 
 // GetMediaItemsByLibraryID 从指定的媒体库中检索所有媒体项目。
-// 它会自动处理分页并为每个项目请求详细字段。
+// 兼容旧调用方：内部使用流式分页接口，再聚合为切片返回。
 func (c *Client) GetMediaItemsByLibraryID(libraryID string, lastDateCreatedTime int64) ([]BaseItemDtoV2, error) {
-	const (
-		limit  = 100 // 每次请求获取的项目数
-		fields = "DateCreated,DateModified,ParentId,PremiereDate,MediaStreams"
-	)
-
 	var allItems []BaseItemDtoV2
-	startIndex := 0
-	firstRequest := true
-
-	// 构建基础 URL
-	baseURL, err := url.Parse(fmt.Sprintf("%s/emby/Items", c.embyURL))
-	if err != nil {
-		return nil, fmt.Errorf("解析基础 URL 时出错: %w", err)
-	}
-
-mainloop:
-	for {
-		// 设置查询参数
-		params := url.Values{}
-		params.Add("ParentId", libraryID)
-		params.Add("api_key", c.apiKey)
-		params.Add("StartIndex", fmt.Sprintf("%d", startIndex))
-		params.Add("Limit", fmt.Sprintf("%d", limit))
-		params.Add("Recursive", "true")
-		params.Add("IncludeItemTypes", "Movie,Video,Episode")
-		params.Add("Fields", fields)
-		params.Add("SortBy", "DateCreated")   // 入库时间
-		params.Add("SortOrder", "Descending") // 倒叙排列
-		baseURL.RawQuery = params.Encode()
-
-		req, err := http.NewRequest("GET", baseURL.String(), nil)
-		if err != nil {
-			return nil, fmt.Errorf("创建请求时出错: %w", err)
-		}
-		req.Header.Set("Accept", "application/json")
-		// helpers.AppLogger.Debugf("GET %s", baseURL.String())
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("发送请求时出错: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("错误: 收到非 200 状态码: %d", resp.StatusCode)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("读取响应体时出错: %w", err)
-		}
-
-		var response QueryResultBaseItemDto
-		if err := json.Unmarshal(body, &response); err != nil {
-			return nil, fmt.Errorf("解析 json 时出错: %w", err)
-		}
-
-		if firstRequest {
-			if response.TotalRecordCount > 0 {
-				allItems = make([]BaseItemDtoV2, 0, response.TotalRecordCount)
-			}
-			firstRequest = false
-		}
-		for _, item := range response.Items {
-			// helpers.AppLogger.Debugf("处理项目 %+v", item)
-			var dateCreatedTime int64 = 0
-			if item.DateCreated != "" {
-				if t, err := time.Parse(time.RFC3339, item.DateCreated); err == nil {
-					dateCreatedTime = t.Unix()
-				}
-			}
-			if dateCreatedTime == lastDateCreatedTime {
-				helpers.AppLogger.Infof("找到最后一个项目 %s =>%d", item.Id, lastDateCreatedTime)
-				break mainloop
-			} else {
-				allItems = append(allItems, item)
-			}
-		}
-
-		// allItems = append(allItems, response.Items...)
-
-		// 检查是否已获取所有项目
-		if len(response.Items) == 0 || len(allItems) >= int(response.TotalRecordCount) {
-			break
-		}
-
-		// 准备下一页
-		startIndex += len(response.Items)
-	}
-
-	return allItems, nil
+	err := c.FetchMediaItemsByLibraryID(
+		context.Background(),
+		EmbyItemsQuery{
+			LibraryID:         libraryID,
+			LastDateCreatedAt: lastDateCreatedTime,
+		},
+		func(item BaseItemDtoV2) error {
+			allItems = append(allItems, item)
+			return nil
+		},
+	)
+	return allItems, err
 }
 
-// CheckPlaybackInfo sends a request to get playback info for a media item and checks for success.
+// FetchMediaItemsByLibraryID 从指定媒体库分页拉取媒体条目，并逐条回调处理。
+func (c *Client) FetchMediaItemsByLibraryID(
+	ctx context.Context,
+	query EmbyItemsQuery,
+	handle func(item BaseItemDtoV2) error,
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if handle == nil {
+		return errors.New("handle 不能为空")
+	}
+
+	startIndex := query.StartIndex
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+
+	for {
+		response, err := c.fetchMediaItemsPage(ctx, query, startIndex, limit)
+		if err != nil {
+			return err
+		}
+		for _, item := range response.Items {
+			if query.LastDateCreatedAt > 0 && item.DateCreated != "" {
+				if t, err := time.Parse(time.RFC3339, item.DateCreated); err == nil && t.Unix() == query.LastDateCreatedAt {
+					return nil
+				}
+			}
+			if err := handle(item); err != nil {
+				return err
+			}
+		}
+
+		if len(response.Items) == 0 {
+			return nil
+		}
+		nextStartIndex := startIndex + len(response.Items)
+		if response.TotalRecordCount > 0 && nextStartIndex >= int(response.TotalRecordCount) {
+			return nil
+		}
+		startIndex = nextStartIndex
+	}
+}
+
+func (c *Client) fetchMediaItemsPage(
+	ctx context.Context,
+	query EmbyItemsQuery,
+	startIndex int,
+	limit int,
+) (QueryResultBaseItemDto, error) {
+	basePath := fmt.Sprintf("%s/emby/Items", c.embyURL)
+	if query.UserID != "" {
+		basePath = fmt.Sprintf("%s/emby/Users/%s/Items", c.embyURL, url.PathEscape(query.UserID))
+	}
+	baseURL, err := url.Parse(basePath)
+	if err != nil {
+		return QueryResultBaseItemDto{}, fmt.Errorf("解析基础 URL 时出错：%w", err)
+	}
+
+	params := url.Values{}
+	params.Add("api_key", c.apiKey)
+	params.Add("StartIndex", fmt.Sprintf("%d", startIndex))
+	params.Add("Limit", fmt.Sprintf("%d", limit))
+	params.Add("Recursive", "true")
+	if query.LibraryID != "" {
+		params.Add("ParentId", query.LibraryID)
+	}
+	if query.IncludeItemTypes != "" {
+		params.Add("IncludeItemTypes", query.IncludeItemTypes)
+	} else {
+		params.Add("IncludeItemTypes", "Movie,Video,Episode")
+	}
+	if query.Fields != "" {
+		params.Add("Fields", query.Fields)
+	} else {
+		params.Add("Fields", "DateCreated,DateModified,ParentId,PremiereDate,MediaStreams")
+	}
+	if query.SortBy != "" {
+		params.Add("SortBy", query.SortBy)
+	} else {
+		params.Add("SortBy", "DateCreated")
+	}
+	if query.SortOrder != "" {
+		params.Add("SortOrder", query.SortOrder)
+	} else {
+		params.Add("SortOrder", "Descending")
+	}
+	if query.MinDateLastSaved != "" {
+		params.Add("MinDateLastSaved", query.MinDateLastSaved)
+	}
+	if query.IDs != "" {
+		params.Add("Ids", query.IDs)
+	}
+	baseURL.RawQuery = params.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL.String(), nil)
+	if err != nil {
+		return QueryResultBaseItemDto{}, fmt.Errorf("创建请求时出错：%w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return QueryResultBaseItemDto{}, fmt.Errorf("发送请求时出错：%w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return QueryResultBaseItemDto{}, fmt.Errorf("收到非 200 状态码：%d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return QueryResultBaseItemDto{}, fmt.Errorf("读取响应体时出错：%w", err)
+	}
+
+	var response QueryResultBaseItemDto
+	if err := json.Unmarshal(body, &response); err != nil {
+		return QueryResultBaseItemDto{}, fmt.Errorf("解析 JSON 时出错：%w", err)
+	}
+	return response, nil
+}
+
+// CheckPlaybackInfo 请求媒体项目的播放信息，并检查请求是否成功。
 func (c *Client) CheckPlaybackInfo(item BaseItemDtoV2, userID string) error {
-	// Construct the request URL
+	// 构造请求 URL
 	url := fmt.Sprintf("%s/emby/Items/%s/PlaybackInfo?api_key=%s", c.embyURL, item.Id, c.apiKey)
-	// Prepare the request body
+	// 准备请求体
 	requestBody, err := json.Marshal(map[string]string{
 		"UserId": userID,
 	})
 	if err != nil {
-		return fmt.Errorf("序列化请求体失败: %w", err)
+		return fmt.Errorf("序列化请求体失败：%w", err)
 	}
 
 	var lastErr error
 
 	for i := 0; i < 1; i++ {
-		// Create a new HTTP POST request
+		// 创建新的 HTTP POST 请求
 		req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
 		if err != nil {
-			return fmt.Errorf("创建 POST 请求失败: %w", err) // This error is not retryable
+			return fmt.Errorf("创建 POST 请求失败：%w", err)
 		}
 
-		// Set request headers
+		// 设置请求头
 		req.Header.Set("Content-Type", "application/json")
 
-		// Send the request
+		// 发送请求
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			lastErr = fmt.Errorf("发送 POST 请求失败: %w", err)
-			helpers.AppLogger.Errorf("第 %d 次尝试失败: %v。3秒后重试...", i+1, err)
+			lastErr = fmt.Errorf("发送 POST 请求失败：%w", err)
+			helpers.AppLogger.Errorf("第 %d 次尝试失败：%v。3 秒后重试…", i+1, err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
 
-		// Check the response status code
+		// 检查响应状态码
 		if resp.StatusCode == http.StatusOK {
-			helpers.AppLogger.Infof("影视剧 %s 的媒体信息请求成功 (用户: %s)", item.Name, userID)
+			helpers.AppLogger.Infof("影视剧 %s 的媒体信息请求成功（用户：%s）", item.Name, userID)
 			resp.Body.Close()
 			return nil
 		}
 
-		// If status code is not OK, record the error and retry.
-		lastErr = fmt.Errorf("请求失败，收到非 200 状态码: %d", resp.StatusCode)
-		helpers.AppLogger.Errorf("第 %d 次尝试失败，状态码: %d。3秒后重试...", i+1, resp.StatusCode)
-		resp.Body.Close() // It's important to close the body to prevent resource leaks.
+		// 状态码异常时记录错误并重试。
+		lastErr = fmt.Errorf("请求失败，收到非 200 状态码：%d", resp.StatusCode)
+		helpers.AppLogger.Errorf("第 %d 次尝试失败，状态码：%d。3 秒后重试…", i+1, resp.StatusCode)
+		resp.Body.Close()
 		time.Sleep(3 * time.Second)
 	}
 
-	helpers.AppLogger.Errorf("1次尝试后，获取影视剧 %s (用户: %s) 的媒体信息失败。最后错误: %v", item.Name, userID, lastErr)
-	return fmt.Errorf("获取媒体信息失败，重试1次后: %w", lastErr)
+	helpers.AppLogger.Errorf("1 次尝试后，获取影视剧 %s（用户：%s）的媒体信息失败。最后错误：%v", item.Name, userID, lastErr)
+	return fmt.Errorf("获取媒体信息失败，重试 1 次后：%w", lastErr)
 }
 
-// GetUsersWithAllLibrariesAccess retrieves all users from Emby and filters for those with access to all libraries.
+// GetUsersWithAllLibrariesAccess 获取所有 Emby 用户，并筛选出可访问全部媒体库的用户。
 func (c *Client) GetUsersWithAllLibrariesAccess() ([]UserDto, error) {
-	// Construct the request URL
+	// 构造请求 URL
 	url := fmt.Sprintf("%s/emby/Users?api_key=%s", c.embyURL, c.apiKey)
 
-	// Create a new HTTP request
+	// 创建新的 HTTP 请求
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("创建请求时出错: %w", err)
+		return nil, fmt.Errorf("创建请求时出错：%w", err)
 	}
 
-	// Set request headers
+	// 设置请求头
 	req.Header.Set("Accept", "application/json")
 
-	// Send the request
+	// 发送请求
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("发送请求时出错: %w", err)
+		return nil, fmt.Errorf("发送请求时出错：%w", err)
 	}
 	defer resp.Body.Close()
 
-	// Check the response status code
+	// 检查响应状态码
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("错误: 收到非 200 状态码: %d", resp.StatusCode)
+		return nil, fmt.Errorf("收到非 200 状态码：%d", resp.StatusCode)
 	}
 
-	// Read the response body
+	// 读取响应体
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("读取响应体时出错: %w", err)
+		return nil, fmt.Errorf("读取响应体时出错：%w", err)
 	}
 
-	// Parse the JSON response
+	// 解析 JSON 响应
 	var users []UserDto
 	if err := json.Unmarshal(body, &users); err != nil {
-		return nil, fmt.Errorf("解析 json 时出错: %w", err)
+		return nil, fmt.Errorf("解析 JSON 时出错：%w", err)
 	}
 
-	// Filter users who have access to all media libraries
+	// 筛选可访问所有媒体库的用户
 	var usersWithAllAccess []UserDto
 	for _, user := range users {
 		if user.Policy.EnableAllFolders {
@@ -368,20 +439,111 @@ func (c *Client) GetUsersWithAllLibrariesAccess() ([]UserDto, error) {
 
 // 刷新媒体库
 func (c *Client) RefreshLibrary(libraryId string, libraryName string) error {
-	// Construct the request URL
+	// 构造请求 URL
 	url := fmt.Sprintf("%s/emby/Items/%s/Refresh?api_key=%s&Fields=MediaStreams", c.embyURL, libraryId, c.apiKey)
 	err := helpers.PostUrl(url)
 	if err != nil {
 		return err
 	}
-	helpers.AppLogger.Infof("已触发Emby媒体库 %s => %s 刷新", libraryId, libraryName)
+	helpers.AppLogger.Infof("已触发 Emby 媒体库 %s => %s 刷新", libraryId, libraryName)
 	return nil
 }
 
+// RefreshItem 刷新单个 Emby 条目。
+func (c *Client) RefreshItem(itemId string, itemName string, recursive bool) error {
+	baseURL, err := url.Parse(fmt.Sprintf("%s/emby/Items/%s/Refresh", c.embyURL, url.PathEscape(itemId)))
+	if err != nil {
+		return fmt.Errorf("解析 Emby 条目刷新 URL 失败：%w", err)
+	}
+	params := url.Values{}
+	params.Add("api_key", c.apiKey)
+	params.Add("Fields", "MediaStreams")
+	params.Add("Recursive", strconv.FormatBool(recursive))
+	baseURL.RawQuery = params.Encode()
+
+	req, err := http.NewRequest(http.MethodPost, baseURL.String(), nil)
+	if err != nil {
+		return fmt.Errorf("创建 Emby 条目刷新请求失败：%w", err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("发送 Emby 条目刷新请求失败：%w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("刷新 Emby 条目失败，状态码：%d", resp.StatusCode)
+	}
+	helpers.AppLogger.Infof("已触发 Emby 条目 %s => %s 刷新，recursive=%v", itemId, itemName, recursive)
+	return nil
+}
+
+// FindItemByPath 按本地路径查询 Emby 条目。
+func (c *Client) FindItemByPath(path string) (*BaseItemDtoV2, error) {
+	if path == "" {
+		return nil, nil
+	}
+	params := url.Values{}
+	params.Add("Path", path)
+	params.Add("Recursive", "true")
+	params.Add("Fields", "Path")
+	params.Add("IncludeItemTypes", embyRefreshLookupItemTypes)
+	params.Add("Limit", "1")
+	return c.findFirstItem(params, "Emby 路径查询")
+}
+
+// FindItemByID 按 item ID 查询 Emby 条目。
+func (c *Client) FindItemByID(itemID string) (*BaseItemDtoV2, error) {
+	if itemID == "" {
+		return nil, nil
+	}
+	params := url.Values{}
+	params.Add("Ids", itemID)
+	params.Add("Recursive", "true")
+	params.Add("Fields", "Path")
+	params.Add("IncludeItemTypes", embyRefreshLookupItemTypes)
+	params.Add("Limit", "1")
+	return c.findFirstItem(params, "Emby ID 查询")
+}
+
+func (c *Client) findFirstItem(params url.Values, errorContext string) (*BaseItemDtoV2, error) {
+	baseURL, err := url.Parse(fmt.Sprintf("%s/emby/Items", c.embyURL))
+	if err != nil {
+		return nil, fmt.Errorf("解析 %s URL 失败：%w", errorContext, err)
+	}
+	params.Add("api_key", c.apiKey)
+	baseURL.RawQuery = params.Encode()
+
+	req, err := http.NewRequest(http.MethodGet, baseURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("创建 %s 请求失败：%w", errorContext, err)
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("发送 %s 请求失败：%w", errorContext, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s 返回非 200 状态码：%d", errorContext, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取 %s 响应失败：%w", errorContext, err)
+	}
+	var result QueryResultBaseItemDto
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("解析 %s 响应失败：%w", errorContext, err)
+	}
+	if len(result.Items) == 0 {
+		return nil, nil
+	}
+	return &result.Items[0], nil
+}
+
 func (c *Client) GetItemDetailByUser(itemId string, userID string) (*BaseItemDtoV2, error) {
-	// Construct the request URL
+	// 构造请求 URL
 	url := fmt.Sprintf("%s/emby/Users/%s/Items/%s?api_key=%s", c.embyURL, userID, itemId, c.apiKey)
-	helpers.AppLogger.Debugf("获取Emby媒体详情 URL: %s", url)
+	helpers.AppLogger.Debugf("获取 Emby 媒体详情 URL：%s", url)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -395,7 +557,7 @@ func (c *Client) GetItemDetailByUser(itemId string, userID string) (*BaseItemDto
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("错误: 收到非 200 状态码: %d", resp.StatusCode)
+		return nil, fmt.Errorf("收到非 200 状态码：%d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -405,114 +567,121 @@ func (c *Client) GetItemDetailByUser(itemId string, userID string) (*BaseItemDto
 
 	var response BaseItemDtoV2
 	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("解析 json 时出错: %w", err)
+		return nil, fmt.Errorf("解析 JSON 时出错：%w", err)
 	}
 	return &response, nil
 }
 
-// 通过item id 查询所属的 媒体库id，返回数组
-// 先查询item的Ancestors获取item所属的文件夹id，取倒数第二个文件夹路径做为顶层文件夹路径
-// 再查询/Library/VirtualFolders获取顶层文件夹路径对应的媒体库id
+// 通过 item ID 查询所属的媒体库 ID，返回数组。
+// 先查询 item 的 Ancestors，再用 ancestor 路径精确匹配 /Library/VirtualFolders 的 Locations。
 func (c *Client) GetItemLibraryId(itemId string) ([]VirtualFolderDto, error) {
 	ancestors, err := c.GetItemAncestors(itemId)
 	if err != nil {
 		return nil, err
 	}
-	// 提取倒数第二个文件夹路径做顶层文件夹路径
-	libraryFolderDto := ancestors[len(ancestors)-2]
-	libraryPath := libraryFolderDto.Path
-	// 查询顶层文件夹路径对应的媒体库id
+	if len(ancestors) == 0 {
+		return nil, fmt.Errorf("Emby 条目 %s ancestors 为空，无法解析所属媒体库", itemId)
+	}
+	// 查询顶层文件夹路径对应的媒体库 ID
 	virtualFolders, err := c.GetLibraryVirtualFolders()
 	if err != nil {
 		return nil, err
 	}
-	// 提取所有媒体库id
+	ancestorPaths := make(map[string]struct{}, len(ancestors))
+	for _, ancestor := range ancestors {
+		if ancestor.Path != "" {
+			ancestorPaths[ancestor.Path] = struct{}{}
+		}
+	}
+	// 提取所有命中 ancestor 路径的媒体库 ID
 	var librarys []VirtualFolderDto
 	for _, virtualFolder := range virtualFolders {
-		if slices.Contains(virtualFolder.Locations, libraryPath) {
-			librarys = append(librarys, virtualFolder)
-			continue
+		for _, location := range virtualFolder.Locations {
+			if _, ok := ancestorPaths[location]; ok {
+				librarys = append(librarys, virtualFolder)
+				break
+			}
 		}
 	}
 	return librarys, nil
 }
 
 func (c *Client) GetItemAncestors(itemId string) ([]AncestorDto, error) {
-	// Construct the request URL
+	// 构造请求 URL
 	url := fmt.Sprintf("%s/emby/Items/%s/Ancestors?api_key=%s", c.embyURL, itemId, c.apiKey)
 
-	// Create a new HTTP request
+	// 创建新的 HTTP 请求
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("创建请求时出错: %w", err)
+		return nil, fmt.Errorf("创建请求时出错：%w", err)
 	}
 
-	// Set request headers
+	// 设置请求头
 	req.Header.Set("Accept", "application/json")
 
-	// Send the request
+	// 发送请求
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("发送请求时出错: %w", err)
+		return nil, fmt.Errorf("发送请求时出错：%w", err)
 	}
 	defer resp.Body.Close()
 
-	// Check the response status code
+	// 检查响应状态码
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("错误: 收到非 200 状态码: %d", resp.StatusCode)
+		return nil, fmt.Errorf("收到非 200 状态码：%d", resp.StatusCode)
 	}
 
-	// Read the response body
+	// 读取响应体
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("读取响应体时出错: %w", err)
+		return nil, fmt.Errorf("读取响应体时出错：%w", err)
 	}
 
-	// Parse the JSON response
+	// 解析 JSON 响应
 	var ancestors []AncestorDto
 	if err := json.Unmarshal(body, &ancestors); err != nil {
-		return nil, fmt.Errorf("解析 json 时出错: %w", err)
+		return nil, fmt.Errorf("解析 JSON 时出错：%w", err)
 	}
-	// 提取所有文件夹id
+	// 提取所有文件夹 ID
 	return ancestors, nil
 }
 
 // 获取所有媒体库的详情包括文件夹
 func (c *Client) GetLibraryVirtualFolders() ([]VirtualFolderDto, error) {
-	// Construct the request URL
+	// 构造请求 URL
 	url := fmt.Sprintf("%s/emby/Library/VirtualFolders?api_key=%s", c.embyURL, c.apiKey)
 
-	// Create a new HTTP request
+	// 创建新的 HTTP 请求
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("创建请求时出错: %w", err)
+		return nil, fmt.Errorf("创建请求时出错：%w", err)
 	}
 
-	// Set request headers
+	// 设置请求头
 	req.Header.Set("Accept", "application/json")
 
-	// Send the request
+	// 发送请求
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("发送请求时出错: %w", err)
+		return nil, fmt.Errorf("发送请求时出错：%w", err)
 	}
 	defer resp.Body.Close()
 
-	// Check the response status code
+	// 检查响应状态码
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("错误: 收到非 200 状态码: %d", resp.StatusCode)
+		return nil, fmt.Errorf("收到非 200 状态码：%d", resp.StatusCode)
 	}
 
-	// Read the response body
+	// 读取响应体
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("读取响应体时出错: %w", err)
+		return nil, fmt.Errorf("读取响应体时出错：%w", err)
 	}
 
-	// Parse the JSON response
+	// 解析 JSON 响应
 	var virtualFolders []VirtualFolderDto
 	if err := json.Unmarshal(body, &virtualFolders); err != nil {
-		return nil, fmt.Errorf("解析 json 时出错: %w", err)
+		return nil, fmt.Errorf("解析 JSON 时出错：%w", err)
 	}
 
 	return virtualFolders, nil
@@ -525,13 +694,13 @@ func ProcessLibraries(embyURL, apiKey string, excludeIds []string) []map[string]
 
 	libs, err := client.GetAllMediaLibraries()
 	if err != nil {
-		helpers.AppLogger.Errorf("获取媒体库失败%v", err)
+		helpers.AppLogger.Errorf("获取媒体库失败：%v", err)
 		return nil
 	}
 	// 获取有权限的用户
 	users, err := client.GetUsersWithAllLibrariesAccess()
 	if err != nil {
-		helpers.AppLogger.Errorf("获取用户失败: %v", err)
+		helpers.AppLogger.Errorf("获取用户失败：%v", err)
 		return nil
 	}
 	if len(users) == 0 {
@@ -548,26 +717,26 @@ func ProcessLibraries(embyURL, apiKey string, excludeIds []string) []map[string]
 
 	// 使用第一个有权限的用户
 	userID := users[0].ID
-	helpers.AppLogger.Infof("使用用户 '%s' (ID: %s) 来检查播放信息", users[0].Name, userID)
+	helpers.AppLogger.Infof("使用用户 %s（ID：%s）检查播放信息", users[0].Name, userID)
 	sum := 0
 	tasks := make([]map[string]string, 0)
 	for _, lib := range libs {
 		if _, exists := excludeMap[lib.ID]; exists {
-			helpers.AppLogger.Infof("媒体库%s在排除列表\n", lib.Name)
+			helpers.AppLogger.Infof("媒体库 %s 在排除列表中", lib.Name)
 			continue
 		}
 
 		items, err := client.GetMediaItemsByLibraryID(lib.ID, 0)
 		if err != nil {
-			helpers.AppLogger.Errorf("获取媒体库 '%s' 中的项目失败: %v", lib.Name, err)
+			helpers.AppLogger.Errorf("获取媒体库 %s 中的项目失败：%v", lib.Name, err)
 			continue // 继续处理下一个媒体库
 		}
 
-		helpers.AppLogger.Infof("在 '%s' 中找到 %d 个影视剧", lib.Name, len(items))
-		//处理数据量
+		helpers.AppLogger.Infof("在 %s 中找到 %d 个影视剧", lib.Name, len(items))
+		// 处理数据量
 
 		for _, item := range items {
-			helpers.AppLogger.Infof("处理项目 %s : %s，共 %d 个媒体流", item.Id, item.Name, len(item.MediaStreams))
+			helpers.AppLogger.Infof("处理项目 %s：%s，共 %d 个媒体流", item.Id, item.Name, len(item.MediaStreams))
 			nonSubtitleStreamCount := 0
 			for _, stream := range item.MediaStreams {
 				if stream.Type != "Subtitle" {

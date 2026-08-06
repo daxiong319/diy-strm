@@ -1,0 +1,31 @@
+services:
+  diy-strm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - VERSION=latest
+    image: diy-strm:latest
+    container_name: diy-strm
+    restart: unless-stopped
+    ports:
+      - "12333:12333"  # Web 管理界面 (http)
+      - "12332:12332"  # Web 管理界面 (https)
+      - "8095:8095"    # Emby 302 代理 (http)
+      - "8094:8094"    # Emby 302 代理 (https)
+    volumes:
+      - ./config:/app/config
+      # 将本地媒体目录挂载到容器，例如：
+      # - /vol1/1000/网盘:/media
+    environment:
+      - TZ=Asia/Shanghai
+      # 如使用外部 PostgreSQL 数据库（推荐）：
+      # - DB_HOST=localhost
+      # - DB_PORT=5432
+      # - DB_USER=qms
+      # - DB_PASSWORD=qms123456
+      # - DB_NAME=qms
+      # - DB_SSLMODE=disable
+    extra_hosts:
+      # 如使用 STRM 直连地址为自定义域名，需解析到本容器/宿主机
+      - "your_domain:127.0.0.1"

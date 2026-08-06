@@ -1,51 +1,104 @@
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.codebuddy
+
+# Local AI agent configuration and lock files
+.agents/
+.claude/
+.codex/
+.trellis/
+skills-lock.json
+
+# Logs and temporary files
+logs/
+!emby302/util/logs/
+!emby302/util/logs/*.go
 *.log
-go.sum
-config/logs/*
-config/config.yml
-config/115-cookies.txt
-config/tmp/*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 *.tmp
+*.temp
 *.bak
+*.local
+*.mp4
+
+# Go/backend dependency metadata kept consistent with the original repository
+
+
+# Root build and release outputs
+config/
+data/
+dist/
+docker-context/
+linux-binaries/
+release-assets/
+temp_build/
+update/
+QMediaSync
+QMediaSync.exe
+Q115-STRM
 Q115-STRM.exe
-config/db.db
-config/db.db-journal
-config/libs/*
-config/logs/*
-config/logs/filepath*
-config/tmp/*
-*_README.md
-dist/*
-temp_build/*
-/config/postgres
-update/*
-QMediaSync.exe
-QMediaSync.exe
-verify_yaml.py
-*.tar.gz
-*.zip
-release_body.txt
-test_guid.sh
 q115strm_test.exe
 q115strm.exe
-/config/backups
-docs/FeHelper-20260123203742.json
-config/.env
-postgres/
+diy-strm
+diy-strm.exe
+QMediaSync_*.zip
+QMediaSync_*.tar.gz
+QMediaSync_*.fpk
+*.zip
+*.tar.gz
+*.fpk
+release_body.txt
+
+# Backend runtime data and generated files
+config/
+update/
+web_statics/
+
+# Backend local experiments, local-only tests, and generated docs
+docs/superpowers/
+test/
 scripts/test_share_link.go
 scripts/test_delta_sync.go
+docs/design/
+docs/FeHelper-20260123203742.json
 docs/sharepoint_azure_setup.md
 docs/sharepoint_usage.md
-config/qmediasync.db
-*.fpk
-*.DS_Store
+verify_yaml.py
+test_guid.sh
+
+# Optional local Postgres binaries/data
+postgres/
+
+# FNOS packaging outputs
 FNOS/qmediasync-arm64/app/QMediaSync
 FNOS/qmediasync-arm64/app/web_statics/
-FNOS/qmediasync-amd64/app/web_statics/
 FNOS/qmediasync-amd64/app/QMediaSync
-Q115-STRM
-config/qmediasync.db-shm
-config/qmediasync.db-wal
-config/config - 副本.yml
-QMediaSync
-*.mp4
-./docs/design/*
+FNOS/qmediasync-amd64/app/web_statics/
+
+# Frontend dependencies and build outputs
+node_modules/
+frontend/node_modules/
+frontend/.vite/
+frontend/.trae/
+frontend/dist/
+frontend/dist-ssr/
+frontend/coverage/
+
+# Frontend local artifacts
+frontend/*.tsbuildinfo
+frontend/cypress/videos/
+frontend/cypress/screenshots/
+
+# Frontend editor files
+frontend/.vscode/*
