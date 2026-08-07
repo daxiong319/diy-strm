@@ -223,8 +223,8 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/qmediasync:${{ needs.metadata.outputs.tag }}
             ghcr.io/${{ github.repository_owner }}/qmediasync:latest
-            daxiong319/diy-strm:${{ needs.metadata.outputs.tag }}
-            daxiong319/diy-strm:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/diy-strm:${{ needs.metadata.outputs.tag }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/diy-strm:latest
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ needs.metadata.outputs.tag }}

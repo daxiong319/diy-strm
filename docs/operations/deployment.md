@@ -22,7 +22,7 @@
 
 ## Docker
 
-正式发布镜像为 `daxiong319/diy-strm:latest`（DockerHub）与 `ghcr.io/daxiong319/qmediasync:latest`（GHCR），同时提供 `linux/amd64` 和 `linux/arm64`。固定版本使用 `daxiong319/diy-strm:<tag>` / `ghcr.io/daxiong319/qmediasync:<tag>`；`beta` 和功能分支镜像的生成规则见 [发布流程](release.md)。
+正式发布镜像为 `afengj/diy-strm:latest`（DockerHub）与 `ghcr.io/daxiong319/qmediasync:latest`（GHCR），同时提供 `linux/amd64` 和 `linux/arm64`。固定版本使用 `afengj/diy-strm:<tag>` / `ghcr.io/daxiong319/qmediasync:<tag>`；`beta` 和功能分支镜像的生成规则见 [发布流程](release.md)。
 
 以下示例把全部运行状态保存到宿主机的 `./config`，并按需给应用挂载媒体目录：
 
@@ -40,7 +40,7 @@ docker run -d \
   ghcr.io/daxiong319/qmediasync:latest
 ```
 
-DockerHub 用户也可以把镜像名替换为 `daxiong319/diy-strm:latest`，两者构建自同一源码。首次运行没有 `config/config.yaml` 时，访问 HTTP `12333` 完成配置向导。使用内置 HTTPS 时还需显式映射 `-p 12332:12332`，并将证书文件放入已挂载的 `config/` 目录。
+DockerHub 用户也可以把镜像名替换为 `afengj/diy-strm:latest`，两者构建自同一源码。首次运行没有 `config/config.yaml` 时，访问 HTTP `12333` 完成配置向导。使用内置 HTTPS 时还需显式映射 `-p 12332:12332`，并将证书文件放入已挂载的 `config/` 目录。
 
 容器入口脚本以 root 完成初始目录检查；可选环境变量 `GUID`、`GPID` 为数值 UID/GID。设置后脚本会在容器内创建对应用户或组（如不存在），并在值变化时递归修正 `/app/config` 的所有者，再以 `GUID` 运行主进程。例如：
 

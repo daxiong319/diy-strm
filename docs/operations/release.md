@@ -16,7 +16,7 @@
 
 `ci.yaml` 在 pull request，以及 `main`、`dev`、`feature/**` 分支推送时执行。前端依次运行 `pnpm run test`、`pnpm run build`（包含类型检查）和 `pnpm run check:build`；后端依次运行 `go vet ./...`、`go test ./...` 和 `go build -trimpath -tags=nomsgpack`。CI 不运行前端 ESLint 或 Prettier；完整验证范围见 [验证说明](../engineering/verification.md)。
 
-推送 `dev` 还会触发 `beta.yaml`，发布多架构镜像 `ghcr.io/<owner>/qmediasync:beta` 和 `daxiong319/diy-strm:beta`。推送 `feature/**` 还会触发 `feature.yaml`，发布 `ghcr.io/<owner>/qmediasync:<branch-tag>` 和 `daxiong319/diy-strm:<branch-tag>`：分支名会去掉 `feature/` 前缀、转为小写，斜杠和非法字符替换为连字符，最长 120 个字符。`dev` 的同一分支构建会取消仍在运行的旧 beta 构建。
+推送 `dev` 还会触发 `beta.yaml`，发布多架构镜像 `ghcr.io/<owner>/qmediasync:beta` 和 `afengj/diy-strm:beta`。推送 `feature/**` 还会触发 `feature.yaml`，发布 `ghcr.io/<owner>/qmediasync:<branch-tag>` 和 `afengj/diy-strm:<branch-tag>`：分支名会去掉 `feature/` 前缀、转为小写，斜杠和非法字符替换为连字符，最长 120 个字符。`dev` 的同一分支构建会取消仍在运行的旧 beta 构建。
 
 这些镜像使用根目录 `Dockerfile` 从源码构建（前端 pnpm 构建 + 后端 Go 编译），目标为 `linux/amd64` 和 `linux/arm64`。它们是预发布交付物；运行时挂载、端口和权限参数见 [部署与持久化](deployment.md)。DockerHub 推送依赖仓库 Secrets `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`，未配置时这些 workflow 会跳过 DockerHub 镜像推送（GHCR 推送不受影响）。
 
@@ -68,7 +68,7 @@ scripts/release/release.sh major
 
 GitHub Release 的正文取自上一步提交的 `.changes/v0.xx.xx.md`；release workflow 会拒绝重复 GitHub Release 和缺失 `.changes/<tag>.md` 的发布。
 
-发布流程还会使用 `GITHUB_TOKEN` 推送 GHCR 镜像 `ghcr.io/<owner>/qmediasync:<tag>` 和 `ghcr.io/<owner>/qmediasync:latest`，并使用 Secrets `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` 推送 DockerHub 镜像 `daxiong319/diy-strm:<tag>` 和 `daxiong319/diy-strm:latest`。
+发布流程还会使用 `GITHUB_TOKEN` 推送 GHCR 镜像 `ghcr.io/<owner>/qmediasync:<tag>` 和 `ghcr.io/<owner>/qmediasync:latest`，并使用 Secrets `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` 推送 DockerHub 镜像 `afengj/diy-strm:<tag>` 和 `afengj/diy-strm:latest`。
 
 镜像同时构建 `linux/amd64` 和 `linux/arm64`。Dockerfile 中的 `TARGETOS`、`TARGETARCH` 由 Buildx 自动注入，声明时不得设置平台默认值；否则 ARM64 镜像可能错误打包 AMD64 二进制。
 
