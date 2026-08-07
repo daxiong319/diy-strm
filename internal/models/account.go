@@ -25,8 +25,8 @@ type Account struct {
 	AppIdName         string                  `json:"app_id_name"` // 自定义开放平台应用显示名，内置应用不使用该字段
 	AuthSourceType    v115auth.AuthSourceType `json:"auth_source_type" gorm:"type:string;size:64"`
 	AuthProvider      v115auth.AuthProvider   `json:"auth_provider" gorm:"type:string;size:64"`
-	Token             string                  `json:"token" gorm:"type:string;size:512"`
-	RefreshToken      string                  `json:"refresh_token" gorm:"type:string;size:512"`
+	Token             string                  `json:"token" gorm:"type:string;size:4096"`
+	RefreshToken      string                  `json:"refresh_token" gorm:"type:string;size:4096"`
 	TokenExpiriesTime int64                   `json:"token_expiries_time"`
 	UserId            string                  `json:"user_id"`                                         // 账号对应的用户 ID，唯一
 	Username          string                  `json:"username" gorm:"type:string;size:32"`             // 网盘对应的用户名或者 OpenList 登录用户名

@@ -18,7 +18,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 60
+var MaxVersionCode = 61
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -672,6 +672,26 @@ func Migrate() {
 			return
 		}
 		helpers.AppLogger.Info("已添加同步目录幂等记录和 Emby 刷新任务键")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 60 {
+		// 扩宽 account 表 token/refresh_token 字段（光鸭云盘/123 云盘访问令牌超过 512 字符）
+		if err := db.Db.AutoMigrate(Account{}); err != nil {
+			helpers.AppLogger.Errorf("迁移 account 表 token 字段失败：%v", err)
+			return
+		}
+		if helpers.GlobalConfig.Db.Engine == helpers.DbEnginePostgres {
+			// PostgreSQL 下显式扩宽列类型（GORM 对已有列长度变化不保证 ALTER）
+			if err := db.Db.Exec("ALTER TABLE account ALTER COLUMN token TYPE varchar(4096)").Error; err != nil {
+				helpers.AppLogger.Errorf("扩宽 account.token 字段失败：%v", err)
+				return
+			}
+			if err := db.Db.Exec("ALTER TABLE account ALTER COLUMN refresh_token TYPE varchar(4096)").Error; err != nil {
+				helpers.AppLogger.Errorf("扩宽 account.refresh_token 字段失败：%v", err)
+				return
+			}
+		}
+		helpers.AppLogger.Info("已扩宽 account 表 token/refresh_token 字段至 4096")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)
