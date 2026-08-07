@@ -82,7 +82,7 @@ jobs:
 
       - name: Include standalone backend assets
         run: |
-          cp backend/assets/db_config.html frontend/dist/
+          cp assets/db_config.html frontend/dist/
 
       - uses: actions/upload-artifact@v7
         with:

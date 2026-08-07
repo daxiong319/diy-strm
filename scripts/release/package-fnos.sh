@@ -65,8 +65,8 @@ cp "$BINARY_PATH" "$APP_DIR/QMediaSync"
 chmod +x "$APP_DIR/QMediaSync"
 cp -R "$WEB_STATICS_DIR" "$APP_DIR/web_statics"
 
-if [ -f "backend/assets/db_config.html" ]; then
-  cp "backend/assets/db_config.html" "$APP_DIR/web_statics/"
+if [ -f "assets/db_config.html" ]; then
+  cp "assets/db_config.html" "$APP_DIR/web_statics/"
 fi
 
 (cd "$FNOS_DIR" && fnpack build)
