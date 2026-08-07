@@ -86,6 +86,30 @@ func saveSyncPathAggregate(c *gin.Context, syncPathID uint) {
 		writeSyncPathSaveError(c, http.StatusBadRequest, syncconfig.ErrorCodeInvalidRequest, "请求格式错误", syncPathRequestFieldErrors(err))
 		return
 	}
+	saveSyncPathAggregateCore(c, syncPathID, req)
+}
+
+// CreateSyncPathLegacy 兼容旧前端扁平结构的创建同步目录接口。
+func CreateSyncPathLegacy(c *gin.Context) {
+	var req requests.SyncPathRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeSyncPathSaveError(c, http.StatusBadRequest, syncconfig.ErrorCodeInvalidRequest, "请求格式错误", syncPathRequestFieldErrors(err))
+		return
+	}
+	saveSyncPathAggregateCore(c, 0, saveSyncPathAggregateRequest{SyncPath: req})
+}
+
+// UpdateSyncPathLegacy 兼容旧前端扁平结构的更新同步目录接口。
+func UpdateSyncPathLegacy(c *gin.Context) {
+	var req requests.UpdateSyncPathRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeSyncPathSaveError(c, http.StatusBadRequest, syncconfig.ErrorCodeInvalidRequest, "请求格式错误", syncPathRequestFieldErrors(err))
+		return
+	}
+	saveSyncPathAggregateCore(c, req.ID, saveSyncPathAggregateRequest{SyncPath: req.SyncPathRequest})
+}
+
+func saveSyncPathAggregateCore(c *gin.Context, syncPathID uint, req saveSyncPathAggregateRequest) {
 	if err := req.SyncPath.Validate(); err != nil {
 		writeSyncPathSaveError(c, http.StatusBadRequest, syncconfig.ErrorCodeInvalidRequest, err.Error(), syncPathRequestFieldErrors(err))
 		return

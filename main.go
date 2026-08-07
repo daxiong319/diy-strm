@@ -734,6 +734,8 @@ func setRouter(r *gin.Engine) {
 		api.GET("/sync/task", controllers.GetSyncTask)                       // 获取同步任务详情
 		api.GET("/sync/path-list", controllers.GetSyncPathList)              // 获取同步路径列表
 		api.POST("/sync/paths", controllers.CreateSyncPathAggregate)         // 原子创建同步路径
+		api.POST("/sync/path-add", controllers.CreateSyncPathLegacy)        // 兼容旧前端扁平结构创建同步路径
+		api.POST("/sync/path-update", controllers.UpdateSyncPathLegacy)     // 兼容旧前端扁平结构更新同步路径
 		api.PUT("/sync/paths/:id", controllers.UpdateSyncPathAggregate)      // 原子更新同步路径
 		api.POST("/sync/path-delete", controllers.DeleteSyncPath)            // 删除同步路径
 		api.POST("/sync/path/stop", controllers.StopSyncByPath)              // 停止同步路径的同步任务
