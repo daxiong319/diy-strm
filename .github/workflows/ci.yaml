@@ -48,11 +48,10 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.mod
+          go-version-file: go.mod
+          cache-dependency-path: go.mod
 
       - name: Test and build backend
-        working-directory: backend
         env:
           GOSUMDB: "off"
           CGO_ENABLED: "0"

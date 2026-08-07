@@ -19,7 +19,7 @@ OUT_DIR="$6"
 
 DOCKER_ENTRYPOINT="${DOCKER_ENTRYPOINT:-docker/entrypoint.sh}"
 DOCKER_WATCH_UPDATE="${DOCKER_WATCH_UPDATE:-docker/watch-update.sh}"
-ICON_PATH="${ICON_PATH:-backend/icon.ico}"
+ICON_PATH="${ICON_PATH:-assets/icon.ico}"
 
 if [ ! -f "$BINARY_PATH" ]; then
   echo "Binary not found: $BINARY_PATH" >&2

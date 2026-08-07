@@ -121,13 +121,13 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.mod
+          go-version-file: go.mod
+          cache-dependency-path: go.mod
 
       - uses: actions/download-artifact@v8
         with:
           name: web-statics
-          path: backend/web_statics
+          path: web_statics
 
       - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
         env:
@@ -155,12 +155,10 @@ jobs:
             output="${output}.exe"
           fi
 
-          cd backend
           go mod download
           go build -trimpath -tags=nomsgpack -ldflags "$ldflags" -o "$GITHUB_WORKSPACE/$output" .
-          cd "$GITHUB_WORKSPACE"
 
-          scripts/release/package-release-asset.sh "$TAG" "$GOOS" "$GOARCH" "$output" backend/web_statics release-assets
+          scripts/release/package-release-asset.sh "$TAG" "$GOOS" "$GOARCH" "$output" web_statics release-assets
 
           if [ "$GOOS" = "linux" ]; then
             cp "$output" "linux-binaries/QMediaSync_linux_${GOARCH}_exe"
@@ -255,7 +253,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: web-statics
-          path: backend/web_statics
+          path: web_statics
 
       - uses: actions/download-artifact@v8
         with:
@@ -284,8 +282,8 @@ jobs:
           TAG: ${{ needs.metadata.outputs.tag }}
         run: |
           mkdir -p release-assets
-          scripts/release/package-fnos.sh "$TAG" amd64 temp_build/QMediaSync_linux_amd64_exe backend/web_statics release-assets
-          scripts/release/package-fnos.sh "$TAG" arm64 temp_build/QMediaSync_linux_arm64_exe backend/web_statics release-assets
+          scripts/release/package-fnos.sh "$TAG" amd64 temp_build/QMediaSync_linux_amd64_exe web_statics release-assets
+          scripts/release/package-fnos.sh "$TAG" arm64 temp_build/QMediaSync_linux_arm64_exe web_statics release-assets
 
       - name: Detect FNOS packages
         id: fpk_assets
