@@ -1,4 +1,4 @@
-﻿package models
+package models
 
 import (
 	"context"
@@ -188,6 +188,8 @@ func (task *DbDownloadTask) Download() {
 			task.DownloadBaiduPanFile()
 		case SourceType123:
 			task.Download123File()
+		case SourceTypeGuangYaPan:
+			task.DownloadGuangYaPanFile()
 		}
 	case DownloadSourceEmbyMedia:
 		// Emby 媒体信息提取，从 Emby 下载
@@ -308,6 +310,56 @@ func (task *DbDownloadTask) Download123File() {
 	}
 	// 下载文件到指定位置
 	downloadErr := helpers.DownloadFile(url, task.LocalFullPath, pan123.WebUA)
+	if downloadErr != nil {
+		helpers.AppLogger.Warnf("[下载] 下载文件失败：%s", downloadErr.Error())
+		task.Fail(downloadErr)
+		return
+	}
+	// 设置文件修改时间
+	task.SetMTime()
+	// 下载完成
+	task.Complete()
+}
+
+func (task *DbDownloadTask) DownloadGuangYaPanFile() {
+	account := task.GetAccount()
+	if account == nil {
+		task.Fail(fmt.Errorf("账户不存在，无法下载文件 %s", task.LocalFullPath))
+		return
+	}
+	// 再次检查文件是否已存在
+	if helpers.PathExists(task.LocalFullPath) {
+		helpers.AppLogger.Infof("[下载] 文件已存在，无需下载：%s", task.LocalFullPath)
+		task.Complete()
+		return
+	}
+	client := account.GetGuangYaPanClient()
+	if client == nil {
+		task.Fail(fmt.Errorf("光鸭云盘客户端不存在，无法下载文件 %s", task.LocalFullPath))
+		return
+	}
+	defer client.Close()
+	// 标记为下载中
+	task.Downloading()
+	// 定位远程文件完整信息
+	parentId := ""
+	if task.SyncFileId > 0 {
+		if syncFile := GetSyncFileById(task.SyncFileId); syncFile != nil {
+			parentId = syncFile.ParentId
+		}
+	}
+	file, err := client.GetFileById(context.Background(), task.RemoteFileId, parentId)
+	if err != nil {
+		task.Fail(fmt.Errorf("获取光鸭云盘文件 %s 信息失败：%v", task.RemoteFileId, err))
+		return
+	}
+	url, err := client.GetDownloadURL(context.Background(), file.GetID())
+	if err != nil {
+		task.Fail(fmt.Errorf("获取光鸭云盘文件 %s 下载链接失败：%v", task.RemoteFileId, err))
+		return
+	}
+	// 下载文件到指定位置
+	downloadErr := helpers.DownloadFile(url, task.LocalFullPath, "")
 	if downloadErr != nil {
 		helpers.AppLogger.Warnf("[下载] 下载文件失败：%s", downloadErr.Error())
 		task.Fail(downloadErr)

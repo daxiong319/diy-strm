@@ -1,10 +1,11 @@
-﻿package controllers
+package controllers
 
 import (
 	"fmt"
 	pathpkg "path"
 	"strings"
 
+	"diy-strm/internal/guangyapan"
 	"diy-strm/internal/models"
 )
 
@@ -82,6 +83,8 @@ func getNetFileSourceCapability(sourceType models.SourceType, sortBy string, sor
 		return netFileSourceCapability{BatchSize: 500, TotalExact: true}, nil
 	case models.SourceType123:
 		return netFileSourceCapability{BatchSize: 100, TotalExact: true}, nil
+	case models.SourceTypeGuangYaPan:
+		return netFileSourceCapability{BatchSize: guangyapan.PageSize, TotalExact: true}, nil
 	default:
 		return netFileSourceCapability{}, fmt.Errorf("未知的网盘类型")
 	}

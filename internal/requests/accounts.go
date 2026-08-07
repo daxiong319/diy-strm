@@ -1,4 +1,4 @@
-﻿package requests
+package requests
 
 import (
 	"strings"
@@ -25,6 +25,7 @@ func (r CreateAccountRequest) Validate() error {
 		string(models.SourceType115),
 		string(models.SourceTypeBaiduPan),
 		string(models.SourceType123),
+		string(models.SourceTypeGuangYaPan),
 	}); err != nil {
 		return err
 	}
@@ -45,6 +46,25 @@ func (r CreateAccountRequest) Validate() error {
 		}
 	}
 	return nil
+}
+
+// GuangYaPanLoginRequest 光鸭云盘账号登录请求（令牌方式）。
+// access_token 为访问令牌（必需），refresh_token 用于令牌过期自动刷新（可选但强烈建议）。
+type GuangYaPanLoginRequest struct {
+	AccountID    uint   `json:"account_id" form:"account_id"`
+	AccessToken  string `json:"access_token" form:"access_token"`
+	RefreshToken string `json:"refresh_token" form:"refresh_token"`
+}
+
+// Validate 校验光鸭云盘账号登录请求。
+func (r GuangYaPanLoginRequest) Validate() error {
+	if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+		return err
+	}
+	if err := validation.NonBlank("access_token", r.AccessToken); err != nil {
+		return err
+	}
+	return validation.Length("access_token", r.AccessToken, 1, 2048)
 }
 
 // Pan123LoginRequest 123 云盘账号登录请求。

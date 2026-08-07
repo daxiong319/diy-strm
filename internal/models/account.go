@@ -1,4 +1,4 @@
-﻿package models
+package models
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 
 	"diy-strm/internal/baidupan"
 	"diy-strm/internal/db"
+	"diy-strm/internal/guangyapan"
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/notificationmanager"
 	"diy-strm/internal/openlist"
@@ -142,6 +143,35 @@ func (account *Account) Get123Client() *pan123.Client {
 		client.SetUserID(account.UserId)
 	}
 	return client
+}
+
+// GetGuangYaPanClient 创建光鸭云盘逆向 API 客户端
+// 使用保存的 AccessToken/RefreshToken 恢复会话，令牌过期自动刷新
+func (account *Account) GetGuangYaPanClient() *guangyapan.Client {
+	client := guangyapan.NewClient(account.ID, account.Token, account.RefreshToken)
+	return client
+}
+
+// UpdateGuangYaPanLogin 更新光鸭云盘账号登录凭据（访问令牌/刷新令牌/用户信息）
+func (account *Account) UpdateGuangYaPanLogin(accessToken string, refreshToken string, userId string, username string) bool {
+	account.Token = accessToken
+	account.RefreshToken = refreshToken
+	account.UserId = userId
+	account.Username = username
+	account.TokenFailedReason = ""
+	updateData := map[string]any{
+		"token":               accessToken,
+		"refresh_token":       refreshToken,
+		"user_id":             userId,
+		"username":            username,
+		"token_failed_reason": "",
+	}
+	err := db.Db.Model(account).Where("id = ?", account.ID).Updates(updateData).Error
+	if err != nil {
+		helpers.AppLogger.Errorf("更新光鸭云盘账号登录凭据失败：%v", err)
+		return false
+	}
+	return true
 }
 
 // Update123Login 更新 123 云盘账号登录凭据（用户名/密码/访问令牌）

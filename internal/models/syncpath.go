@@ -1,4 +1,4 @@
-﻿package models
+package models
 
 import (
 	"errors"
@@ -19,12 +19,13 @@ import (
 type SourceType string
 
 const (
-	SourceType115       SourceType = "115"
-	SourceTypeLocal     SourceType = "local"
-	SourceType123       SourceType = "123"
-	SourceTypeOpenList  SourceType = "openlist"
-	SourceTypeBaiduPan  SourceType = "baidupan"
-	SourceTypeEmbyMedia SourceType = "emby_media" // Emby 媒体信息提取专用
+	SourceType115        SourceType = "115"
+	SourceTypeLocal      SourceType = "local"
+	SourceType123        SourceType = "123"
+	SourceTypeOpenList   SourceType = "openlist"
+	SourceTypeBaiduPan   SourceType = "baidupan"
+	SourceTypeEmbyMedia  SourceType = "emby_media" // Emby 媒体信息提取专用
+	SourceTypeGuangYaPan SourceType = "guangyapan"
 )
 
 func (s SourceType) String() string {
@@ -41,6 +42,8 @@ func (s SourceType) String() string {
 		return "百度网盘"
 	case SourceTypeEmbyMedia:
 		return "Emby 媒体信息提取"
+	case SourceTypeGuangYaPan:
+		return "光鸭云盘"
 	default:
 		return string(s)
 	}

@@ -1,4 +1,4 @@
-﻿package models
+package models
 
 import (
 	"context"
@@ -431,6 +431,9 @@ func (task *DbUploadTask) Upload() {
 		if !task.Upload123File() {
 			return
 		}
+	case SourceTypeGuangYaPan:
+		task.Fail(fmt.Errorf("光鸭云盘暂不支持上传"))
+		return
 	default:
 		task.Fail(fmt.Errorf("未知的上传来源类型 %s", task.SourceType))
 		return

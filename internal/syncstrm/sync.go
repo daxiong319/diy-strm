@@ -1,4 +1,4 @@
-﻿package syncstrm
+package syncstrm
 
 import (
 	"context"
@@ -110,6 +110,8 @@ func newSyncStrm(account *models.Account, syncPathId uint, sourcePath, sourcePat
 		syncDriver = NewBaiduPanDriver(account.GetBaiDuPanClient())
 	case models.SourceType123:
 		syncDriver = NewPan123Driver(account.Get123Client())
+	case models.SourceTypeGuangYaPan:
+		syncDriver = NewGuangYaPanDriver(account.GetGuangYaPanClient())
 	}
 	pathWorkerMax := int64(models.SettingsGlobal.FileDetailThreads)
 	switch account.SourceType {
@@ -122,6 +124,8 @@ func newSyncStrm(account *models.Account, syncPathId uint, sourcePath, sourcePat
 	case models.SourceTypeBaiduPan:
 		pathWorkerMax = int64(models.SettingsGlobal.FileDetailThreads)
 	case models.SourceType123:
+		pathWorkerMax = int64(models.SettingsGlobal.FileDetailThreads)
+	case models.SourceTypeGuangYaPan:
 		pathWorkerMax = int64(models.SettingsGlobal.FileDetailThreads)
 	}
 	if pathWorkerMax <= 1 {
