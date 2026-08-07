@@ -26,6 +26,7 @@ const (
 	SourceTypeBaiduPan   SourceType = "baidupan"
 	SourceTypeEmbyMedia  SourceType = "emby_media" // Emby 媒体信息提取专用
 	SourceTypeGuangYaPan SourceType = "guangyapan"
+	SourceTypePan139     SourceType = "pan139"
 )
 
 func (s SourceType) String() string {
@@ -44,6 +45,8 @@ func (s SourceType) String() string {
 		return "Emby 媒体信息提取"
 	case SourceTypeGuangYaPan:
 		return "光鸭云盘"
+	case SourceTypePan139:
+		return "中国移动云盘"
 	default:
 		return string(s)
 	}

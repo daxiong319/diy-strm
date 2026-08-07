@@ -14,6 +14,7 @@ import (
 	"diy-strm/internal/guangyapan"
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/models"
+	"diy-strm/internal/pan139"
 	"diy-strm/internal/requests"
 	"diy-strm/internal/v115open"
 
@@ -67,6 +68,8 @@ func GetPathList(c *gin.Context) {
 		pathes, err = GetPan123PathList(req.ParentID, req.AccountID)
 	case models.SourceTypeGuangYaPan:
 		pathes, err = GetGuangYaPanPathList(req.ParentID, req.AccountID)
+	case models.SourceTypePan139:
+		pathes, err = GetPan139PathList(req.ParentID, req.AccountID)
 	default:
 		// 报错
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "未知的同步源类型", Data: nil})
@@ -288,6 +291,32 @@ func GetPan123PathList(parentId string, accountId uint) ([]DirResp, error) {
 	return folders, nil
 }
 
+// GetPan139PathList 获取中国移动云盘目录列表
+func GetPan139PathList(parentId string, accountId uint) ([]DirResp, error) {
+	account, err := models.GetAccountById(accountId)
+	if err != nil {
+		return nil, err
+	}
+	client := account.GetPan139Client()
+	defer client.Close()
+	ctx := context.Background()
+	files, err := client.GetFiles(ctx, parentId)
+	if err != nil {
+		helpers.AppLogger.Warnf("获取中国移动云盘目录列表失败：父目录=%s，错误=%v", parentId, err)
+		return nil, err
+	}
+	folders := make([]DirResp, 0)
+	for _, item := range files {
+		if item.IsDir() {
+			folders = append(folders, DirResp{
+				Id:   item.GetID(),
+				Name: item.FileName,
+				Path: item.FileName,
+			})
+		}
+	}
+	return folders, nil
+}
 // GetGuangYaPanPathList 获取光鸭云盘目录列表
 func GetGuangYaPanPathList(parentId string, accountId uint) ([]DirResp, error) {
 	account, err := models.GetAccountById(accountId)
@@ -504,6 +533,8 @@ func fetchNetFileBatch(ctx context.Context, account *models.Account, parentID st
 		return fetchPan123NetFileBatch(ctx, account, parentID, start, size)
 	case models.SourceTypeGuangYaPan:
 		return fetchGuangYaPanNetFileBatch(ctx, account, parentID, start, size)
+	case models.SourceTypePan139:
+		return fetchPan139NetFileBatch(ctx, account, parentID, start, size)
 	default:
 		return netFileBatch{}, fmt.Errorf("未知的网盘类型")
 	}
@@ -691,6 +722,56 @@ func fetchGuangYaPanNetFileBatch(ctx context.Context, account *models.Account, p
 	}, nil
 }
 
+// fetchPan139NetFileBatch 获取中国移动云盘文件列表批次
+// 139 列表接口为游标分页（无页码），此处拉取全量后按偏移切片
+func fetchPan139NetFileBatch(ctx context.Context, account *models.Account, parentID string, start int, size int) (netFileBatch, error) {
+	client := account.GetPan139Client()
+	defer client.Close()
+	files := make([]pan139.File, 0)
+	cursor := ""
+	for {
+		page, nextCursor, err := client.ListPage(ctx, parentID, cursor)
+		if err != nil {
+			helpers.AppLogger.Warnf("获取中国移动云盘文件列表失败：父目录=%s，错误=%v", parentID, err)
+			return netFileBatch{}, err
+		}
+		files = append(files, page...)
+		if nextCursor == "" {
+			break
+		}
+		cursor = nextCursor
+	}
+	total := int64(len(files))
+	if start >= len(files) {
+		return netFileBatch{
+			Items:      []*FileItem{},
+			Total:      total,
+			TotalExact: true,
+			HasMore:    false,
+		}, nil
+	}
+	end := start + size
+	if end > len(files) {
+		end = len(files)
+	}
+	items := make([]*FileItem, 0, end-start)
+	for _, item := range files[start:end] {
+		items = append(items, &FileItem{
+			Id:          item.GetID(),
+			IsDirectory: item.IsDir(),
+			Name:        item.FileName,
+			Size:        item.FileSize,
+			ModifiedAt:  item.UTime,
+		})
+	}
+	return netFileBatch{
+		Items:      items,
+		Total:      total,
+		TotalExact: true,
+		HasMore:    int64(start+size) < total,
+	}, nil
+}
+
 func get115Dirs(parentId string, account *models.Account, page, pageSize int) (netFileListPage, error) {
 	client := account.Get115Client()
 	ctx := context.Background()
@@ -767,6 +848,8 @@ func CreateDir(c *gin.Context) {
 		pathId, err = makePan123PathList(req.ParentID, req.Name, req.AccountID)
 	case models.SourceTypeGuangYaPan:
 		pathId, err = makeGuangYaPanPathList(req.ParentID, req.Name, req.AccountID)
+	case models.SourceTypePan139:
+		pathId, err = makePan139PathList(req.ParentID, req.Name, req.AccountID)
 	default:
 		// 报错
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "未知的同步源类型", Data: nil})
@@ -907,6 +990,20 @@ func makeGuangYaPanPathList(parentId string, folderName string, accountId uint) 
 	return newPathId, nil
 }
 
+func makePan139PathList(parentId string, folderName string, accountId uint) (string, error) {
+	account, err := models.GetAccountById(accountId)
+	if err != nil {
+		return "", fmt.Errorf("获取账号失败：%v", err)
+	}
+	client := account.GetPan139Client()
+	defer client.Close()
+	newPathId, err := client.CreateDir(context.Background(), parentId, folderName)
+	if err != nil {
+		return "", fmt.Errorf("创建中国移动云盘目录失败：%s，错误：%v", folderName, err)
+	}
+	return newPathId, nil
+}
+
 // 更新飞牛有权限的目录
 // 飞牛执行目录授权操作后，会触发该接口调用
 func UpdateFNPath(c *gin.Context) {
@@ -980,6 +1077,9 @@ func DeleteDir(c *gin.Context) {
 		err = client.Delete(context.Background(), []string{req.FileID})
 	case models.SourceTypeGuangYaPan:
 		client := account.GetGuangYaPanClient()
+		err = client.Delete(context.Background(), []string{req.FileID})
+	case models.SourceTypePan139:
+		client := account.GetPan139Client()
 		err = client.Delete(context.Background(), []string{req.FileID})
 	default:
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "不支持的文件系统", Data: nil})

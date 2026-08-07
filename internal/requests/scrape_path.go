@@ -74,6 +74,7 @@ func (r SaveScrapePathRequest) validate() error {
 		string(models.SourceTypeOpenList),
 		string(models.SourceTypeBaiduPan),
 		string(models.SourceTypeGuangYaPan),
+		string(models.SourceTypePan139),
 	}
 	if err := validation.OneOfString("source_type", string(r.SourceType), sourceValues); err != nil {
 		return err

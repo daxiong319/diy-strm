@@ -118,6 +118,7 @@ func (r SyncPathRequest) Validate() error {
 		string(models.SourceTypeOpenList),
 		string(models.SourceTypeBaiduPan),
 		string(models.SourceTypeGuangYaPan),
+		string(models.SourceTypePan139),
 	}
 	if err := validation.OneOfString("source_type", string(r.SourceType), allowedSources); err != nil {
 		return err

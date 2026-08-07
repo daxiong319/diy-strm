@@ -26,6 +26,7 @@ func (r CreateAccountRequest) Validate() error {
 		string(models.SourceTypeBaiduPan),
 		string(models.SourceType123),
 		string(models.SourceTypeGuangYaPan),
+		string(models.SourceTypePan139),
 	}); err != nil {
 		return err
 	}
@@ -144,6 +145,25 @@ func (r Pan123LoginRequest) Validate() error {
 		return err
 	}
 	return validation.Length("password", r.Password, 1, 128)
+}
+
+// Pan139LoginRequest 中国移动云盘（139）账号登录请求。
+// 登录方式：authorization（浏览器抓取的 Base64 凭据，内含令牌与过期时间，到期自动刷新）
+type Pan139LoginRequest struct {
+	AccountID     uint   `json:"account_id" form:"account_id"`
+	Authorization string `json:"authorization" form:"authorization"`
+	Username      string `json:"username" form:"username"` // 账号显示名（手机号/邮箱），可选
+}
+
+// Validate 校验中国移动云盘账号登录请求。
+func (r Pan139LoginRequest) Validate() error {
+	if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+		return err
+	}
+	if err := validation.NonBlank("authorization", r.Authorization); err != nil {
+		return err
+	}
+	return validation.Length("authorization", r.Authorization, 1, 4096)
 }
 
 // UpdateAccountInfoRequest 更新账号资料请求。

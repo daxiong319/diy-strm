@@ -492,6 +492,7 @@ func validateSourceType(sourceType models.SourceType) error {
 		string(models.SourceTypeOpenList),
 		string(models.SourceTypeBaiduPan),
 		string(models.SourceTypeGuangYaPan),
+		string(models.SourceTypePan139),
 	})
 }
 

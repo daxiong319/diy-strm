@@ -13,6 +13,7 @@ import (
 	"diy-strm/internal/notificationmanager"
 	"diy-strm/internal/openlist"
 	"diy-strm/internal/pan123"
+	"diy-strm/internal/pan139"
 	"diy-strm/internal/v115auth"
 	"diy-strm/internal/v115open"
 )
@@ -150,6 +151,37 @@ func (account *Account) Get123Client() *pan123.Client {
 func (account *Account) GetGuangYaPanClient() *guangyapan.Client {
 	client := guangyapan.NewClient(account.ID, account.Token, account.RefreshToken)
 	return client
+}
+
+// GetPan139Client 创建中国移动云盘（139）逆向 API 客户端
+// 使用保存的 Authorization（base64 凭据）恢复会话，令牌自动刷新并持久化
+func (account *Account) GetPan139Client() *pan139.Client {
+	client := pan139.NewClient(account.ID, account.Token)
+	client.SetAuthChanged(func(newAuth string) {
+		account.UpdatePan139Login(newAuth, "")
+	})
+	return client
+}
+
+// UpdatePan139Login 更新中国移动云盘账号登录凭据（Authorization/账号名）
+// accountName 为空时保留原账号名（令牌自动刷新回调场景）
+func (account *Account) UpdatePan139Login(authorization string, accountName string) bool {
+	account.Token = authorization
+	account.TokenFailedReason = ""
+	updateData := map[string]any{
+		"token":               authorization,
+		"token_failed_reason": "",
+	}
+	if accountName != "" {
+		account.Username = accountName
+		updateData["username"] = accountName
+	}
+	err := db.Db.Model(account).Where("id = ?", account.ID).Updates(updateData).Error
+	if err != nil {
+		helpers.AppLogger.Errorf("更新中国移动云盘账号登录凭据失败：%v", err)
+		return false
+	}
+	return true
 }
 
 // UpdateGuangYaPanLogin 更新光鸭云盘账号登录凭据（访问令牌/刷新令牌/用户信息）

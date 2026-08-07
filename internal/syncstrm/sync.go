@@ -112,6 +112,8 @@ func newSyncStrm(account *models.Account, syncPathId uint, sourcePath, sourcePat
 		syncDriver = NewPan123Driver(account.Get123Client())
 	case models.SourceTypeGuangYaPan:
 		syncDriver = NewGuangYaPanDriver(account.GetGuangYaPanClient())
+	case models.SourceTypePan139:
+		syncDriver = NewPan139Driver(account.GetPan139Client())
 	}
 	pathWorkerMax := int64(models.SettingsGlobal.FileDetailThreads)
 	switch account.SourceType {
@@ -126,6 +128,8 @@ func newSyncStrm(account *models.Account, syncPathId uint, sourcePath, sourcePat
 	case models.SourceType123:
 		pathWorkerMax = int64(models.SettingsGlobal.FileDetailThreads)
 	case models.SourceTypeGuangYaPan:
+		pathWorkerMax = int64(models.SettingsGlobal.FileDetailThreads)
+	case models.SourceTypePan139:
 		pathWorkerMax = int64(models.SettingsGlobal.FileDetailThreads)
 	}
 	if pathWorkerMax <= 1 {

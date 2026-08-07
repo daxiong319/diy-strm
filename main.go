@@ -605,6 +605,7 @@ func setRouter(r *gin.Engine) {
 	r.GET("/baidupan/url/*filename", controllers.GetBaiduPanUrlByPickCode)     // 查询百度网盘直链，按 fs_id 查询，支持 ISO，路径最后一部分为 .扩展名格式
 	r.GET("/pan123/url/*filename", controllers.GetPan123UrlByPickCode)         // 查询 123 云盘直链，按文件 ID 查询，支持 ISO，路径最后一部分为 .扩展名格式
 	r.GET("/guangyapan/url/*filename", controllers.GetGuangYaPanUrlByPickCode) // 查询光鸭云盘直链，按文件 ID 查询，支持 ISO，路径最后一部分为 .扩展名格式
+	r.GET("/pan139/url/*filename", controllers.GetPan139UrlByFileId)            // 查询中国移动云盘直链，按文件 ID 查询，支持 ISO，路径最后一部分为 .扩展名格式
 
 	r.GET("/openlist/url", controllers.GetOpenListFileUrl) // 查询 OpenList 直链
 
@@ -664,6 +665,10 @@ func setRouter(r *gin.Engine) {
 		api.POST("/guangyapan/qrcode", controllers.GuangYaPanQRCode)             // 光鸭云盘创建扫码登录会话
 		api.GET("/guangyapan/qrcode/status", controllers.GuangYaPanQRCodeStatus) // 光鸭云盘扫码登录状态轮询
 		api.GET("/guangyapan/status", controllers.GetGuangYaPanStatus)           // 查询光鸭云盘状态
+
+		// 中国移动云盘（139）相关路由
+		api.POST("/pan139/login", controllers.Pan139Login)     // 中国移动云盘账号登录（Authorization 凭据）
+		api.GET("/pan139/status", controllers.GetPan139Status) // 查询中国移动云盘状态
 
 		api.GET("/update/last", controllers.GetLastRelease)         // 获取最新版本
 		api.POST("/update/to-version", controllers.UpdateToVersion) // 获取更新版本
