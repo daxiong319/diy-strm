@@ -659,8 +659,11 @@ func setRouter(r *gin.Engine) {
 		api.GET("/pan123/status", controllers.GetPan123Status) // 查询 123 云盘状态
 
 		// 光鸭云盘相关路由
-		api.POST("/guangyapan/login", controllers.GuangYaPanLogin)     // 光鸭云盘账号登录（令牌方式）
-		api.GET("/guangyapan/status", controllers.GetGuangYaPanStatus) // 查询光鸭云盘状态
+		api.POST("/guangyapan/login", controllers.GuangYaPanLogin)               // 光鸭云盘账号登录（手机号+验证码 或 令牌方式）
+		api.POST("/guangyapan/send-code", controllers.GuangYaPanSendCode)        // 光鸭云盘发送登录短信验证码
+		api.POST("/guangyapan/qrcode", controllers.GuangYaPanQRCode)             // 光鸭云盘创建扫码登录会话
+		api.GET("/guangyapan/qrcode/status", controllers.GuangYaPanQRCodeStatus) // 光鸭云盘扫码登录状态轮询
+		api.GET("/guangyapan/status", controllers.GetGuangYaPanStatus)           // 查询光鸭云盘状态
 
 		api.GET("/update/last", controllers.GetLastRelease)         // 获取最新版本
 		api.POST("/update/to-version", controllers.UpdateToVersion) // 获取更新版本

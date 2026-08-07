@@ -48,23 +48,81 @@ func (r CreateAccountRequest) Validate() error {
 	return nil
 }
 
-// GuangYaPanLoginRequest 光鸭云盘账号登录请求（令牌方式）。
-// access_token 为访问令牌（必需），refresh_token 用于令牌过期自动刷新（可选但强烈建议）。
+// GuangYaPanLoginRequest 光鸭云盘账号登录请求（手机号+短信验证码 或 令牌方式）。
+// 方式一（手机号+验证码）：phone_number + verification_code + verification_id
+// 方式二（令牌）：access_token（必需），refresh_token 用于令牌过期自动刷新（可选但强烈建议）
 type GuangYaPanLoginRequest struct {
-	AccountID    uint   `json:"account_id" form:"account_id"`
-	AccessToken  string `json:"access_token" form:"access_token"`
-	RefreshToken string `json:"refresh_token" form:"refresh_token"`
+	AccountID        uint   `json:"account_id" form:"account_id"`
+	PhoneNumber      string `json:"phone_number" form:"phone_number"`
+	VerificationCode string `json:"verification_code" form:"verification_code"`
+	VerificationID   string `json:"verification_id" form:"verification_id"`
+	CaptchaToken     string `json:"captcha_token" form:"captcha_token"`
+	AccessToken      string `json:"access_token" form:"access_token"`
+	RefreshToken     string `json:"refresh_token" form:"refresh_token"`
 }
 
-// Validate 校验光鸭云盘账号登录请求。
+// Validate 校验光鸭云盘账号登录请求（手机号+验证码与令牌两种方式二选一）。
 func (r GuangYaPanLoginRequest) Validate() error {
 	if err := validation.PositiveID("account_id", r.AccountID); err != nil {
 		return err
+	}
+	phoneMode := strings.TrimSpace(r.PhoneNumber) != "" || strings.TrimSpace(r.VerificationCode) != "" || strings.TrimSpace(r.VerificationID) != ""
+	if phoneMode {
+		if err := validation.NonBlank("phone_number", r.PhoneNumber); err != nil {
+			return err
+	}
+		if err := validation.NonBlank("verification_code", r.VerificationCode); err != nil {
+			return err
+	}
+		if err := validation.NonBlank("verification_id", r.VerificationID); err != nil {
+			return err
+	}
+		if err := validation.Length("phone_number", r.PhoneNumber, 1, 32); err != nil {
+			return err
+	}
+		return validation.Length("verification_code", r.VerificationCode, 1, 16)
 	}
 	if err := validation.NonBlank("access_token", r.AccessToken); err != nil {
 		return err
 	}
 	return validation.Length("access_token", r.AccessToken, 1, 2048)
+}
+
+// GuangYaPanSendCodeRequest 光鸭云盘发送短信验证码请求。
+type GuangYaPanSendCodeRequest struct {
+	AccountID   uint   `json:"account_id" form:"account_id"`
+	PhoneNumber string `json:"phone_number" form:"phone_number"`
+}
+
+// Validate 校验光鸭云盘发送短信验证码请求。
+func (r GuangYaPanSendCodeRequest) Validate() error {
+	if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+		return err
+	}
+	if err := validation.NonBlank("phone_number", r.PhoneNumber); err != nil {
+		return err
+	}
+	return validation.Length("phone_number", r.PhoneNumber, 1, 32)
+}
+
+// GuangYaPanQRCodeRequest 光鸭云盘创建扫码登录会话请求。
+type GuangYaPanQRCodeRequest struct {
+	AccountID uint `json:"account_id" form:"account_id"`
+}
+
+// Validate 校验光鸭云盘创建扫码登录会话请求。
+func (r GuangYaPanQRCodeRequest) Validate() error {
+	return validation.PositiveID("account_id", r.AccountID)
+}
+
+// GuangYaPanQRCodeStatusRequest 光鸭云盘扫码登录状态轮询请求。
+type GuangYaPanQRCodeStatusRequest struct {
+	AccountID uint `json:"account_id" form:"account_id"`
+}
+
+// Validate 校验光鸭云盘扫码登录状态轮询请求。
+func (r GuangYaPanQRCodeStatusRequest) Validate() error {
+	return validation.PositiveID("account_id", r.AccountID)
 }
 
 // Pan123LoginRequest 123 云盘账号登录请求。

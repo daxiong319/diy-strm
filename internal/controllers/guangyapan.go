@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"diy-strm/internal/db"
@@ -23,14 +24,18 @@ type GuangYaPanStatusResp struct {
 	Username string `json:"username"`
 }
 
-// GuangYaPanLogin 光鸭云盘账号登录（令牌方式）。
+// GuangYaPanLogin 光鸭云盘账号登录（手机号+短信验证码 或 令牌方式）。
 // @Summary 光鸭云盘账号登录
-// @Description 使用光鸭云盘的访问令牌（access_token）验证账号，可选提供刷新令牌（refresh_token）用于自动续期
+// @Description 方式一：手机号+短信验证码登录（phone_number + verification_code + verification_id）；方式二：使用访问令牌（access_token）验证，可选提供刷新令牌（refresh_token）用于自动续期
 // @Tags 光鸭云盘
 // @Accept json
 // @Produce json
 // @Param account_id body integer true "账号 ID"
-// @Param access_token body string true "光鸭云盘访问令牌"
+// @Param phone_number body string false "手机号（+86 13800138000 或 13800138000）"
+// @Param verification_code body string false "短信验证码"
+// @Param verification_id body string false "发送验证码返回的流水 ID"
+// @Param captcha_token body string false "人机验证 token"
+// @Param access_token body string false "光鸭云盘访问令牌"
 // @Param refresh_token body string false "光鸭云盘刷新令牌（自动续期用）"
 // @Success 200 {object} object
 // @Failure 200 {object} object
@@ -57,6 +62,37 @@ func GuangYaPanLogin(c *gin.Context) {
 		return
 	}
 
+	// 方式一：手机号+短信验证码登录
+	if strings.TrimSpace(req.PhoneNumber) != "" {
+		client := guangyapan.NewClient(account.ID, "", "")
+		defer client.Close()
+		tokenResp, loginErr := client.LoginWithSMS(c.Request.Context(), req.PhoneNumber, req.VerificationCode, req.VerificationID, req.CaptchaToken)
+		if loginErr != nil {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: loginErr.Error(), Data: nil})
+			return
+		}
+		accessToken := strings.TrimSpace(tokenResp.AccessToken)
+		refreshToken := strings.TrimSpace(tokenResp.RefreshToken)
+		// 获取用户信息（验证登录成功）
+		userInfo, infoErr := client.GetUserInfo(c.Request.Context())
+		if infoErr != nil {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取光鸭云盘用户信息失败：" + infoErr.Error(), Data: nil})
+			return
+		}
+		username := strings.TrimSpace(req.PhoneNumber)
+		if !account.UpdateGuangYaPanLogin(accessToken, refreshToken, userInfo.Sub, username) {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "保存光鸭云盘登录凭据失败", Data: nil})
+			return
+		}
+		helpers.AppLogger.Infof("光鸭云盘账号短信登录成功，账号 ID：%d，用户 ID：%s", account.ID, userInfo.Sub)
+		c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "光鸭云盘登录成功", Data: gin.H{
+			"user_id":  userInfo.Sub,
+			"username": username,
+		}})
+		return
+	}
+
+	// 方式二：令牌方式
 	accessToken := strings.TrimSpace(req.AccessToken)
 	client := guangyapan.NewClient(account.ID, accessToken, strings.TrimSpace(req.RefreshToken))
 	defer client.Close()
@@ -80,6 +116,228 @@ func GuangYaPanLogin(c *gin.Context) {
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "光鸭云盘登录成功", Data: gin.H{
 		"user_id":  userInfo.Sub,
 		"username": userInfo.Sub,
+	}})
+}
+
+// GuangYaPanSendCode 发送光鸭云盘登录短信验证码。
+// @Summary 发送光鸭云盘短信验证码
+// @Description 向指定手机号发送光鸭云盘登录短信验证码，返回验证码流水 ID；若需要人工人机验证则返回验证地址
+// @Tags 光鸭云盘
+// @Accept json
+// @Produce json
+// @Param account_id body integer true "账号 ID"
+// @Param phone_number body string true "手机号（+86 13800138000 或 13800138000）"
+// @Success 200 {object} object
+// @Failure 200 {object} object
+// @Router /guangyapan/send-code [post]
+// @Security JwtAuth
+// @Security ApiKeyAuth
+func GuangYaPanSendCode(c *gin.Context) {
+	req := &requests.GuangYaPanSendCodeRequest{}
+	if err := c.ShouldBind(req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "请求参数错误", Data: nil})
+		return
+	}
+	if err := req.Validate(); err != nil {
+		writeAccountValidationError(c, http.StatusOK, err)
+		return
+	}
+	account, err := models.GetAccountById(req.AccountID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "账号 ID 不存在", Data: nil})
+		return
+	}
+	if account.SourceType != models.SourceTypeGuangYaPan {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "账号类型不是光鸭云盘", Data: nil})
+		return
+	}
+
+	client := guangyapan.NewClient(account.ID, "", "")
+	defer client.Close()
+	result, sendErr := client.SendSMSCode(c.Request.Context(), req.PhoneNumber)
+	if sendErr != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "发送光鸭云盘短信验证码失败：" + sendErr.Error(), Data: nil})
+		return
+	}
+	if result.NeedCaptcha {
+		// 需要用户完成人机验证（返回验证地址，用户完成后再重试发送）
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "需要完成人机验证", Data: gin.H{
+			"need_captcha": true,
+			"captcha_url":  result.CaptchaURL,
+		}})
+		return
+	}
+	helpers.AppLogger.Infof("光鸭云盘短信验证码已发送，账号 ID：%d，手机号：%s", account.ID, guangyapan.NormalizePhone(req.PhoneNumber))
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "验证码已发送，请注意查收短信", Data: gin.H{
+		"verification_id": result.VerificationID,
+		"captcha_token":   result.CaptchaToken,
+	}})
+}
+
+// guangYaPanQRSession 光鸭云盘扫码登录会话（OAuth 设备码）
+type guangYaPanQRSession struct {
+	deviceCode string
+	expiresAt  time.Time
+}
+
+// guangYaPanQRSessions 扫码登录会话缓存（键为账号 ID，重启后失效可接受）
+var guangYaPanQRSessions = struct {
+	sync.Mutex
+	m map[uint]*guangYaPanQRSession
+}{m: make(map[uint]*guangYaPanQRSession)}
+
+// GuangYaPanQRCode 创建光鸭云盘扫码登录会话（二维码）。
+// @Summary 创建光鸭云盘扫码登录会话
+// @Description 创建 OAuth 设备码扫码会话，返回二维码地址（verification_uri）与用户码（user_code），用户使用光鸭云盘 App 扫码或访问地址输入用户码确认登录
+// @Tags 光鸭云盘
+// @Accept json
+// @Produce json
+// @Param account_id body integer true "账号 ID"
+// @Success 200 {object} object
+// @Failure 200 {object} object
+// @Router /guangyapan/qrcode [post]
+// @Security JwtAuth
+// @Security ApiKeyAuth
+func GuangYaPanQRCode(c *gin.Context) {
+	req := &requests.GuangYaPanQRCodeRequest{}
+	if err := c.ShouldBind(req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "请求参数错误", Data: nil})
+		return
+	}
+	if err := req.Validate(); err != nil {
+		writeAccountValidationError(c, http.StatusOK, err)
+		return
+	}
+	account, err := models.GetAccountById(req.AccountID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "账号 ID 不存在", Data: nil})
+		return
+	}
+	if account.SourceType != models.SourceTypeGuangYaPan {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "账号类型不是光鸭云盘", Data: nil})
+		return
+	}
+
+	client := guangyapan.NewClient(account.ID, "", "")
+	defer client.Close()
+	info, createErr := client.CreateQRCode(c.Request.Context())
+	if createErr != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "创建光鸭云盘扫码会话失败：" + createErr.Error(), Data: nil})
+		return
+	}
+	expiresIn := info.ExpiresIn
+	if expiresIn <= 0 {
+		expiresIn = 600
+	}
+	guangYaPanQRSessions.Lock()
+	guangYaPanQRSessions.m[account.ID] = &guangYaPanQRSession{
+		deviceCode: info.DeviceCode,
+		expiresAt:  time.Now().Add(time.Duration(expiresIn) * time.Second),
+	}
+	guangYaPanQRSessions.Unlock()
+
+	helpers.AppLogger.Infof("光鸭云盘扫码会话已创建，账号 ID：%d，有效期：%ds", account.ID, expiresIn)
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "请使用光鸭云盘 App 扫码确认登录", Data: gin.H{
+		"verification_uri": info.VerificationURI,
+		"user_code":        info.UserCode,
+		"expires_in":       expiresIn,
+		"interval":         info.Interval,
+	}})
+}
+
+// GuangYaPanQRCodeStatus 轮询光鸭云盘扫码登录状态。
+// @Summary 轮询光鸭云盘扫码登录状态
+// @Description 轮询扫码登录状态：pending 等待确认、success 登录成功（已保存凭据）、denied 已拒绝、expired 已过期
+// @Tags 光鸭云盘
+// @Accept json
+// @Produce json
+// @Param account_id query integer true "账号 ID"
+// @Success 200 {object} object
+// @Failure 200 {object} object
+// @Router /guangyapan/qrcode/status [get]
+// @Security JwtAuth
+// @Security ApiKeyAuth
+func GuangYaPanQRCodeStatus(c *gin.Context) {
+	req := &requests.GuangYaPanQRCodeStatusRequest{}
+	if err := c.ShouldBindQuery(req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "请求参数错误", Data: nil})
+		return
+	}
+	if err := req.Validate(); err != nil {
+		writeAccountValidationError(c, http.StatusOK, err)
+		return
+	}
+	account, err := models.GetAccountById(req.AccountID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "账号 ID 不存在", Data: nil})
+		return
+	}
+	if account.SourceType != models.SourceTypeGuangYaPan {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "账号类型不是光鸭云盘", Data: nil})
+		return
+	}
+
+	// 取出扫码会话
+	guangYaPanQRSessions.Lock()
+	sess := guangYaPanQRSessions.m[req.AccountID]
+	if sess == nil {
+		guangYaPanQRSessions.Unlock()
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "扫码会话不存在，请重新获取二维码", Data: gin.H{"state": "expired"}})
+		return
+	}
+	if time.Now().After(sess.expiresAt) {
+		delete(guangYaPanQRSessions.m, req.AccountID)
+		guangYaPanQRSessions.Unlock()
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "二维码已过期，请重新获取", Data: gin.H{"state": "expired"}})
+		return
+	}
+	deviceCode := sess.deviceCode
+	guangYaPanQRSessions.Unlock()
+
+	client := guangyapan.NewClient(account.ID, "", "")
+	defer client.Close()
+	result, pollErr := client.PollQRCode(c.Request.Context(), deviceCode)
+	if pollErr != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "轮询光鸭云盘扫码状态失败：" + pollErr.Error(), Data: gin.H{"state": "error"}})
+		return
+	}
+
+	if result.State == "success" {
+		// 登录成功：获取用户信息并保存凭据
+		userInfo, infoErr := client.GetUserInfo(c.Request.Context())
+		if infoErr != nil {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取光鸭云盘用户信息失败：" + infoErr.Error(), Data: gin.H{"state": "error"}})
+			return
+		}
+		if !account.UpdateGuangYaPanLogin(result.AccessToken, result.RefreshToken, userInfo.Sub, userInfo.Sub) {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "保存光鸭云盘登录凭据失败", Data: gin.H{"state": "error"}})
+			return
+		}
+		guangYaPanQRSessions.Lock()
+		delete(guangYaPanQRSessions.m, req.AccountID)
+		guangYaPanQRSessions.Unlock()
+		helpers.AppLogger.Infof("光鸭云盘账号扫码登录成功，账号 ID：%d，用户 ID：%s", account.ID, userInfo.Sub)
+		c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "光鸭云盘扫码登录成功", Data: gin.H{
+			"state":    "success",
+			"user_id":  userInfo.Sub,
+			"username": userInfo.Sub,
+		}})
+		return
+	}
+
+	// 已拒绝/已过期：清理会话
+	if result.State == "denied" || result.State == "expired" {
+		guangYaPanQRSessions.Lock()
+		delete(guangYaPanQRSessions.m, req.AccountID)
+		guangYaPanQRSessions.Unlock()
+	}
+	message := result.ErrorMessage
+	if result.State == "pending" {
+		message = "等待用户扫码确认"
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: message, Data: gin.H{
+		"state":   result.State,
+		"message": result.ErrorMessage,
 	}})
 }
 
