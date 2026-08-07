@@ -206,3 +206,60 @@ func GetPan139UrlByFileId(c *gin.Context) {
 	helpers.AppLogger.Infof("302 重定向到中国移动云盘下载链接：%s", cachedUrl)
 	c.Redirect(http.StatusFound, cachedUrl)
 }
+
+// Pan139QRCode 生成中国移动云盘扫码登录二维码会话。
+// @Summary 生成中国移动云盘扫码登录二维码
+// @Description 创建扫码登录会话，返回二维码内容 URL 与轮询令牌；前端将 URL 渲染为二维码，扫码确认后自动获取 Authorization 凭据
+// @Tags 中国移动云盘
+// @Accept json
+// @Produce json
+// @Success 200 {object} object
+// @Failure 200 {object} object
+// @Router /pan139/qrcode [post]
+// @Security JwtAuth
+// @Security ApiKeyAuth
+func Pan139QRCode(c *gin.Context) {
+	result, err := pan139.StartQRLogin()
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取中国移动云盘二维码失败：" + err.Error(), Data: nil})
+		return
+	}
+	helpers.AppLogger.Infof("生成中国移动云盘扫码登录二维码，有效期 %d 秒", result.ExpiresIn)
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "二维码已生成", Data: gin.H{
+		"token":      result.Token,
+		"qr_url":     result.QRURL,
+		"expires_in": result.ExpiresIn,
+	}})
+}
+
+// Pan139QRCodeStatus 轮询中国移动云盘扫码登录状态。
+// @Summary 轮询中国移动云盘扫码登录状态
+// @Description 轮询扫码结果；成功时返回 Authorization 凭据与账号，可直接用于账号登录
+// @Tags 中国移动云盘
+// @Accept json
+// @Produce json
+// @Param token query string true "扫码会话令牌（二维码生成接口返回）"
+// @Success 200 {object} object
+// @Failure 200 {object} object
+// @Router /pan139/qrcode/status [get]
+// @Security JwtAuth
+// @Security ApiKeyAuth
+func Pan139QRCodeStatus(c *gin.Context) {
+	token := strings.TrimSpace(c.Query("token"))
+	if token == "" {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "缺少扫码会话 token", Data: nil})
+		return
+	}
+	result, err := pan139.PollQRLogin(token)
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "查询扫码状态失败：" + err.Error(), Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "查询扫码状态成功", Data: gin.H{
+		"status":        result.Status,
+		"message":       result.Message,
+		"authorization": result.Authorization,
+		"username":      result.Username,
+		"expires_at":    result.ExpiresAt,
+	}})
+}

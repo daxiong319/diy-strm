@@ -126,16 +126,22 @@ func (c *Client) Close() error {
 
 // authInfo Authorization 解析结果
 type authInfo struct {
-	account    string
-	token      string // token|xxx|xxx|expiration 中的第一段
-	expiration int64  // 毫秒时间戳
+	authorization string // 原始凭据（base64）
+	account       string
+	token         string // token|xxx|xxx|expiration 中的第一段
+	expiration    int64  // 毫秒时间戳
 }
 
-// parseAuthorization 解析 Authorization 凭据
-// 格式：base64(accountId:account:token|xxx|xxx|过期毫秒时间戳)，至少 3 段且 token 段至少 4 个子段
+// parseAuthorization 解析当前客户端 Authorization 凭据
 func (c *Client) parseAuthorization() (*authInfo, error) {
-	auth := c.GetAuthorization()
-	if strings.TrimSpace(auth) == "" {
+	return parseAuthorizationValue(c.GetAuthorization())
+}
+
+// parseAuthorizationValue 解析 Authorization 凭据（包级，扫码登录复用）
+// 格式：base64(accountId:account:token|xxx|xxx|过期毫秒时间戳)，至少 3 段且 token 段至少 4 个子段
+func parseAuthorizationValue(auth string) (*authInfo, error) {
+	auth = strings.TrimSpace(auth)
+	if auth == "" {
 		return nil, fmt.Errorf("中国移动云盘 Authorization 为空")
 	}
 	decoded, err := base64.StdEncoding.DecodeString(auth)
@@ -155,9 +161,10 @@ func (c *Client) parseAuthorization() (*authInfo, error) {
 		return nil, fmt.Errorf("中国移动云盘 Authorization 过期时间无效：%v", err)
 	}
 	return &authInfo{
-		account:    splits[1],
-		token:      strs[0],
-		expiration: expiration,
+		authorization: auth,
+		account:       splits[1],
+		token:         strs[0],
+		expiration:    expiration,
 	}, nil
 }
 
