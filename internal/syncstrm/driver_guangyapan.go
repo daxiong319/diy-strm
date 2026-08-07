@@ -124,6 +124,16 @@ func (d *guangYaPanDriver) CreateDirRecursively(ctx context.Context, path string
 }
 
 func (d *guangYaPanDriver) GetPathIdByPath(ctx context.Context, path string) (string, error) {
+	// 同步入口：优先使用保存的目录 ID（base_cid）定位，避免按名称从根目录逐级查找失败
+	// 光鸭 API 不支持按路径查询，前端保存的 remote_path 可能只是目录短名（非完整路径）
+	if path == d.s.SourcePath && d.s.SourcePathId != "" {
+		// 验证目录仍然存在：能成功列出子项即有效（空目录同样合法）
+		if _, err := d.client.GetFiles(ctx, d.s.SourcePathId); err == nil {
+			return d.s.SourcePathId, nil
+		} else {
+			d.s.Sync.Logger.Warnf("光鸭云盘入口目录 %s（ID=%s）已无法访问，回退按名称查找：%v", path, d.s.SourcePathId, err)
+		}
+	}
 	fsId, err := d.client.GetPathIdByPath(ctx, path)
 	if err != nil {
 		return "", err

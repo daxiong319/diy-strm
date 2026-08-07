@@ -102,3 +102,6 @@ frontend/cypress/screenshots/
 
 # Frontend editor files
 frontend/.vscode/*
+
+# STRM sync output
+strm/
