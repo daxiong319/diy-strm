@@ -491,6 +491,7 @@ func validateSourceType(sourceType models.SourceType) error {
 		string(models.SourceType123),
 		string(models.SourceTypeOpenList),
 		string(models.SourceTypeBaiduPan),
+		string(models.SourceTypeGuangYaPan),
 	})
 }
 
@@ -570,7 +571,7 @@ func validateRelativePath(field string, path string) error {
 	if path == "" {
 		return validation.New(field, "不能为空")
 	}
-	if filepath.IsAbs(path) {
+	if filepath.IsAbs(path) || strings.HasPrefix(path, "/") || strings.HasPrefix(path, `\`) {
 		return validation.New(field, "不能是绝对路径")
 	}
 	cleaned := filepath.Clean(path)
