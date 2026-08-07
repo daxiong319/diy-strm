@@ -22,7 +22,7 @@
 
 ## Docker
 
-正式发布镜像为 `ghcr.io/chen8945/qmediasync:latest`，同时提供 `linux/amd64` 和 `linux/arm64`。固定版本使用 `ghcr.io/chen8945/qmediasync:<tag>`；`beta` 和功能分支镜像的生成规则见 [发布流程](release.md)。
+正式发布镜像为 `daxiong319/diy-strm:latest`（DockerHub）与 `ghcr.io/daxiong319/qmediasync:latest`（GHCR），同时提供 `linux/amd64` 和 `linux/arm64`。固定版本使用 `daxiong319/diy-strm:<tag>` / `ghcr.io/daxiong319/qmediasync:<tag>`；`beta` 和功能分支镜像的生成规则见 [发布流程](release.md)。
 
 以下示例把全部运行状态保存到宿主机的 `./config`，并按需给应用挂载媒体目录：
 
@@ -37,10 +37,10 @@ docker run -d \
   -p 8094:8094 \
   -v "$(pwd)/config:/app/config" \
   -v "$(pwd)/media:/media" \
-  ghcr.io/chen8945/qmediasync:latest
+  ghcr.io/daxiong319/qmediasync:latest
 ```
 
-首次运行没有 `config/config.yaml` 时，访问 HTTP `12333` 完成配置向导。使用内置 HTTPS 时还需显式映射 `-p 12332:12332`，并将证书文件放入已挂载的 `config/` 目录。
+DockerHub 用户也可以把镜像名替换为 `daxiong319/diy-strm:latest`，两者构建自同一源码。首次运行没有 `config/config.yaml` 时，访问 HTTP `12333` 完成配置向导。使用内置 HTTPS 时还需显式映射 `-p 12332:12332`，并将证书文件放入已挂载的 `config/` 目录。
 
 容器入口脚本以 root 完成初始目录检查；可选环境变量 `GUID`、`GPID` 为数值 UID/GID。设置后脚本会在容器内创建对应用户或组（如不存在），并在值变化时递归修正 `/app/config` 的所有者，再以 `GUID` 运行主进程。例如：
 
@@ -53,18 +53,18 @@ docker run -d \
   -p 12333:12333 \
   -v "$(pwd)/config:/app/config" \
   -v "/srv/media:/media" \
-  ghcr.io/chen8945/qmediasync:latest
+  ghcr.io/daxiong319/qmediasync:latest
 ```
 
 该所有权修正不覆盖 `/media`；宿主机媒体目录的读写权限仍由部署者自行保证。不要用 `--user` 替代上述入口逻辑，否则入口无法创建用户或修正持久化目录的权限。
 
-从当前源码构建镜像使用：
+从当前源码构建镜像使用根目录 `Dockerfile`（前端 pnpm 构建 + 后端 Go 编译，产物与 CI 一致）：
 
 ```bash
-docker build -f docker/source.Dockerfile -t qmediasync .
+docker build -t qmediasync .
 ```
 
-`docker/source.local.Dockerfile` 仅为本地网络环境替换构建镜像源，产物目标与 `source.Dockerfile` 相同，不用于正式发布。
+`docker/source.Dockerfile` 与 `docker/source.local.Dockerfile` 是上游旧目录布局的遗留文件，当前仓库不使用；`docker/source.local.Dockerfile` 仅用于本地网络环境替换构建镜像源。
 
 ## 发布二进制与 systemd
 
