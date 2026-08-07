@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -150,7 +151,11 @@ func (d *pan139Driver) MakeStrmContent(sf *SyncFileCache) string {
 	ext := filepath.Ext(sf.FileName)
 	u.Path = fmt.Sprintf("/pan139/url/video%s", ext)
 	params := url.Values{}
-	params.Add("fileid", sf.PickCode)
+	params.Add("pickcode", sf.PickCode)
+	// 参考 LitePan：URL 携带账号 ID，播放时直接定位账号，不依赖文件记录表
+	if d.s.Account != nil && d.s.Account.ID > 0 {
+		params.Add("account", strconv.FormatUint(uint64(d.s.Account.ID), 10))
+	}
 	if pathValue := strmPathQueryValue(d.s.Config.StrmUrlNeedPath, sf); pathValue != "" {
 		params.Add("path", pathValue)
 	}

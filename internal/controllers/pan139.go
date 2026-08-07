@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"diy-strm/internal/models"
 	"diy-strm/internal/pan139"
 	"diy-strm/internal/requests"
+	"diy-strm/internal/validation"
 
 	"github.com/gin-gonic/gin"
 )
@@ -138,13 +140,41 @@ func GetPan139UrlByFileId(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误", Data: nil})
 		return
 	}
-	if err := req.Validate(); err != nil {
+	// 兼容两种参数：新链接使用 pickcode（与其它云盘一致），历史链接使用 fileid
+	fileId := strings.TrimSpace(c.Query("fileid"))
+	if fileId == "" {
+		fileId = strings.TrimSpace(req.PickCode)
+	}
+	if fileId == "" {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "fileid：不能为空", Data: nil})
+		return
+	}
+	if err := validation.OneOfInt("force", req.Force, []int{0, 1}); err != nil {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: err.Error(), Data: nil})
 		return
 	}
-	fileId := req.PickCode
+	// 定位账号（参考 LitePan：STRM URL 携带 account 直接定位，不依赖文件记录表）：
+	// 优先 account（账号 ID）-> 其次 userid -> 最后按文件记录反查账号
 	var account *models.Account
-	if req.UserID == "" {
+	if accID := strings.TrimSpace(c.Query("account")); accID != "" {
+		id, err := strconv.ParseUint(accID, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "账号 ID 无效", Data: nil})
+			return
+		}
+		account, err = models.GetAccountById(uint(id))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "账号 ID 不存在", Data: nil})
+			return
+		}
+	} else if req.UserID != "" {
+		var err error
+		account, err = models.GetAccountByUserId(req.UserID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "用户 ID 不存在", Data: nil})
+			return
+		}
+	} else {
 		syncFile := models.GetFileByPickCode(fileId)
 		if syncFile == nil {
 			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "文件 ID 不存在", Data: nil})
@@ -154,13 +184,6 @@ func GetPan139UrlByFileId(c *gin.Context) {
 		account, err = models.GetAccountById(syncFile.AccountId)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "账号 ID 不存在", Data: nil})
-			return
-		}
-	} else {
-		var err error
-		account, err = models.GetAccountByUserId(req.UserID)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "用户 ID 不存在", Data: nil})
 			return
 		}
 	}

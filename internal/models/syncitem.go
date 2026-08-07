@@ -1,8 +1,13 @@
 ﻿package models
 
 import (
+	"errors"
+
 	"diy-strm/internal/db"
+	"diy-strm/internal/helpers"
 	"diy-strm/internal/v115open"
+
+	"gorm.io/gorm"
 )
 
 type SyncTreeItemMetaAction int
@@ -69,6 +74,10 @@ func GetFileByPickCode(pickCode string) *SyncFile {
 	var db115File *SyncFile
 	err := db.Db.Model(&SyncFile{}).Where("pick_code = ?", pickCode).First(&db115File).Error
 	if err != nil {
+		// 区分"数据库异常"与"确实无记录"，便于排查（数据库异常时不可将其误判为文件不存在）
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			helpers.AppLogger.Warnf("查询文件记录失败：pick_code=%s err=%v", pickCode, err)
+		}
 		return nil
 	}
 	return db115File

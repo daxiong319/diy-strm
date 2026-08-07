@@ -56,6 +56,17 @@ func NewEmbeddedManager(config *Config) *EmbeddedManager {
 
 func (m *EmbeddedManager) Start(ctx context.Context) error {
 	helpers.AppLogger.Info("启动内嵌 PostgreSQL…")
+
+	// 若已有 PostgreSQL 实例正在运行（例如 diy-strm 重启而 PostgreSQL 未随其停止），
+	// 直接复用现有实例，避免删除 postmaster.pid / log 目录导致运行中的实例异常退出
+	if m.isPostgresRunning() {
+		helpers.AppLogger.Info("检测到已有 PostgreSQL 实例在运行，直接复用")
+		if err := m.connectToDB(); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	// 初始化目录和权限
 	if err := m.InitDataDir(); err != nil {
 		return err
@@ -385,6 +396,17 @@ func (m *EmbeddedManager) startPostgresProcess() error {
 	helpers.AppLogger.Infof("PostgreSQL 进程已启动（PID：%d）", m.process.Pid)
 
 	return nil
+}
+
+// isPostgresRunning 检测指定端口上是否已有可用的 PostgreSQL 实例
+func (m *EmbeddedManager) isPostgresRunning() bool {
+	pgIsReadyPath := "pg_isready"
+	if runtime.GOOS == "windows" {
+		pgIsReadyPath = filepath.Join(m.config.BinaryPath, "pg_isready.exe")
+	}
+	cmd := exec.Command(pgIsReadyPath, "-h", m.config.Host, "-p",
+		fmt.Sprintf("%d", m.config.Port), "-U", m.config.User)
+	return cmd.Run() == nil
 }
 
 func (m *EmbeddedManager) waitForPostgres(ctx context.Context) error {
