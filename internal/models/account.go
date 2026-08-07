@@ -135,6 +135,7 @@ func (account *Account) GetBaiDuPanClient() *baidupan.Client {
 
 // Get123Client 创建 123 云盘逆向 API 客户端
 // 使用保存的用户名/密码用于 401 自动重新登录，Token 用于恢复会话
+// 令牌变化（自动重登录）时回调持久化，避免会话过期后需重新授权
 func (account *Account) Get123Client() *pan123.Client {
 	client := pan123.NewClient(account.ID, account.Username, account.Password)
 	if account.Token != "" {
@@ -143,6 +144,9 @@ func (account *Account) Get123Client() *pan123.Client {
 	if account.UserId != "" {
 		client.SetUserID(account.UserId)
 	}
+	client.SetAuthChanged(func(newToken string) {
+		account.Update123Login(account.Username, account.Password, newToken)
+	})
 	return client
 }
 

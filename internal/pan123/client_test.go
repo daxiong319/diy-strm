@@ -457,3 +457,121 @@ func TestGetPathIdByPathRoot(t *testing.T) {
 		t.Errorf("根路径 ID 应为 0：%s", id)
 	}
 }
+
+func TestLoginTriggersAuthChanged(t *testing.T) {
+	client, _, _ := newTestClient(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, map[string]interface{}{
+				"code":    200,
+				"message": "success",
+				"data":    map[string]interface{}{"token": "fresh-token"},
+			})
+		},
+		nil,
+	)
+	var notified []string
+	client.SetAuthChanged(func(token string) {
+		notified = append(notified, token)
+	})
+
+	if err := client.Login(context.Background()); err != nil {
+		t.Fatalf("登录失败：%v", err)
+	}
+	if len(notified) != 1 || notified[0] != "fresh-token" {
+		t.Errorf("登录后应回调一次新令牌：%v", notified)
+	}
+
+	// 令牌未变化时再次登录不应重复回调
+	if err := client.Login(context.Background()); err != nil {
+		t.Fatalf("重复登录失败：%v", err)
+	}
+	if len(notified) != 1 {
+		t.Errorf("令牌未变化时不应重复回调：%v", notified)
+	}
+}
+
+func TestRequestReloginNotifiesAuthChanged(t *testing.T) {
+	loginCount := 0
+	client, _, _ := newTestClient(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			loginCount++
+			writeJSON(w, 200, map[string]interface{}{
+				"code":    200,
+				"message": "success",
+				"data":    map[string]interface{}{"token": "relogin-token"},
+			})
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			if loginCount == 0 {
+				writeJSON(w, 200, map[string]interface{}{"code": 401, "message": "token expired"})
+				return
+			}
+			writeJSON(w, 200, map[string]interface{}{"code": 0, "message": "success", "data": map[string]interface{}{}})
+		},
+	)
+	client.SetAccessToken("expired")
+	var notified []string
+	client.SetAuthChanged(func(token string) {
+		notified = append(notified, token)
+	})
+
+	if _, err := client.Request(context.Background(), client.api("/user/info"), http.MethodGet, nil); err != nil {
+		t.Fatalf("请求失败：%v", err)
+	}
+	if len(notified) != 1 || notified[0] != "relogin-token" {
+		t.Errorf("401 重登录后应回调新令牌：%v", notified)
+	}
+}
+
+func TestGetDownloadInfoPrefersDownloadUrl(t *testing.T) {
+	client, _, _ := newTestClient(t, nil,
+		func(w http.ResponseWriter, r *http.Request) {
+			t.Errorf("列表自带 DownloadUrl 时不应调用 download_info 接口：%s", r.URL.Path)
+		},
+	)
+	client.SetAccessToken("token")
+
+	info, err := client.GetDownloadInfo(context.Background(), File{
+		FileId:      1001,
+		FileName:    "movie.mkv",
+		Etag:        "abc",
+		S3KeyFlag:   "flag",
+		DownloadUrl: "https://download.example.com/movie.mkv",
+	})
+	if err != nil {
+		t.Fatalf("获取下载信息失败：%v", err)
+	}
+	if info.Data.DownloadUrl != "https://download.example.com/movie.mkv" {
+		t.Errorf("应直接使用列表 DownloadUrl：%s", info.Data.DownloadUrl)
+	}
+}
+
+func TestGetDownloadInfoFallbackToAPI(t *testing.T) {
+	client, _, _ := newTestClient(t, nil,
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/file/download_info" {
+				t.Errorf("路径错误：%s", r.URL.Path)
+			}
+			writeJSON(w, 200, map[string]interface{}{
+				"code": 0, "message": "success",
+				"data": map[string]interface{}{"DownloadUrl": "https://api.example.com/dl?sign=1"},
+			})
+		},
+	)
+	client.SetAccessToken("token")
+
+	info, err := client.GetDownloadInfo(context.Background(), File{
+		FileId:   1001,
+		FileName: "movie.mkv",
+		Etag:     "abc",
+		S3KeyFlag: "flag",
+		Size:     1024,
+		Type:     0,
+	})
+	if err != nil {
+		t.Fatalf("获取下载信息失败：%v", err)
+	}
+	if info.Data.DownloadUrl != "https://api.example.com/dl?sign=1" {
+		t.Errorf("DownloadUrl 为空时应回退 download_info 接口：%s", info.Data.DownloadUrl)
+	}
+}

@@ -22,8 +22,10 @@ type Client struct {
 	loginBase string
 	mainBase  string
 
-	tokenMu sync.RWMutex
-	client  *resty.Client
+	tokenMu  sync.RWMutex
+	loginMu  sync.Mutex // 串行化登录/重登录，防止并发 401 触发登录风暴
+	client   *resty.Client
+	authFunc func(newToken string) // 令牌变化回调（重登录后持久化）
 
 	limiterLock sync.RWMutex
 	limiters    map[string]*rate.Limiter
@@ -75,6 +77,24 @@ func (c *Client) SetUserID(userID string) {
 // GetUserID 获取用户 ID
 func (c *Client) GetUserID() string {
 	return c.userID
+}
+
+// SetAuthChanged 设置令牌变化回调（登录或 401 自动重登录成功后触发）
+// 调用方可借此将新令牌持久化到数据库，避免会话过期后每次都要重新授权
+func (c *Client) SetAuthChanged(fn func(newToken string)) {
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	c.authFunc = fn
+}
+
+// notifyAuthChanged 触发令牌变化回调（仅在令牌真正变化时）
+func (c *Client) notifyAuthChanged(token string) {
+	c.tokenMu.RLock()
+	fn := c.authFunc
+	c.tokenMu.RUnlock()
+	if fn != nil {
+		fn(token)
+	}
 }
 
 // SetRateLimit 为指定 API 路径设置 QPS 限流

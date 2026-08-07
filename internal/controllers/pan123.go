@@ -198,7 +198,7 @@ func GetPan123UrlByPickCode(c *gin.Context) {
 
 	client := account.Get123Client()
 	defer client.Close()
-	cacheKey := "pan123url:" + pickCode
+	cacheKey := fmt.Sprintf("pan123url:%d:%s", account.ID, pickCode)
 	if !keyLock.LockWithTimeout(cacheKey, 10*time.Second) {
 		helpers.AppLogger.Warnf("获取 123 云盘下载链接缓存锁超时：fileId=%s", pickCode)
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取 123 云盘下载链接超时，请稍后重试", Data: nil})

@@ -221,7 +221,11 @@ func (c *Client) uploadViaPreSignedURLs(ctx context.Context, upReq *UploadResp, 
 				return err
 			}
 			if progress != nil {
-				progress(int64(j)*chunkSize, size)
+				done := int64(j) * chunkSize
+				if done > size {
+					done = size
+				}
+				progress(done, size)
 			}
 		}
 	}

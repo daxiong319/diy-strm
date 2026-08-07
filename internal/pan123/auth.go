@@ -86,7 +86,10 @@ func IsEmailFormat(username string) bool {
 }
 
 // Login 登录 123 云盘，获取访问令牌
+// 使用 loginMu 串行化，避免并发 401 重登录时重复发起登录请求
 func (c *Client) Login(ctx context.Context) error {
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
 	body := map[string]interface{}{}
 	if IsEmailFormat(c.username) {
 		body = map[string]interface{}{
@@ -139,8 +142,12 @@ func (c *Client) Login(ctx context.Context) error {
 	}
 
 	c.tokenMu.Lock()
+	oldToken := c.accessToken
 	c.accessToken = resp.Data.Token
 	c.tokenMu.Unlock()
+	if resp.Data.Token != oldToken {
+		c.notifyAuthChanged(resp.Data.Token)
+	}
 	return nil
 }
 

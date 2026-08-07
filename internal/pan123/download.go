@@ -13,7 +13,13 @@ import (
 )
 
 // GetDownloadInfo 获取文件下载信息
+// 文件列表中自带的 DownloadUrl 通常可直接使用（省一次 download_info 调用），为空时回退查询下载信息接口
 func (c *Client) GetDownloadInfo(ctx context.Context, file File) (*DownloadInfoResp, error) {
+	if file.DownloadUrl != "" {
+		var resp DownloadInfoResp
+		resp.Data.DownloadUrl = file.DownloadUrl
+		return &resp, nil
+	}
 	data := map[string]interface{}{
 		"driveId":   0,
 		"etag":      file.Etag,
