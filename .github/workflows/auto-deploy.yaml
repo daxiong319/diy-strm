@@ -82,7 +82,7 @@ jobs:
     environment: production
     steps:
       - name: Update server container
-        uses: appleboy/ssh-action@v1.4.0
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
