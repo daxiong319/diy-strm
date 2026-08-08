@@ -1,0 +1,106 @@
+name: auto-deploy
+
+run-name: auto-deploy ${{ github.sha }}
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: auto-deploy
+  cancel-in-progress: true
+
+env:
+  DOCKER_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/diy-strm
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve build metadata
+        id: meta
+        run: |
+          build_date="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          short_sha="${GITHUB_SHA::12}"
+          echo "tag=${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "build_date=${build_date}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          cache-image: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ${{ env.DOCKER_IMAGE }}:latest
+            ${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/qmediasync:latest
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=latest
+            BUILD_DATE=${{ steps.meta.outputs.build_date }}
+            FANART_API_KEY=${{ secrets.FANART_API_KEY }}
+            TMDB_ACCESS_TOKEN=${{ secrets.TMDB_ACCESS_TOKEN }}
+            TMDB_API_KEY=${{ secrets.TMDB_API_KEY }}
+            SC_API_KEY=${{ secrets.SC_API_KEY }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: always() && needs.build-and-push.result == 'success'
+    environment: production
+    steps:
+      - name: Update server container
+        uses: appleboy/ssh-action@v1.4.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          script: |
+            set -e
+            cd /opt/diy-strm
+            if [ ! -f docker-compose.yml ]; then
+              echo "::error::/opt/diy-strm/docker-compose.yml not found"
+              exit 1
+            fi
+            docker pull ${{ env.DOCKER_IMAGE }}:latest
+            docker compose up -d
+            sleep 5
+            if ! docker ps --filter "name=^diy-strm$" --filter "status=running" --format '{{.Names}}' | grep -q '^diy-strm$'; then
+              echo "::error::diy-strm container is not running after deploy"
+              docker compose ps
+              exit 1
+            fi
+            echo "diy-strm deployed: $(docker inspect --format '{{.Image}}' diy-strm)"

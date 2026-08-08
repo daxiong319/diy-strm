@@ -8,10 +8,10 @@
         <div class="card-header">
           <div class="header-left">
             <h2 class="card-title hide-on-mobile">
-              网盘文件浏览器（已支持：查看列表、创建文件夹、删除）
+              网盘文件浏览器（已支持：查看列表、创建文件夹、重命名、移动、删除、命名对齐）
             </h2>
             <p class="card-subtitle">
-              浏览和管理媒体文件，支持 STRM 生成、刮削整理和 ED2K 生成操作
+              浏览和管理媒体文件，支持 STRM 生成、刮削整理和 ED2K 生成操作；命名对齐可将杂乱文件名规范为剧集/电影命名
             </p>
           </div>
         </div>
@@ -31,7 +31,7 @@
                 popper-class="file-manager-summary-popover"
               >
                 <p class="file-manager-summary-popover-text">
-                  浏览和管理媒体文件，支持 STRM 生成、刮削整理和 ED2K 生成操作
+                  浏览和管理媒体文件，支持 STRM 生成、刮削整理和 ED2K 生成操作；命名对齐可将杂乱文件名规范为剧集/电影命名
                 </p>
                 <template #reference>
                   <el-button
@@ -191,6 +191,11 @@
                         >
                           生成 ED2K
                         </el-dropdown-item>
+                        <el-dropdown-item command="RENAME">重命名</el-dropdown-item>
+                        <el-dropdown-item command="MOVE">移动到</el-dropdown-item>
+                        <el-dropdown-item v-if="!row.is_directory" command="NAME_ALIGN">
+                          命名对齐
+                        </el-dropdown-item>
                         <el-dropdown-item command="DELETE" divided>删除</el-dropdown-item>
                       </el-dropdown-menu>
                     </template>
@@ -243,6 +248,27 @@
                         @click="handleSingleOperation('GENERATE_ED2K', row)"
                       >
                         生成 ED2K
+                      </el-button>
+                      <el-button
+                        v-if="!row.is_directory"
+                        size="small"
+                        @click="handleSingleOperation('NAME_ALIGN', row)"
+                      >
+                        命名对齐
+                      </el-button>
+                      <el-button
+                        size="small"
+                        type="primary"
+                        @click="handleSingleOperation('RENAME', row)"
+                      >
+                        重命名
+                      </el-button>
+                      <el-button
+                        size="small"
+                        type="primary"
+                        @click="handleSingleOperation('MOVE', row)"
+                      >
+                        移动到
                       </el-button>
                       <el-button
                         size="small"
@@ -334,6 +360,64 @@
         </div>
       </div>
     </el-dialog>
+
+    <el-dialog
+      v-model="showRenameDialog"
+      title="重命名"
+      width="400px"
+      :close-on-click-modal="false"
+      @closed="resetRenameDialog"
+    >
+      <el-form ref="renameFormRef" :model="renameForm" :rules="renameRules" label-width="80px">
+        <el-form-item label="原名称">
+          <span class="rename-original-name">{{ renameItem?.name }}</span>
+        </el-form-item>
+        <el-form-item label="新名称" prop="newName">
+          <el-input v-model="renameForm.newName" placeholder="请输入新名称" clearable />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="resetRenameDialog">取消</el-button>
+          <el-button type="primary" :loading="renameLoading" @click="handleRenameSubmit">
+            确定
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="showMoveDialog"
+      title="移动到"
+      width="600px"
+      :close-on-click-modal="false"
+      @closed="resetMoveDialog"
+    >
+      <div class="move-dialog-content">
+        <p class="dialog-tip">请选择目标目录：</p>
+        <div v-if="moveItem" class="strm-source-info">
+          <span class="source-label">移动对象：</span>
+          <span class="source-name">{{ moveItem.name }}</span>
+        </div>
+        <div class="dir-selector-container">
+          <DirectorySelector
+            v-model="moveTargetDir"
+            :source-type="selectedAccount?.source_type ?? ''"
+            :account-id="selectedAccountId ?? 0"
+            @cancel="resetMoveDialog"
+            @select="confirmMove"
+          />
+        </div>
+      </div>
+    </el-dialog>
+
+    <NameAlignDialog
+      v-model="showNameAlignDialog"
+      :account-id="selectedAccountId ?? 0"
+      :parent-id="getCurrentParentId()"
+      :files="fileList"
+      @applied="loadFileList({ refresh: true })"
+    />
   </div>
 </template>
 
@@ -363,6 +447,7 @@ import { formatDateTime } from '@/utils/timeUtils'
 import { SERVER_URL } from '@/const'
 import ResponsivePagination from '@/components/common/ResponsivePagination.vue'
 import DirectorySelector from './DirectorySelector.vue'
+import NameAlignDialog from './NameAlignDialog.vue'
 
 interface NetdiskAccount {
   id: number
@@ -581,6 +666,26 @@ const createDirectoryOperationContext = ref<FileOperationContextSnapshot | null>
 const strmGenerateLoading = ref(false)
 const contextVersion = ref(0)
 
+const showRenameDialog = ref(false)
+const renameLoading = ref(false)
+const renameItem = ref<FileSystemItem | null>(null)
+const renameOperationContext = ref<FileOperationContextSnapshot | null>(null)
+const renameFormRef = useTemplateRef<FormInstance>('renameFormRef')
+const renameForm = ref({ newName: '' })
+const renameRules = ref<FormRules>({
+  newName: [
+    { required: true, message: '请输入新名称', trigger: 'blur' },
+    { min: 1, max: 255, message: '名称长度在 1 到 255 个字符', trigger: 'blur' },
+  ],
+})
+
+const showMoveDialog = ref(false)
+const moveItem = ref<FileSystemItem | null>(null)
+const moveTargetDir = ref<DirInfo | null>(null)
+const moveOperationContext = ref<FileOperationContextSnapshot | null>(null)
+
+const showNameAlignDialog = ref(false)
+
 interface FileOperationContextSnapshot {
   accountId: number | null
   parentId: string
@@ -700,10 +805,28 @@ function resetCreateDirectoryDialog() {
   createLoading.value = false
 }
 
+function resetRenameDialog() {
+  showRenameDialog.value = false
+  renameItem.value = null
+  renameForm.value.newName = ''
+  renameOperationContext.value = null
+  renameLoading.value = false
+}
+
+function resetMoveDialog() {
+  showMoveDialog.value = false
+  moveItem.value = null
+  moveTargetDir.value = null
+  moveOperationContext.value = null
+}
+
 function invalidateFileOperationContext() {
   contextVersion.value += 1
   resetStrmTargetDialog()
   resetCreateDirectoryDialog()
+  resetRenameDialog()
+  resetMoveDialog()
+  showNameAlignDialog.value = false
 }
 
 function clearFileListForContextSwitch() {
@@ -1030,6 +1153,21 @@ async function handleSingleOperation(operation: FileOperationType, item: FileSys
     return
   }
 
+  if (operation === 'RENAME') {
+    openRenameDialog(item)
+    return
+  }
+
+  if (operation === 'MOVE') {
+    openMoveDialog(item)
+    return
+  }
+
+  if (operation === 'NAME_ALIGN') {
+    openNameAlignDialog(item)
+    return
+  }
+
   if (operation === 'STRM_GENERATE') {
     const operationContext = createFileOperationContextSnapshot()
     if (!operationContext.accountId) {
@@ -1116,6 +1254,159 @@ async function handleDeleteItem(item: FileSystemItem) {
       ElMessage.error('删除失败')
     }
   }
+}
+
+function openRenameDialog(item: FileSystemItem) {
+  const operationContext = createFileOperationContextSnapshot()
+
+  if (!operationContext.accountId) {
+    ElMessage.warning('请先选择网盘账号')
+    return
+  }
+
+  renameItem.value = item
+  renameForm.value.newName = item.name
+  renameOperationContext.value = operationContext
+  showRenameDialog.value = true
+}
+
+async function handleRenameSubmit() {
+  if (!renameFormRef.value) return
+
+  const operationContext = renameOperationContext.value
+  if (!isFileOperationContextCurrent(operationContext)) {
+    resetRenameDialog()
+    return
+  }
+
+  const item = renameItem.value
+  if (!item || !operationContext.accountId) {
+    ElMessage.warning('请先选择网盘账号')
+    return
+  }
+
+  const newName = renameForm.value.newName.trim()
+  if (!newName || newName === item.name) {
+    resetRenameDialog()
+    return
+  }
+
+  try {
+    await renameFormRef.value.validate()
+
+    if (!isFileOperationContextCurrent(operationContext)) {
+      return
+    }
+
+    renameLoading.value = true
+
+    const response = await http.post(`${SERVER_URL}/path/rename`, {
+      parent_id: operationContext.parentId,
+      file_id: item.id,
+      account_id: operationContext.accountId,
+      new_name: newName,
+    })
+
+    if (!isFileOperationContextCurrent(operationContext)) {
+      return
+    }
+
+    if (response?.data.code === 200) {
+      ElMessage.success('重命名成功')
+      resetRenameDialog()
+      await loadFileList({ refresh: true })
+    } else {
+      ElMessage.error(response?.data.message || '重命名失败')
+    }
+  } catch {
+    if (!isFileOperationContextCurrent(operationContext)) {
+      return
+    }
+    ElMessage.error('重命名失败')
+  } finally {
+    if (renameOperationContext.value === operationContext) {
+      renameLoading.value = false
+    }
+  }
+}
+
+function openMoveDialog(item: FileSystemItem) {
+  const operationContext = createFileOperationContextSnapshot()
+
+  if (!operationContext.accountId) {
+    ElMessage.warning('请先选择网盘账号')
+    return
+  }
+
+  moveItem.value = item
+  moveTargetDir.value = null
+  moveOperationContext.value = operationContext
+  showMoveDialog.value = true
+}
+
+async function confirmMove() {
+  if (!moveTargetDir.value || !moveItem.value) {
+    ElMessage.warning('请选择目标目录')
+    return
+  }
+
+  const operationContext = moveOperationContext.value
+  if (!isFileOperationContextCurrent(operationContext)) {
+    resetMoveDialog()
+    return
+  }
+
+  if (!operationContext.accountId) {
+    ElMessage.warning('请先选择网盘账号')
+    return
+  }
+
+  if (moveTargetDir.value.id === moveItem.value.id) {
+    ElMessage.warning('目标目录不能是文件自身')
+    return
+  }
+
+  try {
+    const response = await http.post(`${SERVER_URL}/path/move`, {
+      parent_id: operationContext.parentId,
+      file_id: moveItem.value.id,
+      account_id: operationContext.accountId,
+      target_parent_id: moveTargetDir.value.id,
+    })
+
+    if (!isFileOperationContextCurrent(operationContext)) {
+      return
+    }
+
+    if (response?.data.code === 200) {
+      ElMessage.success('移动成功')
+      resetMoveDialog()
+      await loadFileList({ refresh: true })
+    } else {
+      ElMessage.error(response?.data.message || '移动失败')
+    }
+  } catch {
+    if (!isFileOperationContextCurrent(operationContext)) {
+      return
+    }
+    ElMessage.error('移动失败')
+  }
+}
+
+function openNameAlignDialog(item: FileSystemItem) {
+  const operationContext = createFileOperationContextSnapshot()
+
+  if (!operationContext.accountId) {
+    ElMessage.warning('请先选择网盘账号')
+    return
+  }
+
+  if (item.is_directory) {
+    ElMessage.warning('命名对齐仅支持文件')
+    return
+  }
+
+  showNameAlignDialog.value = true
 }
 
 function openCreateDialog() {

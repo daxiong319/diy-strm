@@ -1,11 +1,6 @@
 services:
   diy-strm:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        - VERSION=latest
-    image: diy-strm:latest
+    image: afengj/diy-strm:latest
     container_name: diy-strm
     restart: unless-stopped
     ports:

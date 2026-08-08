@@ -691,6 +691,10 @@ func setRouter(r *gin.Engine) {
 		api.POST("/path/create", controllers.CreateDir)                                     // 创建目录接口
 		api.DELETE("/path", controllers.DeleteDir)                                          // 删除目录接口
 		api.GET("/path/files", controllers.GetNetFileList)                                  // 查询网盘文件列表
+		api.POST("/path/rename", controllers.RenameFile)                                    // 重命名网盘文件或目录
+		api.POST("/path/move", controllers.MoveFile)                                        // 移动网盘文件或目录
+		api.POST("/files/name-align/preview", controllers.NameAlignPreview)                 // 命名对齐预览
+		api.POST("/files/name-align/apply", controllers.NameAlignApply)                     // 命名对齐应用
 		api.POST("/user/change", controllers.ChangePassword)                                // 修改当前用户密码
 
 		api.POST("/setting/http-proxy", controllers.UpdateHttpProxy)    // 更改 HTTP 代理

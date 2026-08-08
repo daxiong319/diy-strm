@@ -163,7 +163,14 @@ interface BackupRecordsResponse {
 
 // 文件管理器相关类型定义
 type FileType = 'directory' | 'video' | 'image' | 'nfo' | 'other'
-type FileOperationType = 'STRM_GENERATE' | 'SCRAPE_ORGANIZE' | 'GENERATE_ED2K' | 'DELETE'
+type FileOperationType =
+  | 'STRM_GENERATE'
+  | 'SCRAPE_ORGANIZE'
+  | 'GENERATE_ED2K'
+  | 'RENAME'
+  | 'MOVE'
+  | 'NAME_ALIGN'
+  | 'DELETE'
 
 // 文件系统项目接口
 interface FileSystemItem {

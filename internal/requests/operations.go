@@ -277,6 +277,126 @@ func (r DeleteDirRequest) Validate() error {
 	return nil
 }
 
+// RenameFileRequest 重命名网盘文件或目录请求。
+type RenameFileRequest struct {
+	AccountID uint   `json:"account_id" form:"account_id"`
+	ParentID  string `json:"parent_id" form:"parent_id"`
+	FileID    string `json:"file_id" form:"file_id"`
+	NewName   string `json:"new_name" form:"new_name"`
+}
+
+// Validate 校验重命名请求。
+func (r RenameFileRequest) Validate() error {
+	if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(r.FileID) == "" || r.FileID == "0" {
+		return validation.New("file_id", "不能为空")
+	}
+	return validateFolderName(r.NewName)
+}
+
+// MoveFileRequest 移动网盘文件或目录请求。
+type MoveFileRequest struct {
+	AccountID      uint   `json:"account_id" form:"account_id"`
+	ParentID       string `json:"parent_id" form:"parent_id"`
+	FileID         string `json:"file_id" form:"file_id"`
+	TargetParentID string `json:"target_parent_id" form:"target_parent_id"`
+}
+
+// Validate 校验移动请求。
+func (r MoveFileRequest) Validate() error {
+	if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(r.FileID) == "" || r.FileID == "0" {
+		return validation.New("file_id", "不能为空")
+	}
+	if strings.TrimSpace(r.TargetParentID) == "" || r.TargetParentID == "0" {
+		return validation.New("target_parent_id", "不能为空")
+	}
+	if r.TargetParentID == r.FileID {
+		return validation.New("target_parent_id", "目标目录不能是文件自身")
+	}
+	return nil
+}
+
+// NameAlignItem 命名对齐条目。
+type NameAlignItem struct {
+	FileID string `json:"file_id"`
+	Name   string `json:"name"`
+}
+
+// NameAlignPreviewRequest 命名对齐预览请求。
+type NameAlignPreviewRequest struct {
+	AccountID  uint            `json:"account_id"`
+	ParentID   string          `json:"parent_id"`
+	MediaTitle string          `json:"media_title"`
+	MediaType  string          `json:"media_type"`
+	Year       int             `json:"year"`
+	Items      []NameAlignItem `json:"items"`
+}
+
+// Validate 校验命名对齐预览请求。
+func (r NameAlignPreviewRequest) Validate() error {
+	if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+		return err
+	}
+	switch r.MediaType {
+	case "", "tvshow", "movie":
+	default:
+		return validation.New("media_type", "只能是 tvshow 或 movie")
+	}
+	if len(r.Items) == 0 {
+		return validation.New("items", "不能为空")
+	}
+	if len(r.Items) > 500 {
+		return validation.New("items", "单次最多 500 个文件")
+	}
+	for _, item := range r.Items {
+		if strings.TrimSpace(item.FileID) == "" || strings.TrimSpace(item.Name) == "" {
+			return validation.New("items", "文件 ID 与名称不能为空")
+		}
+	}
+	return nil
+}
+
+// NameAlignApplyItem 命名对齐应用条目。
+type NameAlignApplyItem struct {
+	FileID  string `json:"file_id"`
+	Name    string `json:"name"`
+	NewName string `json:"new_name"`
+}
+
+// NameAlignApplyRequest 命名对齐应用请求。
+type NameAlignApplyRequest struct {
+	AccountID uint                  `json:"account_id"`
+	ParentID  string                `json:"parent_id"`
+	Items     []NameAlignApplyItem `json:"items"`
+}
+
+// Validate 校验命名对齐应用请求。
+func (r NameAlignApplyRequest) Validate() error {
+	if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+		return err
+	}
+	if len(r.Items) == 0 {
+		return validation.New("items", "不能为空")
+	}
+	if len(r.Items) > 500 {
+		return validation.New("items", "单次最多 500 个文件")
+	}
+	for _, item := range r.Items {
+		if strings.TrimSpace(item.FileID) == "" || strings.TrimSpace(item.Name) == "" {
+			return validation.New("items", "文件 ID 与名称不能为空")
+		}
+		if err := validateFolderName(item.NewName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // FNPathRequest 飞牛路径授权回调请求。
 type FNPathRequest struct {
 	Path string `json:"path" form:"path"`
