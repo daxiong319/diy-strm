@@ -600,6 +600,7 @@ func setRouter(r *gin.Engine) {
 	r.GET("/api/setup/status", controllers.SetupStatusAction)                  // 查询首个管理员初始化状态
 	r.POST("/api/setup/admin", controllers.CreateInitialAdminAction)           // 创建首个管理员
 	r.GET("/api/session", controllers.SessionAction)                           // 获取当前登录会话
+	r.GET("/api/scrape/tmdb-popular", controllers.GetTmdbPopular)              // 获取 TMDB 热门电影（登录页背景，无需登录）
 	r.GET("/115/url/*filename", controllers.Get115UrlByPickCode)               // 查询 115 直链，按 PickCode 查询，支持 ISO，路径最后一部分为 .扩展名格式
 	r.GET("/115/newurl", controllers.Get115UrlByPickCode)                      // 查询 115 直链，按 PickCode 查询
 	r.GET("/baidupan/url/*filename", controllers.GetBaiduPanUrlByPickCode)     // 查询百度网盘直链，按 fs_id 查询，支持 ISO，路径最后一部分为 .扩展名格式

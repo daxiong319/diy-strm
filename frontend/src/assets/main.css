@@ -1,10 +1,8 @@
+@import './tokens.css';
 @import './base.css';
 /* 导入组件公共样式 */
 @import './components.css';
 
-body {
-  font-family: '微软雅黑', Arial, sans-serif;
-}
 #app {
   width: 100%;
   margin: 0 auto;
@@ -39,12 +37,6 @@ body {
     font-size: 16px !important;
   }
 
-  /* 优化点击区域 */
-  /* .el-button {
-    min-height: 44px;
-    padding: 8px 16px;
-  } */
-
   /* 优化表单间距 */
   .el-form-item {
     margin-bottom: 16px;
@@ -58,12 +50,6 @@ body {
 
 /* 小屏设备优化 */
 @media (max-width: 480px) {
-  /* .el-button {
-    min-height: 40px;
-    padding: 6px 12px;
-    font-size: 14px;
-  } */
-
   .el-form-item {
     margin-bottom: 14px;
   }

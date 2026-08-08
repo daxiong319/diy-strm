@@ -1,0 +1,234 @@
+/* ===== 全局设计令牌 =====
+   品牌色 / 表面 / 文本 / 边框 / 语义色 / 圆角 / 阴影 / 布局
+   主题（浅/深）与皮肤（brutal）只覆盖变量值，结构样式集中在组件与页面上。
+   参照 LitePan 的令牌机制，在项目既有视觉（蓝紫品牌、深色侧边栏）上迭代。 */
+
+:root {
+  --brand-start: #4c74df;
+  --brand-end: #02a6f0;
+  --brand-gradient: linear-gradient(135deg, var(--brand-start), var(--brand-end));
+  --brand-gradient-h: linear-gradient(90deg, var(--brand-start), var(--brand-end));
+  --brand-gradient-h-hover: linear-gradient(90deg, #3b5bdb, #1e88e5);
+  --brand: #4c74df;
+  --brand-strong: #3b5bdb;
+
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --surface-muted: #fafafa;
+  --surface-sunken: #f8f9fa;
+
+  --text: #1e293b;
+  --text-regular: #374151;
+  --text-muted: #64748b;
+  --text-on-brand: #ffffff;
+
+  --border: #e2e8f0;
+  --border-soft: #f1f5f9;
+
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --info: #1976d2;
+  --info-soft: #e3f2fd;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 2px 8px rgba(15, 23, 42, 0.08);
+  --shadow-soft: 0 2px 4px rgba(0, 0, 0, 0.1);
+  --shadow-pop: 0 8px 24px rgba(15, 23, 42, 0.16);
+  --shadow-brand: 0 2px 4px rgba(76, 116, 223, 0.3);
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei',
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'Monaco', 'Menlo', 'Ubuntu Mono', Consolas, monospace;
+  --font-size: 14px;
+  --line-height: 1.6;
+
+  /* 侧边栏（管理端） */
+  --sidebar-bg: linear-gradient(180deg, var(--brand-start), var(--brand-end));
+  --sidebar-border: rgba(255, 255, 255, 0.18);
+  --sidebar-text: rgba(255, 255, 255, 0.88);
+  --sidebar-hover-bg: rgba(255, 255, 255, 0.15);
+  --sidebar-active-bg: #ffffff;
+  --sidebar-active-color: var(--brand);
+  --sidebar-active-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+
+  --main-bg: var(--bg);
+
+  --panel-head-bg: #f9fafb;
+  --overlay-scrim: color-mix(in srgb, var(--surface) 75%, transparent);
+  --surface-hover: #f5f7fb;
+  --accent-soft: rgba(76, 116, 223, 0.12);
+  --accent-text: #2563eb;
+  --tab-active-bg: #eff6ff;
+  --tab-active-border: #bfdbfe;
+
+  --header-height: 60px;
+  --sidebar-width: 220px;
+
+  --transition: 0.2s ease;
+
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --brand-start: #1e40af;
+  --brand-end: #0f766e;
+  --brand: #3b82f6;
+  --brand-strong: #2563eb;
+  --brand-gradient-h-hover: linear-gradient(90deg, #1d4ed8, #0e7490);
+
+  --bg: #101215;
+  --surface: #181b20;
+  --surface-muted: #1d2127;
+  --surface-sunken: #15181c;
+
+  --text: #e7eaf0;
+  --text-regular: #cbd2dc;
+  --text-muted: #9099a8;
+
+  --border: #2b3038;
+  --border-soft: #23272e;
+
+  --info: #60a5fa;
+  --info-soft: #1e293b;
+
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-soft: 0 2px 4px rgba(0, 0, 0, 0.35);
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  --sidebar-bg: linear-gradient(
+    135deg,
+    rgba(28, 51, 111, 0.98) 0%,
+    rgba(24, 92, 139, 0.96) 52%,
+    rgba(8, 145, 178, 0.92) 100%
+  );
+  --sidebar-border: rgba(148, 163, 184, 0.14);
+  --sidebar-text: rgba(233, 238, 246, 0.86);
+  --sidebar-hover-bg: rgba(255, 255, 255, 0.08);
+  --sidebar-active-bg: rgba(59, 130, 246, 0.18);
+  --sidebar-active-color: #dbeafe;
+  --sidebar-active-shadow: none;
+
+  --panel-head-bg: #1d2127;
+  --overlay-scrim: color-mix(in srgb, var(--bg) 82%, transparent);
+  --surface-hover: #23272e;
+  --accent-soft: rgba(59, 130, 246, 0.18);
+  --accent-text: #93c5fd;
+  --tab-active-bg: rgba(59, 130, 246, 0.15);
+  --tab-active-border: rgba(59, 130, 246, 0.35);
+
+  color-scheme: dark;
+}
+
+/* ===== Element Plus 变量映射 ===== */
+:root {
+  --el-color-primary: var(--brand);
+  --el-color-primary-light-3: color-mix(in srgb, var(--brand) 70%, #ffffff);
+  --el-color-primary-light-5: color-mix(in srgb, var(--brand) 50%, #ffffff);
+  --el-color-primary-light-7: color-mix(in srgb, var(--brand) 30%, #ffffff);
+  --el-color-primary-light-8: color-mix(in srgb, var(--brand) 20%, #ffffff);
+  --el-color-primary-light-9: color-mix(in srgb, var(--brand) 10%, #ffffff);
+  --el-color-primary-dark-2: var(--brand-strong);
+
+  --el-color-success: var(--success);
+  --el-color-warning: var(--warning);
+  --el-color-danger: var(--danger);
+  --el-color-info: var(--info);
+
+  --el-text-color-primary: var(--text);
+  --el-text-color-regular: var(--text-regular);
+  --el-text-color-secondary: var(--text-muted);
+  --el-text-color-placeholder: var(--text-muted);
+  --el-text-color-disabled: color-mix(in srgb, var(--text-muted) 60%, var(--surface));
+
+  --el-bg-color: var(--surface);
+  --el-bg-color-page: var(--bg);
+  --el-bg-color-overlay: var(--surface);
+  --el-fill-color: var(--surface-muted);
+  --el-fill-color-light: var(--surface-muted);
+  --el-fill-color-lighter: var(--surface-sunken);
+  --el-fill-color-extra-light: var(--surface-sunken);
+  --el-fill-color-blank: var(--surface);
+
+  --el-border-color: var(--border);
+  --el-border-color-light: var(--border-soft);
+  --el-border-color-lighter: var(--border-soft);
+  --el-border-color-extra-light: var(--border-soft);
+  --el-border-color-dark: var(--border);
+  --el-border-color-hover: color-mix(in srgb, var(--brand) 55%, var(--border));
+
+  --el-mask-color: rgba(15, 23, 42, 0.45);
+  --el-box-shadow-light: var(--shadow-card);
+  --el-box-shadow: var(--shadow-pop);
+
+  --el-font-family: var(--font-sans);
+  --el-font-size-base: var(--font-size);
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 4px;
+}
+
+:root[data-theme='dark'] {
+  --el-color-primary-light-3: color-mix(in srgb, var(--brand) 70%, #101215);
+  --el-color-primary-light-5: color-mix(in srgb, var(--brand) 50%, #101215);
+  --el-color-primary-light-7: color-mix(in srgb, var(--brand) 30%, #101215);
+  --el-color-primary-light-8: color-mix(in srgb, var(--brand) 20%, #101215);
+  --el-color-primary-light-9: color-mix(in srgb, var(--brand) 10%, #101215);
+}
+
+/* ===== brutal 皮肤：硬边框、方形圆角、硬阴影、黄色强调 ===== */
+:root[data-skin='brutal'] {
+  --brand-start: #4c74df;
+  --brand-end: #02a6f0;
+  --brand-gradient: linear-gradient(135deg, var(--brand-start), var(--brand-end));
+  --brand-gradient-h: linear-gradient(90deg, var(--brand-start), var(--brand-end));
+  --brand-strong: #111111;
+
+  --bg: #f4f1e8;
+  --surface: #ffffff;
+  --surface-muted: #fbf7ea;
+  --surface-sunken: #f4f1e8;
+
+  --text: #111111;
+  --text-regular: #111111;
+  --text-muted: #4b4b4b;
+
+  --border: #111111;
+  --border-soft: #111111;
+
+  --success: #2fae66;
+  --warning: #e8a000;
+  --danger: #e23b3b;
+
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-pill: 0px;
+
+  --shadow-card: 5px 5px 0 #111111;
+  --shadow-soft: 3px 3px 0 #111111;
+  --shadow-pop: 7px 7px 0 #111111;
+  --shadow-brand: 4px 4px 0 #111111;
+
+  --brutal-ink: #111111;
+  --brutal-yellow: #ffd23f;
+
+  --panel-head-bg: var(--brutal-yellow);
+  --overlay-scrim: rgba(17, 17, 17, 0.45);
+  --surface-hover: #fbf7ea;
+  --accent-soft: var(--brutal-yellow);
+  --accent-text: #111111;
+  --tab-active-bg: #111111;
+  --tab-active-border: #111111;
+  --tab-active-color: #ffffff;
+
+  --el-border-radius-base: 0px;
+  --el-border-radius-small: 0px;
+  --el-mask-color: rgba(17, 17, 17, 0.45);
+
+  color-scheme: light;
+}

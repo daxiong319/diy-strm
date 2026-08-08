@@ -1,4 +1,4 @@
-﻿package tmdb
+package tmdb
 
 import (
 	"fmt"
@@ -272,6 +272,29 @@ func (c *Client) GetReleasesDate(movieID int64) (*ReleasesDateResp, error) {
 	if !resp.IsStatusSuccess() {
 		helpers.TMDBLog.Errorf("获取电影发布日期失败：%s", resp.String())
 		return nil, fmt.Errorf("获取电影发布日期失败：%s", resp.String())
+	}
+	return &respResult, nil
+}
+
+// https://api.themoviedb.org/3/movie/popular
+// 查询热门电影列表（登录页背景等场景使用）
+func (c *Client) GetPopularMovies(language string, page int) (*SearchMovieResponse, error) {
+	respResult := SearchMovieResponse{}
+	req := c.resty.R().SetMethod("GET").SetResult(&respResult)
+	if language != "" {
+		req.SetQueryParam("language", language)
+	}
+	if page > 0 {
+		req.SetQueryParam("page", fmt.Sprintf("%d", page))
+	}
+	resp, err := c.doRequest("/movie/popular", req, MakeRequestConfig(2, 5, 5))
+	if err != nil {
+		helpers.TMDBLog.Errorf("获取热门电影失败：%+v", err)
+		return nil, err
+	}
+	if !resp.IsStatusSuccess() {
+		helpers.TMDBLog.Errorf("获取热门电影失败：%s", resp.String())
+		return nil, fmt.Errorf("获取热门电影失败：%s", resp.String())
 	}
 	return &respResult, nil
 }

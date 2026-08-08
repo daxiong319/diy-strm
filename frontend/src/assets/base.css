@@ -1,116 +1,189 @@
-/* color palette from <https://github.com/vuejs/theme> */
-:root {
-  --vt-c-white: #ffffff;
-  --vt-c-white-soft: #f8f8f8;
-  --vt-c-white-mute: #f2f2f2;
-
-  --vt-c-black: #181818;
-  --vt-c-black-soft: #222222;
-  --vt-c-black-mute: #282828;
-
-  --vt-c-indigo: #2c3e50;
-
-  --vt-c-divider-light-1: rgba(60, 60, 60, 0.29);
-  --vt-c-divider-light-2: rgba(60, 60, 60, 0.12);
-  --vt-c-divider-dark-1: rgba(84, 84, 84, 0.65);
-  --vt-c-divider-dark-2: rgba(84, 84, 84, 0.48);
-
-  --vt-c-text-light-1: var(--vt-c-indigo);
-  --vt-c-text-light-2: rgba(60, 60, 60, 0.66);
-  --vt-c-text-dark-1: var(--vt-c-white);
-  --vt-c-text-dark-2: rgba(235, 235, 235, 0.64);
-}
-
-/* semantic color variables for this project */
-:root {
-  --color-background: var(--vt-c-white);
-  --color-background-soft: var(--vt-c-white-soft);
-  --color-background-mute: var(--vt-c-white-mute);
-
-  --color-border: var(--vt-c-divider-light-2);
-  --color-border-hover: var(--vt-c-divider-light-1);
-
-  --color-heading: var(--vt-c-text-light-1);
-  --color-text: var(--vt-c-text-light-1);
-
-  --section-gap: 160px;
-}
-
-/*小于 480px  手机*/
-@media screen and (max-width: 480px) {
-  .el-card {
-    width: 100%;
-    margin: 20px 0 0 0;
-  }
-  .el-card .card-head .name {
-    font-size: 16px;
-    width: 50%;
-  }
-}
-
-@media screen and (max-width: 768px) {
-  .el-card {
-    width: 100%;
-    margin: 20px 0 0 0;
-  }
-  .el-card .card-head .name {
-    font-size: 16px;
-    width: 50%;
-  }
-}
-
-/*768-1023*/
-@media screen and (min-width: 769px) and (max-width: 1023px) {
-  .el-card {
-    width: 338px;
-    margin: 20px 20px 0 0;
-  }
-  .el-card .card-head .name {
-    font-size: 16px;
-  }
-}
-
-@media screen and (min-width: 1024px) {
-  .el-card {
-    width: 380px;
-    margin: 20px 20px 0 0;
-  }
-  .el-card .card-head .name {
-    font-size: 16px;
-  }
-}
+/* 全局基础样式：重置、字体、滚动条、Element Plus 结构收口 */
 
 *,
 *::before,
 *::after {
   box-sizing: border-box;
   margin: 0;
-  font-weight: normal;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
 }
 
 body {
   min-height: 100vh;
-  color: var(--color-text);
-  background: var(--color-background);
+  color: var(--text);
+  background: var(--bg);
   transition:
-    color 0.5s,
-    background-color 0.5s;
-  line-height: 1.6;
-  font-family:
-    Inter,
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    Roboto,
-    Oxygen,
-    Ubuntu,
-    Cantarell,
-    'Fira Sans',
-    'Droid Sans',
-    'Helvetica Neue',
-    sans-serif;
-  font-size: 15px;
+    color 0.3s ease,
+    background-color 0.3s ease;
+  line-height: var(--line-height);
+  font-family: var(--font-sans);
+  font-size: var(--font-size);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
+}
+
+/* brutal 皮肤滚动条收口 */
+:root[data-skin='brutal'] ::-webkit-scrollbar-thumb {
+  background: #111111;
+  border-radius: 0;
+}
+
+/* Element Plus 结构收口 */
+.el-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.el-card:hover {
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--border));
+}
+
+.el-card__header {
+  padding: 15px 20px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--panel-head-bg);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.el-card__body {
+  padding: 20px;
+  background: var(--surface);
+}
+
+.el-dialog {
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.el-dialog__header {
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--panel-head-bg);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  margin-right: 0;
+}
+
+.el-dialog__body {
+  background: var(--surface);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.el-menu-vertical {
+  background: transparent;
+  border-right: none;
+}
+
+.el-table {
+  --el-table-border-color: var(--border-soft);
+  --el-table-header-bg-color: var(--panel-head-bg);
+  --el-table-row-hover-bg-color: var(--surface-hover);
+  --el-table-bg-color: var(--surface);
+  --el-table-tr-bg-color: var(--surface);
+  --el-table-header-text-color: var(--text-regular);
+  --el-table-text-color: var(--text);
+  border-radius: var(--radius-sm);
+}
+
+.el-pagination {
+  --el-pagination-bg-color: transparent;
+  --el-pagination-hover-color: var(--brand);
+  --el-pagination-button-bg-color: var(--surface);
+  --el-pagination-button-disabled-bg-color: var(--surface-muted);
+}
+
+.el-message {
+  border-radius: var(--radius-sm);
+}
+
+.el-notification {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.el-message-box {
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.el-popper.is-light {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+/* brutal 皮肤：硬边框与方形圆角收口 */
+:root[data-skin='brutal'] .el-card {
+  border: 3px solid #111111;
+  border-radius: 0;
+  box-shadow: var(--shadow-card);
+}
+
+:root[data-skin='brutal'] .el-card:hover {
+  border-color: #111111;
+}
+
+:root[data-skin='brutal'] .el-card__header {
+  border-radius: 0;
+  background: var(--brutal-yellow);
+  border-bottom: 3px solid #111111;
+}
+
+:root[data-skin='brutal'] .el-card__body {
+  border-radius: 0;
+}
+
+:root[data-skin='brutal'] .el-dialog {
+  border: 3px solid #111111;
+  border-radius: 0;
+  box-shadow: 7px 7px 0 #111111;
+}
+
+:root[data-skin='brutal'] .el-dialog__header,
+:root[data-skin='brutal'] .el-dialog__body {
+  border-radius: 0;
+}
+
+:root[data-skin='brutal'] .el-table {
+  --el-table-border-color: #111111;
+  border-radius: 0;
+}
+
+:root[data-skin='brutal'] .el-button--primary {
+  border-radius: 0;
+  border: 2px solid #111111;
+  box-shadow: 3px 3px 0 #111111;
+}
+
+:root[data-skin='brutal'] .el-button--primary:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 #111111;
 }

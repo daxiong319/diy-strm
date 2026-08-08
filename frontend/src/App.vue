@@ -72,6 +72,28 @@
             <span>使用帮助</span>
           </el-menu-item>
         </el-menu>
+
+        <!-- 主题与皮肤切换 -->
+        <div class="sidebar-tools">
+          <el-tooltip :content="isDark ? '切换到浅色' : '切换到深色'" placement="top">
+            <button type="button" class="tool-btn" @click="toggleTheme">
+              <el-icon :size="16">
+                <Sunny v-if="isDark" />
+                <Moon v-else />
+              </el-icon>
+            </button>
+          </el-tooltip>
+          <el-tooltip
+            :content="isBrutal ? '切换回默认皮肤' : '切换野兽派皮肤'"
+            placement="top"
+          >
+            <button type="button" class="tool-btn" :class="{ active: isBrutal }" @click="toggleSkin">
+              <el-icon :size="16">
+                <MagicStick />
+              </el-icon>
+            </button>
+          </el-tooltip>
+        </div>
       </el-aside>
 
       <!-- 主内容区 -->
@@ -200,6 +222,9 @@ import {
   QuestionFilled,
   RefreshLeft,
   Setting,
+  Sunny,
+  MagicStick,
+  Moon,
   Upload,
   User,
   UserFilled,
@@ -212,6 +237,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useBackupStore } from '@/stores/backup'
 import { http } from '@/http/client'
 import { useDeviceType } from '@/composables/useDeviceType'
+import { useTheme } from '@/composables/useTheme'
 import {
   realtimeActive,
   realtimeConnectionState,
@@ -225,6 +251,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 const backupStore = useBackupStore()
 const { isMobile } = useDeviceType()
+const { isDark, isBrutal, toggleTheme, toggleSkin } = useTheme()
 const isMenuOpen = ref(false)
 
 // KeepAlive include 匹配组件名，不匹配路由名
@@ -485,7 +512,8 @@ onUnmounted(() => {
 }
 
 .el-aside {
-  background-color: var(--sidebar-bg, #1a1a2e);
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
   z-index: 1000;
   display: flex;
   flex-direction: column;
@@ -493,7 +521,7 @@ onUnmounted(() => {
 
 .user-info {
   padding: 20px 15px;
-  border-bottom: 1px solid var(--sidebar-border, #2a2a4a);
+  border-bottom: 1px solid var(--sidebar-border);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -503,11 +531,12 @@ onUnmounted(() => {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background-color: #409eff;
+  background: rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: #ffffff;
   flex-shrink: 0;
 }
 
@@ -517,7 +546,7 @@ onUnmounted(() => {
 }
 
 .username {
-  color: var(--sidebar-text, #c0c4cc);
+  color: var(--sidebar-text);
   font-size: 14px;
   font-weight: 500;
   margin-bottom: 4px;
@@ -525,43 +554,84 @@ onUnmounted(() => {
 }
 
 .logout-btn {
-  color: #909399 !important;
+  color: var(--sidebar-text) !important;
   font-size: 12px;
   padding: 0 !important;
   height: auto !important;
+  opacity: 0.75;
 }
 
 .logout-btn:hover {
-  color: #ffd04b !important;
+  color: #ffffff !important;
+  opacity: 1;
 }
 
 .el-menu-vertical {
-  background-color: var(--sidebar-bg, #1a1a2e);
+  background: transparent;
   border-right: none;
   flex: 1;
 }
 
 .el-menu-vertical .el-menu-item {
-  color: var(--sidebar-text, #c0c4cc);
+  color: var(--sidebar-text);
   border-radius: 6px;
   margin: 2px 8px;
 }
 
 .el-menu-vertical .el-menu-item:hover {
-  background-color: var(--sidebar-hover, rgba(64, 158, 255, 0.15));
+  background-color: var(--sidebar-hover-bg);
 }
 
 .el-menu-vertical .el-menu-item.is-active {
-  background-color: var(--sidebar-hover, rgba(64, 158, 255, 0.15));
-  color: var(--sidebar-active, #409eff);
+  background: var(--sidebar-active-bg);
+  color: var(--sidebar-active-color);
+  box-shadow: var(--sidebar-active-shadow);
 }
 
 .el-menu-vertical .el-sub-menu__title {
-  color: var(--sidebar-text, #c0c4cc);
+  color: var(--sidebar-text);
 }
 
 .el-menu-vertical .el-sub-menu__title:hover {
-  background-color: var(--sidebar-hover, rgba(64, 158, 255, 0.15));
+  background-color: var(--sidebar-hover-bg);
+}
+
+.el-menu-vertical .el-sub-menu .el-menu-item {
+  background-color: transparent;
+}
+
+/* 侧边栏底部：主题与皮肤切换 */
+.sidebar-tools {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--sidebar-border);
+}
+
+.tool-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--sidebar-text);
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.tool-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.tool-btn.active {
+  background: #ffffff;
+  color: var(--brand);
 }
 
 .main-content {

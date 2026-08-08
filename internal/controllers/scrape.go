@@ -1,4 +1,4 @@
-﻿package controllers
+package controllers
 
 import (
 	"encoding/json"
@@ -1394,4 +1394,65 @@ func TmdbSearch(c *gin.Context) {
 		return
 	}
 
+}
+
+// TmdbPopularItem 热门电影条目（登录页背景等场景使用）。
+type TmdbPopularItem struct {
+	TmdbID    int     `json:"tmdb_id"`
+	Title     string  `json:"title"`
+	Backdrop  string  `json:"backdrop_url"`
+	Poster    string  `json:"poster_url"`
+	Overview  string  `json:"overview"`
+	VoteAvg   float64 `json:"vote_average"`
+	ReleaseAt string  `json:"release_date"`
+}
+
+// GetTmdbPopular 获取 TMDB 热门电影列表，供登录页背景随机切换使用。
+// @Summary 获取 TMDB 热门电影
+// @Description 获取 TMDB 热门电影列表（用于登录页背景随机切换）
+// @Param page query integer false "页码，默认 1"
+// @Success 200 {object} APIResponse[[]TmdbPopularItem]
+// @Router /scrape/tmdb-popular [get]
+func GetTmdbPopular(c *gin.Context) {
+	var req struct {
+		Page int `json:"page" form:"page"`
+	}
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "请求参数错误：" + err.Error(), Data: nil})
+		return
+	}
+	page := req.Page
+	if page <= 0 {
+		page = 1
+	}
+	if page > 20 {
+		page = 20
+	}
+	tmdbClient := models.GlobalScrapeSettings.GetTmdbClient()
+	resp, err := tmdbClient.GetPopularMovies(models.GlobalScrapeSettings.GetTmdbLanguage(), page)
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取热门电影失败：" + err.Error(), Data: nil})
+		return
+	}
+	items := make([]TmdbPopularItem, 0, len(resp.Results))
+	for _, r := range resp.Results {
+		backdropURL := ""
+		if r.BackdropPath != "" {
+			backdropURL = models.GetTmdbImageUrl(r.BackdropPath)
+		}
+		posterURL := ""
+		if r.PosterPath != "" {
+			posterURL = models.GetTmdbImageUrl(r.PosterPath)
+		}
+		items = append(items, TmdbPopularItem{
+			TmdbID:    int(r.ID),
+			Title:     r.Title,
+			Backdrop:  backdropURL,
+			Poster:    posterURL,
+			Overview:  r.Overview,
+			VoteAvg:   r.VoteAverage,
+			ReleaseAt: r.ReleaseDate,
+		})
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "获取热门电影成功", Data: items})
 }

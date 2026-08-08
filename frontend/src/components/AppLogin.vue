@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, shallowRef } from 'vue'
+import { computed, onMounted, shallowRef, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
@@ -11,14 +11,64 @@ import InitialAdminSetupForm, {
 } from '@/components/auth/InitialAdminSetupForm.vue'
 import { createInitialAdmin, fetchSetupStatus } from '@/composables/useInitialAdminSetup'
 
+interface TmdbBackdropItem {
+  tmdb_id: number
+  title: string
+  backdrop_url: string
+  overview: string
+}
+
 const router = useRouter()
 const authStore = useAuthStore()
 const http = useHttpClient()
 const loading = shallowRef(false)
 const setupRequired = shallowRef(false)
 const setupStatusLoaded = shallowRef(false)
+const backdropUrl = shallowRef('')
+const backdropTitle = shallowRef('')
+const backdropItems = ref<TmdbBackdropItem[]>([])
+const fallbackGradient =
+  'linear-gradient(135deg, #4c74df 0%, #02a6f0 45%, #764ba2 100%)'
+const currentBackground = computed(() =>
+  backdropUrl.value
+    ? `linear-gradient(rgba(15, 23, 42, 0.55), rgba(15, 23, 42, 0.65)), url("${backdropUrl.value}") center / cover no-repeat fixed`
+    : fallbackGradient,
+)
 
 const subtitle = computed(() => (setupRequired.value ? '创建管理员' : '系统登录'))
+
+// TMDB 热门影片背景随机切换
+const pickRandomBackdrop = () => {
+  const withBackdrop = backdropItems.value.filter((item) => item.backdrop_url)
+  if (withBackdrop.length === 0) {
+    backdropUrl.value = ''
+    backdropTitle.value = ''
+    return
+  }
+  const next = withBackdrop[Math.floor(Math.random() * withBackdrop.length)]
+  backdropUrl.value = next.backdrop_url
+  backdropTitle.value = next.title
+}
+
+const loadBackdrops = async () => {
+  if (!http) return
+  try {
+    const response = await http.get(`${SERVER_URL}/scrape/tmdb-popular?page=1`, {
+      skipAuthInvalidation: true,
+    })
+    const payload = response?.data as
+      | { code?: number; data?: TmdbBackdropItem[]; message?: string }
+      | undefined
+    if (payload?.code === 200 && Array.isArray(payload.data)) {
+      backdropItems.value = payload.data
+      pickRandomBackdrop()
+    }
+  } catch (error) {
+    // 背景加载失败不影响登录，回退到默认渐变
+    console.error('加载 TMDB 热门背景失败：', error)
+    backdropUrl.value = ''
+  }
+}
 
 const getErrorMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error && error.message) {
@@ -121,17 +171,23 @@ onMounted(() => {
     router.replace('/')
     return
   }
+  void loadBackdrops()
   void loadSetupStatus()
 })
 </script>
 
 <template>
-  <div class="login-container">
+  <div class="login-container" :style="{ background: currentBackground }">
     <div class="login-box">
       <div class="login-header">
         <h1 class="login-title">QMediaSync</h1>
         <p class="login-subtitle">{{ subtitle }}</p>
       </div>
+
+      <button v-if="backdropTitle" type="button" class="backdrop-switch" @click="pickRandomBackdrop">
+        换一张
+      </button>
+      <p v-if="backdropTitle" class="backdrop-caption">{{ backdropTitle }}</p>
 
       <InitialAdminSetupForm
         v-if="setupStatusLoaded && setupRequired"
@@ -151,15 +207,20 @@ onMounted(() => {
   justify-content: center;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   padding: 20px;
+  transition: background 0.6s ease;
 }
 
 .login-box {
+  position: relative;
   width: 100%;
   max-width: 500px;
-  background: white;
-  border-radius: 12px;
+  background: var(--overlay-scrim);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 16px;
   padding: 40px 30px;
-  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.25);
 }
 
 .login-header {
@@ -170,14 +231,53 @@ onMounted(() => {
 .login-title {
   font-size: 28px;
   font-weight: 600;
-  color: #303133;
+  color: var(--text);
   margin: 0 0 8px 0;
 }
 
 .login-subtitle {
   font-size: 16px;
-  color: #909399;
+  color: var(--text-muted);
   margin: 0;
+}
+
+.backdrop-switch {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 999px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background-color 0.2s ease;
+}
+
+.backdrop-switch:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.backdrop-caption {
+  position: absolute;
+  bottom: 12px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+  pointer-events: none;
+}
+
+/* brutal 皮肤：方形硬边框 */
+:global(:root[data-skin='brutal']) .login-box {
+  border: 3px solid #111111;
+  border-radius: 0;
+  box-shadow: 7px 7px 0 #111111;
+  backdrop-filter: none;
 }
 
 /* 移动端适配 */

@@ -1,6 +1,6 @@
-/* 组件共享样式 */
+﻿/* 缁勪欢鍏变韩鏍峰紡 */
 
-/* 与项目 768px 移动端断点一致，避免 Element Plus md（992px）断点混用。 */
+/* 涓庨」鐩?768px 绉诲姩绔柇鐐逛竴鑷达紝閬垮厤 Element Plus md锛?92px锛夋柇鐐规贩鐢ㄣ€?*/
 .hide-on-mobile {
   display: block;
 }
@@ -19,14 +19,14 @@
   }
 }
 
-/* 容器样式 */
+/* 瀹瑰櫒鏍峰紡 */
 .main-content-container {
   width: 100%;
   max-width: none;
   padding: 0 10px 10px 10px;
 }
 
-/* 卡片样式 */
+/* 鍗＄墖鏍峰紡 */
 .card-header {
   margin: 0 0 16px 0;
   padding: 0;
@@ -56,20 +56,20 @@
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #303133;
+  color: var(--text);
 }
 
 .card-subtitle {
   margin: 0;
   font-size: 14px;
-  color: #909399;
+  color: var(--text-muted);
 }
 
-/* 表单样式 */
+/* 琛ㄥ崟鏍峰紡 */
 .form-help {
   margin-top: 8px;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-muted);
   line-height: 1.6;
 }
 
@@ -84,7 +84,7 @@
   margin-top: 24px;
 }
 
-/* 设置页面表单样式 */
+/* 璁剧疆椤甸潰琛ㄥ崟鏍峰紡 */
 .settings-form {
   margin-top: 20px;
   width: 100%;
@@ -96,11 +96,11 @@
 
 .settings-form .el-form-item__label {
   font-weight: 500;
-  color: #303133;
+  color: var(--text);
   margin-bottom: 8px;
 }
 
-/* 示例样式 */
+/* 绀轰緥鏍峰紡 */
 .example-inline {
   margin-top: 8px;
   display: flex;
@@ -110,32 +110,32 @@
 
 .example-label {
   font-size: 12px;
-  color: #606266;
+  color: var(--text-regular);
   font-weight: 500;
 }
 
 .example-url {
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
   font-size: 13px;
-  background: #f5f7fa;
+  background: var(--bg);
   padding: 4px 8px;
   border-radius: 4px;
-  color: #303133;
+  color: var(--text);
 }
 
-/* 启用开关样式 */
+/* 鍚敤寮€鍏虫牱寮?*/
 .enable-switch {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-/* 有限宽度输入框 */
+/* 鏈夐檺瀹藉害杈撳叆妗?*/
 .limited-width-input {
   max-width: 500px;
 }
 
-/* 适配移动设备的表单布局 */
+/* 閫傞厤绉诲姩璁惧鐨勮〃鍗曞竷灞€ */
 @media (max-width: 768px) {
   .limited-width-input {
     max-width: 100%;
@@ -151,7 +151,7 @@
   }
 }
 
-/* Telegram设置特定样式 */
+/* Telegram璁剧疆鐗瑰畾鏍峰紡 */
 .telegram-settings-container {
   display: flex;
   flex-direction: column;
@@ -169,11 +169,11 @@
 
 .telegram-form .el-form-item__label {
   font-weight: 500;
-  color: #303133;
+  color: var(--text);
   margin-bottom: 8px;
 }
 
-/* Emby设置特定样式 */
+/* Emby璁剧疆鐗瑰畾鏍峰紡 */
 .emby-content {
   display: flex;
   flex-direction: column;
@@ -197,13 +197,13 @@
   margin-top: 24px;
 }
 
-/* 同步目录特定样式 */
+/* 鍚屾鐩綍鐗瑰畾鏍峰紡 */
 .sync-directories-container {
   margin: 0;
   padding: 0;
 }
 
-/* 全宽度容器，突破父容器的padding限制 */
+/* 鍏ㄥ搴﹀鍣紝绐佺牬鐖跺鍣ㄧ殑padding闄愬埗 */
 .full-width-container {
   margin: -20px !important;
   padding: 20px !important;
@@ -228,7 +228,7 @@
   overflow-x: auto;
 }
 
-/* 确保表格容器也占满宽度 */
+/* 纭繚琛ㄦ牸瀹瑰櫒涔熷崰婊″搴?*/
 .directories-table .el-table {
   width: 100% !important;
 }
@@ -245,29 +245,29 @@
 
 .cell-label {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-muted);
   font-weight: 500;
 }
 
 .cid-text {
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
   font-size: 13px;
-  color: #606266;
+  color: var(--text-regular);
   word-break: break-all;
-  background: #f5f7fa;
+  background: var(--bg);
   padding: 2px 6px;
   border-radius: 4px;
   display: inline-block;
 }
 
 .path-text {
-  color: #303133;
+  color: var(--text);
   word-break: break-all;
   font-size: 13px;
   line-height: 1.4;
 }
 
-/* 卡片列表基础样式 */
+/* 鍗＄墖鍒楄〃鍩虹鏍峰紡 */
 .directories-card-list {
   margin-bottom: 20px;
 }
@@ -284,7 +284,7 @@
 }
 
 .directory-card:hover {
-  border-color: #409eff;
+  border-color: var(--brand);
 }
 
 .card-actions {
@@ -309,12 +309,12 @@
 
 .info-label {
   font-size: 12px;
-  color: #606266;
+  color: var(--text-regular);
 }
 
 .info-value {
   font-size: 16px;
-  color: #303133;
+  color: var(--text);
   word-break: break-all;
   line-height: 1.5;
 }
@@ -328,8 +328,8 @@
   align-items: center;
   justify-content: center;
   min-height: 200px;
-  color: #909399;
-  background: #fafafa;
+  color: var(--text-muted);
+  background: var(--surface-muted);
 }
 
 .empty-content {
