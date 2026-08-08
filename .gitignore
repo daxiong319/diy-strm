@@ -68,6 +68,11 @@ web_statics/
 # Backend local experiments, local-only tests, and generated docs
 docs/superpowers/
 test/
+!frontend/test/
+frontend/test/*
+!frontend/test/regression/
+frontend/test/regression/*
+!frontend/test/regression/charts-chunk-cycle.check.mjs
 scripts/test_share_link.go
 scripts/test_delta_sync.go
 docs/design/
