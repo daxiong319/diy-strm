@@ -554,11 +554,35 @@
     :account-name="selectedV115Account?.name ?? ''"
     @confirmed="loadAccounts"
   />
+
+  <Pan123AuthDialog
+    v-model:visible="showPan123AuthDialog"
+    :account-id="selectedAccountId ?? null"
+    :account-name="selectedAccountName"
+    @confirmed="loadAccounts"
+  />
+
+  <GuangYaPanAuthDialog
+    v-model:visible="showGuangYaAuthDialog"
+    :account-id="selectedAccountId ?? null"
+    :account-name="selectedAccountName"
+    @confirmed="loadAccounts"
+  />
+
+  <Pan139AuthDialog
+    v-model:visible="showPan139AuthDialog"
+    :account-id="selectedAccountId ?? null"
+    :account-name="selectedAccountName"
+    @confirmed="loadAccounts"
+  />
 </template>
 
 <script setup lang="ts">
 import { SERVER_URL } from '@/const'
 import V115AuthorizationDialog from '@/components/cloud-auth/V115AuthorizationDialog.vue'
+import Pan123AuthDialog from '@/components/cloud-auth/Pan123AuthDialog.vue'
+import GuangYaPanAuthDialog from '@/components/cloud-auth/GuangYaPanAuthDialog.vue'
+import Pan139AuthDialog from '@/components/cloud-auth/Pan139AuthDialog.vue'
 import V115AppSelector from '@/components/cloud-auth/V115AppSelector.vue'
 import type { AxiosError } from 'axios'
 import { ref, computed, onMounted } from 'vue'
@@ -678,7 +702,10 @@ const editAccountForm = ref({
 })
 
 const selectedAccountId = ref<number | undefined>(undefined)
-const show123AuthDialog = ref(false)
+const selectedAccountName = ref('')
+const showPan123AuthDialog = ref(false)
+const showGuangYaAuthDialog = ref(false)
+const showPan139AuthDialog = ref(false)
 const selectedV115Account = ref<CloudAccount | null>(null)
 const showV115AuthDialog = ref(false)
 
@@ -989,7 +1016,20 @@ const handleAuthorize = (row: CloudAccount) => {
   }
   if (row.source_type === '123') {
     selectedAccountId.value = row.id
-    show123AuthDialog.value = true
+    selectedAccountName.value = row.name || ''
+    showPan123AuthDialog.value = true
+    return
+  }
+  if (row.source_type === 'guangyapan') {
+    selectedAccountId.value = row.id
+    selectedAccountName.value = row.name || ''
+    showGuangYaAuthDialog.value = true
+    return
+  }
+  if (row.source_type === 'pan139') {
+    selectedAccountId.value = row.id
+    selectedAccountName.value = row.name || ''
+    showPan139AuthDialog.value = true
     return
   }
   if (row.source_type === 'baidupan') {
