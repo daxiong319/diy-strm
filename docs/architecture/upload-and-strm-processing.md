@@ -27,7 +27,7 @@ OSS `CompleteMultipartUpload` 完成后，必须带回 115 init 返回的 `callb
 规则接口：
 
 - `GET /api/directory-upload/rules`：查询规则列表，可用 `sync_path_id` 过滤。
-- `POST /api/sync/paths`、`PUT /api/sync/paths/:id`：原子保存同步目录基础配置和目录监控上传最终规则集合。旧同步目录创建、更新和规则独立写接口不再提供；精确请求字段、幂等、错误与响应见 [同步目录聚合 API](../reference/sync-path-api.md)。
+- `POST /api/sync/paths`、`PUT /api/sync/paths/:id`：原子保存同步目录基础配置和目录监控上传最终规则集合；`POST /api/sync/path-add`、`POST /api/sync/path-update` 是保留的旧前端扁平结构兼容入口，仍可用但新实现应使用聚合接口。精确请求字段、幂等、错误与响应见 [同步目录聚合 API](../reference/sync-path-api.md)。
 - `POST /api/directory-upload/sync-paths/:sync_path_id/scan`：手动触发一个同步目录下所有已启用规则扫描，返回汇总候选数和每条规则结果；页面“目录监控扫描”按钮会调用该接口，文案不区分单条或多条规则。扫描使用当前 HTTP 请求 context 派生的 10 分钟超时 context，请求取消或超时会终止扫描并在响应中返回错误。
 - `GET /api/directory-upload/runtime-status`：查询当前目录监控运行状态，返回每条运行中规则的配置模式、实际模式、auto 降级原因、最近扫描时间、耗时、候选数、跳过数、最近错误和待稳定文件数。
 

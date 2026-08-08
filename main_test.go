@@ -64,17 +64,14 @@ func TestSyncPathAggregateWriteRoutesReplaceLegacyRoutes(t *testing.T) {
 	for _, route := range router.Routes() {
 		routes[route.Method+" "+route.Path] = struct{}{}
 	}
-	for _, expected := range []string{"POST /api/sync/paths", "PUT /api/sync/paths/:id"} {
-		if _, ok := routes[expected]; !ok {
-			t.Fatalf("缺少新同步目录写路由 %s", expected)
-		}
-	}
-	for _, removed := range []string{
-		"POST /api/sync/path-add",
-		"POST /api/sync/path-update",
+	for _, expected := range []string{
+		"POST /api/sync/paths",
+		"PUT /api/sync/paths/:id",
+		"POST /api/sync/path-add",    // 兼容旧前端扁平结构（03e2e76 有意保留）
+		"POST /api/sync/path-update", // 兼容旧前端扁平结构（03e2e76 有意保留）
 	} {
-		if _, ok := routes[removed]; ok {
-			t.Fatalf("旧写路由仍存在：%s", removed)
+		if _, ok := routes[expected]; !ok {
+			t.Fatalf("缺少同步目录写路由 %s", expected)
 		}
 	}
 	for _, retained := range []string{

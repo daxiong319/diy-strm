@@ -10,7 +10,7 @@
 
 ## 范围和对象
 
-`sync_paths` 是可保存、可调度的同步目录：它绑定来源类型、账号、远端路径、STRM 本地目录和可继承的 STRM 配置。创建和更新通过 `POST /api/sync/paths`、`PUT /api/sync/paths/:id` 的聚合保存完成；保存成功后重载同步目录自定义 Cron，并在需要时重载目录监控服务。精确请求、幂等和错误契约见 [同步目录聚合 API](../reference/sync-path-api.md)。
+`sync_paths` 是可保存、可调度的同步目录：它绑定来源类型、账号、远端路径、STRM 本地目录和可继承的 STRM 配置。创建和更新通过 `POST /api/sync/paths`、`PUT /api/sync/paths/:id` 的聚合保存完成（`POST /api/sync/path-add`、`POST /api/sync/path-update` 保留为旧前端兼容入口）；保存成功后重载同步目录自定义 Cron，并在需要时重载目录监控服务。精确请求、幂等和错误契约见 [同步目录聚合 API](../reference/sync-path-api.md)。
 
 `POST /api/sync/manual` 是临时同步入口。它使用请求中的账号、文件或目录和目标路径，不对应保存的 `sync_paths`，运行时使用临时 ID 创建记录；不会提交 Emby 刷新，也不会触发关联刮削。临时记录可以按临时记录规则删除，但不应被当作可再次调度的同步目录。
 
