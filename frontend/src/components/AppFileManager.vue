@@ -57,7 +57,7 @@
                 </el-icon>
                 <div class="account-details">
                   <div class="account-name">
-                    {{ account.username }}
+                    {{ account.name || account.username }}
                     <span v-if="account.source_type === '115'">({{ account.user_id }})</span>
                   </div>
                   <div class="account-type">{{ getAccountTypeName(account.source_type) }}</div>
@@ -454,7 +454,7 @@ interface NetdiskAccount {
   name: string
   username: string
   user_id: string
-  source_type: '115' | '123' | 'openlist' | 'baidupan'
+  source_type: '115' | '123' | 'openlist' | 'baidupan' | 'pan139' | 'guangyapan'
   token: string
   created_at: number
   base_url?: string
@@ -937,6 +937,10 @@ function getAccountTypeName(sourceType: string): string {
       return 'OpenList'
     case 'baidupan':
       return '百度网盘'
+    case 'pan139':
+      return '移动云盘'
+    case 'guangyapan':
+      return '光鸭云盘'
     default:
       return '其他'
   }

@@ -131,7 +131,7 @@ func RefreshOAuthAccessToken() {
 	now := time.Now().Unix()
 	for _, account := range accounts {
 		if account.RefreshToken == "" {
-			helpers.AppLogger.Infof("账号 %d 没有刷新 Token，跳过", account.ID)
+			helpers.AppLogger.Debugf("账号 %d 没有刷新 Token，跳过", account.ID)
 			continue
 		}
 		if account.SourceType == models.SourceType115 {

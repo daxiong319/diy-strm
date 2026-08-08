@@ -177,7 +177,7 @@ func GetPan139UrlByFileId(c *gin.Context) {
 	} else {
 		syncFile := models.GetFileByPickCode(fileId)
 		if syncFile == nil {
-			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "文件 ID 不存在", Data: nil})
+			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "文件 ID 不存在，请重新同步生成 STRM 后重试", Data: nil})
 			return
 		}
 		var err error

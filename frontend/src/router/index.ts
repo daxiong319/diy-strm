@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { http } from '@/http/client'
 
 const AppHome = createAsyncRouteComponent('AppHome', () => import('@/components/AppHome.vue'))
+const AppLogPage = createAsyncRouteComponent('AppLogPage', () => import('@/components/AppLogPage.vue'))
 const AppLogin = createAsyncRouteComponent('AppLogin', () => import('@/components/AppLogin.vue'))
 const AppUserSettings = createAsyncRouteComponent(
   'AppUserSettings',
@@ -146,6 +147,17 @@ const routes = [
       title: '首页',
       requiresAuth: true,
       icon: 'House',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/logs',
+    name: 'logs',
+    component: AppLogPage,
+    meta: {
+      title: '运行日志',
+      requiresAuth: true,
+      icon: 'Document',
       showInMenu: true,
     },
   },

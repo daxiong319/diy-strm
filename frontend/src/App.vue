@@ -205,6 +205,7 @@
 import {
   DataAnalysis,
   DataLine,
+  Document,
   DocumentCopy,
   Download,
   Film,
@@ -281,6 +282,7 @@ const getRouteViewKey = (routeName: unknown, fullPath: string) => {
 const menuIconMap = {
   DataAnalysis: markRaw(DataAnalysis),
   DataLine: markRaw(DataLine),
+  Document: markRaw(Document),
   DocumentCopy: markRaw(DocumentCopy),
   Download: markRaw(Download),
   Film: markRaw(Film),
@@ -570,12 +572,21 @@ onUnmounted(() => {
   background: transparent;
   border-right: none;
   flex: 1;
+  --el-menu-bg-color: transparent;
+  --el-menu-hover-bg-color: var(--sidebar-hover-bg);
+  --el-menu-text-color: var(--sidebar-text);
+}
+
+.el-menu-vertical .el-menu {
+  background: transparent;
+  --el-menu-bg-color: transparent;
 }
 
 .el-menu-vertical .el-menu-item {
   color: var(--sidebar-text);
   border-radius: 6px;
   margin: 2px 8px;
+  background-color: transparent;
 }
 
 .el-menu-vertical .el-menu-item:hover {
