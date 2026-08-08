@@ -3,6 +3,7 @@ import { onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as QRCode from 'qrcode'
 import { useHttpClient } from '@/http/client'
+import { useDeviceType } from '@/composables/useDeviceType'
 import { SERVER_URL } from '@/const'
 
 const visible = defineModel<boolean>('visible', { required: true })
@@ -17,177 +18,143 @@ const emit = defineEmits<{
 }>()
 
 const http = useHttpClient()
+const { isMobile } = useDeviceType()
 
-const activeTab = ref<'qrcode' | 'token'>('qrcode')
-
-const qrLoading = ref(false)
-const qrUrl = ref('')
-const qrToken = ref('')
-const qrTip = ref('')
-const qrStatus = ref<'idle' | 'waiting' | 'success' | 'expired' | 'failed'>('idle')
-let qrTimer: number | undefined
-
-const tokenForm = reactive({
+const authMode = ref<'qrcode' | 'token'>('qrcode')
+const form = reactive({
   authorization: '',
   username: '',
 })
 const submitting = ref(false)
 
-const stopPolling = () => {
-  if (qrTimer !== undefined) {
-    window.clearInterval(qrTimer)
-    qrTimer = undefined
-  }
-}
+const qrCodeUrl = ref('')
+const qrToken = ref('')
+const qrCreating = ref(false)
+let qrTimer: ReturnType<typeof setInterval> | null = null
+let qrPolling = false
 
-const resetAll = () => {
-  stopPolling()
-  qrUrl.value = ''
-  qrToken.value = ''
-  qrTip.value = ''
-  qrStatus.value = 'idle'
-  tokenForm.authorization = ''
-  tokenForm.username = ''
+const resetForm = () => {
+  clearQrCode()
+  authMode.value = 'qrcode'
+  form.authorization = ''
+  form.username = ''
 }
 
 watch(
   () => visible.value,
   (isVisible) => {
-    if (isVisible) {
-      if (activeTab.value === 'qrcode') void startQrLogin()
-    } else {
-      stopPolling()
-    }
+    if (isVisible) resetForm()
   },
 )
 
-watch(activeTab, (tab) => {
-  stopPolling()
-  if (tab === 'qrcode' && visible.value) void startQrLogin()
-})
+onBeforeUnmount(() => stopQrPolling())
 
-onBeforeUnmount(() => stopPolling())
-
-const renderQrCode = async (content: string) => {
-  await new Promise<void>((resolve) => {
-    const el = document.getElementById('pan139-qr-canvas')
-    if (!el) {
-      resolve()
-      return
-    }
-    void QRCode.toCanvas(el, content, {
-      width: 220,
-      margin: 2,
-      errorCorrectionLevel: 'M',
-      color: { dark: '#1f2937', light: '#ffffff' },
-    })
-      .then(() => resolve())
-      .catch((error) => {
-        console.error('移动云盘二维码生成失败：', error)
-        resolve()
-      })
-  })
-}
-
-const startQrLogin = async () => {
-  if (!props.accountId || qrLoading.value) return
-  stopPolling()
-  qrLoading.value = true
-  qrStatus.value = 'idle'
-  qrTip.value = ''
+// 创建扫码登录会话并展示二维码
+const handleCreateQrCode = async () => {
+  if (!props.accountId) {
+    ElMessage.error('缺少账号信息')
+    return
+  }
+  qrCreating.value = true
   try {
-    const response = await http.get(`${SERVER_URL}/pan139/qrcode`)
-    if (response?.data.code === 200 && response.data.data) {
-      qrUrl.value = response.data.data.qr_url
-      qrToken.value = response.data.data.token
-      await renderQrCode(response.data.data.qr_url)
-      qrTip.value = '请用中国移动云盘 App「扫一扫」扫码并确认登录'
-      qrStatus.value = 'waiting'
-      startPolling()
+    const response = await http.post(`${SERVER_URL}/pan139/qrcode`, {})
+    const data = response?.data
+    if (data?.code === 200) {
+      const qrData = data.data
+      const dataUrl = await QRCode.toDataURL(qrData.qr_url, {
+        width: 200,
+        margin: 1,
+        color: {
+          dark: '#000000',
+          light: '#ffffff',
+        },
+      })
+      qrCodeUrl.value = dataUrl
+      qrToken.value = qrData.token || ''
+      startQrPolling()
+      ElMessage.success(data.message || '二维码已生成，请使用移动云盘 App 扫码')
     } else {
-      ElMessage.error(response?.data.message || '获取移动云盘二维码失败')
+      ElMessage.error(data?.message || '获取二维码失败')
     }
   } catch (error) {
-    console.error('获取移动云盘二维码错误：', error)
-    ElMessage.error('获取移动云盘二维码失败')
+    console.error('移动云盘获取二维码错误:', error)
+    ElMessage.error('获取二维码失败')
   } finally {
-    qrLoading.value = false
+    qrCreating.value = false
   }
 }
 
-const startPolling = () => {
-  stopPolling()
-  qrTimer = window.setInterval(async () => {
-    if (!qrToken.value) return
+// 轮询扫码登录状态；成功后自动填充凭据并完成授权
+const startQrPolling = () => {
+  stopQrPolling()
+  qrTimer = setInterval(async () => {
+    if (qrPolling) return
+    qrPolling = true
     try {
       const response = await http.get(`${SERVER_URL}/pan139/qrcode/status`, {
         params: { token: qrToken.value },
       })
-      if (response?.data.code !== 200) {
-        ElMessage.error(response?.data.message || '查询扫码状态失败')
-        stopPolling()
-        return
+      const state = response?.data?.data?.status
+      if (!state) return
+      if (state === 'success') {
+        stopQrPolling()
+        // 自动填充凭据并提交登录（复用凭据授权接口完成验证与保存）
+        form.authorization = response?.data?.data?.authorization || ''
+        form.username = response?.data?.data?.username || ''
+        ElMessage.success('扫码成功，正在完成授权...')
+        await handleLogin()
+        clearQrCode()
+      } else if (state === 'expired') {
+        stopQrPolling()
+        ElMessage.warning('二维码已过期，请重新获取')
+        clearQrCode()
+      } else if (state === 'cancelled') {
+        stopQrPolling()
+        ElMessage.error('扫码登录已取消')
+        clearQrCode()
+      } else if (state === 'failed') {
+        stopQrPolling()
+        ElMessage.error(response?.data?.data?.message || '扫码登录失败')
+        clearQrCode()
       }
-      const data = response.data.data
-      if (data?.status === 'success') {
-        stopPolling()
-        qrStatus.value = 'success'
-        qrTip.value = '扫码成功，正在保存凭据…'
-        await submitAuthorization(data.authorization, data.username || '')
-        return
-      }
-      if (data?.status === 'expired' || data?.status === 'failed' || data?.status === 'cancelled') {
-        stopPolling()
-        qrStatus.value = 'failed'
-        qrTip.value = data.message || '扫码已失效，请重新获取二维码'
-        return
-      }
-      qrStatus.value = 'waiting'
-      if (data?.message) qrTip.value = data.message
     } catch (error) {
-      console.error('查询移动云盘扫码状态错误：', error)
-      stopPolling()
-      ElMessage.error('查询扫码状态失败')
+      // 网络抖动时容忍失败，下一轮继续轮询
+      console.error('移动云盘扫码状态轮询错误:', error)
+    } finally {
+      qrPolling = false
     }
-  }, 2000)
+  }, 3000)
 }
 
-const submitAuthorization = async (authorization: string, username: string) => {
-  if (!props.accountId || !authorization) return
-  try {
-    const response = await http.post(`${SERVER_URL}/pan139/login`, {
-      account_id: props.accountId,
-      authorization,
-      username,
-    })
-    if (response?.data.code === 200) {
-      ElMessage.success('移动云盘授权成功')
-      visible.value = false
-      emit('confirmed')
-    } else {
-      ElMessage.error(response?.data.message || '移动云盘凭据保存失败')
-      qrStatus.value = 'failed'
-      qrTip.value = response?.data.message || '凭据保存失败'
-    }
-  } catch (error) {
-    console.error('移动云盘凭据保存错误：', error)
-    ElMessage.error('移动云盘凭据保存失败')
-    qrStatus.value = 'failed'
+const stopQrPolling = () => {
+  if (qrTimer) {
+    clearInterval(qrTimer)
+    qrTimer = null
   }
+  qrPolling = false
 }
 
-const handleTokenSubmit = async () => {
-  if (!props.accountId) return
-  if (!tokenForm.authorization.trim()) {
-    ElMessage.warning('请输入 Authorization 凭据')
+const clearQrCode = () => {
+  stopQrPolling()
+  qrCodeUrl.value = ''
+  qrToken.value = ''
+}
+
+const handleLogin = async () => {
+  if (!props.accountId) {
+    ElMessage.error('缺少账号信息')
+    return
+  }
+  if (!form.authorization.trim()) {
+    ElMessage.error('请输入 Authorization 凭据')
     return
   }
   submitting.value = true
   try {
     const response = await http.post(`${SERVER_URL}/pan139/login`, {
       account_id: props.accountId,
-      authorization: tokenForm.authorization.trim(),
-      username: tokenForm.username.trim(),
+      authorization: form.authorization.trim(),
+      username: form.username.trim(),
     })
     if (response?.data.code === 200) {
       ElMessage.success('移动云盘授权成功')
@@ -197,7 +164,7 @@ const handleTokenSubmit = async () => {
       ElMessage.error(response?.data.message || '移动云盘授权失败')
     }
   } catch (error) {
-    console.error('移动云盘授权错误：', error)
+    console.error('移动云盘授权错误:', error)
     ElMessage.error('移动云盘授权失败')
   } finally {
     submitting.value = false
@@ -208,111 +175,75 @@ const handleTokenSubmit = async () => {
 <template>
   <el-dialog
     v-model="visible"
-    title="移动云盘授权"
-    width="420px"
+    :title="`移动云盘授权 - ${accountName || ''}`"
+    :width="isMobile ? '90%' : '500px'"
     destroy-on-close
     align-center
-    @closed="resetAll"
+    @closed="resetForm"
   >
-    <div class="pan139-auth-dialog">
-      <div class="pan139-auth-dialog__name">{{ accountName }}</div>
-      <el-tabs v-model="activeTab">
-        <el-tab-pane label="扫码登录" name="qrcode">
-          <div class="pan139-auth-dialog__qr">
-            <div v-if="qrUrl" class="pan139-auth-dialog__qr-box">
-              <canvas id="pan139-qr-canvas" width="220" height="220" />
-            </div>
-            <el-skeleton v-else animated>
-              <template #template>
-                <el-skeleton-item variant="rect" style="width: 220px; height: 220px" />
-              </template>
-            </el-skeleton>
-            <el-tag
-              v-if="qrTip"
-              :type="qrStatus === 'failed' ? 'danger' : qrStatus === 'success' ? 'success' : 'info'"
-              class="pan139-auth-dialog__tip"
-            >
-              {{ qrTip }}
-            </el-tag>
-            <el-button
-              :icon="undefined"
-              :loading="qrLoading"
-              :disabled="qrStatus === 'waiting'"
-              @click="startQrLogin"
-            >
-              重新获取二维码
-            </el-button>
+    <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
+      <template #title>
+        移动云盘（中国移动云盘 139）支持扫码登录自动获取凭据，或手动粘贴浏览器抓取的 Authorization 凭据；凭据内含令牌与过期时间，到期自动刷新。
+      </template>
+    </el-alert>
+    <el-tabs v-model="authMode">
+      <el-tab-pane label="扫码登录" name="qrcode">
+        <div v-if="!qrCodeUrl" style="text-align: center; padding: 24px 0">
+          <el-button type="primary" plain :loading="qrCreating" @click="handleCreateQrCode">
+            获取二维码
+          </el-button>
+          <div style="margin-top: 8px; font-size: 12px; color: #909399">
+            请使用中国移动云盘 App 或微信扫码，确认后自动完成授权
           </div>
-        </el-tab-pane>
-        <el-tab-pane label="凭据登录" name="token">
-          <el-form label-position="top">
-            <el-form-item label="Authorization 凭据（Base64）">
-              <el-input
-                v-model="tokenForm.authorization"
-                type="password"
-                placeholder="浏览器抓取的 Authorization（base64 编码）"
-                show-password
-              />
-            </el-form-item>
-            <el-form-item label="账号显示名（可选）">
-              <el-input
-                v-model="tokenForm.username"
-                placeholder="手机号/邮箱，留空自动解析"
-                clearable
-                @keyup.enter="handleTokenSubmit"
-              />
-            </el-form-item>
-          </el-form>
-        </el-tab-pane>
-      </el-tabs>
-    </div>
+        </div>
+        <div v-else style="text-align: center">
+          <img
+            :src="qrCodeUrl"
+            alt="移动云盘扫码登录二维码"
+            style="width: 200px; height: 200px; border: 1px solid #dcdfe6; border-radius: 8px"
+          />
+          <div style="margin-top: 8px; font-size: 12px; color: #909399">
+            请使用中国移动云盘 App「扫一扫」扫码，并在手机上确认登录
+          </div>
+          <div style="margin-top: 8px">
+            <el-button size="small" link type="danger" @click="clearQrCode">取消并重新获取</el-button>
+          </div>
+        </div>
+      </el-tab-pane>
+      <el-tab-pane label="凭据授权" name="token">
+        <el-form :model="form" label-width="90px">
+          <el-form-item label="Authorization">
+            <el-input
+              v-model="form.authorization"
+              type="textarea"
+              :rows="3"
+              placeholder="浏览器登录 yun.139.com 后抓取的 Authorization 请求头（base64 编码）"
+              clearable
+            />
+          </el-form-item>
+          <el-form-item label="账号名称">
+            <el-input
+              v-model="form.username"
+              placeholder="手机号/邮箱（可选，留空自动从凭据解析）"
+              clearable
+            />
+          </el-form-item>
+        </el-form>
+      </el-tab-pane>
+    </el-tabs>
     <template #footer>
-      <el-button @click="visible = false">取消</el-button>
-      <el-button
-        v-if="activeTab === 'token'"
-        type="primary"
-        :loading="submitting"
-        @click="handleTokenSubmit"
-      >
-        验证
-      </el-button>
+      <span class="dialog-footer">
+        <el-button @click="visible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="handleLogin">登录授权</el-button>
+      </span>
     </template>
   </el-dialog>
 </template>
 
 <style scoped>
-.pan139-auth-dialog {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.pan139-auth-dialog__name {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  color: #606266;
-  margin-bottom: 4px;
-}
-
-.pan139-auth-dialog__qr {
-  display: grid;
-  justify-items: center;
-  gap: 12px;
-}
-
-.pan139-auth-dialog__qr-box {
-  width: 220px;
-  height: 220px;
-}
-
-.pan139-auth-dialog__tip {
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
-  white-space: normal;
-  text-align: center;
-  line-height: 1.5;
-  height: auto;
-  padding: 6px 9px;
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>
