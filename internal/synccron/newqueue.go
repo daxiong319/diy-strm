@@ -328,7 +328,7 @@ func (q *NewSyncQueuePerType) executeStrmSync(task *NewSyncTask) {
 		q.strmSync = nil
 	}()
 	if startErr := q.strmSync.Start(); startErr == nil {
-		logInfo("STRM 同步任务执行成功：ID=%d", task.ID)
+		logInfo("STRM 同步任务执行成功：ID=%d，视频 %d 个，新增 STRM %d，新增元数据 %d，新增上传 %d", task.ID, q.strmSync.TotalFile, q.strmSync.NewStrm, q.strmSync.NewMeta, q.strmSync.NewUpload)
 		// 触发 STRM 同步任务完成事件
 		completePayload := map[string]any{
 			"task_id": task.ID,
