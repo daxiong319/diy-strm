@@ -815,6 +815,10 @@ func setRouter(r *gin.Engine) {
 		api.GET("/discover/douban", controllers.GetDiscoverDouban)            // 获取豆瓣榜单/片单
 		api.POST("/discover/emby-check", controllers.GetDiscoverEmbyCheck)    // 检测影片是否已入库 Emby
 
+		// 目录整理
+		api.POST("/organize/preview", controllers.OrganizePreview)            // 目录整理预览
+		api.POST("/organize/apply", controllers.OrganizeApply)                // 目录整理执行
+
 		api.GET("/upload/queue", controllers.UploadList)                                             // 获取上传队列列表
 		api.POST("/upload/queue/clear-pending", controllers.ClearPendingUploadTasks)                 // 清除上传队列中未开始的任务
 		api.POST("/upload/queue/start", controllers.StartUploadQueue)                                // 启动上传队列

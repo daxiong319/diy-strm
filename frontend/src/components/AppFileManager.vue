@@ -134,6 +134,13 @@
                 >
                   新建文件夹
                 </el-button>
+                <el-button
+                  size="small"
+                  :disabled="!selectedAccountId"
+                  @click="openOrganizeDialog"
+                >
+                  目录整理
+                </el-button>
               </div>
             </div>
 
@@ -418,6 +425,14 @@
       :files="fileList"
       @applied="loadFileList({ refresh: true })"
     />
+
+    <OrganizeDialog
+      v-model="showOrganizeDialog"
+      :account-id="selectedAccountId ?? 0"
+      :account-source-type="selectedAccount?.source_type ?? ''"
+      :parent-id="getCurrentParentId()"
+      @applied="loadFileList({ refresh: true })"
+    />
   </div>
 </template>
 
@@ -448,6 +463,7 @@ import { SERVER_URL } from '@/const'
 import ResponsivePagination from '@/components/common/ResponsivePagination.vue'
 import DirectorySelector from './DirectorySelector.vue'
 import NameAlignDialog from './NameAlignDialog.vue'
+import OrganizeDialog from './OrganizeDialog.vue'
 
 interface NetdiskAccount {
   id: number
@@ -685,7 +701,7 @@ const moveTargetDir = ref<DirInfo | null>(null)
 const moveOperationContext = ref<FileOperationContextSnapshot | null>(null)
 
 const showNameAlignDialog = ref(false)
-
+const showOrganizeDialog = ref(false)
 interface FileOperationContextSnapshot {
   accountId: number | null
   parentId: string
@@ -1411,6 +1427,22 @@ function openNameAlignDialog(item: FileSystemItem) {
   }
 
   showNameAlignDialog.value = true
+}
+
+function openOrganizeDialog() {
+  const operationContext = createFileOperationContextSnapshot()
+
+  if (!operationContext.accountId) {
+    ElMessage.warning('请先选择网盘账号')
+    return
+  }
+
+  if (!getCurrentParentId()) {
+    ElMessage.warning('请先进入要整理的目录')
+    return
+  }
+
+  showOrganizeDialog.value = true
 }
 
 function openCreateDialog() {
