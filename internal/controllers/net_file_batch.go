@@ -7,6 +7,7 @@ import (
 
 	"diy-strm/internal/guangyapan"
 	"diy-strm/internal/models"
+	"diy-strm/internal/pan139"
 )
 
 type netFileCacheStatus string
@@ -85,6 +86,8 @@ func getNetFileSourceCapability(sourceType models.SourceType, sortBy string, sor
 		return netFileSourceCapability{BatchSize: 100, TotalExact: true}, nil
 	case models.SourceTypeGuangYaPan:
 		return netFileSourceCapability{BatchSize: guangyapan.PageSize, TotalExact: true}, nil
+	case models.SourceTypePan139:
+		return netFileSourceCapability{BatchSize: pan139.PageSize, TotalExact: true}, nil
 	default:
 		return netFileSourceCapability{}, fmt.Errorf("未知的网盘类型")
 	}
