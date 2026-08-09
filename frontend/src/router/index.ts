@@ -116,6 +116,7 @@ const AppDatabaseRepair = createAsyncRouteComponent(
   'AppDatabaseRepair',
   () => import('@/components/AppDatabaseRepair.vue'),
 )
+const AppDiscover = createAsyncRouteComponent('AppDiscover', () => import('@/components/AppDiscover.vue'))
 
 // 定义路由元信息类型
 declare module 'vue-router' {
@@ -169,6 +170,17 @@ const routes = [
       title: '网盘账号',
       requiresAuth: true,
       icon: 'User',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/discover',
+    name: 'discover',
+    component: AppDiscover,
+    meta: {
+      title: '发现',
+      requiresAuth: true,
+      icon: 'Promotion',
       showInMenu: true,
     },
   },

@@ -810,6 +810,11 @@ func setRouter(r *gin.Engine) {
 		api.GET("/scrape/sync-pathes", controllers.GetScrapeStrmPaths)                // 获取刮削目录关联的同步目录
 		api.GET("/scrape/tmdb-search", controllers.TmdbSearch)                        // 搜索 TMDB 媒体
 
+		// 发现页
+		api.GET("/discover/tmdb", controllers.GetDiscoverTmdb)                // 获取 TMDB 热门影片列表
+		api.GET("/discover/douban", controllers.GetDiscoverDouban)            // 获取豆瓣榜单/片单
+		api.POST("/discover/emby-check", controllers.GetDiscoverEmbyCheck)    // 检测影片是否已入库 Emby
+
 		api.GET("/upload/queue", controllers.UploadList)                                             // 获取上传队列列表
 		api.POST("/upload/queue/clear-pending", controllers.ClearPendingUploadTasks)                 // 清除上传队列中未开始的任务
 		api.POST("/upload/queue/start", controllers.StartUploadQueue)                                // 启动上传队列

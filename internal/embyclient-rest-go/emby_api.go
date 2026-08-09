@@ -89,6 +89,7 @@ type BaseItemDtoV2 struct {
 	People            []PersonDto       `json:"People,omitempty"`
 	Overview          string            `json:"Overview,omitempty"`
 	ImageTags         map[string]string `json:"ImageTags,omitempty"`
+	ProviderIds       map[string]string `json:"ProviderIds,omitempty"`
 }
 
 type MediaSource struct {
