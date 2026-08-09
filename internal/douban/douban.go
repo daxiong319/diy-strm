@@ -32,17 +32,18 @@ type searchSubjectsResponse struct {
 
 // CollectionItem 片单条目（rexxar 接口）
 type CollectionItem struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
+	ID            string `json:"id"`
+	Title         string `json:"title"`
 	OriginalTitle string `json:"original_title"`
-	URL         string `json:"url"`
-	Rating      struct {
+	URL           string `json:"url"`
+	Rating        struct {
 		Value float64 `json:"value"`
 	} `json:"rating"`
-	Pic         struct {
-		Normal string `json:"normal"`
-	} `json:"pic"`
+	Cover       struct {
+		URL string `json:"url"`
+	} `json:"cover"`
 	ReleaseDate string `json:"release_date"`
+	Year        string `json:"year"`
 	Info        string `json:"info"`
 }
 

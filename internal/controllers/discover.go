@@ -232,18 +232,21 @@ func GetDiscoverDouban(c *gin.Context) {
 			items = make([]DiscoverItem, 0, len(rawItems))
 			for _, item := range rawItems {
 				year := 0
-				if len(item.ReleaseDate) >= 4 {
+				if item.Year != "" {
+					year, _ = strconv.Atoi(item.Year)
+				} else if len(item.ReleaseDate) >= 4 {
 					year, _ = strconv.Atoi(item.ReleaseDate[:4])
 				}
 				items = append(items, DiscoverItem{
-					Source:    "douban",
-					MediaType: mediaType,
-					DoubanID:  item.ID,
-					Title:     item.Title,
-					Poster:    item.Pic.Normal,
-					VoteAvg:   item.Rating.Value,
-					ReleaseDate: item.ReleaseDate,
-					Year:      year,
+					Source:        "douban",
+					MediaType:     mediaType,
+					DoubanID:      item.ID,
+					Title:         item.Title,
+					OriginalTitle: item.OriginalTitle,
+					Poster:        item.Cover.URL,
+					VoteAvg:       item.Rating.Value,
+					ReleaseDate:   item.ReleaseDate,
+					Year:          year,
 				})
 			}
 		}
