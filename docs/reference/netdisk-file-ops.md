@@ -6,7 +6,7 @@
 >
 > 修改时机：修改上述路由、请求字段、验证、缓存失效或响应契约时必须更新本文档。
 >
-> 相关代码：`backend/internal/controllers/path.go`、`backend/internal/controllers/path_ops.go`、`backend/internal/controllers/name_align.go`、`backend/internal/controllers/net_file_batch.go`、`backend/internal/controllers/organize.go`、`backend/internal/requests/operations.go`、`frontend/src/components/AppFileManager.vue`、`frontend/src/components/NameAlignDialog.vue`、`frontend/src/components/OrganizeDialog.vue`。
+> 相关代码：`backend/internal/controllers/path.go`、`backend/internal/controllers/path_ops.go`、`backend/internal/controllers/name_align.go`、`backend/internal/controllers/net_file_batch.go`、`backend/internal/controllers/organize.go`、`backend/internal/controllers/crosstransfer.go`、`backend/internal/requests/operations.go`、`frontend/src/components/AppFileManager.vue`、`frontend/src/components/NameAlignDialog.vue`、`frontend/src/components/OrganizeDialog.vue`、`frontend/src/components/CrossTransferDialog.vue`。
 
 文件操作接口位于受保护的 `/api` 路由组（JWT / Cookie 会话需通过 CSRF，API Key 可用 `X-API-Key` 或 `api_key` 查询参数）。认证边界见 [认证与浏览器会话](../architecture/authentication-sessions.md)。
 
@@ -24,6 +24,17 @@
 | 命名对齐应用 | `POST /api/files/name-align/apply` | 按预览结果批量重命名，逐条执行并汇总。 |
 | 目录整理预览 | `POST /api/organize/preview` | 扫描目录并规划整理动作（建目录 + 移动 + 重命名），不改动文件。 |
 | 目录整理应用 | `POST /api/organize/apply` | 按预览结果批量建目录、移动并重命名，逐条执行并汇总。 |
+| 跨盘秒传扫描 | `POST /api/crosstransfer/scan` | 递归扫描源目录文件并提取指纹（SHA1/MD5）。 |
+| 跨盘秒传执行 | `POST /api/crosstransfer/execute` | 按指纹秒传到目标网盘，未命中自动入队中转上传。 |
+| 光鸭开发者配置保存 | `POST /api/guangya/developer-setting` | 保存光鸭开发者 client_id / client_secret（每账号一份）。 |
+| 光鸭开发者配置查询 | `GET /api/guangya/developer-setting` | 查询开发者配置（secret 脱敏）。 |
+| 光鸭开发者配置删除 | `DELETE /api/guangya/developer-setting` | 删除开发者配置。 |
+| 接收 TOKEN 添加 | `POST /api/guangya/receiver-tokens` | 添加小号秒传接收 TOKEN。 |
+| 接收 TOKEN 列表 | `GET /api/guangya/receiver-tokens` | 按账号列出接收 TOKEN。 |
+| 接收 TOKEN 删除 | `DELETE /api/guangya/receiver-tokens/:id` | 删除接收 TOKEN。 |
+| 小号秒传任务创建 | `POST /api/guangya/small-transfer` | 创建光鸭小号秒传任务并异步执行。 |
+| 小号秒传任务列表 | `GET /api/guangya/small-transfer` | 按账号列出秒传任务。 |
+| 小号秒传任务删除 | `DELETE /api/guangya/small-transfer/:id` | 删除已完成/失败任务。 |
 
 ## 标识语义
 
@@ -221,3 +232,107 @@
 - 目标目录按 `rel_path` 相对整理根目录逐级创建，已存在时忽略错误继续。
 - 响应 `data` 为 `{ "success": [...], "failed": [...] }`；`success` 条目为 `{ file_id, new_name, rel_path }`，`failed` 条目为 `{ file_id, name, reason }`。
 - 成功后失效源目录缓存。
+
+## 跨盘秒传
+
+跨盘秒传用于把一个网盘账号目录下的文件批量传输到另一个网盘账号：优先按文件指纹在目标网盘秒传（不消耗流量），指纹未命中时自动降级为「中转上传」——从源网盘下载到服务器临时目录，再走上传队列上传到目标网盘。
+
+- 相关代码：`backend/internal/controllers/crosstransfer.go`、`backend/internal/models/dbupload.go`（`downloadCrossTransferSource`、`tryLocalFingerprintRapid`、`UploadGuangYaPanFile`）、`backend/internal/guangyapan/`（上传与开发者接口）、`frontend/src/components/CrossTransferDialog.vue`、`frontend/src/components/GuangYaSmallTransferDialog.vue`。
+- 秒传能力矩阵（按目标网盘）：
+
+| 目标网盘 | 秒传指纹 | 限制 |
+| --- | --- | --- |
+| `115` | 源文件 SHA1 | 需源文件有 SHA1 |
+| `123` | 源文件 MD5（Etag） | 需源文件有 MD5 |
+| `baidupan` | 源文件 MD5 | 仅 ≤32MB 且需源文件有 MD5 |
+| `openlist` | 无 | 只能中转 |
+| `guangyapan` | GCID（分块 SHA1 再 SHA1） | flash 秒传未命中自动 OSS 上传 |
+| `pan139` | 不支持 | 直接拒绝执行 |
+
+- 源指纹来源：115 列表接口需开启 `show_sha1=1`（`v115open.FileListOptions.ShowSha1`）；123 列表的 `etag`、百度列表的云端 MD5 与 `fs_id`。
+- 中转上传任务以 `source = "cross_transfer"` 入队，记录 `source_account_id`（源账号）与 `source_file_id`（源文件下载定位 ID：115 为 pickcode、百度为 `fs_id`、其余为文件 ID），下载完成后清理临时文件。
+- 本地指纹秒传（上传队列兜底）：`dbupload.go` 的 `tryLocalFingerprintRapid` 会在普通上传前对**本地文件**计算指纹并再次尝试秒传（115 用 SHA1、123 用 MD5 `duplicate=2`、百度用 MD5 ≤32MB），命中则跳过普通上传；秒传尝试失败时回退普通上传，不影响上传流程。
+
+### 扫描
+
+`POST /api/crosstransfer/scan`
+
+```json
+{ "account_id": 12, "path": "12345" }
+```
+
+- 递归扫描 `path` 下所有文件（最多 2000 个、深度 10 层），`path` 为空表示根目录。
+- 响应 `data` 为 `{ "files": [...], "total": n, "truncated": bool }`；`files` 条目为 `{ source_file_id, download_id, rel_path, rel_dir, name, size, sha1, md5 }`。
+- 115/123/百度源分别填充 `sha1`/`md5`（百度同时受 ≤32MB 限制）；OpenList 源两者皆空。
+
+### 执行
+
+`POST /api/crosstransfer/execute`
+
+```json
+{
+  "source_account_id": 12,
+  "target_account_id": 8,
+  "source_path": "12345",
+  "target_path": "67890",
+  "conflict": "rename",
+  "files": [{ "source_file_id": "a1", "download_id": "pc-xxx", "rel_path": "电影/A.mkv", "rel_dir": "电影", "name": "A.mkv", "size": 1024, "sha1": "...", "md5": "" }]
+}
+```
+
+- `conflict`：`skip` / `rename` / `overwrite`，默认 `rename`；仅 123 秒传按此映射 `duplicate`（`rename`=1，其余=2），其余网盘冲突时秒传接口自行返回结果。
+- 每个文件依次：确保目标目录存在（相对 `target_path` 按 `rel_dir` 逐级创建）→ 按目标网盘类型尝试秒传 → 未命中入队中转上传。
+- `files` 最多 500 条，逐条执行不中断。
+- 响应 `data` 为 `{ "results": [...], "rapid": n, "relay": n, "skipped": n, "failed": n }`；`results` 条目为 `{ rel_path, name, mode, success, file_id, error }`，`mode` 为 `rapid` / `relay` / `error`。
+
+## 光鸭云盘秒传
+
+光鸭目标秒传共两条通道：**flash 秒传**（目标为光鸭账号的普通跨盘/上传流程内自动尝试）与**开发者小号秒传**（通过官方开发者接口把当前开发者账号的文件秒传到小号接收 TOKEN）。
+
+### 光鸭 flash 秒传
+
+- 相关代码：`backend/internal/guangyapan/upload.go`。
+- 流程：`get_res_center_token`（`capacity:2`，附 `fileSize`/`md5`，code `156` 表示小文件秒传命中）→ 未命中时 `check_can_flash_upload`（需 `gcid`）→ 命中则轮询 `get_info_by_task_id`（`147`=处理中）取 `fileId` → 未命中走 OSS 上传（阿里云 STS 凭证：小文件 PutObject、大文件 multipart），完成后轮询任务取 `fileId`。
+- GCID 算法：按文件大小分块（≤128MB→256KB、≤256MB→512KB、≤512MB→1MB、更大→2MB），各块 SHA1 后整体再 SHA1，大写十六进制。
+- 跨盘秒传目标为光鸭时，中转入队后 `UploadGuangYaPanFile` 内部自动先尝试 flash 秒传，未命中再 OSS 上传。
+- 上传队列普通上传（目录监控/手动上传等）到光鸭账号也走同一通道。
+
+### 光鸭开发者小号秒传
+
+- 相关代码：`backend/internal/guangyapan/developer.go`（开发者客户端与签名）、`backend/internal/controllers/guangya_transfer.go`（接口与异步执行）、`backend/internal/models/guangya_developer.go`（表：`guangya_developer_settings`、`guangya_receiver_tokens`、`guangya_transfer_tasks`，数据库版本 `61`）。
+- 前置：源光鸭账号需配置开发者 `client_id`/`client_secret`（在光鸭开发者平台申请，请求签名后才被接受），并添加一个**小号**光鸭账号分享的接收 TOKEN（接收 TOKEN 在小号上生成并授权目录）。
+- 请求签名：请求头携带 `client_id`、`nonce`（16–32 位）、`timestamp`（秒级）、`sign`；`sign = SHA512(MD5("client_id=..&client_secret=..&nonce=..&timestamp=.."))` 十六进制；业务码 `18020` 凭据无效、`18021` 签名失败、`18022` 签名过期、`18023` nonce 重用、`18010`/`18013` 自动重试。
+- 执行流程：`upload_by_fileid`（`{token_id, file_ids}`，≤20 项）→ 业务码 `18014` 表示文件已传过（幂等成功，跳过）→ `18011` 表示需预审：先 `pre_upload` 提交预审，轮询 `pre_upload_status`（`3`=通过继续秒传、`4`=未通过）→ 通过后再 `upload_by_fileid` → 轮询 `upload_status` 至 `success`/`failed`。
+- 任务异步执行，同一账号+接收 TOKEN 同时只允许一个任务；任务状态 `running` / `auditing` / `success` / `failed`。
+- 前端入口：文件管理工具栏「小号秒传」（`GuangYaSmallTransferDialog.vue`），在对话框内配置开发者凭据、管理接收 TOKEN、选择目录文件（复用 `/crosstransfer/scan` 加载文件列表）并创建任务。
+
+### 开发者配置接口
+
+`POST /api/guangya/developer-setting`
+
+```json
+{ "account_id": 12, "client_id": "xxx", "client_secret": "xxx" }
+```
+
+- 查询 `GET /api/guangya/developer-setting?account_id=12` 返回 `{ configured, client_id, secret_hint }`（secret 脱敏）；删除 `DELETE /api/guangya/developer-setting?account_id=12`。
+
+### 接收 TOKEN 接口
+
+`POST /api/guangya/receiver-tokens`
+
+```json
+{ "account_id": 12, "token_id": "xxxx", "remark": "小号A" }
+```
+
+- 列表 `GET /api/guangya/receiver-tokens?account_id=12`；删除 `DELETE /api/guangya/receiver-tokens/:id`。
+
+### 小号秒传任务接口
+
+`POST /api/guangya/small-transfer`
+
+```json
+{ "account_id": 12, "receiver_token_id": 1, "file_ids": ["f1", "f2"] }
+```
+
+- `file_ids` 为光鸭源账号内文件 ID（1–20 项），取自语列表接口或 `/crosstransfer/scan` 的 `source_file_id`。
+- 创建即异步执行，响应 `{ task_id }`；列表 `GET /api/guangya/small-transfer?account_id=12` 返回任务数组（`status`、`total_count`、`success_count`、`skipped_count`、`failed_count`、`error_message` 等）；删除 `DELETE /api/guangya/small-transfer/:id`（仅限已完成/失败任务）。

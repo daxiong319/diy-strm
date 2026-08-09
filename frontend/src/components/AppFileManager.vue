@@ -141,6 +141,20 @@
                 >
                   目录整理
                 </el-button>
+                <el-button
+                  size="small"
+                  :disabled="!selectedAccountId"
+                  @click="openCrossTransferDialog"
+                >
+                  跨盘秒传
+                </el-button>
+                <el-button
+                  size="small"
+                  :disabled="!selectedAccountId"
+                  @click="openSmallTransferDialog"
+                >
+                  小号秒传
+                </el-button>
               </div>
             </div>
 
@@ -433,6 +447,17 @@
       :parent-id="getCurrentParentId()"
       @applied="loadFileList({ refresh: true })"
     />
+
+    <CrossTransferDialog
+      v-model="showCrossTransferDialog"
+      :default-source-account-id="selectedAccountId ?? 0"
+      @applied="loadFileList({ refresh: true })"
+    />
+
+    <GuangYaSmallTransferDialog
+      v-model="showSmallTransferDialog"
+      :default-source-account-id="selectedAccountId ?? 0"
+    />
   </div>
 </template>
 
@@ -464,6 +489,8 @@ import ResponsivePagination from '@/components/common/ResponsivePagination.vue'
 import DirectorySelector from './DirectorySelector.vue'
 import NameAlignDialog from './NameAlignDialog.vue'
 import OrganizeDialog from './OrganizeDialog.vue'
+import CrossTransferDialog from './CrossTransferDialog.vue'
+import GuangYaSmallTransferDialog from './GuangYaSmallTransferDialog.vue'
 
 interface NetdiskAccount {
   id: number
@@ -702,6 +729,8 @@ const moveOperationContext = ref<FileOperationContextSnapshot | null>(null)
 
 const showNameAlignDialog = ref(false)
 const showOrganizeDialog = ref(false)
+const showCrossTransferDialog = ref(false)
+const showSmallTransferDialog = ref(false)
 interface FileOperationContextSnapshot {
   accountId: number | null
   parentId: string
@@ -1443,6 +1472,22 @@ function openOrganizeDialog() {
   }
 
   showOrganizeDialog.value = true
+}
+
+function openCrossTransferDialog() {
+  if (!selectedAccountId.value) {
+    ElMessage.warning('请先选择网盘账号')
+    return
+  }
+  showCrossTransferDialog.value = true
+}
+
+function openSmallTransferDialog() {
+  if (!selectedAccountId.value) {
+    ElMessage.warning('请先选择网盘账号')
+    return
+  }
+  showSmallTransferDialog.value = true
 }
 
 function openCreateDialog() {

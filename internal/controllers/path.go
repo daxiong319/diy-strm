@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -350,6 +351,10 @@ type FileItem struct {
 	Name        string `json:"name"`
 	Size        int64  `json:"size"`
 	ModifiedAt  int64  `json:"modified_time"`
+	Sha1        string `json:"sha1,omitempty"`
+	Md5         string `json:"md5,omitempty"`
+	PickCode    string `json:"pick_code,omitempty"`
+	FsId        string `json:"fs_id,omitempty"`
 }
 
 type netFileListPage struct {
@@ -549,7 +554,7 @@ func fetch115NetFileBatch(ctx context.Context, account *models.Account, parentID
 		return netFileBatch{}, err
 	}
 	client := account.Get115Client()
-	resp, err := client.GetFsListWithOptions(ctx, parentID, true, false, true, start, size, v115open.FileListOptions{Order: order, Asc: asc})
+	resp, err := client.GetFsListWithOptions(ctx, parentID, true, false, true, start, size, v115open.FileListOptions{Order: order, Asc: asc, ShowSha1: true})
 	if err != nil {
 		helpers.AppLogger.Warnf("获取 115 文件列表失败：父目录=%s，错误=%v", parentID, err)
 		return netFileBatch{}, err
@@ -562,6 +567,8 @@ func fetch115NetFileBatch(ctx context.Context, account *models.Account, parentID
 			Name:        item.FileName,
 			Size:        item.FileSize,
 			ModifiedAt:  item.Ptime,
+			Sha1:        item.Sha1,
+			PickCode:    item.PickCode,
 		})
 	}
 	return netFileBatch{
@@ -598,6 +605,8 @@ func fetchBaiduNetFileBatch(ctx context.Context, account *models.Account, parent
 			Name:        name,
 			Size:        int64(item.Size),
 			ModifiedAt:  int64(item.ServerMtime),
+			Md5:         item.Md5,
+			FsId:        strconv.FormatUint(item.FsId, 10),
 		})
 	}
 	total, hasMore := buildBaiduSyntheticTotal(start, len(fileList), size)
@@ -681,6 +690,7 @@ func fetchPan123NetFileBatch(ctx context.Context, account *models.Account, paren
 			Name:        item.FileName,
 			Size:        item.Size,
 			ModifiedAt:  item.UpdateAt.Unix(),
+			Md5:         item.Etag,
 		})
 	}
 	total := int64(resp.Data.Total)

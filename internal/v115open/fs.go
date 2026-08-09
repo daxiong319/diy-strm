@@ -82,8 +82,9 @@ type MkDirData struct {
 }
 
 type FileListOptions struct {
-	Order string
-	Asc   string
+	Order    string
+	Asc      string
+	ShowSha1 bool
 }
 
 func (d *FileDetail) GetFullPath() string {
@@ -133,6 +134,9 @@ func (c *OpenClient) GetFsListWithOptions(ctx context.Context, fileId string, sh
 	}
 	if options.Asc != "" {
 		data["asc"] = options.Asc
+	}
+	if options.ShowSha1 {
+		data["show_sha1"] = "1"
 	}
 	url := fmt.Sprintf("%s/open/ufile/files", OPEN_BASE_URL)
 	req := c.client.R().SetQueryParams(data).SetMethod("GET")

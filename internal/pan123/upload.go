@@ -35,6 +35,41 @@ func MD5File(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// RapidUploadByHash 跨盘秒传：仅凭 etag（MD5）触发 123 云盘秒传，不读取本地文件。
+// reuse=true 表示命中秒传；duplicate: 1=重命名 2=覆盖。
+func (c *Client) RapidUploadByHash(ctx context.Context, parentFileId string, fileName string, size int64, etag string, duplicate int) (reuse bool, fileId string, err error) {
+	if duplicate <= 0 || duplicate > 2 {
+		duplicate = 2
+	}
+	data := map[string]interface{}{
+		"driveId":      0,
+		"duplicate":    duplicate,
+		"etag":         etag,
+		"fileName":     fileName,
+		"parentFileId": parentFileId,
+		"size":         size,
+		"type":         0,
+	}
+	body, err := json.Marshal(data)
+	if err != nil {
+		return false, "", err
+	}
+	var uploadResp UploadResp
+	respBody, err := c.Request(ctx, c.api("/file/upload_request"), http.MethodPost, func(req *resty.Request) {
+		req.SetBody(body).SetContext(ctx)
+	})
+	if err != nil {
+		return false, "", err
+	}
+	if err := json.Unmarshal(respBody, &uploadResp); err != nil {
+		return false, "", fmt.Errorf("解析上传请求响应失败：%w", err)
+	}
+	if uploadResp.Data.Reuse {
+		return true, strconv.FormatInt(uploadResp.Data.FileId, 10), nil
+	}
+	return false, "", nil
+}
+
 // UploadFile 上传文件到指定目录
 // 流程：upload_request 获取凭证 → 秒传判断 → S3 直传或预签名分片上传 → 完成
 // 返回上传结果（fileId 等）

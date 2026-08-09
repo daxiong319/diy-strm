@@ -18,7 +18,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 61
+var MaxVersionCode = 62
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -26,6 +26,7 @@ var AllTables = []any{
 	SyncPath{}, SyncFile{}, SyncPathScrapePath{}, DirectoryUploadRule{}, DirectoryUploadProcessedFile{}, SyncPathIdempotencyRecord{},
 	ScrapeSettings{}, ScrapePath{}, MovieCategory{}, TvShowCategory{}, ScrapePathCategory{},
 	ScrapeMediaFile{}, Media{}, MediaSeason{}, MediaEpisode{}, ScrapeStrmPath{},
+	GuangYaDeveloperSetting{}, GuangYaReceiverToken{}, GuangYaTransferTask{},
 	RequestStat{}, EmbyConfig{}, EmbyMediaItem{}, EmbyMediaSyncFile{}, EmbyLibrary{}, EmbyLibrarySyncPath{}, EmbyLibraryRefreshTask{},
 	DbDownloadTask{}, DbUploadTask{}, UploadSession{}, StrmGenerationTask{}, NotificationChannel{}, TelegramChannelConfig{}, MeoWChannelConfig{}, BarkChannelConfig{},
 	ServerChanChannelConfig{}, CustomWebhookChannelConfig{}, NotificationRule{},
@@ -692,6 +693,15 @@ func Migrate() {
 			}
 		}
 		helpers.AppLogger.Info("已扩宽 account 表 token/refresh_token 字段至 4096")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 61 {
+		// 光鸭云盘开发者接口（小号秒传）：开发者配置 + 接收 TOKEN + 秒传任务表
+		if err := db.Db.AutoMigrate(GuangYaDeveloperSetting{}, GuangYaReceiverToken{}, GuangYaTransferTask{}); err != nil {
+			helpers.AppLogger.Errorf("迁移光鸭开发者表失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("已创建光鸭开发者配置/接收 TOKEN/秒传任务表")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)

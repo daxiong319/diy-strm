@@ -135,6 +135,26 @@ func (c *OpenClient) UploadInit(ctx context.Context, input UploadInitRequest) (*
 	return respData.toUploadInitResult()
 }
 
+// RapidUploadBySHA1 跨盘秒传：仅凭 SHA1 触发 115 秒传，不读取本地文件。
+// status=2 表示秒传命中；status=1 表示需要普通上传（未命中）。
+func (c *OpenClient) RapidUploadBySHA1(ctx context.Context, parentFileId string, fileName string, fileSize int64, fileSha1 string) (reuse bool, fileId string, err error) {
+	initResult, err := c.UploadInit(ctx, UploadInitRequest{
+		FileName:     fileName,
+		FileSize:     fileSize,
+		ParentFileId: parentFileId,
+		FileSha1:     fileSha1,
+		Preid:        "",
+		TopUpload:    "0",
+	})
+	if err != nil {
+		return false, "", err
+	}
+	if initResult.Status == UploadInitStatusRapidUploaded {
+		return true, initResult.FileId, nil
+	}
+	return false, "", nil
+}
+
 func buildUploadInitForm(input UploadInitRequest) map[string]string {
 	topUpload := input.TopUpload
 	if topUpload == "" {

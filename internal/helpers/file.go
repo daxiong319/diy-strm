@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/md5"
+	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -560,6 +561,34 @@ func CalculateFileChunkMD5(filePath string, chunkSize int64) (*FileChunkMD5Resul
 const (
 	PartialMD5Size = 256 * 1024
 )
+
+// CalculateFileSHA1 计算整文件 SHA1（十六进制小写）。
+func CalculateFileSHA1(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("打开文件失败：%v", err)
+	}
+	defer file.Close()
+	hash := sha1.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", fmt.Errorf("计算文件 SHA1 失败：%v", err)
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// CalculateFileMD5 计算整文件 MD5（十六进制小写）。
+func CalculateFileMD5(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("打开文件失败：%v", err)
+	}
+	defer file.Close()
+	hash := md5.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", fmt.Errorf("计算文件 MD5 失败：%v", err)
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
 
 func CalculateFilePartialMD5(filePath string) (string, error) {
 	file, err := os.Open(filePath)

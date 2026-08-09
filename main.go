@@ -819,6 +819,21 @@ func setRouter(r *gin.Engine) {
 		api.POST("/organize/preview", controllers.OrganizePreview)            // 目录整理预览
 		api.POST("/organize/apply", controllers.OrganizeApply)                // 目录整理执行
 
+		// 跨盘秒传
+		api.POST("/crosstransfer/scan", controllers.CrossTransferScan)        // 跨盘秒传扫描
+		api.POST("/crosstransfer/execute", controllers.CrossTransferExecute)  // 跨盘秒传执行
+
+		// 光鸭开发者小号秒传
+		api.POST("/guangya/developer-setting", controllers.GuangYaDeveloperSetting)            // 保存光鸭开发者凭据
+		api.GET("/guangya/developer-setting", controllers.GuangYaDeveloperSettingQuery)        // 查询光鸭开发者配置
+		api.DELETE("/guangya/developer-setting", controllers.GuangYaDeveloperSettingDelete)    // 删除光鸭开发者配置
+		api.POST("/guangya/receiver-tokens", controllers.GuangYaReceiverTokensCreate)          // 添加接收 TOKEN
+		api.GET("/guangya/receiver-tokens", controllers.GuangYaReceiverTokensList)             // 接收 TOKEN 列表
+		api.DELETE("/guangya/receiver-tokens/:id", controllers.GuangYaReceiverTokensDelete)    // 删除接收 TOKEN
+		api.POST("/guangya/small-transfer", controllers.GuangYaSmallTransfer)                  // 创建小号秒传任务
+		api.GET("/guangya/small-transfer", controllers.GuangYaSmallTransferList)               // 小号秒传任务列表
+		api.DELETE("/guangya/small-transfer/:id", controllers.GuangYaSmallTransferDelete)      // 删除小号秒传任务
+
 		api.GET("/upload/queue", controllers.UploadList)                                             // 获取上传队列列表
 		api.POST("/upload/queue/clear-pending", controllers.ClearPendingUploadTasks)                 // 清除上传队列中未开始的任务
 		api.POST("/upload/queue/start", controllers.StartUploadQueue)                                // 启动上传队列

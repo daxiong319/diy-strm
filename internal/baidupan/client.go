@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -397,6 +398,28 @@ func (c *Client) Upload(ctx context.Context, localPath string, remotePath string
 		return nil, fmt.Errorf("创建文件失败：%w", err)
 	}
 	return &resp, nil
+}
+
+// RapidUploadByMD5 跨盘秒传：仅凭 MD5 触发百度网盘秒传（单分片文件，≤32MB）。
+// 先 precreate（block_list=[md5]），若服务端全部分片已存在则直接 create 完成秒传。
+func (c *Client) RapidUploadByMD5(ctx context.Context, remotePath string, size int64, md5 string) (reuse bool, fileID string, err error) {
+	if size > 32*1024*1024 {
+		return false, "", fmt.Errorf("文件超过 32MB，无法单分片秒传")
+	}
+	blockList := "[\"" + md5 + "\"]"
+	preResp, r, err := c.client.FileuploadApi.Xpanfileprecreate(ctx).AccessToken(c.accessToken).Path(remotePath).Size(int32(size)).Isdir(0).Autoinit(1).Rtype(2).BlockList(blockList).Execute()
+	if c.handleError(err, r, preResp) != nil {
+		return false, "", err
+	}
+	remaining := preResp.BlockList
+	if remaining != nil && len(*remaining) > 0 {
+		return false, "", nil
+	}
+	resp, r, err := c.client.FileuploadApi.Xpanfilecreate(ctx).AccessToken(c.accessToken).Path(remotePath).Isdir(0).Size(int32(size)).Uploadid("").BlockList(blockList).Rtype(2).Execute()
+	if c.handleError(err, r, resp) != nil {
+		return false, "", err
+	}
+	return true, strconv.FormatInt(resp.GetFsId(), 10), nil
 }
 
 // 路径是否存在

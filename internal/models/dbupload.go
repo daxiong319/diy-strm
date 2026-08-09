@@ -12,7 +12,9 @@ import (
 
 	"diy-strm/internal/db"
 	"diy-strm/internal/helpers"
+	"diy-strm/internal/pan123"
 	"diy-strm/internal/realtime"
+	"diy-strm/internal/v115open"
 
 	"gorm.io/gorm"
 )
@@ -37,6 +39,7 @@ const (
 	UploadSourceStrm             UploadSource = "strm_sync"
 	UploadSourceScrape           UploadSource = "scrape_organize"
 	UploadSourceDirectoryMonitor UploadSource = "directory_monitor"
+	UploadSourceCrossTransfer    UploadSource = "cross_transfer"
 )
 
 // UploadResult 是上传任务的最终结果类型。
@@ -74,6 +77,8 @@ type DbUploadTask struct {
 	ScrapeMediaFileId     uint                      `json:"scrape_media_file_id"`                              // 刮削文件 ID
 	SyncPathId            uint                      `json:"sync_path_id" gorm:"index"`                         // 同步目录 ID
 	SourceType            SourceType                `json:"source_type"`                                       // 任务来源类型
+	SourceAccountId       uint                      `json:"source_account_id" gorm:"default:0;index"`          // 跨盘秒传源账号 ID
+	SourceFileId          string                    `json:"source_file_id" gorm:"size:512"`                    // 跨盘秒传源文件 ID（115 pickcode/123 文件 ID/百度 fs_id/OpenList 路径）
 	LocalFullPath         string                    `json:"local_full_path" gorm:"index:idx_local_full_path"`  // 本地完整文件路径，包含文件名
 	RelativePath          string                    `json:"relative_path" gorm:"type:text;size:1024"`          // 目录监控源文件相对路径
 	SourceFingerprint     string                    `json:"source_fingerprint" gorm:"size:128;index"`          // 目录监控源文件签名
@@ -402,12 +407,32 @@ func (task *DbUploadTask) Upload() {
 		}
 		return
 	}
+	// 跨盘秒传兜底：先把源网盘文件下载到本地临时路径
+	if task.Source == UploadSourceCrossTransfer {
+		if !helpers.PathExists(task.LocalFullPath) {
+			if err := task.downloadCrossTransferSource(); err != nil {
+				task.Fail(err)
+				return
+			}
+		}
+	}
 	if !helpers.PathExists(task.LocalFullPath) {
 		task.Fail(fmt.Errorf("本地文件 %s 不存在", task.LocalFullPath))
 		return
 	}
 	if err := task.validateDirectoryMonitorSourceFingerprint(); err != nil {
 		task.cancelWithError(err)
+		return
+	}
+	// 本地文件指纹秒传：先对本地文件计算指纹并尝试目标网盘秒传，命中则跳过普通上传；
+	// 秒传尝试失败时回退普通上传，不阻塞上传流程
+	if task.tryLocalFingerprintRapid() {
+		if err := task.MarkRemoteCompletedPendingFinalize(); err != nil {
+			return
+		}
+		if err := task.finalizeRemoteCompletedUploadWithClaim(); err != nil {
+			helpers.AppLogger.Warnf("[上传] 秒传成功后收尾失败：task_id=%d err=%v", task.ID, err)
+		}
 		return
 	}
 	switch task.SourceType {
@@ -432,8 +457,9 @@ func (task *DbUploadTask) Upload() {
 			return
 		}
 	case SourceTypeGuangYaPan:
-		task.Fail(fmt.Errorf("光鸭云盘暂不支持上传"))
-		return
+		if !task.UploadGuangYaPanFile() {
+			return
+		}
 	default:
 		task.Fail(fmt.Errorf("未知的上传来源类型 %s", task.SourceType))
 		return
@@ -469,6 +495,14 @@ func (task *DbUploadTask) finalizeRemoteCompletedUpload() error {
 	}
 	if err := task.enqueueStrmGenerationAfterUploadAndMarkDirectoryProcessed(); err != nil {
 		return fmt.Errorf("创建 STRM 生成任务失败：%w", err)
+	}
+	// 跨盘秒传兜底：清理下载的临时文件
+	if task.Source == UploadSourceCrossTransfer {
+		if helpers.PathExists(task.LocalFullPath) {
+			if err := os.Remove(task.LocalFullPath); err != nil {
+				helpers.AppLogger.Warnf("[上传] 清理跨盘秒传临时文件失败：%s，%v", task.LocalFullPath, err)
+			}
+		}
 	}
 	// 如果是刮削类型，需要进行后续通知
 	if task.Source == UploadSourceScrape {
@@ -587,6 +621,100 @@ func ensureLocalPathWithinRoot(rootPath string, targetPath string) error {
 	return nil
 }
 
+// tryLocalFingerprintRapid 本地文件指纹秒传：对本地文件计算指纹并尝试目标网盘秒传，命中返回 true。
+// 未命中或调用失败（网络/授权问题）返回 false，由调用方回退普通上传。
+func (task *DbUploadTask) tryLocalFingerprintRapid() bool {
+	fileInfo, err := os.Stat(task.LocalFullPath)
+	if err != nil {
+		return false
+	}
+	account := task.GetAccount()
+	if account == nil {
+		return false
+	}
+	switch task.SourceType {
+	case SourceType115:
+		client := account.Get115Client()
+		if client == nil {
+			return false
+		}
+		fileSHA1, err := helpers.CalculateFileSHA1(task.LocalFullPath)
+		if err != nil {
+			return false
+		}
+		reuse, fileID, err := client.RapidUploadBySHA1(context.Background(), task.RemoteFileId, task.FileName, fileInfo.Size(), fileSHA1)
+		if err != nil {
+			helpers.AppLogger.Warnf("[上传] 115 秒传尝试失败，回退普通上传：%v", err)
+			return false
+		}
+		if !reuse {
+			return false
+		}
+		task.Uploading()
+		task.UploadResult = UploadResultRapidUpload
+		task.CompletedRemoteFileId = fileID
+		task.CompletedPickCode = fileID
+		task.FileSize = fileInfo.Size()
+		task.UploadedBytes = fileInfo.Size()
+		task.applyUploadQueueDisplayFields(nil)
+		return true
+	case SourceType123:
+		client := account.Get123Client()
+		if client == nil {
+			return false
+		}
+		fileMD5, err := helpers.CalculateFileMD5(task.LocalFullPath)
+		if err != nil {
+			return false
+		}
+		reuse, fileID, err := client.RapidUploadByHash(context.Background(), task.RemoteFileId, task.FileName, fileInfo.Size(), fileMD5, 2)
+		if err != nil {
+			helpers.AppLogger.Warnf("[上传] 123 秒传尝试失败，回退普通上传：%v", err)
+			return false
+		}
+		if !reuse {
+			return false
+		}
+		task.Uploading()
+		task.UploadResult = UploadResultRapidUpload
+		task.CompletedRemoteFileId = fileID
+		task.CompletedPickCode = fileID
+		task.FileSize = fileInfo.Size()
+		task.UploadedBytes = fileInfo.Size()
+		task.applyUploadQueueDisplayFields(nil)
+		return true
+	case SourceTypeBaiduPan:
+		if fileInfo.Size() > 32*1024*1024 {
+			return false
+		}
+		client := account.GetBaiDuPanClient()
+		if client == nil {
+			return false
+		}
+		fileMD5, err := helpers.CalculateFileMD5(task.LocalFullPath)
+		if err != nil {
+			return false
+		}
+		remotePath := strings.TrimRight(strings.TrimSpace(task.RemoteFileId), "/") + "/" + task.FileName
+		reuse, fileID, err := client.RapidUploadByMD5(context.Background(), remotePath, fileInfo.Size(), fileMD5)
+		if err != nil {
+			helpers.AppLogger.Warnf("[上传] 百度网盘秒传尝试失败，回退普通上传：%v", err)
+			return false
+		}
+		if !reuse {
+			return false
+		}
+		task.Uploading()
+		task.UploadResult = UploadResultRapidUpload
+		task.CompletedRemoteFileId = fileID
+		task.FileSize = fileInfo.Size()
+		task.UploadedBytes = fileInfo.Size()
+		task.applyUploadQueueDisplayFields(nil)
+		return true
+	}
+	return false
+}
+
 func (task *DbUploadTask) Upload115File() bool {
 	// 检查账户是否存在
 	account := task.GetAccount()
@@ -688,6 +816,48 @@ func (task *DbUploadTask) Upload123File() bool {
 	task.CompletedRemoteFileId = fileId
 	task.CompletedPickCode = fileId // 123 云盘的 PickCode 即文件 ID
 	if resp.Data.Reuse {
+		task.UploadResult = UploadResultRapidUpload
+	} else {
+		task.UploadResult = UploadResultMultipartUploaded
+	}
+	if fileInfo, statErr := os.Stat(task.LocalFullPath); statErr == nil {
+		task.FileSize = fileInfo.Size()
+		task.UploadedBytes = fileInfo.Size()
+	}
+	task.applyUploadQueueDisplayFields(nil)
+	publishUploadQueueChanged(task, "progress")
+	return true
+}
+
+// UploadGuangYaPanFile 光鸭云盘上传文件（内部自动尝试秒传，未命中回退 OSS 分片上传）。
+func (task *DbUploadTask) UploadGuangYaPanFile() bool {
+	account := task.GetAccount()
+	if account == nil {
+		task.Fail(fmt.Errorf("账户 %d 不存在", task.AccountId))
+		return false
+	}
+	client := account.GetGuangYaPanClient()
+	if client == nil {
+		task.Fail(fmt.Errorf("账户 %s 光鸭云盘客户端不存在", account.Name))
+		return false
+	}
+	task.Uploading()
+	fileID, rapid, err := client.UploadFile(context.Background(), task.LocalFullPath, task.RemoteFileId, func(done, total int64) {
+		if total > 0 {
+			task.FileSize = total
+		}
+		task.UploadedBytes = done
+		if err := db.Db.Model(task).Update("uploaded_bytes", done).Error; err != nil {
+			helpers.AppLogger.Warnf("[上传] 保存光鸭云盘上传进度失败：%s", err.Error())
+		}
+		publishUploadQueueChanged(task, "progress")
+	})
+	if err != nil {
+		task.Fail(fmt.Errorf("光鸭云盘上传文件 %s 失败：%v", task.FileName, err))
+		return false
+	}
+	task.CompletedRemoteFileId = fileID
+	if rapid {
 		task.UploadResult = UploadResultRapidUpload
 	} else {
 		task.UploadResult = UploadResultMultipartUploaded
@@ -1031,4 +1201,118 @@ func GetUnFinishUploadTaskCountByScrapeMediaId(scrapeMediaFileId uint) int64 {
 		Where("scrape_media_file_id = ? AND status IN ?", scrapeMediaFileId, activeUploadTaskStatuses()).
 		Count(&count)
 	return count
+}
+
+// CreateUploadTask 创建上传任务并发布队列变更事件。
+func CreateUploadTask(task *DbUploadTask) error {
+	if task == nil {
+		return errors.New("上传任务为空")
+	}
+	if task.Status == 0 {
+		task.Status = UploadStatusPending
+	}
+	if task.UploadResult == "" {
+		task.UploadResult = UploadResultUnknown
+	}
+	if task.SourceCleanupStatus == "" {
+		task.SourceCleanupStatus = UploadSourceCleanupStatusNone
+	}
+	if err := db.Db.Create(task).Error; err != nil {
+		return err
+	}
+	PublishUploadTaskCreated(task)
+	return nil
+}
+
+// UpdateUploadTaskLocalPath 更新上传任务的本地文件路径（跨盘秒传兜底任务先建任务再补路径）。
+func UpdateUploadTaskLocalPath(taskID uint, localPath string) error {
+	return db.Db.Model(&DbUploadTask{}).Where("id = ?", taskID).Update("local_full_path", localPath).Error
+}
+
+// downloadCrossTransferSource 跨盘秒传兜底：把源网盘文件下载到本地临时路径。
+func (task *DbUploadTask) downloadCrossTransferSource() error {
+	account, err := GetAccountById(task.SourceAccountId)
+	if err != nil {
+		return fmt.Errorf("源账号 %d 不存在", task.SourceAccountId)
+	}
+	task.Uploading()
+	switch account.SourceType {
+	case SourceType115:
+		client := account.Get115Client()
+		if client == nil {
+			return fmt.Errorf("源账号 115 客户端不存在")
+		}
+		url := client.GetDownloadUrl(context.Background(), task.SourceFileId, v115open.DEFAULTUA, false)
+		if url == "" {
+			return fmt.Errorf("获取 115 源文件下载链接失败：%s", task.SourceFileId)
+		}
+		return helpers.DownloadFile(url, task.LocalFullPath, v115open.DEFAULTUA)
+	case SourceType123:
+		client := account.Get123Client()
+		if client == nil {
+			return fmt.Errorf("源账号 123 云盘客户端不存在")
+		}
+		file, err := client.GetFileById(context.Background(), task.SourceFileId, "")
+		if err != nil {
+			return fmt.Errorf("获取 123 云盘源文件信息失败：%w", err)
+		}
+		downloadInfo, err := client.GetDownloadInfo(context.Background(), *file)
+		if err != nil {
+			return fmt.Errorf("获取 123 云盘源文件下载信息失败：%w", err)
+		}
+		url, err := client.ResolveDownloadURL(context.Background(), downloadInfo.Data.DownloadUrl)
+		if err != nil {
+			return fmt.Errorf("解析 123 云盘源文件下载链接失败：%w", err)
+		}
+		return helpers.DownloadFile(url, task.LocalFullPath, pan123.WebUA)
+	case SourceTypeBaiduPan:
+		client := account.GetBaiDuPanClient()
+		if client == nil {
+			return fmt.Errorf("源账号百度网盘客户端不存在")
+		}
+		fileDetail, err := client.GetFileDetail(context.Background(), task.SourceFileId, 1)
+		if err != nil {
+			return fmt.Errorf("获取百度网盘源文件详情失败：%w", err)
+		}
+		url := fmt.Sprintf("%s&access_token=%s", fileDetail.Dlink, account.Token)
+		return helpers.DownloadFile(url, task.LocalFullPath, "pan.baidu.com")
+	case SourceTypeOpenList:
+		client := account.GetOpenListClient()
+		if client == nil {
+			return fmt.Errorf("源账号 OpenList 客户端不存在")
+		}
+		url := client.GetRawUrl(task.SourceFileId)
+		if url == "" {
+			return fmt.Errorf("获取 OpenList 源文件直链失败：%s", task.SourceFileId)
+		}
+		return helpers.DownloadFile(url, task.LocalFullPath, v115open.DEFAULTUA)
+	case SourceTypeGuangYaPan:
+		client := account.GetGuangYaPanClient()
+		if client == nil {
+			return fmt.Errorf("源账号光鸭云盘客户端不存在")
+		}
+		defer client.Close()
+		file, err := client.GetFileById(context.Background(), task.SourceFileId, "")
+		if err != nil {
+			return fmt.Errorf("获取光鸭云盘源文件信息失败：%w", err)
+		}
+		url, err := client.GetDownloadURL(context.Background(), file.GetID())
+		if err != nil {
+			return fmt.Errorf("获取光鸭云盘源文件下载链接失败：%w", err)
+		}
+		return helpers.DownloadFile(url, task.LocalFullPath, "")
+	case SourceTypePan139:
+		client := account.GetPan139Client()
+		if client == nil {
+			return fmt.Errorf("源账号中国移动云盘客户端不存在")
+		}
+		defer client.Close()
+		url, err := client.GetDownloadURL(context.Background(), task.SourceFileId)
+		if err != nil {
+			return fmt.Errorf("获取中国移动云盘源文件下载链接失败：%w", err)
+		}
+		return helpers.DownloadFile(url, task.LocalFullPath, "")
+	default:
+		return fmt.Errorf("未知的源账号类型 %s", account.SourceType)
+	}
 }
