@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -259,6 +261,28 @@ func RepairDB(c *gin.Context) {
 }
 
 func GetAnnounce(c *gin.Context) {
+	type announce struct {
+		ID      int    `json:"id"`
+		Title   string `json:"title"`
+		Content string `json:"content"`
+		Time    string `json:"time"`
+	}
+	var announces []announce
+	// 优先读取本地公告文件 config/announce.json（JSON 数组，字段同上）
+	// 不存在或解析失败时回退远程公告
+	var bytes []byte
+	localFile := filepath.Join(helpers.ConfigDir, "announce.json")
+	if helpers.PathExists(localFile) {
+		data, readErr := os.ReadFile(localFile)
+		if readErr == nil && len(data) > 0 {
+			if parseErr := json.Unmarshal(data, &announces); parseErr == nil {
+				c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "获取公告成功", Data: announces})
+				return
+			} else {
+				helpers.AppLogger.Warnf("解析本地公告文件 %s 失败：%v", localFile, parseErr)
+			}
+		}
+	}
 	// 从 https://api.mqfamily.top/desc.json 获取公告
 	bytes, err := helpers.ReadFromUrl("https://api.mqfamily.top/desc.json", v115open.DEFAULTUA)
 	if err != nil {
@@ -267,13 +291,6 @@ func GetAnnounce(c *gin.Context) {
 	}
 	// helpers.AppLogger.Infof("获取到的公告：%s", string(bytes))
 	// 解析 JSON
-	type announce struct {
-		ID      int    `json:"id"`
-		Title   string `json:"title"`
-		Content string `json:"content"`
-		Time    string `json:"time"`
-	}
-	var announces []announce
 	err = json.Unmarshal(bytes, &announces)
 	if err != nil {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "解析公告失败：" + err.Error(), Data: nil})
