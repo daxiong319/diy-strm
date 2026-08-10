@@ -55,6 +55,11 @@ type ShareInfo struct {
 
 // sharePost 发送分享接口请求
 func (c *Client) sharePost(ctx context.Context, path string, body map[string]interface{}) (map[string]interface{}, error) {
+	if c.GetAuthorization() != "" {
+		if err := c.ensureAuth(ctx); err != nil {
+			return nil, err
+		}
+	}
 	headers := shareHeaders()
 	if auth := c.GetAuthorization(); auth != "" {
 		headers["Authorization"] = "Basic " + auth
