@@ -669,24 +669,31 @@ func handleTelegramShareSave(text string, chatID int64, defaultDir string) helpe
 	if strings.TrimSpace(saveDir) == "" {
 		saveDir = defaultDir
 	}
+	helpers.AppLogger.Infof("Telegram 转存：收到分享链接 chatID=%d linkID=%s 目标目录=%q（默认目录=%q）", chatID, linkID, saveDir, defaultDir)
 
 	var account models.Account
 	if err := db.Db.Where("source_type = ?", models.SourceTypePan139).Order("id asc").First(&account).Error; err != nil {
+		helpers.AppLogger.Errorf("Telegram 转存失败：未配置中国移动云盘账号（chatID=%d linkID=%s）", chatID, linkID)
 		return helpers.CommandResponse{Text: "❌ 未配置中国移动云盘账号，无法转存分享链接"}
 	}
+	helpers.AppLogger.Infof("Telegram 转存：使用账号 %q（ID=%d）处理分享 %s，目标目录 %q", account.Name, account.ID, linkID, saveDir)
 	client := account.GetPan139Client()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	targetCatalogID, err := client.GetPathIdByPath(ctx, saveDir)
 	if err != nil {
+		helpers.AppLogger.Errorf("Telegram 转存失败：目标目录不存在 %q（chatID=%d linkID=%s）：%v", saveDir, chatID, linkID, err)
 		return helpers.CommandResponse{Text: "❌ 目标目录不存在：" + htmlEscape(saveDir) + "（" + htmlEscape(err.Error()) + "）"}
 	}
+	helpers.AppLogger.Infof("Telegram 转存：目标目录 %q 已定位，catalogID=%s（chatID=%d linkID=%s）", saveDir, targetCatalogID, chatID, linkID)
 
 	info, err := client.ListShareDir(ctx, linkID, "", "root")
 	if err != nil {
+		helpers.AppLogger.Errorf("Telegram 转存失败：查询分享链接内容失败（chatID=%d linkID=%s）：%v", chatID, linkID, err)
 		return helpers.CommandResponse{Text: "❌ 查询分享链接失败：" + htmlEscape(err.Error())}
 	}
+	helpers.AppLogger.Infof("Telegram 转存：分享「%s」（linkID=%s）读取成功，文件 %d 项、文件夹 %d 项", info.LinkName, linkID, len(info.FileList), len(info.FolderList))
 
 	coPaths := make([]string, 0, len(info.FileList))
 	for _, item := range info.FileList {
@@ -701,15 +708,19 @@ func handleTelegramShareSave(text string, chatID int64, defaultDir string) helpe
 		}
 	}
 	if len(coPaths) == 0 && len(caPaths) == 0 {
+		helpers.AppLogger.Warnf("Telegram 转存失败：分享 %s 内容为空（chatID=%d）", linkID, chatID)
 		return helpers.CommandResponse{Text: "❌ 分享链接内容为空，无法转存"}
 	}
+	helpers.AppLogger.Debugf("Telegram 转存：分享 %s 待转存文件列表 %v，文件夹列表 %v", linkID, coPaths, caPaths)
 
 	taskID, err := client.SaveShareFiles(ctx, linkID, "", targetCatalogID, coPaths, caPaths)
 	if err != nil {
+		helpers.AppLogger.Errorf("Telegram 转存失败：转存接口调用失败（chatID=%d linkID=%s 目标catalogID=%s 文件%d项 文件夹%d项）：%v", chatID, linkID, targetCatalogID, len(coPaths), len(caPaths), err)
 		return helpers.CommandResponse{Text: "❌ 转存失败：" + htmlEscape(err.Error())}
 	}
 
 	total := len(coPaths) + len(caPaths)
+	helpers.AppLogger.Infof("Telegram 转存成功：chatID=%d linkID=%s 分享「%s」共 %d 项已转存到 %s，任务ID=%s", chatID, linkID, info.LinkName, total, saveDir, taskID)
 	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享「%s」共 %d 项到 %s\n任务 ID：%s", htmlEscape(info.LinkName), total, htmlEscape(saveDir), htmlEscape(taskID))}
 }
 

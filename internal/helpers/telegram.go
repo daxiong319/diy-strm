@@ -371,11 +371,14 @@ func (bot *TelegramBot) StartListening(ctx context.Context, handleCommand map[st
 		}
 
 		if isText {
+			AppLogger.Infof("Telegram 收到文本消息，chatID=%d，消息长度=%d", chatID, len([]rune(update.Message.Text)))
 			response := bot.TextHandler(update.Message.Text, chatID)
 			if response.Text != "" {
 				msg := tgbotapi.NewMessage(chatID, response.Text)
 				msg.ParseMode = "HTML"
-				bot.Client.Send(msg)
+				if _, err := bot.Client.Send(msg); err != nil {
+					AppLogger.Errorf("Telegram 发送文本消息回复失败，chatID=%d：%v", chatID, err)
+				}
 			}
 			continue
 		}
