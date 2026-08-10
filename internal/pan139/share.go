@@ -55,9 +55,13 @@ type ShareInfo struct {
 
 // sharePost 发送分享接口请求
 func (c *Client) sharePost(ctx context.Context, path string, body map[string]interface{}) (map[string]interface{}, error) {
+	headers := shareHeaders()
+	if auth := c.GetAuthorization(); auth != "" {
+		headers["Authorization"] = "Basic " + auth
+	}
 	req := c.client.R().
 		SetContext(ctx).
-		SetHeaders(shareHeaders()).
+		SetHeaders(headers).
 		SetBody(body)
 	var raw map[string]interface{}
 	res, err := req.SetResult(&raw).Post(ShareAPIBase + path)
