@@ -19,7 +19,7 @@ func TestNetFileSourceCapability(t *testing.T) {
 		{name: "115 支持类型排序", sourceType: models.SourceType115, sortBy: "type", wantBatch: 1000},
 		{name: "百度不支持类型排序", sourceType: models.SourceTypeBaiduPan, sortBy: "type", wantErr: true},
 		{name: "OpenList 默认顺序", sourceType: models.SourceTypeOpenList, sortBy: "default", wantBatch: 500},
-		{name: "OpenList 第一版不支持 name 排序", sourceType: models.SourceTypeOpenList, sortBy: "name", wantErr: true},
+		{name: "OpenList 忽略排序参数", sourceType: models.SourceTypeOpenList, sortBy: "name", wantBatch: 500},
 	}
 
 	for _, tt := range tests {
