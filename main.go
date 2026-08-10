@@ -834,6 +834,10 @@ func setRouter(r *gin.Engine) {
 		api.GET("/guangya/small-transfer", controllers.GuangYaSmallTransferList)               // 小号秒传任务列表
 		api.DELETE("/guangya/small-transfer/:id", controllers.GuangYaSmallTransferDelete)      // 删除小号秒传任务
 
+		// 中国移动云盘分享转存
+		api.POST("/pan139/share/info", controllers.Pan139ShareInfo)   // 查询 139 分享链接内容
+		api.POST("/pan139/share/save", controllers.Pan139ShareSave)   // 转存 139 分享到目标目录
+
 		api.GET("/upload/queue", controllers.UploadList)                                             // 获取上传队列列表
 		api.POST("/upload/queue/clear-pending", controllers.ClearPendingUploadTasks)                 // 清除上传队列中未开始的任务
 		api.POST("/upload/queue/start", controllers.StartUploadQueue)                                // 启动上传队列

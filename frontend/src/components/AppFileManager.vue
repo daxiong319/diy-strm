@@ -126,6 +126,15 @@
                   刷新
                 </el-button>
                 <el-button
+                  v-if="isPan139Account"
+                  type="success"
+                  size="small"
+                  @click="openShareDialog"
+                >
+                  <el-icon style="margin-right: 4px"><Share /></el-icon>
+                  保存分享
+                </el-button>
+                <el-button
                   type="primary"
                   :icon="FolderAdd"
                   size="small"
@@ -458,6 +467,13 @@
       v-model="showSmallTransferDialog"
       :default-source-account-id="selectedAccountId ?? 0"
     />
+
+    <Pan139ShareDialog
+      v-model="showShareDialog"
+      :account-id="selectedAccountId"
+      :default-target-catalog-id="getCurrentParentId()"
+      @saved="loadFileList({ refresh: true })"
+    />
   </div>
 </template>
 
@@ -473,7 +489,7 @@ import {
   useTemplateRef,
 } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { ArrowDown, Files, FolderAdd, InfoFilled, Refresh } from '@element-plus/icons-vue'
+import { ArrowDown, Files, FolderAdd, InfoFilled, Refresh, Share } from '@element-plus/icons-vue'
 import type { FileSystemItem, FileOperationType, DirInfo } from '@/typing'
 import { createActiveRequestGate } from '@/composables/useActiveRequestGate'
 import { useBackgroundRefresh } from '@/composables/useBackgroundRefresh'
@@ -491,6 +507,7 @@ import NameAlignDialog from './NameAlignDialog.vue'
 import OrganizeDialog from './OrganizeDialog.vue'
 import CrossTransferDialog from './CrossTransferDialog.vue'
 import GuangYaSmallTransferDialog from './GuangYaSmallTransferDialog.vue'
+import Pan139ShareDialog from './Pan139ShareDialog.vue'
 
 interface NetdiskAccount {
   id: number
@@ -731,6 +748,13 @@ const showNameAlignDialog = ref(false)
 const showOrganizeDialog = ref(false)
 const showCrossTransferDialog = ref(false)
 const showSmallTransferDialog = ref(false)
+const showShareDialog = ref(false)
+
+const isPan139Account = computed(() => selectedAccount.value?.source_type === 'pan139')
+
+function openShareDialog() {
+  showShareDialog.value = true
+}
 interface FileOperationContextSnapshot {
   accountId: number | null
   parentId: string

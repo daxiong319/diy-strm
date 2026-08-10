@@ -175,9 +175,9 @@ func buildOrganizeTargetRelPath(category string, title string, season int, year 
 // OrganizePreviewRequest 目录整理预览请求
 type OrganizePreviewRequest struct {
 	AccountID  uint   `json:"account_id" binding:"required"`
-	Path       string `json:"path" binding:"required"`        // 源目录
-	TargetPath string `json:"target_path"`                    // 整理根目录，默认源目录
-	Depth      int    `json:"depth"`                          // 扫描深度 1-3，默认 2
+	Path       string `json:"path" binding:"required"` // 源目录
+	TargetPath string `json:"target_path"`             // 整理根目录，默认源目录
+	Depth      int    `json:"depth"`                   // 扫描深度 1-3，默认 2
 }
 
 // OrganizePreview 目录整理预览：扫描目录并规划整理动作。
@@ -196,7 +196,7 @@ func OrganizePreview(c *gin.Context) {
 		return
 	}
 	switch account.SourceType {
-	case models.SourceTypeGuangYaPan, models.SourceTypePan139:
+	case models.SourceTypeGuangYaPan:
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "该网盘暂不支持目录整理（不支持移动）", Data: nil})
 		return
 	}
@@ -298,11 +298,11 @@ func OrganizePreview(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "扫描完成", Data: map[string]any{
-		"actions":  actions,
-		"groups":   summaries,
-		"skipped":  skipped,
-		"scanned":  counter,
-		"total":    len(actions),
+		"actions": actions,
+		"groups":  summaries,
+		"skipped": skipped,
+		"scanned": counter,
+		"total":   len(actions),
 	}})
 }
 
@@ -313,20 +313,20 @@ func buildGroupRelPath(category string, title string, season int, year int) stri
 
 // OrganizeApplyRequest 目录整理执行请求
 type OrganizeApplyRequest struct {
-	AccountID  uint                     `json:"account_id" binding:"required"`
-	Path       string                   `json:"path" binding:"required"` // 源目录
-	TargetPath string                   `json:"target_path"`             // 整理根目录，默认源目录
-	Items      []organizeApplyItem      `json:"items" binding:"required"`
+	AccountID  uint                `json:"account_id" binding:"required"`
+	Path       string              `json:"path" binding:"required"` // 源目录
+	TargetPath string              `json:"target_path"`             // 整理根目录，默认源目录
+	Items      []organizeApplyItem `json:"items" binding:"required"`
 }
 
 type organizeApplyItem struct {
-	FileID   string `json:"file_id" binding:"required"`
-	NewName  string `json:"new_name" binding:"required"`
-	RelPath  string `json:"rel_path" binding:"required"` // 相对整理根目录的目标目录，如 电影/蜘蛛侠 (2025)
+	FileID  string `json:"file_id" binding:"required"`
+	NewName string `json:"new_name" binding:"required"`
+	RelPath string `json:"rel_path" binding:"required"` // 相对整理根目录的目标目录，如 电影/蜘蛛侠 (2025)
 }
 
 type organizeApplyResult struct {
-	Success []organizeApplyItem `json:"success"`
+	Success []organizeApplyItem   `json:"success"`
 	Failed  []organizeApplyFailed `json:"failed"`
 }
 
@@ -412,6 +412,31 @@ func ensureOrganizeDir(ctx context.Context, account *models.Account, sourcePath 
 		return currentID, nil
 	case models.SourceType123:
 		client := account.Get123Client()
+		currentID := targetPath
+		if currentID == "" {
+			currentID = sourcePath
+		}
+		built := ""
+		for _, part := range parts {
+			built = built + "/" + part
+			if id, ok := dirCache[built]; ok {
+				currentID = id
+				continue
+			}
+			id, err := client.CreateDir(ctx, currentID, part)
+			if err != nil {
+				return "", err
+			}
+			dirCache[built] = id
+			currentID = id
+		}
+		dirCache[relPath] = currentID
+		return currentID, nil
+	case models.SourceTypePan139:
+		client := account.GetPan139Client()
+		if client == nil {
+			return "", fmt.Errorf("获取中国移动云盘客户端失败")
+		}
 		currentID := targetPath
 		if currentID == "" {
 			currentID = sourcePath

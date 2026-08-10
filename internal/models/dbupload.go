@@ -460,6 +460,10 @@ func (task *DbUploadTask) Upload() {
 		if !task.UploadGuangYaPanFile() {
 			return
 		}
+	case SourceTypePan139:
+		if !task.UploadPan139File() {
+			return
+		}
 	default:
 		task.Fail(fmt.Errorf("未知的上传来源类型 %s", task.SourceType))
 		return
@@ -711,6 +715,35 @@ func (task *DbUploadTask) tryLocalFingerprintRapid() bool {
 		task.UploadedBytes = fileInfo.Size()
 		task.applyUploadQueueDisplayFields(nil)
 		return true
+	case SourceTypePan139:
+		client := account.GetPan139Client()
+		if client == nil {
+			return false
+		}
+		fileSHA256, err := helpers.CalculateFileSHA256(task.LocalFullPath)
+		if err != nil {
+			return false
+		}
+		file, err := os.Open(task.LocalFullPath)
+		if err != nil {
+			return false
+		}
+		defer file.Close()
+		fileID, _, rapid, err := client.UploadFile(context.Background(), task.RemoteFileId, task.FileName, fileInfo.Size(), fileSHA256, file, nil)
+		if err != nil {
+			helpers.AppLogger.Warnf("[上传] 中国移动云盘秒传尝试失败，回退普通上传：%v", err)
+			return false
+		}
+		if !rapid {
+			return false
+		}
+		task.Uploading()
+		task.UploadResult = UploadResultRapidUpload
+		task.CompletedRemoteFileId = fileID
+		task.FileSize = fileInfo.Size()
+		task.UploadedBytes = fileInfo.Size()
+		task.applyUploadQueueDisplayFields(nil)
+		return true
 	}
 	return false
 }
@@ -866,6 +899,59 @@ func (task *DbUploadTask) UploadGuangYaPanFile() bool {
 		task.FileSize = fileInfo.Size()
 		task.UploadedBytes = fileInfo.Size()
 	}
+	task.applyUploadQueueDisplayFields(nil)
+	publishUploadQueueChanged(task, "progress")
+	return true
+}
+
+// UploadPan139File 中国移动云盘上传文件（内部自动尝试秒传，未命中回退分片上传）。
+func (task *DbUploadTask) UploadPan139File() bool {
+	account := task.GetAccount()
+	if account == nil {
+		task.Fail(fmt.Errorf("账户 %d 不存在", task.AccountId))
+		return false
+	}
+	client := account.GetPan139Client()
+	if client == nil {
+		task.Fail(fmt.Errorf("账户 %s 中国移动云盘客户端不存在", account.Name))
+		return false
+	}
+	fileInfo, err := os.Stat(task.LocalFullPath)
+	if err != nil {
+		task.Fail(fmt.Errorf("读取本地文件 %s 失败：%v", task.LocalFullPath, err))
+		return false
+	}
+	sha256, err := helpers.CalculateFileSHA256(task.LocalFullPath)
+	if err != nil {
+		task.Fail(fmt.Errorf("计算文件 SHA256 失败：%v", err))
+		return false
+	}
+	file, err := os.Open(task.LocalFullPath)
+	if err != nil {
+		task.Fail(fmt.Errorf("打开本地文件 %s 失败：%v", task.LocalFullPath, err))
+		return false
+	}
+	defer file.Close()
+	task.Uploading()
+	fileID, _, rapid, err := client.UploadFile(context.Background(), task.RemoteFileId, task.FileName, fileInfo.Size(), sha256, file, func(done int64) {
+		task.UploadedBytes = done
+		if err := db.Db.Model(task).Update("uploaded_bytes", done).Error; err != nil {
+			helpers.AppLogger.Warnf("[上传] 保存中国移动云盘上传进度失败：%s", err.Error())
+		}
+		publishUploadQueueChanged(task, "progress")
+	})
+	if err != nil {
+		task.Fail(fmt.Errorf("中国移动云盘上传文件 %s 失败：%v", task.FileName, err))
+		return false
+	}
+	task.CompletedRemoteFileId = fileID
+	if rapid {
+		task.UploadResult = UploadResultRapidUpload
+	} else {
+		task.UploadResult = UploadResultMultipartUploaded
+	}
+	task.FileSize = fileInfo.Size()
+	task.UploadedBytes = fileInfo.Size()
 	task.applyUploadQueueDisplayFields(nil)
 	publishUploadQueueChanged(task, "progress")
 	return true

@@ -5,20 +5,21 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // API 路径常量（逆向自中国移动云盘 Web 端，协议参考 alist 139Yun 驱动）
 const (
-	APIFileList      = "/file/list"
-	APIDownloadURL   = "/file/getDownloadUrl"
-	APICreateDir     = "/file/create"
-	APIDeleteFile    = "/recyclebin/batchTrash"
-	APIGetUploadURL  = "/file/getUploadUrl"
-	APIComplete      = "/file/complete"
-	APIUpdate        = "/file/update"
-	APIBatchMove     = "/file/batchMove"
-	APIBatchCopy     = "/file/batchCopy"
-	APIBatchRename   = "/file/batchRename"
+	APIFileList     = "/file/list"
+	APIDownloadURL  = "/file/getDownloadUrl"
+	APICreateDir    = "/file/create"
+	APIDeleteFile   = "/recyclebin/batchTrash"
+	APIGetUploadURL = "/file/getUploadUrl"
+	APIComplete     = "/file/complete"
+	APIUpdate       = "/file/update"
+	APIBatchMove    = "/file/batchMove"
+	APIBatchCopy    = "/file/batchCopy"
+	APIBatchRename  = "/file/batchRename"
 )
 
 // PageSize 单页列表大小（与 Web 端一致）
@@ -161,7 +162,7 @@ func (c *Client) CreateDir(ctx context.Context, parentID, dirName string) (strin
 	return out.Data.FileId, nil
 }
 
-// Delete 删除文件或目录（移入回收站）
+// Delete 删除文件或目录（移入回收站，异步任务，最多轮询 60 秒等待完成）
 func (c *Client) Delete(ctx context.Context, fileIDs []string) error {
 	if len(fileIDs) == 0 {
 		return nil
@@ -174,6 +175,134 @@ func (c *Client) Delete(ctx context.Context, fileIDs []string) error {
 	}
 	if !out.Success {
 		return fmt.Errorf("中国移动云盘删除文件失败：code=%s msg=%s", out.Code, out.Message)
+	}
+	return nil
+}
+
+// taskResp 异步任务状态查询响应
+type taskResp struct {
+	BaseResp
+	TaskID     string `json:"taskId"`
+	TaskStatus int    `json:"taskStatus"`
+	Status     int    `json:"status"`
+}
+
+// WaitTaskDone 轮询异步任务直到完成（status=3 成功；status=2 执行中；其他值视为失败）
+// 接口路径先试 /task/get，失败时回退 /hcy/task/get（部分路由域需要 /hcy 前缀）
+// 最多等待 timeout（默认 60 秒）
+func (c *Client) WaitTaskDone(ctx context.Context, taskID string, timeout time.Duration) error {
+	if strings.TrimSpace(taskID) == "" {
+		return fmt.Errorf("中国移动云盘任务 ID 为空")
+	}
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	paths := []string{"/task/get", "/hcy/task/get"}
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		var lastErr error
+		for _, path := range paths {
+			var out taskResp
+			if err := c.Request(ctx, path, map[string]interface{}{"taskId": taskID}, &out); err != nil {
+				lastErr = err
+				continue
+			}
+			if !out.Success && out.Code != "" {
+				lastErr = fmt.Errorf("code=%s msg=%s", out.Code, out.Message)
+				continue
+			}
+			status := out.Status
+			if status == 0 {
+				status = out.TaskStatus
+			}
+			switch status {
+			case 3:
+				return nil
+			case 2:
+				lastErr = nil
+			default:
+				if status != 0 {
+					return fmt.Errorf("中国移动云盘任务 %s 状态异常：status=%d", taskID, status)
+				}
+				lastErr = nil
+			}
+			break
+		}
+		if lastErr == nil {
+			time.Sleep(1000 * time.Millisecond)
+			continue
+		}
+		// 两个路径都失败：记录错误后继续轮询（可能只是接口瞬时异常），超时后返回
+		time.Sleep(1000 * time.Millisecond)
+	}
+	return fmt.Errorf("中国移动云盘任务 %s 等待超时", taskID)
+}
+
+// Rename 重命名文件或目录
+func (c *Client) Rename(ctx context.Context, fileID, newName string) error {
+	if strings.TrimSpace(fileID) == "" {
+		return errors.New("中国移动云盘文件 ID 为空")
+	}
+	if strings.TrimSpace(newName) == "" {
+		return errors.New("中国移动云盘新文件名不能为空")
+	}
+	var out BaseResp
+	if err := c.Request(ctx, APIUpdate, map[string]interface{}{
+		"fileId":      fileID,
+		"name":        newName,
+		"description": "",
+	}, &out); err != nil {
+		return err
+	}
+	if !out.Success {
+		return fmt.Errorf("中国移动云盘重命名失败：code=%s msg=%s", out.Code, out.Message)
+	}
+	return nil
+}
+
+// MoveBatch 批量移动文件/目录到目标目录
+func (c *Client) MoveBatch(ctx context.Context, fileIDs []string, toParentFileID string) error {
+	if len(fileIDs) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(toParentFileID) == "" {
+		return errors.New("中国移动云盘目标目录 ID 为空")
+	}
+	var out BaseResp
+	if err := c.Request(ctx, APIBatchMove, map[string]interface{}{
+		"fileIds":        fileIDs,
+		"toParentFileId": toParentFileID,
+	}, &out); err != nil {
+		return err
+	}
+	if !out.Success {
+		return fmt.Errorf("中国移动云盘移动文件失败：code=%s msg=%s", out.Code, out.Message)
+	}
+	return nil
+}
+
+// CopyBatch 批量复制文件/目录到目标目录
+func (c *Client) CopyBatch(ctx context.Context, fileIDs []string, toParentFileID string) error {
+	if len(fileIDs) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(toParentFileID) == "" {
+		return errors.New("中国移动云盘目标目录 ID 为空")
+	}
+	var out BaseResp
+	if err := c.Request(ctx, APIBatchCopy, map[string]interface{}{
+		"fileIds":        fileIDs,
+		"toParentFileId": toParentFileID,
+	}, &out); err != nil {
+		return err
+	}
+	if !out.Success {
+		return fmt.Errorf("中国移动云盘复制文件失败：code=%s msg=%s", out.Code, out.Message)
 	}
 	return nil
 }

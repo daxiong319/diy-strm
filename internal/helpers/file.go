@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -572,6 +573,20 @@ func CalculateFileSHA1(filePath string) (string, error) {
 	hash := sha1.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", fmt.Errorf("计算文件 SHA1 失败：%v", err)
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// CalculateFileSHA256 计算整文件 SHA256（十六进制小写）。
+func CalculateFileSHA256(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("打开文件失败：%v", err)
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", fmt.Errorf("计算文件 SHA256 失败：%v", err)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }

@@ -14,12 +14,12 @@ import (
 )
 
 const (
-	crossTransferMaxFiles  = 2000
-	crossTransferMaxDepth  = 10
-	crossTransferTempDir   = "cross-transfer"
-	crossTransferMaxItems  = 500
-	crossTransferMaxRapid  = 32 * 1024 * 1024 // 百度单分片秒传上限
-	crossTransferBaiduCap  = 32 * 1024 * 1024
+	crossTransferMaxFiles = 2000
+	crossTransferMaxDepth = 10
+	crossTransferTempDir  = "cross-transfer"
+	crossTransferMaxItems = 500
+	crossTransferMaxRapid = 32 * 1024 * 1024 // 百度单分片秒传上限
+	crossTransferBaiduCap = 32 * 1024 * 1024
 )
 
 // crossTransferScanFile 扫描到的源文件
@@ -121,12 +121,12 @@ func CrossTransferScan(c *gin.Context) {
 
 // CrossTransferExecuteRequest 跨盘秒传执行请求
 type CrossTransferExecuteRequest struct {
-	SourceAccountID uint                          `json:"source_account_id" binding:"required"`
-	TargetAccountID uint                          `json:"target_account_id" binding:"required"`
-	SourcePath      string                        `json:"source_path" binding:"required"`
-	TargetPath      string                        `json:"target_path" binding:"required"`
-	Conflict        string                        `json:"conflict"` // skip / rename / overwrite
-	Files           []crossTransferExecuteItem    `json:"files" binding:"required"`
+	SourceAccountID uint                       `json:"source_account_id" binding:"required"`
+	TargetAccountID uint                       `json:"target_account_id" binding:"required"`
+	SourcePath      string                     `json:"source_path" binding:"required"`
+	TargetPath      string                     `json:"target_path" binding:"required"`
+	Conflict        string                     `json:"conflict"` // skip / rename / overwrite
+	Files           []crossTransferExecuteItem `json:"files" binding:"required"`
 }
 
 type crossTransferExecuteItem struct {
@@ -168,11 +168,6 @@ func CrossTransferExecute(c *gin.Context) {
 	}
 	if len(req.Files) > crossTransferMaxItems {
 		req.Files = req.Files[:crossTransferMaxItems]
-	}
-	switch targetAccount.SourceType {
-	case models.SourceTypePan139:
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "该网盘暂不支持秒传或中转上传", Data: nil})
-		return
 	}
 
 	ctx := context.Background()
@@ -288,6 +283,9 @@ func tryCrossTransferRapid(ctx context.Context, targetAccount *models.Account, t
 	case models.SourceTypeGuangYaPan:
 		// 光鸭秒传需要本地文件计算 GCID，直接入队中转，上传阶段内部自动尝试秒传
 		return false, "", ""
+	case models.SourceTypePan139:
+		// 139 秒传需要完整文件 SHA256，跨盘场景无本地文件，直接入队中转，上传阶段内部自动尝试秒传
+		return false, "", ""
 	default:
 		return false, "", ""
 	}
@@ -296,19 +294,19 @@ func tryCrossTransferRapid(ctx context.Context, targetAccount *models.Account, t
 // enqueueCrossTransferRelay 创建跨盘中转上传任务：源网盘下载 → 目标网盘上传。
 func enqueueCrossTransferRelay(req CrossTransferExecuteRequest, sourceAccount *models.Account, targetAccount *models.Account, targetDirID string, file crossTransferExecuteItem) error {
 	task := models.DbUploadTask{
-		Source:            models.UploadSourceCrossTransfer,
-		AccountId:         targetAccount.ID,
-		SourceType:        targetAccount.SourceType,
-		SourceAccountId:   sourceAccount.ID,
-		SourceFileId:      file.DownloadID,
-		RemoteFileId:      targetDirID,
-		RemotePathId:      targetDirID,
-		RelativePath:      file.RelDir,
-		FileName:          file.Name,
-		FileSize:          file.Size,
-		Status:            models.UploadStatusPending,
-		UploadedBytes:     0,
-		LocalFullPath:     "",
+		Source:          models.UploadSourceCrossTransfer,
+		AccountId:       targetAccount.ID,
+		SourceType:      targetAccount.SourceType,
+		SourceAccountId: sourceAccount.ID,
+		SourceFileId:    file.DownloadID,
+		RemoteFileId:    targetDirID,
+		RemotePathId:    targetDirID,
+		RelativePath:    file.RelDir,
+		FileName:        file.Name,
+		FileSize:        file.Size,
+		Status:          models.UploadStatusPending,
+		UploadedBytes:   0,
+		LocalFullPath:   "",
 	}
 	if err := models.CreateUploadTask(&task); err != nil {
 		return err

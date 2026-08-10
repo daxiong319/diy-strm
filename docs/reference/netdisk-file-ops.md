@@ -64,7 +64,7 @@
 | `new_name` | 是 | 不能为空、`.`、`..`，不能包含路径分隔符和控制字符。 |
 
 - `baidupan`、`openlist` 的 `file_id` 为完整路径，后端自动拆分为目录与旧名。
-- `guangyapan`、`pan139` 暂不支持重命名，返回明确错误。
+- `guangyapan` 暂不支持重命名，返回明确错误；`pan139` 走 `/file/update` 接口（`{fileId, name}`）。
 - 成功响应 `code=200`；失败返回 `code=500` 与错误信息。
 
 ## 移动
@@ -87,7 +87,7 @@
 | `file_id` | 是 | 非空且不为 `"0"`。 |
 | `target_parent_id` | 是 | 目标目录标识，非空且不为 `"0"`，不能等于 `file_id`。 |
 
-- `guangyapan`、`pan139` 暂不支持移动。
+- `guangyapan` 暂不支持移动；`pan139` 走 `/file/batchMove` 接口（`{fileIds, toParentFileId}`）。
 - 成功后源父目录与目标目录缓存均失效。
 
 ## 命名对齐
@@ -155,7 +155,7 @@
 目录整理用于把散乱存放的媒体文件收束为 `电影/<标题> (年份)` 与 `剧集/<标题>/Season XX` 目录结构，每个文件执行「确保目标目录存在 → 移动 → 重命名为规范名」三步。
 
 - 文件名解析复用命名对齐规则：含 `S01E01` / `1x01` / `EP01` 等集数标记的判为剧集，含年份（`19xx` / `20xx`）的判为电影，其余跳过。
-- `guangyapan`、`pan139` 暂不支持目录整理（不支持移动），预览与应用均返回明确错误。
+- `guangyapan` 暂不支持目录整理（不支持移动），预览与应用均返回明确错误；`pan139` 支持（建目录走 `/file/create`、移动走 `/file/batchMove`、重命名走 `/file/update`）。
 - 扫描上限 1000 项，最多递归 3 层（`depth` 默认 2）。
 
 ### 预览
@@ -247,11 +247,12 @@
 | `baidupan` | 源文件 MD5 | 仅 ≤32MB 且需源文件有 MD5 |
 | `openlist` | 无 | 只能中转 |
 | `guangyapan` | GCID（分块 SHA1 再 SHA1） | flash 秒传未命中自动 OSS 上传 |
-| `pan139` | 不支持 | 直接拒绝执行 |
+| `pan139` | 完整文件 SHA256 | 跨盘场景无本地文件，直接入队中转，上传阶段按 SHA256 自动秒传 |
 
 - 源指纹来源：115 列表接口需开启 `show_sha1=1`（`v115open.FileListOptions.ShowSha1`）；123 列表的 `etag`、百度列表的云端 MD5 与 `fs_id`。
 - 中转上传任务以 `source = "cross_transfer"` 入队，记录 `source_account_id`（源账号）与 `source_file_id`（源文件下载定位 ID：115 为 pickcode、百度为 `fs_id`、其余为文件 ID），下载完成后清理临时文件。
-- 本地指纹秒传（上传队列兜底）：`dbupload.go` 的 `tryLocalFingerprintRapid` 会在普通上传前对**本地文件**计算指纹并再次尝试秒传（115 用 SHA1、123 用 MD5 `duplicate=2`、百度用 MD5 ≤32MB），命中则跳过普通上传；秒传尝试失败时回退普通上传，不影响上传流程。
+- 本地指纹秒传（上传队列兜底）：`dbupload.go` 的 `tryLocalFingerprintRapid` 会在普通上传前对**本地文件**计算指纹并再次尝试秒传（115 用 SHA1、123 用 MD5 `duplicate=2`、百度用 MD5 ≤32MB、139 用完整文件 SHA256），命中则跳过普通上传；秒传尝试失败时回退普通上传，不影响上传流程。
+- 139 上传通道（`internal/pan139/upload.go`）：`UploadFile` 先 `/file/create`（`contentHash=SHA256`，`exist` 命中直接完成），未命中 `/file/getUploadUrl` 分批获取分片上传地址（首批发 100 片，超出部分按 100 片一批补齐），逐片 PUT（100MB 分片），最后 `/file/complete` 收尾。删除走 `/recyclebin/batchTrash` 异步任务，`WaitTaskDone` 轮询 `/task/get`（回退 `/hcy/task/get`）至 status=3（status=2 执行中）。
 
 ### 扫描
 
@@ -284,6 +285,44 @@
 - 每个文件依次：确保目标目录存在（相对 `target_path` 按 `rel_dir` 逐级创建）→ 按目标网盘类型尝试秒传 → 未命中入队中转上传。
 - `files` 最多 500 条，逐条执行不中断。
 - 响应 `data` 为 `{ "results": [...], "rapid": n, "relay": n, "skipped": n, "failed": n }`；`results` 条目为 `{ rel_path, name, mode, success, file_id, error }`，`mode` 为 `rapid` / `relay` / `error`。
+
+## 中国移动云盘分享转存
+
+中国移动云盘（139）分享链接转存：把他人分享链接中的文件/目录直接保存到本账号指定目录，走 `share-kd-njs.yun.139.com` 分享域（无需 `mcloud-sign`，用账号名做 `account`）。
+
+- 相关代码：`backend/internal/pan139/share.go`、`backend/internal/controllers/pan139_share.go`、`frontend/src/components/Pan139ShareDialog.vue`（文件管理工具栏「保存分享」，仅中国移动云盘账号显示，默认保存到当前目录）。
+- 接口协议：`getOutLinkInfoV6` 查询分享内容（`bNum/eNum` 为 1 起始闭区间分页），`createOuterLinkBatchOprTask` 创建转存任务（返回 `taskID`）；转存任务无状态查询接口，提交成功后轮询目标目录列表确认文件出现（`WaitShareFilesVisible`，最多 20 秒）。
+- 分享项 `path` 字段格式：`parentID/fileID`（目录 `catalogID`、文件 `contentID`），转存时原样提交给 `contentInfoList`（文件）与 `catalogInfoList`（目录）。
+
+### 查询分享
+
+`POST /api/pan139/share/info`
+
+```json
+{ "account_id": 12, "link_id": "xxx", "passwd": "", "ca_id": "root" }
+```
+
+- `ca_id` 为分享内目录 ID（根目录 `root`）。
+- 响应 `data` 为 `{ "nod_num": n, "link_name": "...", "expire_time": "...", "folder_list": [{ "catalog_id", "ca_name", "path" }], "file_list": [{ "content_id", "co_name", "co_size", "path" }] }`。
+
+### 转存
+
+`POST /api/pan139/share/save`
+
+```json
+{
+  "account_id": 12,
+  "link_id": "xxx",
+  "passwd": "",
+  "target_catalog_id": "12345",
+  "file_paths": ["root/abc123"],
+  "dir_paths": ["root/def456"],
+  "wait_visible": true
+}
+```
+
+- `target_catalog_id` 为本账号目标目录 ID（根目录 `root`）。
+- `wait_visible=true` 时轮询目标目录等待转存文件出现（最多 20 秒），超时返回 `code=500` 但任务仍在后台执行；响应 `data` 含 `{ "task_id", "visible", "missing" }`。
 
 ## 光鸭云盘秒传
 

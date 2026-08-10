@@ -84,7 +84,13 @@ func renameNetdiskFile(account *models.Account, fileID string, newName string) e
 			parentPath = "/"
 		}
 		return client.Rename(parentPath, path.Base(fileID), newName)
-	case models.SourceTypeGuangYaPan, models.SourceTypePan139:
+	case models.SourceTypePan139:
+		client := account.GetPan139Client()
+		if client == nil {
+			return fmt.Errorf("获取中国移动云盘客户端失败")
+		}
+		return client.Rename(ctx, fileID, newName)
+	case models.SourceTypeGuangYaPan:
 		return fmt.Errorf("该网盘暂不支持重命名")
 	default:
 		return fmt.Errorf("不支持的文件系统")
@@ -116,7 +122,13 @@ func moveNetdiskFile(account *models.Account, fileID string, targetParentID stri
 			oldPath = "/"
 		}
 		return client.Move(oldPath, normalizeOpenListPath(targetParentID), []string{path.Base(fileID)})
-	case models.SourceTypeGuangYaPan, models.SourceTypePan139:
+	case models.SourceTypePan139:
+		client := account.GetPan139Client()
+		if client == nil {
+			return fmt.Errorf("获取中国移动云盘客户端失败")
+		}
+		return client.MoveBatch(ctx, []string{fileID}, targetParentID)
+	case models.SourceTypeGuangYaPan:
 		return fmt.Errorf("该网盘暂不支持移动")
 	default:
 		return fmt.Errorf("不支持的文件系统")
