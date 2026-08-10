@@ -161,6 +161,10 @@ function parseLink(text: string) {
   if (linkIdMatch) {
     return { linkId: linkIdMatch[1], pwd: pwdMatch ? decodeURIComponent(pwdMatch[1]) : '' }
   }
+  const urlMatch = trimmed.match(/(?:shareweb\/#\/)?w\/i\/([A-Za-z0-9_\-]{6,})/)
+  if (urlMatch) {
+    return { linkId: urlMatch[1], pwd: pwdMatch ? decodeURIComponent(pwdMatch[1]) : '' }
+  }
   if (/^[A-Za-z0-9_\-]{8,}$/.test(trimmed)) {
     return { linkId: trimmed, pwd: '' }
   }
