@@ -166,9 +166,13 @@ func (c *Client) SaveShareFiles(ctx context.Context, linkID, passwd, targetCatal
 	if strings.TrimSpace(linkID) == "" {
 		return "", fmt.Errorf("分享链接 ID 为空")
 	}
+	var msisdn interface{} = c.GetAccount()
+	if n, err := strconv.ParseInt(c.GetAccount(), 10, 64); err == nil {
+		msisdn = n
+	}
 	data, err := c.sharePost(ctx, "/yun-share/richlifeApp/devapp/IBatchOprTask/createOuterLinkBatchOprTask", map[string]interface{}{
 		"createOuterLinkBatchOprTaskReq": map[string]interface{}{
-			"msisdn":       c.GetAccount(),
+			"msisdn":       msisdn,
 			"ownerAccount": "",
 			"taskType":     1,
 			"linkID":       strings.TrimSpace(linkID),
