@@ -100,16 +100,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, inject } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Document, Folder } from '@element-plus/icons-vue'
 import { SERVER_URL } from '@/const'
-import type { AxiosStatic } from 'axios'
+import { formatFileSize } from '@/utils/fileSizeUtils'
+import { useHttpClient } from '@/http/client'
 
 const props = defineProps<{
   modelValue: boolean
   accountId: number | null
-  defaultTargetCatalogID: string
+  defaultTargetCatalogId: string
 }>()
 
 const emit = defineEmits<{
@@ -126,7 +127,7 @@ interface ShareRow {
   parentCaID: string
 }
 
-const http: AxiosStatic | undefined = inject('$http')
+const http = useHttpClient()
 
 const linkInput = ref('')
 const passwd = ref('')
@@ -146,7 +147,7 @@ watch(
   () => props.modelValue,
   (open) => {
     if (open) {
-      targetCatalogID.value = props.defaultTargetCatalogID || ''
+      targetCatalogID.value = props.defaultTargetCatalogId || ''
     }
   }
 )
