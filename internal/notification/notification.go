@@ -15,13 +15,14 @@ type NotificationChannel struct {
 
 // TelegramChannelConfig Telegram 渠道配置
 type TelegramChannelConfig struct {
-	ID        uint   `json:"id" gorm:"primaryKey"`
-	ChannelID uint   `json:"channel_id" gorm:"uniqueIndex:idx_telegram_channel"`
-	BotToken  string `json:"bot_token"`
-	ChatID    string `json:"chat_id"`
-	ProxyURL  string `json:"proxy_url"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           uint   `json:"id" gorm:"primaryKey"`
+	ChannelID    uint   `json:"channel_id" gorm:"uniqueIndex:idx_telegram_channel"`
+	BotToken     string `json:"bot_token"`
+	ChatID       string `json:"chat_id"`
+	ProxyURL     string `json:"proxy_url"`
+	Pan139SaveDir string `json:"pan139_save_dir"` // 移动云盘分享自动转存默认目录
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // MeoWChannelConfig MeoW 渠道配置

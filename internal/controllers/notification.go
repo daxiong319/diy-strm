@@ -153,9 +153,10 @@ func CreateTelegramChannel(c *gin.Context) {
 
 	// 创建配置
 	config := models.TelegramChannelConfig{
-		ChannelID: channel.ID,
-		BotToken:  r.BotToken,
-		ChatID:    r.ChatID,
+		ChannelID:     channel.ID,
+		BotToken:      r.BotToken,
+		ChatID:        r.ChatID,
+		Pan139SaveDir: r.Pan139SaveDir,
 	}
 	if err := db.Db.Save(&config).Error; err != nil {
 		// 回滚
@@ -739,6 +740,9 @@ func UpdateTelegramChannel(c *gin.Context) {
 	}
 	if r.ChatID != "" {
 		updates["chat_id"] = r.ChatID
+	}
+	if r.Pan139SaveDir != "" {
+		updates["pan139_save_dir"] = r.Pan139SaveDir
 	}
 
 	// 更新配置

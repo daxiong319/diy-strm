@@ -3,9 +3,12 @@
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
+	"diy-strm/internal/db"
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/models"
 	"diy-strm/internal/notificationmanager"
@@ -625,5 +628,93 @@ func StartListenTelegramBot() {
 	}
 
 	mgr.RegisterTelegramCommands(myCommands)
+	mgr.RegisterTelegramTextHandler(handleTelegramShareSave)
 	mgr.StartAll()
+}
+
+const defaultPan139SaveDir = "/影视/待整理"
+
+var pan139ShareLinkPattern = regexp.MustCompile(`(?:shareweb/#/)?w/i/([A-Za-z0-9_\-]{6,})`)
+
+// parsePan139ShareText 从文本中解析 139 分享链接，返回 linkID 与可选目标目录
+func parsePan139ShareText(text string) (linkID, saveDir string) {
+	trimmed := strings.TrimSpace(text)
+	if m := pan139ShareLinkPattern.FindStringSubmatch(trimmed); m != nil {
+		linkID = m[1]
+		rest := strings.TrimSpace(strings.Replace(trimmed, m[0], " ", 1))
+		parts := strings.Fields(rest)
+		for _, part := range parts {
+			if strings.HasPrefix(part, "/") {
+				saveDir = part
+				break
+			}
+		}
+		return linkID, saveDir
+	}
+	if match, _ := regexp.MatchString(`^[A-Za-z0-9_\-]{8,}$`, trimmed); match {
+		return trimmed, ""
+	}
+	return "", ""
+}
+
+// handleTelegramShareSave 处理 Telegram 普通文本消息：识别 139 分享链接并转存到指定目录
+func handleTelegramShareSave(text string, chatID int64, defaultDir string) helpers.CommandResponse {
+	linkID, saveDir := parsePan139ShareText(text)
+	if linkID == "" {
+		return helpers.CommandResponse{}
+	}
+	if strings.TrimSpace(defaultDir) == "" {
+		defaultDir = defaultPan139SaveDir
+	}
+	if strings.TrimSpace(saveDir) == "" {
+		saveDir = defaultDir
+	}
+
+	var account models.Account
+	if err := db.Db.Where("source_type = ?", models.SourceTypePan139).Order("id asc").First(&account).Error; err != nil {
+		return helpers.CommandResponse{Text: "❌ 未配置中国移动云盘账号，无法转存分享链接"}
+	}
+	client := account.GetPan139Client()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	targetCatalogID, err := client.GetPathIdByPath(ctx, saveDir)
+	if err != nil {
+		return helpers.CommandResponse{Text: "❌ 目标目录不存在：" + htmlEscape(saveDir) + "（" + htmlEscape(err.Error()) + "）"}
+	}
+
+	info, err := client.ListShareDir(ctx, linkID, "", "root")
+	if err != nil {
+		return helpers.CommandResponse{Text: "❌ 查询分享链接失败：" + htmlEscape(err.Error())}
+	}
+
+	coPaths := make([]string, 0, len(info.FileList))
+	for _, item := range info.FileList {
+		if item.Path != "" {
+			coPaths = append(coPaths, item.Path)
+		}
+	}
+	caPaths := make([]string, 0, len(info.FolderList))
+	for _, item := range info.FolderList {
+		if item.Path != "" {
+			caPaths = append(caPaths, item.Path)
+		}
+	}
+	if len(coPaths) == 0 && len(caPaths) == 0 {
+		return helpers.CommandResponse{Text: "❌ 分享链接内容为空，无法转存"}
+	}
+
+	taskID, err := client.SaveShareFiles(ctx, linkID, "", targetCatalogID, coPaths, caPaths)
+	if err != nil {
+		return helpers.CommandResponse{Text: "❌ 转存失败：" + htmlEscape(err.Error())}
+	}
+
+	total := len(coPaths) + len(caPaths)
+	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享「%s」共 %d 项到 %s\n任务 ID：%s", htmlEscape(info.LinkName), total, htmlEscape(saveDir), htmlEscape(taskID))}
+}
+
+// htmlEscape 转义 Telegram HTML 消息中的特殊字符
+func htmlEscape(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
+	return r.Replace(s)
 }

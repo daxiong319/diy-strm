@@ -311,3 +311,21 @@ func (m *EnhancedNotificationManager) RegisterTelegramCommands(cmds map[string]f
 		}
 	}
 }
+
+// RegisterTelegramTextHandler 将普通文本消息处理器注入到所有 Telegram 渠道中
+func (m *EnhancedNotificationManager) RegisterTelegramTextHandler(handler func(text string, chatID int64, saveDir string) helpers.CommandResponse) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, info := range m.handlers {
+		if tg, ok := info.handler.(*TelegramChannelHandler); ok {
+			saveDir := ""
+			if tg.config != nil {
+				saveDir = tg.config.Pan139SaveDir
+			}
+			tg.SetTextHandler(func(text string, chatID int64) helpers.CommandResponse {
+				return handler(text, chatID, saveDir)
+			})
+		}
+	}
+}

@@ -170,6 +170,9 @@
           <el-form-item label="Chat ID" required>
             <el-input v-model="channelForm.chat_id" placeholder="123456789" />
           </el-form-item>
+          <el-form-item label="139 自动转存目录">
+            <el-input v-model="channelForm.pan139_save_dir" placeholder="/影视/待整理（发分享链接自动转存到此目录）" />
+          </el-form-item>
         </template>
 
         <!-- MeoW 配置 -->
@@ -373,6 +376,9 @@
           <el-form-item label="Chat ID">
             <el-input v-model="channelForm.chat_id" placeholder="123456789" />
           </el-form-item>
+          <el-form-item label="139 自动转存目录">
+            <el-input v-model="channelForm.pan139_save_dir" placeholder="/影视/待整理（发分享链接自动转存到此目录）" />
+          </el-form-item>
         </template>
 
         <!-- MeoW 编辑 -->
@@ -544,6 +550,7 @@ interface ChannelFormData {
   // Telegram
   bot_token: string
   chat_id: string
+  pan139_save_dir: string
   // MeoW
   nickname: string
   // 通用
@@ -651,6 +658,7 @@ const channelForm = reactive<ChannelFormData>({
   channel_name: '',
   bot_token: '',
   chat_id: '',
+  pan139_save_dir: '',
   nickname: '',
   endpoint: '',
   device_key: '',
@@ -709,6 +717,7 @@ const resetChannelForm = () => {
   channelForm.channel_name = ''
   channelForm.bot_token = ''
   channelForm.chat_id = ''
+  channelForm.pan139_save_dir = ''
   channelForm.nickname = ''
   channelForm.endpoint = ''
   channelForm.device_key = ''
@@ -753,6 +762,7 @@ const showEditDialog = async (channel: NotificationChannel) => {
         if (channel.channel_type === 'telegram') {
           channelForm.bot_token = config.bot_token || ''
           channelForm.chat_id = config.chat_id || ''
+          channelForm.pan139_save_dir = config.pan139_save_dir || ''
         }
         // MeoW
         else if (channel.channel_type === 'meow') {
@@ -849,6 +859,9 @@ const createChannel = async () => {
     if (selectedChannelType.value === 'telegram') {
       requestData.bot_token = channelForm.bot_token
       requestData.chat_id = channelForm.chat_id
+      if (channelForm.pan139_save_dir) {
+        requestData.pan139_save_dir = channelForm.pan139_save_dir
+      }
     } else if (selectedChannelType.value === 'meow') {
       requestData.nickname = channelForm.nickname
       if (channelForm.endpoint) {
@@ -970,6 +983,7 @@ const updateChannel = async () => {
     if (channelType === 'telegram') {
       if (channelForm.bot_token) requestData.bot_token = channelForm.bot_token
       if (channelForm.chat_id) requestData.chat_id = channelForm.chat_id
+      if (channelForm.pan139_save_dir) requestData.pan139_save_dir = channelForm.pan139_save_dir
     } else if (channelType === 'meow') {
       if (channelForm.nickname) requestData.nickname = channelForm.nickname
       if (channelForm.endpoint) requestData.endpoint = channelForm.endpoint

@@ -15,6 +15,8 @@ type TelegramBot struct {
 	Token  string
 	ChatID string
 	Client *tgbotapi.BotAPI
+	// TextHandler 普通文本消息处理器（非命令），返回回复文本；nil 时忽略普通文本
+	TextHandler func(text string, chatID int64) CommandResponse
 }
 
 // TelegramResponse Telegram API 响应结构
@@ -332,6 +334,7 @@ func (bot *TelegramBot) StartListening(ctx context.Context, handleCommand map[st
 		var cmd string
 		var args []string
 		var chatID int64
+		isText := false
 
 		if update.Message != nil && update.Message.IsCommand() {
 			// 处理文字命令 /xxxx
@@ -352,6 +355,11 @@ func (bot *TelegramBot) StartListening(ctx context.Context, handleCommand map[st
 				args = []string{}
 			}
 			chatID = update.CallbackQuery.Message.Chat.ID
+		} else if update.Message != nil && update.Message.Text != "" && bot.TextHandler != nil {
+			// 处理普通文本消息（如网盘分享链接），交给业务处理器
+			cmd = ""
+			chatID = update.Message.Chat.ID
+			isText = true
 		} else {
 			continue
 		}
@@ -359,6 +367,16 @@ func (bot *TelegramBot) StartListening(ctx context.Context, handleCommand map[st
 		// --- 权限检查 ---
 		// 重点：只响应配置中指定的 Chat ID，防止其他人控制程序
 		if bot.ChatID != "" && fmt.Sprintf("%d", chatID) != bot.ChatID {
+			continue
+		}
+
+		if isText {
+			response := bot.TextHandler(update.Message.Text, chatID)
+			if response.Text != "" {
+				msg := tgbotapi.NewMessage(chatID, response.Text)
+				msg.ParseMode = "HTML"
+				bot.Client.Send(msg)
+			}
 			continue
 		}
 

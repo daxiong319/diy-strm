@@ -12,9 +12,10 @@ var webhookHeaderNamePattern = regexp.MustCompile("^[!#$%&'*+\\-.^_`|~0-9A-Za-z]
 
 // CreateTelegramChannelRequest 创建 Telegram 渠道请求。
 type CreateTelegramChannelRequest struct {
-	ChannelName string `json:"channel_name" binding:"required"`
-	BotToken    string `json:"bot_token" binding:"required"`
-	ChatID      string `json:"chat_id" binding:"required"`
+	ChannelName   string `json:"channel_name" binding:"required"`
+	BotToken      string `json:"bot_token" binding:"required"`
+	ChatID        string `json:"chat_id" binding:"required"`
+	Pan139SaveDir string `json:"pan139_save_dir"`
 }
 
 // Validate 校验 Telegram 渠道创建请求。
@@ -30,11 +31,12 @@ func (r CreateTelegramChannelRequest) Validate() error {
 
 // UpdateTelegramChannelRequest 更新 Telegram 渠道请求。
 type UpdateTelegramChannelRequest struct {
-	ChannelID   uint   `json:"channel_id" binding:"required"`
-	ChannelName string `json:"channel_name"`
-	BotToken    string `json:"bot_token"`
-	ChatID      string `json:"chat_id"`
-	Description string `json:"description"`
+	ChannelID     uint   `json:"channel_id" binding:"required"`
+	ChannelName   string `json:"channel_name"`
+	BotToken      string `json:"bot_token"`
+	ChatID        string `json:"chat_id"`
+	Description   string `json:"description"`
+	Pan139SaveDir string `json:"pan139_save_dir"`
 }
 
 // Validate 校验 Telegram 渠道更新请求。

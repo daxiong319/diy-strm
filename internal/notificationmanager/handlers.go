@@ -40,7 +40,8 @@ type TelegramChannelHandler struct {
 	listenToken        *struct{}
 	initBotFunc        func() error
 	startListeningFunc func(context.Context, map[string]func([]string) helpers.CommandResponse)
-	customCommands     map[string]func([]string) helpers.CommandResponse // 保存从外部注入的命令
+	customCommands     map[string]func([]string) helpers.CommandResponse // 从外部注入的命令
+	textHandler        func(string, int64) helpers.CommandResponse       // 普通文本消息处理器
 }
 
 func NewTelegramChannelHandler(config *notification.TelegramChannelConfig) *TelegramChannelHandler {
@@ -154,6 +155,11 @@ func (h *TelegramChannelHandler) SetCommands(cmds map[string]func([]string) help
 	h.customCommands = cmds
 }
 
+// SetTextHandler 设置普通文本消息处理器
+func (h *TelegramChannelHandler) SetTextHandler(handler func(string, int64) helpers.CommandResponse) {
+	h.textHandler = handler
+}
+
 // Start 实现 BackgroundHandler 接口
 func (h *TelegramChannelHandler) Start(ctx context.Context) {
 	if ctx == nil {
@@ -210,6 +216,7 @@ func (h *TelegramChannelHandler) startListening(ctx context.Context, cmds map[st
 		helpers.AppLogger.Errorf("Telegram Bot 未初始化")
 		return
 	}
+	h.bot.TextHandler = h.textHandler
 	h.bot.StartListening(ctx, cmds)
 }
 
