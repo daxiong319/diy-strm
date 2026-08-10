@@ -75,12 +75,7 @@ func getNetFileSourceCapability(sourceType models.SourceType, sortBy string, sor
 		}
 		return netFileSourceCapability{BatchSize: 1000, TotalExact: false}, nil
 	case models.SourceTypeOpenList:
-		if sortBy == "" {
-			sortBy = "default"
-		}
-		if sortBy != "default" {
-			return netFileSourceCapability{}, fmt.Errorf("OpenList 暂不支持排序")
-		}
+		// OpenList 不支持排序，排序参数仅作占位（列表/扫描请求均会被忽略）
 		return netFileSourceCapability{BatchSize: 500, TotalExact: true}, nil
 	case models.SourceType123:
 		return netFileSourceCapability{BatchSize: 100, TotalExact: true}, nil
