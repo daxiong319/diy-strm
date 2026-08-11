@@ -54,6 +54,8 @@ func Migrate() {
 		helpers.AppLogger.Errorf("获取数据库迁移表失败：%v", err)
 	}
 	// MoviePilot 对接表（幂等创建，兼容既有库升级）
+	// 注意：PG 驱动下 AutoMigrate 必须开启 PrepareStmt，否则报 "pq: got 2 parameters but the statement requires 1"
+	db.Db.Statement.PrepareStmt = true
 	if err := db.Db.AutoMigrate(&MoviePilotConfig{}, &MoviePilotUploadTask{}, &MoviePilotFailedFile{}); err != nil {
 		helpers.AppLogger.Errorf("自动迁移 MoviePilot 表失败：%v", err)
 	}
