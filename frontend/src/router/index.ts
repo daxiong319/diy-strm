@@ -192,7 +192,7 @@ const routes = [
     meta: {
       title: '发现',
       requiresAuth: true,
-      icon: 'Promotion',
+      icon: 'Compass',
       showInMenu: true,
     },
   },

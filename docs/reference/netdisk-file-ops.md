@@ -167,6 +167,16 @@ MoviePilot 上传任务完成后自动对上传根目录执行同规则整理（
 
 整理成功后按成功目标目录逐个触发手动 STRM 同步（ID=0，按路径定位）；`strm_local_dir` 未配置时跳过 STRM 生成。
 
+#### 下载完成检测
+
+后台轮询（周期 `poll_interval` 分钟，默认 5 分钟）检测 MoviePilot 下载完成并创建上传任务（`internal/moviepilot/watcher.go`）：
+
+- **下载列表**：轮询 `GET /api/v1/download/`，进度 100% 且非 `downloading` 的任务视为完成。
+- **下载历史兜底**：MoviePilot 在下载完成并转移后会把任务从下载列表移除，故同时轮询 `GET /api/v1/history/download?page=1&count=100`（`moviepilot/client.go` 的 `ListDownloadHistory`），仅处理 `id` 大于上次游标的记录（内存游标 `lastHistoryID`），以 `download_hash` 与 `movie_pilot_upload_tasks.torrent_hash` 幂等去重。
+- **本地路径匹配**：历史记录只含 MP 侧路径（如 `alist:/中国移动云盘/影视/待整理/日韩剧集/xxx`），实际文件位于 `local_view_root`（未配置时用 `download_root`）下同名目录，故取历史 `path` 最后一段在本地根下递归匹配目录（最多 3 层），匹配单个文件时取其所在目录；匹配到 0 个记录尝试时间（1 小时内不重试），匹配到多个跳过。
+- **单轮上限**：每轮最多创建 20 个上传任务，避免批量历史任务瞬间涌入。
+- **下载任务列表接口**：`GET /api/moviepilot/downloads` 合并下载列表与最近 20 条历史记录，并附带 `upload_status`（关联 `movie_pilot_upload_tasks.status`；已下载未捕获时为 `pending_capture`）。
+
 #### 识别失败独立菜单接口
 
 - `GET /api/moviepilot/failed-files?page&page_size&status`：分页查询（`status`：`pending` / `resolved` / `skipped`），返回 `{ list, total }`，`list` 项含 `task_title` 关联任务标题。

@@ -223,6 +223,7 @@ import {
   QuestionFilled,
   RefreshLeft,
   Setting,
+  Compass,
   Sunny,
   MagicStick,
   Moon,
@@ -280,6 +281,7 @@ const getRouteViewKey = (routeName: unknown, fullPath: string) => {
 }
 
 const menuIconMap = {
+  Compass: markRaw(Compass),
   DataAnalysis: markRaw(DataAnalysis),
   DataLine: markRaw(DataLine),
   Document: markRaw(Document),

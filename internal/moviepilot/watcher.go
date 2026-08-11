@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -73,7 +74,8 @@ func StartMoviePilotWatcher() {
 	}()
 }
 
-// checkCompletedDownloads 检测 MP 已完成的下载任务并创建上传任务
+// checkCompletedDownloads 检测 MP 已完成的下载任务并创建上传任务。
+// 先检查下载列表中的完成任务，再兜底检查下载历史（任务完成后即从下载列表移除）。
 func checkCompletedDownloads() error {
 	cfg := models.LoadMoviePilotConfig()
 	client := NewClient(cfg.BaseUrl, cfg.ApiToken)
@@ -99,11 +101,6 @@ func checkCompletedDownloads() error {
 		if localPath == "" {
 			continue
 		}
-		remotePath := strings.TrimRight(cfg.UploadRoot, "/")
-		if remotePath == "" {
-			remotePath = "/影视/订阅下载"
-		}
-		remotePath += "/" + filepath.Base(strings.TrimRight(localPath, "/"))
 
 		mediaType := ""
 		var tmdbId int64
@@ -115,29 +112,202 @@ func checkCompletedDownloads() error {
 				tmdbId = int64(v)
 			}
 		}
-		title := t.Title
-		if title == "" {
-			title = t.Name
-		}
-
-		task := &models.MoviePilotUploadTask{
-			TorrentHash: t.Hash,
-			Title:       title,
-			MediaType:   mediaType,
-			TmdbId:      tmdbId,
-			Season:      t.SeasonEpisode,
-			LocalPath:   localPath,
-			RemotePath:  remotePath,
-			Status:      models.MoviePilotUploadPending,
-		}
-		if err := models.CreateMoviePilotUploadTask(task); err != nil {
-			helpers.AppLogger.Errorf("MoviePilot 创建上传任务失败：%v", err)
+		if err := createUploadTaskFromDownload(client, cfg, t.Hash, t.Title, t.Name, localPath, mediaType, tmdbId, t.SeasonEpisode); err != nil {
+			helpers.AppLogger.Errorf("MoviePilot 为下载任务 %s 创建上传任务失败：%v", t.Name, err)
 			continue
 		}
-		helpers.AppLogger.Infof("MoviePilot 检测到下载完成：%s → %s（139 目标 %s）", title, localPath, remotePath)
-		uploadQueue <- task
+	}
+	// 兜底：下载历史中尚未捕获的完成任务
+	return checkDownloadHistory()
+}
+
+// createUploadTaskFromDownload 创建上传任务并加入上传队列（hash 幂等）
+func createUploadTaskFromDownload(client *Client, cfg *models.MoviePilotConfig, hash, title, name, localPath, mediaType string, tmdbId int64, seasonEpisode string) error {
+	remotePath := strings.TrimRight(cfg.UploadRoot, "/")
+	if remotePath == "" {
+		remotePath = "/影视/订阅下载"
+	}
+	remotePath += "/" + filepath.Base(strings.TrimRight(localPath, "/"))
+	if title == "" {
+		title = name
+	}
+	task := &models.MoviePilotUploadTask{
+		TorrentHash: hash,
+		Title:       title,
+		MediaType:   mediaType,
+		TmdbId:      tmdbId,
+		Season:      seasonEpisode,
+		LocalPath:   localPath,
+		RemotePath:  remotePath,
+		Status:      models.MoviePilotUploadPending,
+	}
+	if err := models.CreateMoviePilotUploadTask(task); err != nil {
+		return fmt.Errorf("创建上传任务失败：%v", err)
+	}
+	helpers.AppLogger.Infof("MoviePilot 检测到下载完成：%s → %s（139 目标 %s）", title, localPath, remotePath)
+	uploadQueue <- task
+	return nil
+}
+
+// 下载历史检测游标：已扫描到的最大历史 ID；attempts 记录本地路径未匹配的 hash 及上次尝试时间
+var (
+	historyMu       sync.Mutex
+	lastHistoryID   int64
+	historyAttempts = map[string]time.Time{}
+)
+
+// checkDownloadHistory 检查 MP 下载历史，为尚未捕获的完成下载创建上传任务。
+// 历史 path 为 MP 侧保存路径（如 alist:/中国移动云盘/影视/待整理/日韩剧集/xxx），
+// 实际文件位于本地视图根目录（LocalViewRoot）下同名目录，故取 path 最后一段递归匹配。
+func checkDownloadHistory() error {
+	cfg := models.LoadMoviePilotConfig()
+	client := NewClient(cfg.BaseUrl, cfg.ApiToken)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	histories, err := client.ListDownloadHistory(ctx, 1, 100)
+	if err != nil {
+		return err
+	}
+	if len(histories) == 0 {
+		return nil
+	}
+
+	historyMu.Lock()
+	cursor := lastHistoryID
+	historyMu.Unlock()
+
+	processed := 0
+	for _, h := range histories {
+		if h.ID <= cursor {
+			continue
+		}
+		if h.DownloadHash == "" {
+			cursor = h.ID
+			continue
+		}
+		if models.FindMoviePilotUploadTask(h.DownloadHash) != nil {
+			cursor = h.ID
+			continue
+		}
+		// 本地路径未匹配过的任务 1 小时内不重试（文件可能尚未到位）
+		historyMu.Lock()
+		lastTry, tried := historyAttempts[h.DownloadHash]
+		historyMu.Unlock()
+		if tried && time.Since(lastTry) < time.Hour {
+			cursor = h.ID
+			continue
+		}
+		localPath := resolveHistoryLocalPath(h, cfg)
+		if localPath == "" {
+			historyMu.Lock()
+			historyAttempts[h.DownloadHash] = time.Now()
+			historyMu.Unlock()
+			cursor = h.ID
+			continue
+		}
+		mediaType := ""
+		if h.Type == "电视剧" {
+			mediaType = "tv"
+		} else if h.Type == "电影" {
+			mediaType = "movie"
+		}
+		if err := createUploadTaskFromDownload(client, cfg, h.DownloadHash, h.Title, h.TorrentName, localPath, mediaType, h.TmdbId, h.Seasons); err != nil {
+			helpers.AppLogger.Errorf("MoviePilot 为历史下载 %s（%s）创建上传任务失败：%v", h.Title, h.DownloadHash, err)
+		} else {
+			processed++
+		}
+		cursor = h.ID
+		if processed >= 20 {
+			break
+		}
+	}
+	historyMu.Lock()
+	if cursor > lastHistoryID {
+		lastHistoryID = cursor
+	}
+	historyMu.Unlock()
+	if processed > 0 {
+		helpers.AppLogger.Infof("MoviePilot 下载历史检测完成：新增 %d 个上传任务", processed)
 	}
 	return nil
+}
+
+// resolveHistoryLocalPath 从下载历史记录定位容器内可访问的本地路径。
+// 取历史 path 最后一段（MP 转移后的目录/文件名），在本地视图根下递归匹配（最多 3 层）。
+func resolveHistoryLocalPath(h *DownloadHistory, cfg *models.MoviePilotConfig) string {
+	lastSeg := path.Base(strings.TrimRight(strings.ReplaceAll(h.Path, "\\", "/"), "/"))
+	if lastSeg == "" || lastSeg == "." || lastSeg == "/" {
+		return ""
+	}
+	root := strings.TrimRight(cfg.LocalViewRoot, "/")
+	if root == "" {
+		root = strings.TrimRight(cfg.DownloadRoot, "/")
+	}
+	if root == "" {
+		return ""
+	}
+	var found string
+	count := 0
+	scanDirMatch(root, lastSeg, 0, 3, &found, &count)
+	// 历史指向单个文件时，匹配到文件取所在目录
+	if count == 0 {
+		scanFileMatch(root, lastSeg, 0, 3, &found, &count)
+	}
+	if count == 1 {
+		return strings.TrimRight(filepath.ToSlash(found), "/")
+	}
+	if count > 1 {
+		helpers.AppLogger.Warnf("MoviePilot 历史 %s 本地匹配到多个路径，跳过：%s", lastSeg, h.Path)
+	}
+	return ""
+}
+
+// scanDirMatch 在 root 下递归（maxDepth 层内）查找与 target 同名的目录，命中即停止
+func scanDirMatch(root, target string, depth, maxDepth int, found *string, count *int) {
+	if depth > maxDepth {
+		return
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		p := filepath.Join(root, e.Name())
+		if e.Name() == target {
+			*found = p
+			*count++
+			return
+		}
+		scanDirMatch(p, target, depth+1, maxDepth, found, count)
+	}
+}
+
+// scanFileMatch 在 root 下递归查找与 target 同名的文件，命中取所在目录
+func scanFileMatch(root, target string, depth, maxDepth int, found *string, count *int) {
+	if depth > maxDepth {
+		return
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		p := filepath.Join(root, e.Name())
+		if e.IsDir() {
+			if !strings.HasPrefix(e.Name(), ".") {
+				scanFileMatch(p, target, depth+1, maxDepth, found, count)
+			}
+			continue
+		}
+		if e.Name() == target {
+			*found = filepath.Dir(p)
+			*count++
+		}
+	}
 }
 
 // resolveLocalPath 把 MP 返回的保存路径映射为容器内可访问路径

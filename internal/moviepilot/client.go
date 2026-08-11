@@ -195,6 +195,36 @@ func (c *Client) ListDownloads(ctx context.Context) ([]*DownloadTorrent, error) 
 	return out, nil
 }
 
+// DownloadHistory MP 下载历史记录（对应 /api/v1/history/download 返回项）
+// 下载任务完成后会从下载列表移除，历史记录是可靠的完成事件来源。
+type DownloadHistory struct {
+	ID            int64  `json:"id"`
+	Path          string `json:"path"` // MP 侧保存路径，如 alist:/中国移动云盘/影视/待整理/日韩剧集/xxx
+	Type          string `json:"type"` // 电视剧/电影
+	Title         string `json:"title"`
+	Year          string `json:"year"`
+	TmdbId        int64  `json:"tmdbid"`
+	MediaSource   string `json:"media_source"`
+	MediaID       string `json:"media_id"`
+	Seasons       string `json:"seasons"`  // S01
+	Episodes      string `json:"episodes"` // 1-12
+	Poster        string `json:"poster"`
+	DownloadHash  string `json:"download_hash"`
+	TorrentName   string `json:"torrent_name"`
+	Date          string `json:"date"`
+	MediaCategory string `json:"media_category"`
+}
+
+// ListDownloadHistory 分页查询下载历史（page 从 1 开始）
+func (c *Client) ListDownloadHistory(ctx context.Context, page, count int) ([]*DownloadHistory, error) {
+	var out []*DownloadHistory
+	path := fmt.Sprintf("/api/v1/history/download?page=%d&count=%d", page, count)
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // TestConnection 测试连接（查询下载器列表，失败时回退订阅列表）
 func (c *Client) TestConnection(ctx context.Context) error {
 	var out any

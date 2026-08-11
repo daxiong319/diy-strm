@@ -12,6 +12,38 @@
             <el-button type="info" @click="loadSubscribes" :loading="subscribesLoading">刷新</el-button>
           </div>
         </div>
+        <div class="quick-search-bar">
+          <el-input
+            v-model="quickKeyword"
+            placeholder="输入影视名称直接搜索订阅，如：我的荒糖恋爱"
+            clearable
+            style="max-width: 340px"
+            @keyup.enter="quickSearch"
+          />
+          <el-radio-group v-model="quickType">
+            <el-radio-button value="tv">剧集</el-radio-button>
+            <el-radio-button value="movie">电影</el-radio-button>
+          </el-radio-group>
+          <el-button type="primary" :icon="Search" :loading="quickSearching" @click="quickSearch">搜索</el-button>
+        </div>
+        <div v-if="quickResults.length > 0" class="quick-results">
+          <div v-for="r in quickResults" :key="r.tmdb_id" class="quick-result-row">
+            <el-image :src="r.poster_url" fit="cover" class="quick-poster" lazy>
+              <template #error>
+                <div class="quick-poster-placeholder">暂无封面</div>
+              </template>
+            </el-image>
+            <div class="quick-info">
+              <div class="quick-title">
+                {{ r.title || r.name }}
+                <span v-if="r.year" class="quick-year">（{{ r.year }}）</span>
+                <el-tag v-if="r.vote_average" size="small" type="warning" class="quick-score">{{ r.vote_average.toFixed(1) }}</el-tag>
+              </div>
+              <div class="quick-overview">{{ r.overview || '暂无简介' }}</div>
+            </div>
+            <el-button size="small" type="primary" :loading="r._subscribing" @click="quickSubscribe(r)">订阅</el-button>
+          </div>
+        </div>
         <el-table :data="subscribes" v-loading="subscribesLoading" empty-text="暂无订阅" style="width: 100%">
           <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
           <el-table-column prop="year" label="年份" width="80" />
@@ -52,6 +84,14 @@
           <el-table-column label="状态" width="100">
             <template #default="scope">
               <el-tag :type="getDownloadStateTag(scope.row.state)">{{ scope.row.state }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="上传状态" width="120">
+            <template #default="scope">
+              <el-tag v-if="scope.row.upload_status" :type="getUploadStatusTag(scope.row.upload_status)">
+                {{ getUploadStatusText(scope.row.upload_status) }}
+              </el-tag>
+              <span v-else>-</span>
             </template>
           </el-table-column>
           <el-table-column label="进度" min-width="140">
@@ -192,7 +232,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Search } from '@element-plus/icons-vue'
 import { SERVER_URL } from '@/const'
 import { useHttpClient } from '@/http/client'
 
@@ -215,9 +255,14 @@ const uploadStatusFilter = ref('')
 const createDialogVisible = ref(false)
 const creating = ref(false)
 const searchKeyword = ref('')
-const searchType = ref('tv_show')
+const searchType = ref('tvshow')
 const tmdbSearching = ref(false)
 const tmdbResults = ref<any[]>([])
+
+const quickKeyword = ref('')
+const quickType = ref('tv')
+const quickSearching = ref(false)
+const quickResults = ref<any[]>([])
 
 const createForm = ref<any>({
   name: '',
@@ -360,6 +405,56 @@ const selectTmdbResult = (row: any) => {
   createForm.value.type = row.media_type === 'movie' ? 'movie' : 'tv'
 }
 
+const quickSearch = async () => {
+  if (!quickKeyword.value.trim()) {
+    ElMessage.warning('请输入搜索关键词')
+    return
+  }
+  quickSearching.value = true
+  try {
+    const params: Record<string, string | number> = { name: quickKeyword.value.trim(), type: quickType.value === 'movie' ? 'movie' : 'tvshow' }
+    const response = await http.get(`${SERVER_URL}/scrape/tmdb-search`, { params, timeout: 30000 })
+    const data = response?.data?.data
+    const list = Array.isArray(data) ? data : data?.list || []
+    quickResults.value = list
+      .filter((item: any) => item && (item.title || item.name) && item.tmdb_id)
+      .map((item: any) => ({ ...item, _subscribing: false }))
+    if (quickResults.value.length === 0) {
+      ElMessage.info('未找到匹配的影片')
+    }
+  } catch (error) {
+    console.error('快速搜索错误：', error)
+    ElMessage.error('搜索失败')
+  } finally {
+    quickSearching.value = false
+  }
+}
+
+const quickSubscribe = async (row: any) => {
+  row._subscribing = true
+  try {
+    const payload: Record<string, any> = {
+      name: row.title || row.name,
+      type: quickType.value,
+      tmdbid: Number(row.tmdb_id),
+    }
+    if (row.year) payload.year = String(row.year)
+    const response = await http.post(`${SERVER_URL}/moviepilot/subscribes`, payload)
+    if (response?.data.code === 200) {
+      ElMessage.success(`已订阅「${payload.name}」`)
+      quickResults.value = quickResults.value.filter((item) => item.tmdb_id !== row.tmdb_id)
+      loadSubscribes()
+    } else {
+      ElMessage.error(response?.data.message || '添加订阅失败')
+    }
+  } catch (error) {
+    console.error('快速订阅错误：', error)
+    ElMessage.error('添加订阅失败')
+  } finally {
+    row._subscribing = false
+  }
+}
+
 const createSubscribe = async () => {
   if (!createForm.value.name) {
     ElMessage.warning('请填写媒体名称')
@@ -490,3 +585,71 @@ onMounted(() => {
   loadUploadTasks()
 })
 </script>
+
+<style scoped>
+.quick-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 12px;
+}
+.quick-results {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+.quick-result-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.quick-result-row:last-child {
+  border-bottom: none;
+}
+.quick-result-row:hover {
+  background: var(--el-fill-color-light);
+}
+.quick-poster {
+  width: 56px;
+  height: 80px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.quick-poster-placeholder {
+  width: 56px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-light);
+}
+.quick-info {
+  flex: 1;
+  min-width: 0;
+}
+.quick-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.quick-year {
+  color: var(--el-text-color-secondary);
+  font-weight: 400;
+}
+.quick-score {
+  margin-left: 8px;
+}
+.quick-overview {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>

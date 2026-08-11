@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"diy-strm/internal/db"
+	"diy-strm/internal/helpers"
 	"diy-strm/internal/models"
 	"diy-strm/internal/moviepilot"
 	"diy-strm/internal/requests"
@@ -468,4 +469,60 @@ func SkipMoviePilotFailedFile(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "已跳过", Data: nil})
+}
+
+// TrendingMoviePilot TMDB 热门趋势列表（发现页数据源）
+// @Summary TMDB 热门趋势列表
+// @Tags MoviePilot
+// @Success 200 {object} APIResponse[any]
+// @Router /moviepilot/trending [get]
+// @Security JwtAuth
+// @Security ApiKeyAuth
+func TrendingMoviePilot(c *gin.Context) {
+	mediaType := c.DefaultQuery("type", "movie")
+	window := c.DefaultQuery("window", "day")
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	lang := models.GlobalScrapeSettings.GetTmdbLanguage()
+	tmdbClient := models.GlobalScrapeSettings.GetTmdbClient()
+
+	resp := make([]TmdbSearchResp, 0)
+	if mediaType == "tv" {
+		tvResp, err := tmdbClient.GetTrendingTv(window, lang, page)
+		if err != nil {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取热门剧集失败：" + err.Error(), Data: nil})
+			return
+		}
+		for _, r := range tvResp.Results {
+			resp = append(resp, TmdbSearchResp{
+				TmdbID:        int(r.ID),
+				Title:         r.Name,
+				OriginalTitle: r.OriginalName,
+				Year:          helpers.ParseYearFromDate(r.FirstAirDate),
+				PosterUrl:     models.GetTmdbImageUrl(r.PosterPath),
+				Overview:      r.Overview,
+				VoteAverage:   r.VoteAverage,
+			})
+		}
+	} else {
+		movieResp, err := tmdbClient.GetTrendingMovies(window, lang, page)
+		if err != nil {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取热门电影失败：" + err.Error(), Data: nil})
+			return
+		}
+		for _, r := range movieResp.Results {
+			resp = append(resp, TmdbSearchResp{
+				TmdbID:        int(r.ID),
+				Title:         r.Title,
+				OriginalTitle: r.OriginalTitle,
+				Year:          helpers.ParseYearFromDate(r.ReleaseDate),
+				PosterUrl:     models.GetTmdbImageUrl(r.PosterPath),
+				Overview:      r.Overview,
+				VoteAverage:   r.VoteAverage,
+			})
+		}
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "获取热门趋势成功", Data: resp})
 }

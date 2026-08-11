@@ -30,6 +30,17 @@ const errorMessage = ref('')
 const page = ref(1)
 const totalPages = ref(1)
 
+const searchKeyword = ref('')
+const searchMode = ref(false)
+const searching = ref(false)
+const subscribingIds = ref<Record<number, boolean>>({})
+const subscribedMap = ref<Record<string, boolean>>({})
+
+const isSubscribed = (item: DiscoverItem) => {
+  if (!item.tmdb_id) return false
+  return !!subscribedMap.value[`${item.media_type || 'movie'}:${item.tmdb_id}`]
+}
+
 const tmdbMovieCategories = [
   { value: 'popular', label: '热门' },
   { value: 'top_rated', label: '高分' },
@@ -145,6 +156,91 @@ const changePage = (p: number) => {
   load()
 }
 
+const loadSubscribed = async () => {
+  try {
+    const response = await http.get(`${SERVER_URL}/moviepilot/subscribes`)
+    const list = response?.data?.data || []
+    const map: Record<string, boolean> = {}
+    list.forEach((s: any) => {
+      if (s.tmdbid && s.type) map[`${s.type}:${s.tmdbid}`] = true
+    })
+    subscribedMap.value = map
+  } catch {
+    // 未配置 MoviePilot 时静默跳过
+  }
+}
+
+const onSearch = async () => {
+  const keyword = searchKeyword.value.trim()
+  if (!keyword) {
+    ElMessage.warning('请输入搜索关键词')
+    return
+  }
+  const isTv = activeTab.value === 'tmdb-tv'
+  searching.value = true
+  searchMode.value = true
+  errorMessage.value = ''
+  try {
+    const params: Record<string, string | number> = { name: keyword, type: isTv ? 'tvshow' : 'movie' }
+    const response = await http.get(`${SERVER_URL}/scrape/tmdb-search`, { params, timeout: 30000 })
+    const data = response?.data?.data
+    const list = Array.isArray(data) ? data : data?.list || []
+    items.value = list
+      .filter((r: any) => r && (r.title || r.name) && r.tmdb_id)
+      .map((r: any) => ({
+        source: 'tmdb',
+        media_type: isTv ? 'tv' : 'movie',
+        tmdb_id: Number(r.tmdb_id),
+        title: r.title || r.name,
+        original_title: r.original_title,
+        poster: r.poster_url || '',
+        vote_avg: Number(r.vote_average || 0),
+        year: r.year || 0,
+        in_emby: false,
+      }))
+    totalPages.value = 1
+  } catch (err) {
+    errorMessage.value = '搜索失败：' + (err as Error).message
+    items.value = []
+  } finally {
+    searching.value = false
+  }
+  checkEmbyStatus()
+}
+
+const clearSearch = () => {
+  searchMode.value = false
+  searchKeyword.value = ''
+  page.value = 1
+  load()
+}
+
+const toggleSubscribe = async (item: DiscoverItem) => {
+  if (!item.tmdb_id || isSubscribed(item) || subscribingIds.value[item.tmdb_id]) return
+  subscribingIds.value[item.tmdb_id] = true
+  try {
+    const mediaType = item.media_type || 'movie'
+    const payload: Record<string, any> = {
+      name: item.title,
+      type: mediaType,
+      tmdbid: item.tmdb_id,
+    }
+    if (item.year) payload.year = String(item.year)
+    const response = await http.post(`${SERVER_URL}/moviepilot/subscribes`, payload)
+    if (response?.data.code === 200) {
+      ElMessage.success(`已订阅「${item.title}」`)
+      subscribedMap.value[`${mediaType}:${item.tmdb_id}`] = true
+    } else {
+      ElMessage.error(response?.data.message || '添加订阅失败，请检查 MoviePilot 配置')
+    }
+  } catch (err) {
+    console.error('添加订阅错误：', err)
+    ElMessage.error('添加订阅失败')
+  } finally {
+    subscribingIds.value[item.tmdb_id] = false
+  }
+}
+
 const posterUrl = (item: DiscoverItem) => {
   if (item.poster) return item.poster
   return ''
@@ -166,9 +262,14 @@ const openDetail = (item: DiscoverItem) => {
 
 onMounted(() => {
   load()
+  loadSubscribed()
 })
 
-watch(activeTab, changeTab)
+watch(activeTab, () => {
+  searchMode.value = false
+  searchKeyword.value = ''
+  changeTab()
+})
 </script>
 
 <template>
@@ -176,7 +277,19 @@ watch(activeTab, changeTab)
     <div class="page-header">
       <div class="header-content">
         <h1>发现</h1>
-        <p>TMDB 与豆瓣热门影片、片单一览，已入库 Emby 的影片会标记勾选</p>
+        <p>TMDB 与豆瓣热门影片、片单一览，已入库 Emby 的影片会标记勾选，点击爱心一键订阅。</p>
+      </div>
+      <div class="search-box">
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索影片名称"
+          clearable
+          style="width: 220px"
+          @keyup.enter="onSearch"
+          @clear="clearSearch"
+        />
+        <el-button v-if="!searchMode" type="primary" :loading="searching" @click="onSearch">搜索</el-button>
+        <el-button v-else type="warning" @click="clearSearch">返回榜单</el-button>
       </div>
     </div>
 
@@ -187,7 +300,7 @@ watch(activeTab, changeTab)
       <el-tab-pane label="豆瓣片单" name="douban-collection" />
     </el-tabs>
 
-    <div class="category-bar">
+    <div v-if="!searchMode" class="category-bar">
       <template v-if="activeTab === 'tmdb-movie'">
         <el-radio-group v-model="selectedTmdbMovieCategory" @change="changeCategory">
           <el-radio-button v-for="cat in tmdbMovieCategories" :key="cat.value" :value="cat.value">
@@ -238,6 +351,14 @@ watch(activeTab, changeTab)
             <div v-if="item.in_emby" class="emby-badge" title="已入库 Emby">
               <el-icon><CircleCheck /></el-icon>
             </div>
+            <div v-if="item.tmdb_id" class="heart-btn" :class="{ active: isSubscribed(item), busy: subscribingIds[item.tmdb_id] }"
+              :title="isSubscribed(item) ? '已订阅' : '点击订阅'" @click.stop="toggleSubscribe(item)">
+              <svg viewBox="0 0 24 24" width="16" height="16">
+                <path
+                  d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
+                />
+              </svg>
+            </div>
             <div v-if="formatVote(item.vote_avg)" class="score-badge">{{ formatVote(item.vote_avg) }}</div>
           </div>
           <div class="card-title" :title="item.title">{{ item.title }}</div>
@@ -250,7 +371,7 @@ watch(activeTab, changeTab)
       <div v-if="!loading && !items.length && !errorMessage" class="empty-tip">
         <el-empty description="暂无数据" />
       </div>
-      <div class="pager" v-if="items.length">
+      <div class="pager" v-if="items.length && !searchMode">
         <el-pagination
           background
           layout="prev, pager, next"
@@ -276,10 +397,18 @@ watch(activeTab, changeTab)
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
   padding: 20px 24px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   border-radius: 16px;
   color: white;
+  flex-wrap: wrap;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .header-content h1 {
@@ -380,6 +509,38 @@ watch(activeTab, changeTab)
   font-size: 13px;
   font-weight: 700;
   z-index: 2;
+}
+
+.heart-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  z-index: 3;
+  opacity: 0.85;
+}
+.heart-btn:hover {
+  transform: scale(1.12);
+  opacity: 1;
+}
+.heart-btn.active {
+  background: rgba(245, 63, 63, 0.9);
+}
+.heart-btn.busy {
+  pointer-events: none;
+  opacity: 0.5;
+}
+.heart-btn svg {
+  fill: currentColor;
 }
 
 .card-title {

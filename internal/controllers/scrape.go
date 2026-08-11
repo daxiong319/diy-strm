@@ -1279,12 +1279,13 @@ func GetScrapeStrmPaths(c *gin.Context) {
 }
 
 type TmdbSearchResp struct {
-	TmdbID        int    `json:"tmdb_id"`
-	Title         string `json:"title"`
-	OriginalTitle string `json:"original_title"`
-	Year          int    `json:"year"`
-	PosterUrl     string `json:"poster_url"`
-	Overview      string `json:"overview"`
+	TmdbID        int     `json:"tmdb_id"`
+	Title         string  `json:"title"`
+	OriginalTitle string  `json:"original_title"`
+	Year          int     `json:"year"`
+	PosterUrl     string  `json:"poster_url"`
+	Overview      string  `json:"overview"`
+	VoteAverage   float64 `json:"vote_average"`
 }
 
 func TmdbSearch(c *gin.Context) {
