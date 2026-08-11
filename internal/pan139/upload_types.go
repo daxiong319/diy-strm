@@ -65,7 +65,7 @@ func buildPartInfos(size int64) []map[string]interface{} {
 }
 
 func checkUploadCode(code string) error {
-	if code != "" && code != "0" {
+	if code != "" && code != "0" && code != "0000" {
 		return fmt.Errorf("code=%s", code)
 	}
 	return nil
