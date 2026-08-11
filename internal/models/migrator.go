@@ -30,6 +30,7 @@ var AllTables = []any{
 	RequestStat{}, EmbyConfig{}, EmbyMediaItem{}, EmbyMediaSyncFile{}, EmbyLibrary{}, EmbyLibrarySyncPath{}, EmbyLibraryRefreshTask{},
 	DbDownloadTask{}, DbUploadTask{}, UploadSession{}, StrmGenerationTask{}, NotificationChannel{}, TelegramChannelConfig{}, MeoWChannelConfig{}, BarkChannelConfig{},
 	ServerChanChannelConfig{}, CustomWebhookChannelConfig{}, NotificationRule{},
+	MoviePilotConfig{}, MoviePilotUploadTask{}, MoviePilotFailedFile{},
 }
 
 func (*Migrator) TableName() string {
@@ -53,7 +54,7 @@ func Migrate() {
 		helpers.AppLogger.Errorf("获取数据库迁移表失败：%v", err)
 	}
 	// MoviePilot 对接表（幂等创建，兼容既有库升级）
-	if err := db.Db.AutoMigrate(&MoviePilotConfig{}, &MoviePilotUploadTask{}); err != nil {
+	if err := db.Db.AutoMigrate(&MoviePilotConfig{}, &MoviePilotUploadTask{}, &MoviePilotFailedFile{}); err != nil {
 		helpers.AppLogger.Errorf("自动迁移 MoviePilot 表失败：%v", err)
 	}
 	db.Db.Statement.PrepareStmt = true

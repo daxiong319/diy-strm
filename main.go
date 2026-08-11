@@ -721,6 +721,10 @@ func setRouter(r *gin.Engine) {
 		api.GET("/moviepilot/upload-tasks", controllers.ListMoviePilotUploadTasks)                 // 查询 139 上传任务
 		api.POST("/moviepilot/upload-tasks/:id/retry", controllers.RetryMoviePilotUploadTask)      // 重试上传任务
 		api.POST("/moviepilot/upload-tasks/:id/cancel", controllers.CancelMoviePilotUploadTask)    // 取消上传任务
+		api.GET("/moviepilot/failed-files", controllers.ListMoviePilotFailedFiles)                 // 查询识别失败文件
+		api.POST("/moviepilot/failed-files/:id/identify", controllers.IdentifyMoviePilotFailedFile) // AI 识别失败文件
+		api.POST("/moviepilot/failed-files/:id/resolve", controllers.ResolveMoviePilotFailedFile)  // 确认整理失败文件
+		api.POST("/moviepilot/failed-files/:id/skip", controllers.SkipMoviePilotFailedFile)        // 跳过失败文件
 		api.POST("/setting/notification/channels/telegram", controllers.CreateTelegramChannel)     // 创建 Telegram 渠道
 		api.GET("/setting/notification/channels/telegram/:id", controllers.GetTelegramChannel)     // 查询 Telegram 渠道
 		api.PUT("/setting/notification/channels/telegram", controllers.UpdateTelegramChannel)      // 更新 Telegram 渠道

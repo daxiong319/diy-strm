@@ -1018,3 +1018,48 @@ Server酱 渠道配置表。
 - `channel_id`：关联的通知渠道 ID。
 - `event_type`：事件类型，`sync_finish`、`sync_error`、`scrape_finish`、`scrape_error`、`system_alert`、`media_added`、`media_removed`、`playback_start`、`playback_pause` 或 `playback_stop`。
 - `is_enabled`：是否启用。
+
+### `movie_pilot_configs`
+
+MoviePilot 对接配置（单行表，首次读取时自动创建默认行）。
+
+- `enabled`：是否启用订阅自动下载检测。
+- `base_url`：MoviePilot 地址。
+- `api_token`：MoviePilot API Token。
+- `download_root`：MoviePilot 侧下载根目录（路径前缀映射用）。
+- `local_view_root`：下载目录在本容器中的路径。
+- `upload_account_id`：目标网盘账号 ID（0 表示禁用上传）。
+- `upload_root`：目标网盘上传根目录（路径）。
+- `upload_root_id`：目标网盘上传根目录 ID。
+- `strm_local_dir`：STRM 文件本地输出目录（留空则整理成功后不生成 STRM）。
+- `poll_interval`：轮询间隔（分钟，默认 5）。
+- `notify_enabled`：完成后是否发送通知。
+
+### `movie_pilot_upload_tasks`
+
+MoviePilot 下载完成后的上传任务记录。
+
+- `torrent_hash`：下载任务哈希（去重），有索引。
+- `title`：种子标题。
+- `media_type`：`movie` / `tv`。
+- `tmdb_id`：TMDB ID。
+- `season`：季号。
+- `local_path`：上传源目录（容器内路径）。
+- `remote_path`：上传目标目录。
+- `status`：`pending`、`uploading`、`uploaded`、`failed`、`canceled`，有索引。
+- `total_files` / `uploaded_files`：总文件数 / 已上传文件数。
+- `total_bytes` / `uploaded_bytes`：总字节数 / 已上传字节数。
+- `error`：失败或部分失败说明。
+
+### `movie_pilot_failed_files`
+
+MoviePilot 上传整理时无法识别（正则 + AI 兜底均未命中）或整理失败的文件记录，供"识别失败"独立菜单手动确认整理或跳过。
+
+- `task_id`：关联上传任务 ID，有索引。
+- `file_name`：网盘文件名。
+- `parent_id`：文件所在源目录 ID（网盘语义）。
+- `root_path`：文件所在源目录路径（整理根目录）。
+- `account_id`：网盘账号 ID。
+- `status`：`pending`、`resolved`、`skipped`，有索引；`resolved` 表示已确认媒体信息并整理完成。
+- `media_type` / `title` / `tmdb_id` / `year` / `season`：确认后的媒体信息（整理成功后回填）。
+- `reason`：失败原因。

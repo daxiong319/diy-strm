@@ -158,6 +158,22 @@
 - `pan139` 支持（建目录走 `/file/create`、移动走 `/file/batchMove`、重命名走 `/file/update`）；`guangyapan` 支持（建目录走 `/file/create_dir`、移动走 `/file/move_file` 异步任务、重命名走 `/file/rename`）。
 - 扫描上限 1000 项，最多递归 3 层（`depth` 默认 2）。
 
+### MoviePilot 上传自动整理
+
+MoviePilot 上传任务完成后自动对上传根目录执行同规则整理（`internal/moviepilot/organize.go`，扫描上限 500 项、递归 4 层），并额外提供两级兜底：
+
+1. **AI 辅助识别**：正则解析失败（`unknown`）时，若刮削设置启用了 AI 识别（`enable_ai != off`），对文件名执行 AI 提取 + TMDB 校验（优先电影，其次剧集；剧集季集缺省 1）。每个整理任务最多尝试 20 个文件的 AI 识别，连续失败 3 次即停止后续尝试。AI 命中后按识别结果整理。
+2. **识别失败落库**：AI 未启用 / 未命中或建目录、移动、重命名失败的视频文件记录到 `movie_pilot_failed_files`（同一任务下同名文件已有待处理记录时不重复插入），并计入任务 `error` 摘要。
+
+整理成功后按成功目标目录逐个触发手动 STRM 同步（ID=0，按路径定位）；`strm_local_dir` 未配置时跳过 STRM 生成。
+
+#### 识别失败独立菜单接口
+
+- `GET /api/moviepilot/failed-files?page&page_size&status`：分页查询（`status`：`pending` / `resolved` / `skipped`），返回 `{ list, total }`，`list` 项含 `task_title` 关联任务标题。
+- `POST /api/moviepilot/failed-files/:id/identify`：AI 辅助识别该文件名，成功返回 `{ category, title, season, episode, year, tmdb_id }`。
+- `POST /api/moviepilot/failed-files/:id/resolve`：请求体 `{ media_type, title, year, season }`；按文件所在源目录重新定位文件，执行建目录 → 移动 → 重命名，成功后记录状态 `resolved` 并回填媒体信息，同时按整理成功目录触发 STRM 同步；失败时保留 `pending` 并更新 `reason`。
+- `POST /api/moviepilot/failed-files/:id/skip`：标记 `skipped`。
+
 ### 预览
 
 `POST /api/organize/preview`

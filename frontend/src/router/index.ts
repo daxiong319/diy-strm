@@ -91,6 +91,10 @@ const AppMoviePilotSubscribes = createAsyncRouteComponent(
   'AppMoviePilotSubscribes',
   () => import('@/components/AppMoviePilotSubscribes.vue'),
 )
+const AppMoviePilotFailed = createAsyncRouteComponent(
+  'AppMoviePilotFailed',
+  () => import('@/components/AppMoviePilotFailed.vue'),
+)
 const AppApiKeys = createAsyncRouteComponent(
   'AppApiKeys',
   () => import('@/components/AppApiKeys.vue'),
@@ -548,6 +552,17 @@ const routes = [
     component: AppMoviePilotSettings,
     meta: {
       title: '设置',
+      requiresAuth: true,
+      parent: 'moviepilot',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/moviepilot/failed',
+    name: 'moviepilot-failed',
+    component: AppMoviePilotFailed,
+    meta: {
+      title: '识别失败',
       requiresAuth: true,
       parent: 'moviepilot',
       showInMenu: true,

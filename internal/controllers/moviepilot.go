@@ -4,10 +4,12 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"diy-strm/internal/db"
 	"diy-strm/internal/models"
 	"diy-strm/internal/moviepilot"
 	"diy-strm/internal/requests"
@@ -318,4 +320,152 @@ func moviePilotClientFromConfig(c *gin.Context) (*moviepilot.Client, bool) {
 		return nil, false
 	}
 	return client, true
+}
+
+// ListMoviePilotFailedFiles 查询识别失败文件列表（识别失败独立菜单）
+// @Summary 查询识别失败文件列表
+// @Tags MoviePilot
+// @Success 200 {object} APIResponse[any]
+// @Router /moviepilot/failed-files [get]
+// @Security JwtAuth
+// @Security ApiKeyAuth
+func ListMoviePilotFailedFiles(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	status := c.DefaultQuery("status", "")
+	files, total := models.ListMoviePilotFailedFiles(page, pageSize, status)
+	taskTitles := map[uint]string{}
+	var tasks []models.MoviePilotUploadTask
+	if err := db.Db.Select("id", "title").Find(&tasks).Error; err == nil {
+		for _, t := range tasks {
+			taskTitles[t.ID] = t.Title
+		}
+	}
+	type failedItem struct {
+		models.MoviePilotFailedFile
+		TaskTitle string `json:"task_title"`
+	}
+	list := make([]failedItem, 0, len(files))
+	for _, f := range files {
+		list = append(list, failedItem{MoviePilotFailedFile: f, TaskTitle: taskTitles[f.TaskID]})
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "获取识别失败文件成功", Data: map[string]any{"list": list, "total": total}})
+}
+
+// IdentifyMoviePilotFailedFile AI 辅助识别失败文件，返回建议的媒体信息
+// @Summary AI 识别失败文件
+// @Tags MoviePilot
+// @Success 200 {object} APIResponse[any]
+// @Router /moviepilot/failed-files/:id/identify [post]
+// @Security JwtAuth
+// @Security ApiKeyAuth
+func IdentifyMoviePilotFailedFile(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "记录 ID 无效", Data: nil})
+		return
+	}
+	f := models.GetMoviePilotFailedFile(uint(id))
+	if f == nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "记录不存在", Data: nil})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c, 120*time.Second)
+	defer cancel()
+	res, ok := moviepilot.IdentifyFileWithAI(ctx, f.FileName)
+	if !ok {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "AI 识别失败，请在下方手动填写媒体信息", Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "AI 识别成功", Data: res})
+}
+
+// ResolveMoviePilotFailedFile 确认媒体信息并重新整理识别失败的文件
+// @Summary 确认整理识别失败文件
+// @Tags MoviePilot
+// @Success 200 {object} APIResponse[any]
+// @Router /moviepilot/failed-files/:id/resolve [post]
+// @Security JwtAuth
+// @Security ApiKeyAuth
+func ResolveMoviePilotFailedFile(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "记录 ID 无效", Data: nil})
+		return
+	}
+	var req requests.ResolveMoviePilotFailedFileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "请求参数错误：" + err.Error(), Data: nil})
+		return
+	}
+	if err := req.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: err.Error(), Data: nil})
+		return
+	}
+	f := models.GetMoviePilotFailedFile(uint(id))
+	if f == nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "记录不存在", Data: nil})
+		return
+	}
+	var account models.Account
+	if err := db.Db.First(&account, f.AccountID).Error; err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "上传账号不存在（ID=%d），请检查账号配置", Data: nil})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c, 10*time.Minute)
+	defer cancel()
+	dir, err := moviepilot.ResolveFailedFile(ctx, &account, f, req.MediaType, req.Title, req.Year, req.Season)
+	if err != nil {
+		f.Reason = "确认整理失败：" + err.Error()
+		f.Status = string(models.MoviePilotFailedPending)
+		_ = models.UpdateMoviePilotFailedFile(f)
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: err.Error(), Data: nil})
+		return
+	}
+	f.Status = string(models.MoviePilotFailedResolved)
+	f.MediaType = req.MediaType
+	f.Title = req.Title
+	f.Year = req.Year
+	f.Season = req.Season
+	f.Reason = ""
+	_ = models.UpdateMoviePilotFailedFile(f)
+	// 整理成功的目标目录触发 STRM 同步
+	cfg := models.LoadMoviePilotConfig()
+	if strings.TrimSpace(cfg.StrmLocalDir) != "" {
+		sourcePath := strings.TrimRight(f.RootPath, "/") + "/" + dir
+		moviepilot.TriggerStrmSyncForDir(&account, sourcePath, cfg.StrmLocalDir)
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "整理完成", Data: map[string]any{"dir": dir}})
+}
+
+// SkipMoviePilotFailedFile 跳过识别失败文件
+// @Summary 跳过识别失败文件
+// @Tags MoviePilot
+// @Success 200 {object} APIResponse[any]
+// @Router /moviepilot/failed-files/:id/skip [post]
+// @Security JwtAuth
+// @Security ApiKeyAuth
+func SkipMoviePilotFailedFile(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "记录 ID 无效", Data: nil})
+		return
+	}
+	f := models.GetMoviePilotFailedFile(uint(id))
+	if f == nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "记录不存在", Data: nil})
+		return
+	}
+	f.Status = string(models.MoviePilotFailedSkipped)
+	if err := models.UpdateMoviePilotFailedFile(f); err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "操作失败：" + err.Error(), Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "已跳过", Data: nil})
 }

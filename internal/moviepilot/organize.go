@@ -2,12 +2,14 @@ package moviepilot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"path/filepath"
 	"strings"
 
 	"diy-strm/internal/baidupan"
+	"diy-strm/internal/db"
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/mediaparse"
 	"diy-strm/internal/models"
@@ -30,6 +32,15 @@ type organizeEntry struct {
 	IsDir    bool
 }
 
+// errMediaUnrecognized 文件名无法识别（正则与 AI 均未命中）
+var errMediaUnrecognized = errors.New("文件名无法识别")
+
+// aiTryBudget 每个整理任务最多尝试 AI 识别的文件数，避免批量文件逐个调用 AI
+const aiTryBudget = 20
+
+// aiConsecutiveFailStop 连续 AI 识别失败次数达到该值时停止后续 AI 尝试
+const aiConsecutiveFailStop = 3
+
 const (
 	organizeMaxEntries = 500
 	organizeMaxDepth   = 4
@@ -38,7 +49,8 @@ const (
 // organizeUploadedDir 对上传完成的网盘目录执行文件名解析整理（同"目录整理"规则）：
 // 建目标目录 → 移动 → 重命名；只处理视频文件，无法识别的不移动。
 // rootID 为整理根目录 ID（或路径语义字符串），rootPath 为整理根目录路径。
-func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, rootPath string) *organizeMediaResult {
+// task 非空时，识别失败的文件会尝试 AI 兜底并记录到 movie_pilot_failed_files 供手动确认。
+func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, rootPath string, task *models.MoviePilotUploadTask) *organizeMediaResult {
 	result := &organizeMediaResult{}
 	var entries []organizeEntry
 	counter := 0
@@ -48,6 +60,8 @@ func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, r
 	}
 
 	dirIDCache := map[string]string{} // relPath -> 目录 ID
+	aiBudget := aiTryBudget
+	aiConsecutiveFail := 0
 	for _, e := range entries {
 		if e.IsDir || !mediaparse.IsVideoExt(e.Name) {
 			continue
@@ -56,35 +70,30 @@ func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, r
 			break
 		}
 		category, title, season, episode, year := mediaparse.ParseMedia(e.Name)
-		relDir, ok := mediaparse.BuildTargetRelPath(category, title, season, year)
-		if !ok {
-			result.Unrecognized++
-			result.FailedNames = append(result.FailedNames, e.Name)
-			continue
+		media := &IdentifyResult{Category: category, Title: title, Season: season, Episode: episode, Year: year}
+		dir, err := organizeOneFile(ctx, account, e, rootPath, dirIDCache, media)
+		if err == errMediaUnrecognized && aiBudget > 0 {
+			// 正则识别失败：AI 兜底
+			aiBudget--
+			if ai, ok := IdentifyFileWithAI(ctx, e.Name); ok {
+				aiConsecutiveFail = 0
+				dir, err = organizeOneFile(ctx, account, e, rootPath, dirIDCache, &ai)
+			} else if aiConsecutiveFail++; aiConsecutiveFail >= aiConsecutiveFailStop {
+				aiBudget = 0
+			}
 		}
-		newName := buildOrganizeNewName(category, title, season, episode, year, path.Ext(e.Name))
-
-		targetDirID, err := ensureOrganizeDirInternal(ctx, account, rootPath, relDir, dirIDCache)
 		if err != nil {
-			result.Failed++
+			if err == errMediaUnrecognized {
+				result.Unrecognized++
+			} else {
+				result.Failed++
+			}
 			result.FailedNames = append(result.FailedNames, e.Name)
-			helpers.AppLogger.Errorf("MoviePilot 整理创建目标目录 %s 失败：%v", relDir, err)
-			continue
-		}
-		if err := moveNetdiskFileInternal(account, e.ID, e.ParentID, targetDirID); err != nil {
-			result.Failed++
-			result.FailedNames = append(result.FailedNames, e.Name)
-			helpers.AppLogger.Errorf("MoviePilot 整理移动 %s 失败：%v", e.Name, err)
-			continue
-		}
-		if err := renameNetdiskFileInternal(account, e.ID, e.ParentID, targetDirID, newName); err != nil {
-			result.Failed++
-			result.FailedNames = append(result.FailedNames, e.Name)
-			helpers.AppLogger.Errorf("MoviePilot 整理重命名 %s 失败：%v", e.Name, err)
+			helpers.AppLogger.Warnf("MoviePilot 整理 %s 失败：%v", e.Name, err)
+			saveFailedFile(task, account, e, err)
 			continue
 		}
 		result.Organized++
-		dir := relDir
 		found := false
 		for _, d := range result.SuccessDirs {
 			if d == dir {
@@ -97,6 +106,97 @@ func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, r
 		}
 	}
 	return result
+}
+
+// organizeOneFile 整理单个网盘文件：建目标目录 → 移动 → 重命名。
+// media 为已解析的媒体信息；无法识别返回 errMediaUnrecognized（不移动）。
+// 返回整理成功的目标相对目录（相对整理根目录）。
+func organizeOneFile(ctx context.Context, account *models.Account, e organizeEntry, rootPath string, dirCache map[string]string, media *IdentifyResult) (string, error) {
+	relDir, ok := mediaparse.BuildTargetRelPath(media.Category, media.Title, media.Season, media.Year)
+	if !ok {
+		return "", errMediaUnrecognized
+	}
+	newName := buildOrganizeNewName(media.Category, media.Title, media.Season, media.Episode, media.Year, path.Ext(e.Name))
+
+	targetDirID, err := ensureOrganizeDirInternal(ctx, account, rootPath, relDir, dirCache)
+	if err != nil {
+		return "", fmt.Errorf("创建目标目录 %s 失败：%v", relDir, err)
+	}
+	if err := moveNetdiskFileInternal(account, e.ID, e.ParentID, targetDirID); err != nil {
+		return "", fmt.Errorf("移动 %s 失败：%v", e.Name, err)
+	}
+	if err := renameNetdiskFileInternal(account, e.ID, e.ParentID, targetDirID, newName); err != nil {
+		return "", fmt.Errorf("重命名 %s 失败：%v", e.Name, err)
+	}
+	return relDir, nil
+}
+
+// saveFailedFile 记录识别失败/整理失败的文件到 movie_pilot_failed_files（任务下同一文件已有待处理记录则不重复插入）
+func saveFailedFile(task *models.MoviePilotUploadTask, account *models.Account, e organizeEntry, err error) {
+	if task == nil || account == nil {
+		return
+	}
+	var count int64
+	if err := db.Db.Model(&models.MoviePilotFailedFile{}).
+		Where("task_id = ? AND file_name = ? AND status = ?", task.ID, e.Name, models.MoviePilotFailedPending).
+		Count(&count); err == nil && count > 0 {
+		return
+	}
+	reason := "文件名无法识别"
+	if err != errMediaUnrecognized && err != nil {
+		reason = err.Error()
+	}
+	f := &models.MoviePilotFailedFile{
+		TaskID:    task.ID,
+		FileName:  e.Name,
+		ParentID:  e.ParentID,
+		RootPath:  task.RemotePath,
+		AccountID: account.ID,
+		Status:    string(models.MoviePilotFailedPending),
+		Reason:    reason,
+	}
+	if err := models.CreateMoviePilotFailedFile(f); err != nil {
+		helpers.AppLogger.Errorf("保存 MoviePilot 识别失败记录失败：%v", err)
+	}
+}
+
+// ResolveFailedFile 手动确认媒体信息后重新整理识别失败的文件（识别失败独立菜单"确认整理"）。
+// 返回整理成功的目标相对目录（相对整理根目录）。
+func ResolveFailedFile(ctx context.Context, account *models.Account, f *models.MoviePilotFailedFile, mediaType, title string, year, season int) (string, error) {
+	if f.Status == string(models.MoviePilotFailedResolved) {
+		return "", fmt.Errorf("该文件已整理完成")
+	}
+	files, err := listNetDirByID(ctx, account, f.ParentID)
+	if err != nil {
+		return "", fmt.Errorf("读取源目录失败：%v", err)
+	}
+	var entry *organizeEntry
+	for i := range files {
+		if files[i].Name == f.FileName && !files[i].IsDir {
+			entry = &files[i]
+			break
+		}
+	}
+	if entry == nil {
+		return "", fmt.Errorf("网盘中已找不到文件 %s（可能已被移动或删除）", f.FileName)
+	}
+	if mediaType != "tv" && mediaType != "movie" {
+		mediaType = "movie"
+	}
+	media := &IdentifyResult{Category: mediaType, Title: title, Year: year, Season: season, Episode: 1}
+	if parsed, ok := mediaparse.ParseEpisode(f.FileName); ok {
+		if parsed.Season > 0 {
+			media.Season = parsed.Season
+		}
+		if parsed.Episode > 0 {
+			media.Episode = parsed.Episode
+		}
+	}
+	if media.Title == "" {
+		return "", fmt.Errorf("请填写媒体标题")
+	}
+	dirCache := map[string]string{}
+	return organizeOneFile(ctx, account, *entry, f.RootPath, dirCache, media)
 }
 
 // buildOrganizeNewName 按目录整理规则生成规范化文件名

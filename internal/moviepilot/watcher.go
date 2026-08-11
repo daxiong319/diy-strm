@@ -293,7 +293,7 @@ func organizeAndSyncStrm(task *models.MoviePilotUploadTask, account *models.Acco
 	if id, err := EnsureRemoteDir(ctx, account, task.RemotePath); err == nil && id != "" {
 		rootID = id
 	}
-	result := organizeUploadedDir(ctx, account, rootID, task.RemotePath)
+	result := organizeUploadedDir(ctx, account, rootID, task.RemotePath, task)
 	helpers.AppLogger.Infof("MoviePilot 整理完成：%s：成功 %d 个，失败 %d 个，无法识别 %d 个", task.Title, result.Organized, result.Failed, result.Unrecognized)
 	if result.Organized == 0 {
 		task.Error = fmt.Sprintf("无整理成功的文件（失败 %d，无法识别 %d）", result.Failed, result.Unrecognized)
@@ -310,7 +310,7 @@ func organizeAndSyncStrm(task *models.MoviePilotUploadTask, account *models.Acco
 	}
 	for _, dir := range result.SuccessDirs {
 		sourcePath := strings.TrimRight(task.RemotePath, "/") + "/" + dir
-		triggerStrmSyncForDir(account, sourcePath, cfg.StrmLocalDir)
+		TriggerStrmSyncForDir(account, sourcePath, cfg.StrmLocalDir)
 	}
 }
 
@@ -348,8 +348,8 @@ func notifyUploadFinished(task *models.MoviePilotUploadTask, success bool, errMs
 	}
 }
 
-// triggerStrmSyncForDir 对整理成功的网盘目录触发手动 STRM 同步（ID=0，按路径定位）
-func triggerStrmSyncForDir(account *models.Account, sourcePath, strmLocalDir string) {
+// TriggerStrmSyncForDir 对整理成功的网盘目录触发手动 STRM 同步（ID=0，按路径定位）
+func TriggerStrmSyncForDir(account *models.Account, sourcePath, strmLocalDir string) {
 	syncTask := &synccron.NewSyncTask{
 		TaskType:   synccron.SyncTaskTypeStrm,
 		SourcePath: sourcePath,

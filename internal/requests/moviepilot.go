@@ -86,3 +86,22 @@ func (r UpdateMoviePilotSubscribeStatusRequest) Validate() error {
 	}
 	return nil
 }
+
+// ResolveMoviePilotFailedFileRequest 确认整理识别失败文件请求
+type ResolveMoviePilotFailedFileRequest struct {
+	MediaType string `json:"media_type"` // movie/tv
+	Title     string `json:"title"`      // 媒体标题
+	Year      int    `json:"year"`       // 年份（可选）
+	Season    int    `json:"season"`     // 季号（剧集，可选，缺省 1）
+}
+
+// Validate 校验确认整理参数
+func (r ResolveMoviePilotFailedFileRequest) Validate() error {
+	if r.MediaType != "movie" && r.MediaType != "tv" {
+		return validation.New("media_type", "媒体类型必须为 movie 或 tv")
+	}
+	if err := validation.NonBlank("title", r.Title); err != nil {
+		return err
+	}
+	return nil
+}

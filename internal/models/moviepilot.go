@@ -138,3 +138,63 @@ func ListMoviePilotUploadTasks(page, pageSize int, status string) ([]MoviePilotU
 	q.Order("id desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&tasks)
 	return tasks, total
 }
+
+// MoviePilotFailedStatus 识别失败文件处理状态
+type MoviePilotFailedStatus string
+
+const (
+	MoviePilotFailedPending  MoviePilotFailedStatus = "pending"  // 待处理
+	MoviePilotFailedResolved MoviePilotFailedStatus = "resolved" // 已确认并整理完成
+	MoviePilotFailedSkipped  MoviePilotFailedStatus = "skipped"  // 已跳过
+)
+
+// MoviePilotFailedFile MoviePilot 上传整理时无法识别的文件（识别失败独立菜单数据）
+type MoviePilotFailedFile struct {
+	BaseModel
+	TaskID    uint   `json:"task_id" gorm:"index"`              // 关联上传任务 ID
+	FileName  string `json:"file_name"`                         // 网盘文件名
+	ParentID  string `json:"parent_id"`                         // 文件所在源目录 ID（网盘语义）
+	RootPath  string `json:"root_path"`                         // 文件所在源目录路径（整理根目录）
+	AccountID uint   `json:"account_id"`                        // 网盘账号 ID
+	Status    string `json:"status" gorm:"index;default:pending"` // 处理状态：pending/resolved/skipped
+	MediaType string `json:"media_type"`                        // 确认后的媒体类型：movie/tv
+	Title     string `json:"title"`                             // 确认后的标题
+	TmdbId    int64  `json:"tmdb_id"`                           // 确认后的 TMDB ID
+	Year      int    `json:"year"`                              // 确认后的年份
+	Season    int    `json:"season"`                            // 确认后的季号（剧集）
+	Reason    string `json:"reason"`                            // 失败原因
+}
+
+func (*MoviePilotFailedFile) TableName() string { return "movie_pilot_failed_files" }
+
+// CreateMoviePilotFailedFile 创建识别失败记录
+func CreateMoviePilotFailedFile(f *MoviePilotFailedFile) error {
+	return db.Db.Create(f).Error
+}
+
+// UpdateMoviePilotFailedFile 更新识别失败记录
+func UpdateMoviePilotFailedFile(f *MoviePilotFailedFile) error {
+	return db.Db.Model(f).Where("id = ?", f.ID).Save(f).Error
+}
+
+// GetMoviePilotFailedFile 查询单条识别失败记录
+func GetMoviePilotFailedFile(id uint) *MoviePilotFailedFile {
+	var f MoviePilotFailedFile
+	if err := db.Db.First(&f, id).Error; err != nil {
+		return nil
+	}
+	return &f
+}
+
+// ListMoviePilotFailedFiles 分页查询识别失败记录
+func ListMoviePilotFailedFiles(page, pageSize int, status string) ([]MoviePilotFailedFile, int64) {
+	var files []MoviePilotFailedFile
+	var total int64
+	q := db.Db.Model(&MoviePilotFailedFile{})
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+	q.Count(&total)
+	q.Order("id desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&files)
+	return files, total
+}
