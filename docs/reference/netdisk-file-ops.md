@@ -279,6 +279,7 @@ MoviePilot 上传任务完成后自动对上传根目录执行同规则整理（
 - 中转上传任务以 `source = "cross_transfer"` 入队，记录 `source_account_id`（源账号）与 `source_file_id`（源文件下载定位 ID：115 为 pickcode、百度为 `fs_id`、其余为文件 ID），下载完成后清理临时文件。
 - 本地指纹秒传（上传队列兜底）：`dbupload.go` 的 `tryLocalFingerprintRapid` 会在普通上传前对**本地文件**计算指纹并再次尝试秒传（115 用 SHA1、123 用 MD5 `duplicate=2`、百度用 MD5 ≤32MB、139 用完整文件 SHA256），命中则跳过普通上传；秒传尝试失败时回退普通上传，不影响上传流程。
 - 139 上传通道（`internal/pan139/upload.go`）：`UploadFile` 先 `/file/create`（`contentHash=SHA256`，`exist` 命中直接完成），未命中 `/file/getUploadUrl` 分批获取分片上传地址（首批发 100 片，超出部分按 100 片一批补齐），逐片 PUT（100MB 分片），最后 `/file/complete` 收尾。删除走 `/recyclebin/batchTrash` 异步任务，`WaitTaskDone` 轮询 `/task/get`（回退 `/hcy/task/get`）至 status=3（status=2 执行中）。
+- 139 上传踩坑（2026-08-12 实测）：①`parentFileId` 必须传目录 ID（`RemotePathId`），传路径/名字报 `04000002` 请求参数不合法；②成功码是 `0000`，`checkUploadCode` 需兼容 `0`/`0000`；③分片 URL 为 AWS 预签名（签名覆盖 `content-length;host`），PUT 必须设置 `req.ContentLength`（`io.LimitReader` 作 body 时 Go 会走 chunked 导致 403 SignatureDoesNotMatch）；④`/file/create` 请求头需完整（含 `Caller`/`Mcloud-Sign` 签名等 personalHeaders 全套），头不全报 `04000003` 请求头不合法。
 
 ### 扫描
 
