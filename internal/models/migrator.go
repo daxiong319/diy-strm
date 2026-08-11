@@ -52,6 +52,10 @@ func Migrate() {
 	if err != nil {
 		helpers.AppLogger.Errorf("获取数据库迁移表失败：%v", err)
 	}
+	// MoviePilot 对接表（幂等创建，兼容既有库升级）
+	if err := db.Db.AutoMigrate(&MoviePilotConfig{}, &MoviePilotUploadTask{}); err != nil {
+		helpers.AppLogger.Errorf("自动迁移 MoviePilot 表失败：%v", err)
+	}
 	db.Db.Statement.PrepareStmt = true
 	if migrator.VersionCode == 1 {
 		// 数据库版本低于最大版本，需要升级

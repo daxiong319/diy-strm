@@ -83,6 +83,14 @@ const AppNotificationChannels = createAsyncRouteComponent(
   'AppNotificationChannels',
   () => import('@/components/AppNotificationChannels.vue'),
 )
+const AppMoviePilotSettings = createAsyncRouteComponent(
+  'AppMoviePilotSettings',
+  () => import('@/components/AppMoviePilotSettings.vue'),
+)
+const AppMoviePilotSubscribes = createAsyncRouteComponent(
+  'AppMoviePilotSubscribes',
+  () => import('@/components/AppMoviePilotSubscribes.vue'),
+)
 const AppApiKeys = createAsyncRouteComponent(
   'AppApiKeys',
   () => import('@/components/AppApiKeys.vue'),
@@ -505,6 +513,40 @@ const routes = [
       requiresAuth: true,
       parent: 'settings',
       icon: 'Promotion',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/settings/moviepilot',
+    name: 'settings-moviepilot',
+    component: AppMoviePilotSettings,
+    meta: {
+      title: 'MoviePilot',
+      requiresAuth: true,
+      parent: 'settings',
+      icon: 'Film',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/moviepilot',
+    name: 'moviepilot',
+    redirect: '/moviepilot/subscribes',
+    meta: {
+      title: '影视订阅',
+      requiresAuth: true,
+      icon: 'Collection',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/moviepilot/subscribes',
+    name: 'moviepilot-subscribes',
+    component: AppMoviePilotSubscribes,
+    meta: {
+      title: '订阅管理',
+      requiresAuth: true,
+      parent: 'moviepilot',
       showInMenu: true,
     },
   },

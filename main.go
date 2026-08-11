@@ -30,6 +30,7 @@ import (
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/migrate"
 	"diy-strm/internal/models"
+	"diy-strm/internal/moviepilot"
 	"diy-strm/internal/realtime"
 	"diy-strm/internal/synccron"
 	"diy-strm/internal/syncstrm"
@@ -504,6 +505,7 @@ func initOthers() {
 	models.InitUQ()                      // 初始化上传队列
 	models.InitNotificationManager()     // 初始化通知管理器
 	controllers.StartListenTelegramBot() // 初始化 Telegram Bot 监听
+	moviepilot.StartMoviePilotWatcher()  // 启动 MoviePilot 订阅下载检测
 	models.GetEmbyConfig()               // 加载 Emby 配置
 	helpers.SubscribeSync(helpers.V115TokenInValidEvent, models.HandleV115TokenInvalid)
 	helpers.SubscribeSync(helpers.SaveOpenListTokenEvent, models.HandleOpenListTokenSaveSync)
@@ -706,6 +708,18 @@ func setRouter(r *gin.Engine) {
 		// api.POST("/setting/telegram", controllers.UpdateTelegram)                                  // 更改 Telegram 消息通知配置
 		// api.POST("/telegram/test", controllers.TestTelegram)                                       // 测试 Telegram 连通性
 		api.GET("/setting/notification/channels", controllers.GetNotificationChannels)             // 获取所有通知渠道
+		api.GET("/setting/moviepilot", controllers.GetMoviePilotConfig)                            // 获取 MoviePilot 配置
+		api.PUT("/setting/moviepilot", controllers.UpdateMoviePilotConfig)                         // 更新 MoviePilot 配置
+		api.POST("/setting/moviepilot/test", controllers.TestMoviePilotConnection)                 // 测试 MoviePilot 连接
+		api.GET("/moviepilot/subscribes", controllers.ListMoviePilotSubscribes)                    // 查询 MoviePilot 订阅列表
+		api.POST("/moviepilot/subscribes", controllers.CreateMoviePilotSubscribe)                  // 添加 MoviePilot 订阅
+		api.POST("/moviepilot/subscribes/:id/search", controllers.SearchMoviePilotSubscribe)       // 触发订阅搜索
+		api.DELETE("/moviepilot/subscribes/:id", controllers.DeleteMoviePilotSubscribe)            // 删除订阅
+		api.PUT("/moviepilot/subscribes/:id/status", controllers.UpdateMoviePilotSubscribeStatus)  // 更新订阅状态
+		api.GET("/moviepilot/downloads", controllers.ListMoviePilotDownloads)                      // 查询 MoviePilot 下载任务
+		api.GET("/moviepilot/upload-tasks", controllers.ListMoviePilotUploadTasks)                 // 查询 139 上传任务
+		api.POST("/moviepilot/upload-tasks/:id/retry", controllers.RetryMoviePilotUploadTask)      // 重试上传任务
+		api.POST("/moviepilot/upload-tasks/:id/cancel", controllers.CancelMoviePilotUploadTask)    // 取消上传任务
 		api.POST("/setting/notification/channels/telegram", controllers.CreateTelegramChannel)     // 创建 Telegram 渠道
 		api.GET("/setting/notification/channels/telegram/:id", controllers.GetTelegramChannel)     // 查询 Telegram 渠道
 		api.PUT("/setting/notification/channels/telegram", controllers.UpdateTelegramChannel)      // 更新 Telegram 渠道
