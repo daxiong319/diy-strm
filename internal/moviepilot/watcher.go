@@ -157,6 +157,7 @@ var (
 )
 
 // checkDownloadHistory 检查 MP 下载历史，为尚未捕获的完成下载创建上传任务。
+// 历史接口按 id 降序返回（最新在前），lastHistoryID 记录已处理过的最大 id。
 // 历史 path 为 MP 侧保存路径（如 alist:/中国移动云盘/影视/待整理/日韩剧集/xxx），
 // 实际文件位于本地视图根目录（LocalViewRoot）下同名目录，故取 path 最后一段递归匹配。
 func checkDownloadHistory() error {
@@ -174,28 +175,33 @@ func checkDownloadHistory() error {
 	}
 
 	historyMu.Lock()
-	cursor := lastHistoryID
+	base := lastHistoryID
 	historyMu.Unlock()
 
 	processed := 0
+	maxID := base
 	for _, h := range histories {
-		if h.ID <= cursor {
-			continue
+		// MP 历史接口按 id 降序返回（最新在前），遇到已处理过的记录即可停止
+		if h.ID <= base {
+			break
 		}
 		if h.DownloadHash == "" {
-			cursor = h.ID
+			if h.ID > maxID {
+				maxID = h.ID
+			}
 			continue
 		}
 		if models.FindMoviePilotUploadTask(h.DownloadHash) != nil {
-			cursor = h.ID
+			if h.ID > maxID {
+				maxID = h.ID
+			}
 			continue
 		}
-		// 本地路径未匹配过的任务 1 小时内不重试（文件可能尚未到位）
+		// 本地路径未匹配过的任务 1 小时内不重试（文件可能尚未到位），且不推进游标
 		historyMu.Lock()
 		lastTry, tried := historyAttempts[h.DownloadHash]
 		historyMu.Unlock()
 		if tried && time.Since(lastTry) < time.Hour {
-			cursor = h.ID
 			continue
 		}
 		localPath := resolveHistoryLocalPath(h, cfg)
@@ -203,7 +209,6 @@ func checkDownloadHistory() error {
 			historyMu.Lock()
 			historyAttempts[h.DownloadHash] = time.Now()
 			historyMu.Unlock()
-			cursor = h.ID
 			continue
 		}
 		mediaType := ""
@@ -217,14 +222,16 @@ func checkDownloadHistory() error {
 		} else {
 			processed++
 		}
-		cursor = h.ID
+		if h.ID > maxID {
+			maxID = h.ID
+		}
 		if processed >= 20 {
 			break
 		}
 	}
 	historyMu.Lock()
-	if cursor > lastHistoryID {
-		lastHistoryID = cursor
+	if maxID > lastHistoryID {
+		lastHistoryID = maxID
 	}
 	historyMu.Unlock()
 	if processed > 0 {
