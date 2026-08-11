@@ -388,7 +388,7 @@ const saveSettings = async () => {
   try {
     loading.value = true
     const response = await http.put(`${SERVER_URL}/setting/moviepilot`, {
-      enabled: formData.enabled ? 1 : 0,
+      enabled: !!formData.enabled,
       base_url: formData.base_url,
       api_token: formData.api_token,
       download_root: formData.download_root,
@@ -397,7 +397,7 @@ const saveSettings = async () => {
       upload_root: formData.upload_root,
       strm_local_dir: formData.strm_local_dir,
       poll_interval: formData.poll_interval,
-      notify_enabled: formData.notify_enabled ? 1 : 0,
+      notify_enabled: !!formData.notify_enabled,
     })
     if (response?.data.code === 200) {
       ElMessage.success(formData.enabled ? 'MoviePilot 配置已保存并启用' : 'MoviePilot 联动已关闭')
