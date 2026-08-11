@@ -117,7 +117,9 @@ func (c *Client) UploadFile(ctx context.Context, parentFileID, name string, size
 			return "", "", false, fmt.Errorf("中国移动云盘构造分片上传请求失败：%v", err)
 		}
 		req.Header.Set("Content-Type", "application/octet-stream")
-		req.Header.Set("Content-Length", fmt.Sprint(partSize))
+		// 分片上传 URL 为 AWS 预签名地址，签名覆盖 content-length;host，
+		// 必须显式声明 ContentLength 字段（LimitReader 非 seekable，否则 Go 会改用 chunked 导致签名不匹配）
+		req.ContentLength = partSize
 		req.Header.Set("Origin", "https://yun.139.com")
 		req.Header.Set("Referer", "https://yun.139.com/")
 		res, err := c.client.Client().Do(req)
