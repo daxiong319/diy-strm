@@ -731,7 +731,7 @@ func (task *DbUploadTask) tryLocalFingerprintRapid() bool {
 			return false
 		}
 		defer file.Close()
-		fileID, _, rapid, err := client.UploadFile(context.Background(), task.RemoteFileId, task.FileName, fileInfo.Size(), fileSHA256, file, nil)
+		fileID, _, rapid, err := client.UploadFile(context.Background(), task.uploadPan139ParentID(), task.FileName, fileInfo.Size(), fileSHA256, file, nil)
 		if err != nil {
 			helpers.AppLogger.Warnf("[上传] 中国移动云盘秒传尝试失败，回退普通上传：%v", err)
 			return false
@@ -907,6 +907,15 @@ func (task *DbUploadTask) UploadGuangYaPanFile() bool {
 }
 
 // UploadPan139File 中国移动云盘上传文件（内部自动尝试秒传，未命中回退分片上传）。
+func (task *DbUploadTask) uploadPan139ParentID() string {
+	// 139 为 ID 语义：父目录 ID 存于 RemotePathId，RemoteFileId 为远程完整路径
+	if id := strings.TrimSpace(task.RemotePathId); id != "" {
+		return id
+	}
+	return task.RemoteFileId
+}
+
+// UploadPan139File 中国移动云盘上传文件（内部自动尝试秒传，未命中回退分片上传）。
 func (task *DbUploadTask) UploadPan139File() bool {
 	account := task.GetAccount()
 	if account == nil {
@@ -935,7 +944,7 @@ func (task *DbUploadTask) UploadPan139File() bool {
 	}
 	defer file.Close()
 	task.Uploading()
-	fileID, _, rapid, err := client.UploadFile(context.Background(), task.RemoteFileId, task.FileName, fileInfo.Size(), sha256, file, func(done int64) {
+	fileID, _, rapid, err := client.UploadFile(context.Background(), task.uploadPan139ParentID(), task.FileName, fileInfo.Size(), sha256, file, func(done int64) {
 		task.UploadedBytes = done
 		if err := db.Db.Model(task).Update("uploaded_bytes", done).Error; err != nil {
 			helpers.AppLogger.Warnf("[上传] 保存中国移动云盘上传进度失败：%s", err.Error())
