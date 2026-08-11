@@ -693,6 +693,7 @@ func setRouter(r *gin.Engine) {
 		api.POST("/path/create", controllers.CreateDir)                                     // 创建目录接口
 		api.DELETE("/path", controllers.DeleteDir)                                          // 删除目录接口
 		api.GET("/path/files", controllers.GetNetFileList)                                  // 查询网盘文件列表
+		api.GET("/path/local", controllers.ListLocalDirectories)                           // 查询本地目录列表
 		api.POST("/path/rename", controllers.RenameFile)                                    // 重命名网盘文件或目录
 		api.POST("/path/move", controllers.MoveFile)                                        // 移动网盘文件或目录
 		api.POST("/files/name-align/preview", controllers.NameAlignPreview)                 // 命名对齐预览

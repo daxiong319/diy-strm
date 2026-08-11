@@ -180,23 +180,21 @@ func pathExists(p string) bool {
 	return err == nil
 }
 
-// runUploadTask 执行上传任务
+// runUploadTask 执行上传任务：创建文件级上传任务走系统统一上传队列
 func runUploadTask(task *models.MoviePilotUploadTask) {
-	task.Status = models.MoviePilotUploadUploading
-	_ = models.UpdateMoviePilotUploadTask(task)
-
+	cfg := models.LoadMoviePilotConfig()
 	var account models.Account
-	if err := db.Db.Where("source_type = ?", models.SourceTypePan139).Order("id asc").First(&account).Error; err != nil {
-		failUploadTask(task, fmt.Errorf("未配置中国移动云盘账号"))
+	if err := db.Db.First(&account, cfg.UploadAccountId).Error; err != nil {
+		failUploadTask(task, fmt.Errorf("上传账号不存在（ID=%d），请在设置中配置", cfg.UploadAccountId))
 		return
 	}
 
-	client := account.GetPan139Client()
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
-	defer cancel()
+	task.Status = models.MoviePilotUploadUploading
+	task.Error = ""
+	_ = models.UpdateMoviePilotUploadTask(task)
 
-	files, err := CollectLocalFiles(task.LocalPath)
-	if err == nil {
+	// 统计本地文件
+	if files, err := CollectLocalFiles(task.LocalPath); err == nil {
 		var totalBytes int64
 		for _, f := range files {
 			totalBytes += f.Size
@@ -206,22 +204,114 @@ func runUploadTask(task *models.MoviePilotUploadTask) {
 		_ = models.UpdateMoviePilotUploadTask(task)
 	}
 
-	uploaded, err := UploadLocalDirToPan139(ctx, client, task.LocalPath, task.RemotePath, func(p *UploadProgress) {
-		task.UploadedFiles = p.FileIndex
-		task.UploadedBytes = p.UploadedBytes
-		_ = models.UpdateMoviePilotUploadTask(task)
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
+	defer cancel()
+
+	// 重试场景：清理该任务旧的批次记录
+	purgeMoviePilotDbTasks(task.ID)
+
+	baseDirID, err := EnsureRemoteDir(ctx, &account, task.RemotePath)
 	if err != nil {
-		failUploadTask(task, err)
+		failUploadTask(task, fmt.Errorf("定位网盘上传目录失败：%v", err))
 		return
 	}
-	task.UploadedFiles = uploaded
-	task.Status = models.MoviePilotUploadUploaded
-	_ = models.UpdateMoviePilotUploadTask(task)
+	created, err := CreateMoviePilotUploadTasks(ctx, &account, task.ID, task.LocalPath, task.RemotePath, baseDirID)
+	if err != nil {
+		failUploadTask(task, fmt.Errorf("创建上传任务失败：%v", err))
+		return
+	}
+	if created == 0 {
+		failUploadTask(task, fmt.Errorf("没有可上传的文件"))
+		return
+	}
+	helpers.AppLogger.Infof("MoviePilot 已创建上传批次：%s 共 %d 个文件 → %s", task.Title, created, task.RemotePath)
+	// 异步等待批次完成，避免阻塞串行上传队列
+	go waitMoviePilotBatchFinalize(task, &account, cfg)
+}
 
-	helpers.AppLogger.Infof("MoviePilot 上传完成：%s 共 %d 个文件 → %s", task.Title, uploaded, task.RemotePath)
-	notifyUploadFinished(task, true, "")
-	triggerStrmSync(task)
+// waitMoviePilotBatchFinalize 轮询批次文件任务完成，聚合进度并执行收尾（整理/STRM/通知）
+func waitMoviePilotBatchFinalize(task *models.MoviePilotUploadTask, account *models.Account, cfg *models.MoviePilotConfig) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	deadline := time.Now().Add(6 * time.Hour)
+	for range ticker.C {
+		if moviePilotDbTasksFinished(task.ID) {
+			break
+		}
+		totalBytes, uploadedBytes, totalFiles, uploadedFiles := moviePilotDbTaskProgress(task.ID)
+		task.TotalBytes = totalBytes
+		task.UploadedBytes = uploadedBytes
+		task.TotalFiles = int(totalFiles)
+		task.UploadedFiles = int(uploadedFiles)
+		_ = models.UpdateMoviePilotUploadTask(task)
+		if time.Now().After(deadline) {
+			helpers.AppLogger.Errorf("MoviePilot 等待批次完成超时：%s", task.Title)
+			break
+		}
+	}
+
+	var failedCount int64
+	db.Db.Model(&models.DbUploadTask{}).
+		Where("movie_pilot_task_id = ? AND status IN ?", task.ID, []models.UploadStatus{
+			models.UploadStatusFailed, models.UploadStatusCancelled,
+		}).
+		Count(&failedCount)
+	totalBytes, uploadedBytes, totalFiles, uploadedFiles := moviePilotDbTaskProgress(task.ID)
+	task.TotalBytes = totalBytes
+	task.UploadedBytes = uploadedBytes
+	task.TotalFiles = int(totalFiles)
+	task.UploadedFiles = int(uploadedFiles)
+
+	if failedCount > 0 {
+		if int64(totalFiles) > 0 && failedCount >= int64(totalFiles) {
+			failUploadTask(task, fmt.Errorf("全部文件上传失败（%d 个）", failedCount))
+			return
+		}
+		task.Status = models.MoviePilotUploadUploaded
+		task.Error = fmt.Sprintf("部分文件上传失败：%d 个", failedCount)
+		_ = models.UpdateMoviePilotUploadTask(task)
+		helpers.AppLogger.Warnf("MoviePilot 上传部分失败：%s：%s", task.Title, task.Error)
+		notifyUploadFinished(task, false, task.Error)
+	} else {
+		task.Status = models.MoviePilotUploadUploaded
+		task.Error = ""
+		_ = models.UpdateMoviePilotUploadTask(task)
+		helpers.AppLogger.Infof("MoviePilot 上传完成：%s 共 %d 个文件 → %s", task.Title, totalFiles, task.RemotePath)
+		notifyUploadFinished(task, true, "")
+	}
+
+	// 网盘端整理（文件名解析）→ 整理成功目录生成 STRM
+	organizeAndSyncStrm(task, account, cfg)
+}
+
+// organizeAndSyncStrm 上传完成后执行网盘端整理并按整理成功目录触发 STRM 同步
+func organizeAndSyncStrm(task *models.MoviePilotUploadTask, account *models.Account, cfg *models.MoviePilotConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	rootID := strings.TrimSpace(task.RemotePath)
+	if id, err := EnsureRemoteDir(ctx, account, task.RemotePath); err == nil && id != "" {
+		rootID = id
+	}
+	result := organizeUploadedDir(ctx, account, rootID, task.RemotePath)
+	helpers.AppLogger.Infof("MoviePilot 整理完成：%s：成功 %d 个，失败 %d 个，无法识别 %d 个", task.Title, result.Organized, result.Failed, result.Unrecognized)
+	if result.Organized == 0 {
+		task.Error = fmt.Sprintf("无整理成功的文件（失败 %d，无法识别 %d）", result.Failed, result.Unrecognized)
+		if task.Error == "" {
+			task.Error = "无整理成功的文件"
+		}
+		_ = models.UpdateMoviePilotUploadTask(task)
+		return
+	}
+
+	if strings.TrimSpace(cfg.StrmLocalDir) == "" {
+		helpers.AppLogger.Warnf("MoviePilot 未配置 STRM 本地输出目录，跳过 STRM 生成：%s", task.Title)
+		return
+	}
+	for _, dir := range result.SuccessDirs {
+		sourcePath := strings.TrimRight(task.RemotePath, "/") + "/" + dir
+		triggerStrmSyncForDir(account, sourcePath, cfg.StrmLocalDir)
+	}
 }
 
 // failUploadTask 标记失败并通知
@@ -240,12 +330,12 @@ func notifyUploadFinished(task *models.MoviePilotUploadTask, success bool, errMs
 		return
 	}
 	notifType := notification.MediaAdded
-	title := "✅ 订阅下载已上传 139"
+	title := "✅ 订阅下载已上传网盘"
 	if !success {
 		notifType = notification.SystemAlert
-		title = "❌ 订阅下载上传 139 失败"
+		title = "❌ 订阅下载上传网盘失败"
 	}
-	content := fmt.Sprintf("%s\n本地路径：%s\n139 路径：%s", task.Title, task.LocalPath, task.RemotePath)
+	content := fmt.Sprintf("%s\n本地路径：%s\n网盘路径：%s", task.Title, task.LocalPath, task.RemotePath)
 	if !success {
 		content += "\n错误：" + errMsg
 	}
@@ -258,28 +348,20 @@ func notifyUploadFinished(task *models.MoviePilotUploadTask, success bool, errMs
 	}
 }
 
-// triggerStrmSync 上传完成后触发配置的 STRM 同步目录
-func triggerStrmSync(task *models.MoviePilotUploadTask) {
-	cfg := models.LoadMoviePilotConfig()
-	if cfg.SyncPathId == 0 {
-		return
-	}
-	var account models.Account
-	if err := db.Db.Where("source_type = ?", models.SourceTypePan139).Order("id asc").First(&account).Error; err != nil {
-		helpers.AppLogger.Errorf("MoviePilot 触发 STRM 同步失败：未找到 139 账号")
-		return
-	}
+// triggerStrmSyncForDir 对整理成功的网盘目录触发手动 STRM 同步（ID=0，按路径定位）
+func triggerStrmSyncForDir(account *models.Account, sourcePath, strmLocalDir string) {
 	syncTask := &synccron.NewSyncTask{
-		ID:         cfg.SyncPathId,
 		TaskType:   synccron.SyncTaskTypeStrm,
-		SourceType: models.SourceTypePan139,
+		SourcePath: sourcePath,
 		AccountId:  account.ID,
+		SourceType: account.SourceType,
+		TargetPath: strings.TrimRight(strmLocalDir, "/"),
 	}
 	if err := synccron.AddNewSyncTask(syncTask); err != nil {
-		helpers.AppLogger.Errorf("MoviePilot 触发 STRM 同步失败：%v", err)
+		helpers.AppLogger.Errorf("MoviePilot 触发 STRM 同步失败（%s）：%v", sourcePath, err)
 		return
 	}
-	helpers.AppLogger.Infof("MoviePilot 上传完成已触发 STRM 同步（同步目录 ID=%d）", cfg.SyncPathId)
+	helpers.AppLogger.Infof("MoviePilot 已触发 STRM 同步：%s → %s", sourcePath, strmLocalDir)
 }
 
 // RetryUploadTask 重试失败/取消的上传任务
@@ -298,8 +380,14 @@ func RetryUploadTask(taskID uint) bool {
 	if err := models.UpdateMoviePilotUploadTask(task); err != nil {
 		return false
 	}
+	purgeMoviePilotDbTasks(task.ID)
 	uploadQueue <- task
 	return true
+}
+
+// purgeMoviePilotDbTasks 删除某 MoviePilot 任务的文件级上传批次记录
+func purgeMoviePilotDbTasks(mpTaskId uint) {
+	db.Db.Where("movie_pilot_task_id = ?", mpTaskId).Delete(&models.DbUploadTask{})
 }
 
 // CancelUploadTask 取消待处理/失败的上传任务

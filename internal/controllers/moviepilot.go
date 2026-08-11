@@ -43,15 +43,17 @@ func UpdateMoviePilotConfig(c *gin.Context) {
 		return
 	}
 	cfg, ok := models.UpdateMoviePilotConfig(&models.MoviePilotConfig{
-		Enabled:       req.Enabled,
-		BaseUrl:       req.BaseUrl,
-		ApiToken:      req.ApiToken,
-		DownloadRoot:  req.DownloadRoot,
-		LocalViewRoot: req.LocalViewRoot,
-		UploadRoot:    req.UploadRoot,
-		PollInterval:  req.PollInterval,
-		SyncPathId:    req.SyncPathId,
-		NotifyEnabled: req.NotifyEnabled,
+		Enabled:         req.Enabled,
+		BaseUrl:         req.BaseUrl,
+		ApiToken:        req.ApiToken,
+		DownloadRoot:    req.DownloadRoot,
+		LocalViewRoot:   req.LocalViewRoot,
+		UploadAccountId: req.UploadAccountId,
+		UploadRoot:      req.UploadRoot,
+		UploadRootId:    req.UploadRootId,
+		StrmLocalDir:    req.StrmLocalDir,
+		PollInterval:    req.PollInterval,
+		NotifyEnabled:   req.NotifyEnabled,
 	})
 	if !ok {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "更新 MoviePilot 配置失败", Data: nil})

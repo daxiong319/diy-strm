@@ -15,6 +15,8 @@ const (
 	APICreateDir     = "/nd.bizuserres.s/v1/file/create_dir"
 	APIDeleteFile    = "/nd.bizuserres.s/v1/file/delete_file"
 	APIGetTaskStatus = "/nd.bizuserres.s/v1/get_task_status"
+	APIRename        = "/userres/v1/file/rename"
+	APIMoveFile      = "/userres/v1/file/move_file"
 )
 
 // PageSize 单页列表大小（与 Web 端一致）
@@ -208,6 +210,51 @@ func (c *Client) waitTaskDone(ctx context.Context, taskID string) error {
 		}
 	}
 	return fmt.Errorf("光鸭云盘任务 %s 超时", taskID)
+}
+
+// Rename 重命名文件或目录
+func (c *Client) Rename(ctx context.Context, fileID, newName string) error {
+	fileID = strings.TrimSpace(fileID)
+	newName = strings.TrimSpace(newName)
+	if fileID == "" {
+		return errors.New("光鸭云盘重命名失败：fileID 为空")
+	}
+	if newName == "" {
+		return errors.New("光鸭云盘重命名失败：newName 为空")
+	}
+	var out CommonResp
+	if err := c.Request(ctx, APIRename, map[string]interface{}{
+		"fileId":  fileID,
+		"newName": newName,
+	}, &out); err != nil {
+		return err
+	}
+	if !isSuccess(out.Code, out.Msg) {
+		return fmt.Errorf("光鸭云盘重命名失败：code=%d msg=%s", out.Code, out.Msg)
+	}
+	return nil
+}
+
+// Move 移动文件或目录到目标目录，等待异步任务完成
+func (c *Client) Move(ctx context.Context, fileIDs []string, targetParentID string) error {
+	if len(fileIDs) == 0 {
+		return nil
+	}
+	var out CommonResp
+	if err := c.Request(ctx, APIMoveFile, map[string]interface{}{
+		"fileIds":  fileIDs,
+		"parentId": targetParentID,
+	}, &out); err != nil {
+		return err
+	}
+	if !isSuccess(out.Code, out.Msg) {
+		return fmt.Errorf("光鸭云盘移动失败：code=%d msg=%s", out.Code, out.Msg)
+	}
+	taskID := strings.TrimSpace(out.Data.TaskID)
+	if taskID == "" {
+		return nil
+	}
+	return c.waitTaskDone(ctx, taskID)
 }
 
 // Delete 删除文件或目录（放入回收站），等待异步任务完成

@@ -2,16 +2,14 @@ package moviepilot
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"diy-strm/internal/db"
 	"diy-strm/internal/helpers"
-	"diy-strm/internal/pan139"
+	"diy-strm/internal/models"
 )
 
 // LocalFile 待上传的本地文件
@@ -57,116 +55,117 @@ func CollectLocalFiles(root string) ([]LocalFile, error) {
 	return files, nil
 }
 
-// EnsureRemotePath 确保 139 上存在该路径（逐级创建），返回最终目录 ID
-func EnsureRemotePath(ctx context.Context, client *pan139.Client, path string) (string, error) {
-	path = strings.Trim(path, "/")
-	if path == "" {
-		return "root", nil
+// CreateMoviePilotUploadTasks 为本地目录生成文件级上传任务（走系统统一上传队列）
+// remoteRootPath 为目标网盘上传根目录路径，remoteRootId 为根目录 ID（各网盘语义：ID 或路径）
+// 返回创建的文件任务数
+func CreateMoviePilotUploadTasks(ctx context.Context, account *models.Account, moviePilotTaskId uint, localRoot, remoteRootPath, remoteRootId string) (int, error) {
+	if account == nil {
+		return 0, fmt.Errorf("上传账号为空")
 	}
-	parentID := "root"
-	for _, part := range strings.Split(path, "/") {
-		if part == "" {
-			continue
-		}
-		files, err := client.GetFiles(ctx, parentID)
-		if err != nil {
-			return "", err
-		}
-		found := ""
-		for _, f := range files {
-			if f.IsDir() && f.FileName == part {
-				found = f.GetID()
-				break
-			}
-		}
-		if found == "" {
-			found, err = client.CreateDir(ctx, parentID, part)
-			if err != nil {
-				return "", fmt.Errorf("创建 139 目录 %s 失败：%v", part, err)
-			}
-			helpers.AppLogger.Infof("MoviePilot 上传：已在 139 创建目录 %s", part)
-		}
-		parentID = found
-	}
-	return parentID, nil
-}
-
-// UploadProgress 上传进度回调
-type UploadProgress struct {
-	FileIndex    int
-	TotalFiles   int
-	UploadedBytes int64
-	TotalBytes   int64
-	CurrentName  string
-}
-
-// UploadLocalDirToPan139 把本地目录完整上传到 139 指定目录（保留相对结构），返回上传文件数
-// progress 可为 nil；secUploadRapid 命中时该文件仍需计入已上传数
-func UploadLocalDirToPan139(ctx context.Context, client *pan139.Client, localRoot, remotePath string, progress func(*UploadProgress)) (int, error) {
 	files, err := CollectLocalFiles(localRoot)
 	if err != nil {
 		return 0, err
 	}
-	var totalBytes int64
+
+	baseDirId := strings.TrimSpace(remoteRootId)
+	if baseDirId == "" {
+		baseDirId, err = EnsureRemoteDir(ctx, account, remoteRootPath)
+		if err != nil {
+			return 0, fmt.Errorf("定位上传根目录失败：%v", err)
+		}
+	}
+
+	dirIDCache := map[string]string{}
+	created := 0
 	for _, f := range files {
-		totalBytes += f.Size
-	}
-
-	targetID, err := EnsureRemotePath(ctx, client, remotePath)
-	if err != nil {
-		return 0, err
-	}
-
-	uploaded := 0
-	var uploadedBytes int64
-	for i, f := range files {
 		if err := ctx.Err(); err != nil {
-			return uploaded, err
+			return created, err
 		}
 		dir := filepath.ToSlash(filepath.Dir(f.RelPath))
-		parentID := targetID
+		parentID := baseDirId
 		if dir != "." && dir != "" {
-			parentID, err = EnsureRemotePath(ctx, client, strings.TrimRight(remotePath, "/")+"/"+dir)
-			if err != nil {
-				return uploaded, fmt.Errorf("创建上传子目录 %s 失败：%v", dir, err)
+			relDir := strings.TrimRight(remoteRootPath, "/") + "/" + dir
+			if id, ok := dirIDCache[dir]; ok {
+				parentID = id
+			} else {
+				id, err := EnsureRemoteDir(ctx, account, relDir)
+				if err != nil {
+					helpers.AppLogger.Errorf("MoviePilot 创建上传子目录 %s 失败：%v", relDir, err)
+					continue
+				}
+				dirIDCache[dir] = id
+				parentID = id
 			}
 		}
-		name := filepath.Base(f.RelPath)
-
-		// 计算 SHA256（秒传需要）
-		hash, err := fileSha256(f.AbsPath)
-		if err != nil {
-			return uploaded, fmt.Errorf("计算 %s 的 SHA256 失败：%v", f.AbsPath, err)
+		task := &models.DbUploadTask{
+			AccountId:        account.ID,
+			SourceType:       account.SourceType,
+			MoviePilotTaskId: moviePilotTaskId,
+			LocalFullPath:    f.AbsPath,
+			RelativePath:     f.RelPath,
+			RemoteFileId:     strings.TrimRight(remoteRootPath, "/") + "/" + f.RelPath,
+			RemotePathId:     parentID,
+			FileName:         filepath.Base(f.RelPath),
+			Source:           models.UploadSourceMoviePilot,
+			Status:           models.UploadStatusPending,
+			FileSize:         f.Size,
 		}
-		file, err := os.Open(f.AbsPath)
-		if err != nil {
-			return uploaded, fmt.Errorf("打开文件 %s 失败：%v", f.AbsPath, err)
+		if err := models.CreateUploadTask(task); err != nil {
+			helpers.AppLogger.Errorf("MoviePilot 创建文件上传任务失败：%s：%v", f.AbsPath, err)
+			continue
 		}
-		_, _, _, err = client.UploadFile(ctx, parentID, name, f.Size, hash, file, nil)
-		file.Close()
-		if err != nil {
-			return uploaded, fmt.Errorf("上传 %s 失败：%v", f.AbsPath, err)
-		}
-		uploaded++
-		uploadedBytes += f.Size
-		if progress != nil {
-			progress(&UploadProgress{FileIndex: i + 1, TotalFiles: len(files), UploadedBytes: uploadedBytes, TotalBytes: totalBytes, CurrentName: name})
-		}
-		helpers.AppLogger.Infof("MoviePilot 上传进度：%d/%d %s（%.1f%%）", i+1, len(files), name, float64(uploadedBytes)*100/float64(totalBytes))
+		created++
 	}
-	return uploaded, nil
+	return created, nil
 }
 
-// fileSha256 计算文件 SHA256
-func fileSha256(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
+// moviePilotUploadTaskIdsByDbTask 通过 db_upload_tasks 反查指定批次的任务
+func moviePilotDbTasks(mpTaskId uint) []*models.DbUploadTask {
+	var tasks []*models.DbUploadTask
+	db.Db.Where("movie_pilot_task_id = ?", mpTaskId).Order("id asc").Find(&tasks)
+	return tasks
+}
+
+// moviePilotDbTasksFinished 批次是否全部进入终态
+func moviePilotDbTasksFinished(mpTaskId uint) bool {
+	var total int64
+	db.Db.Model(&models.DbUploadTask{}).
+		Where("movie_pilot_task_id = ?", mpTaskId).
+		Count(&total)
+	if total == 0 {
+		return false
 	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	var unfinished int64
+	db.Db.Model(&models.DbUploadTask{}).
+		Where("movie_pilot_task_id = ? AND status NOT IN ?", mpTaskId, []models.UploadStatus{
+			models.UploadStatusCompleted, models.UploadStatusFailed, models.UploadStatusCancelled,
+		}).
+		Count(&unfinished)
+	return unfinished == 0
+}
+
+// moviePilotDbTasksAllSuccess 批次是否全部上传成功
+func moviePilotDbTasksAllSuccess(mpTaskId uint) bool {
+	var failed int64
+	db.Db.Model(&models.DbUploadTask{}).
+		Where("movie_pilot_task_id = ? AND status IN ?", mpTaskId, []models.UploadStatus{
+			models.UploadStatusFailed, models.UploadStatusCancelled,
+		}).
+		Count(&failed)
+	return failed == 0
+}
+
+// moviePilotDbTaskProgress 汇总批次的上传进度
+func moviePilotDbTaskProgress(mpTaskId uint) (totalBytes, uploadedBytes int64, totalFiles, uploadedFiles int64) {
+	db.Db.Model(&models.DbUploadTask{}).
+		Where("movie_pilot_task_id = ?", mpTaskId).
+		Select("COALESCE(SUM(file_size),0), COALESCE(SUM(uploaded_bytes),0)").
+		Row().Scan(&totalBytes, &uploadedBytes)
+	db.Db.Model(&models.DbUploadTask{}).
+		Where("movie_pilot_task_id = ?", mpTaskId).
+		Count(&totalFiles)
+	db.Db.Model(&models.DbUploadTask{}).
+		Where("movie_pilot_task_id = ? AND status = ?", mpTaskId, models.UploadStatusCompleted).
+		Count(&uploadedFiles)
+	return
 }

@@ -5,7 +5,7 @@
         <div class="card-header" style="padding-bottom: 12px">
           <div>
             <h2 class="hide-on-mobile">MoviePilot 订阅</h2>
-            <p class="queue-description">在 MoviePilot 中订阅剧集/电影，下载完成后自动上传 139 并生成 STRM。</p>
+            <p class="queue-description">在 MoviePilot 中订阅剧集/电影，下载完成后自动上传网盘并生成 STRM。</p>
           </div>
           <div class="header-actions">
             <el-button type="primary" :icon="Plus" @click="openCreateDialog">添加订阅</el-button>
@@ -63,11 +63,11 @@
         </el-table>
       </el-tab-pane>
 
-      <el-tab-pane label="139 上传任务" name="upload-tasks">
+      <el-tab-pane label="网盘上传任务" name="upload-tasks">
         <div class="card-header" style="padding-bottom: 12px">
           <div>
-            <h2 class="hide-on-mobile">139 上传任务</h2>
-            <p class="queue-description">MoviePilot 下载完成后自动上传中国移动云盘的任务进度。</p>
+            <h2 class="hide-on-mobile">网盘上传任务</h2>
+            <p class="queue-description">MoviePilot 下载完成后自动上传到目标网盘，并执行文件名解析整理（重命名 + 分类移动）的任务进度。</p>
           </div>
           <div>
             <el-select v-model="uploadStatusFilter" style="width: 140px; margin-right: 8px" @change="loadUploadTasks">

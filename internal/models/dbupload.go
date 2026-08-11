@@ -40,6 +40,7 @@ const (
 	UploadSourceScrape           UploadSource = "scrape_organize"
 	UploadSourceDirectoryMonitor UploadSource = "directory_monitor"
 	UploadSourceCrossTransfer    UploadSource = "cross_transfer"
+	UploadSourceMoviePilot       UploadSource = "moviepilot"
 )
 
 // UploadResult 是上传任务的最终结果类型。
@@ -83,7 +84,8 @@ type DbUploadTask struct {
 	RelativePath          string                    `json:"relative_path" gorm:"type:text;size:1024"`          // 目录监控源文件相对路径
 	SourceFingerprint     string                    `json:"source_fingerprint" gorm:"size:128;index"`          // 目录监控源文件签名
 	RemoteFileId          string                    `json:"remote_file_id" gorm:"index:idx_remote_file_id"`    // 远程文件 ID，包含完整路径
-	RemotePathId          string                    `json:"remote_path_id"`                                    // 父目录 CID，如果是 115 则是文件夹 ID，如果是 OpenList 则是父文件夹路径
+	RemotePathId          string                    `json:"remote_path_id"`                                    // 父目录 ID，如果是 115 则是文件夹 ID，如果是 OpenList 则是父文件夹路径
+	MoviePilotTaskId      uint                      `json:"movie_pilot_task_id" gorm:"default:0;index"`        // MoviePilot 上传批次任务 ID
 	FileName              string                    `json:"file_name"`                                         // 要上传的文件名
 	Status                UploadStatus              `json:"status" gorm:"index:idx_status_new"`                // 任务状态
 	FileSize              int64                     `json:"file_size"`                                         // 文件大小

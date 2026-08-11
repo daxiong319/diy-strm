@@ -9,18 +9,20 @@ import (
 
 // MoviePilotConfig MoviePilot 对接配置（单行表）
 type MoviePilotConfig struct {
-	ID            uint   `json:"id" gorm:"primaryKey"`
-	Enabled       bool   `json:"enabled" gorm:"default:false"`              // 是否启用订阅自动下载检测
-	BaseUrl       string `json:"base_url"`                                  // MoviePilot 地址，如 http://127.0.0.1:3000
-	ApiToken      string `json:"api_token"`                                 // MoviePilot API Token（settings.API_TOKEN）
-	DownloadRoot  string `json:"download_root"`                             // 下载器保存根目录（MoviePilot 侧路径）
-	LocalViewRoot string `json:"local_view_root"`                           // 下载目录在本容器/进程中的路径（用于前缀映射）
-	UploadRoot    string `json:"upload_root"`                               // 139 上传目标根目录，如 /影视/订阅下载
-	PollInterval  int    `json:"poll_interval" gorm:"default:5"`            // 轮询间隔（分钟）
-	SyncPathId    uint   `json:"sync_path_id"`                              // 上传完成后触发的 STRM 同步目录 ID（0=不自动同步）
-	NotifyEnabled bool   `json:"notify_enabled" gorm:"default:true"`        // 完成后是否发送通知
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID             uint     `json:"id" gorm:"primaryKey"`
+	Enabled        bool     `json:"enabled" gorm:"default:false"`    // 是否启用订阅自动下载检测
+	BaseUrl        string   `json:"base_url"`                        // MoviePilot 地址，如 http://127.0.0.1:3000
+	ApiToken       string   `json:"api_token"`                       // MoviePilot API Token（settings.API_TOKEN）
+	DownloadRoot   string   `json:"download_root"`                   // 下载器保存根目录（MoviePilot 侧路径）
+	LocalViewRoot  string   `json:"local_view_root"`                 // 下载目录在本容器/进程中的路径（用于前缀映射）
+	UploadAccountId uint    `json:"upload_account_id"`               // 目标网盘账号 ID（0=禁用上传）
+	UploadRoot     string   `json:"upload_root"`                     // 目标网盘上传根目录（路径）
+	UploadRootId   string   `json:"upload_root_id"`                  // 目标网盘上传根目录 ID
+	StrmLocalDir   string   `json:"strm_local_dir"`                  // STRM 文件本地输出目录
+	PollInterval   int      `json:"poll_interval" gorm:"default:5"`  // 轮询间隔（分钟）
+	NotifyEnabled  bool     `json:"notify_enabled" gorm:"default:true"` // 完成后是否发送通知
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 func (*MoviePilotConfig) TableName() string { return "movie_pilot_configs" }
@@ -48,11 +50,13 @@ func UpdateMoviePilotConfig(req *MoviePilotConfig) (*MoviePilotConfig, bool) {
 	cfg.ApiToken = req.ApiToken
 	cfg.DownloadRoot = req.DownloadRoot
 	cfg.LocalViewRoot = req.LocalViewRoot
+	cfg.UploadAccountId = req.UploadAccountId
 	cfg.UploadRoot = req.UploadRoot
+	cfg.UploadRootId = req.UploadRootId
+	cfg.StrmLocalDir = req.StrmLocalDir
 	if req.PollInterval > 0 {
 		cfg.PollInterval = req.PollInterval
 	}
-	cfg.SyncPathId = req.SyncPathId
 	cfg.NotifyEnabled = req.NotifyEnabled
 	if err := db.Db.Model(cfg).Where("id = ?", cfg.ID).Save(cfg).Error; err != nil {
 		helpers.AppLogger.Errorf("更新 MoviePilot 配置失败：%v", err)

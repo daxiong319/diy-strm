@@ -5,25 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"path"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"diy-strm/internal/helpers"
+	"diy-strm/internal/mediaparse"
 	"diy-strm/internal/models"
 
 	"github.com/gin-gonic/gin"
-)
-
-// organizeVideoExts 目录整理识别的视频扩展名（与 STRM 默认视频扩展名一致）
-var organizeVideoExts = map[string]bool{
-	".mp4": true, ".mkv": true, ".avi": true, ".mov": true, ".wmv": true,
-	".flv": true, ".webm": true, ".m4v": true, ".3gp": true, ".ts": true,
-}
-
-var (
-	organizeYearRe = regexp.MustCompile(`(19|20)\d{2}`)
-	organizeMiscRe = regexp.MustCompile(`(?i)(1080p|720p|2160p|4k|bluray|blu-ray|web-?dl|webrip|hdr|hdr10|dolby|atmos|ddp?|5\.1|7\.1|ac3|aac|hevc|h\.?26[45]|x26[45]|xvid|chd|chdw|hd|sdr|repack|proper|extended|remux|uhd)`)
 )
 
 // organizeEntry 扫描到的文件或目录
@@ -114,62 +102,18 @@ func collectOrganizeEntries(ctx context.Context, account *models.Account, parent
 }
 
 func isOrganizeVideo(name string) bool {
-	ext := strings.ToLower(path.Ext(name))
-	return organizeVideoExts[ext]
+	return mediaparse.IsVideoExt(name)
 }
 
 // parseOrganizeMedia 解析文件名归类：返回分类、标题、季、集、年份。
 // movie：含年份；tv：含季集信息；unknown：其他。
 func parseOrganizeMedia(name string) (category string, title string, season int, episode int, year int) {
-	stem := strings.TrimSuffix(name, path.Ext(name))
-	if parsed, ok := parseNameAlignEpisode(stem); ok {
-		title = cleanMediaTitle(parsed.Title)
-		season = parsed.Season
-		episode = parsed.Episode
-		if season == 0 {
-			season = 1
-		}
-		if m := organizeYearRe.FindString(title); m != "" {
-			year, _ = strconv.Atoi(m)
-			title = strings.TrimSpace(strings.Replace(title, m, "", 1))
-		}
-		return "tv", title, season, episode, year
-	}
-	title = cleanMediaTitle(stem)
-	title = organizeMiscRe.ReplaceAllString(title, " ")
-	title = strings.TrimSpace(strings.Join(strings.Fields(title), " "))
-	if m := organizeYearRe.FindString(stem); m != "" {
-		year, _ = strconv.Atoi(m)
-		title = cleanMediaTitle(strings.Replace(stem, m, "", 1))
-		title = organizeMiscRe.ReplaceAllString(title, " ")
-		title = strings.TrimSpace(strings.Join(strings.Fields(title), " "))
-		return "movie", title, 0, 0, year
-	}
-	return "unknown", title, 0, 0, 0
+	return mediaparse.ParseMedia(name)
 }
 
 // buildOrganizeTargetRelPath 构建目标相对路径（相对整理根目录）
 func buildOrganizeTargetRelPath(category string, title string, season int, year int) (string, bool) {
-	if category == "movie" {
-		if title == "" {
-			return "", false
-		}
-		if year > 0 {
-			return fmt.Sprintf("电影/%s (%d)", title, year), true
-		}
-		return fmt.Sprintf("电影/%s", title), true
-	}
-	if category == "tv" {
-		if title == "" {
-			return "", false
-		}
-		base := fmt.Sprintf("剧集/%s", title)
-		if year > 0 {
-			base = fmt.Sprintf("剧集/%s (%d)", title, year)
-		}
-		return fmt.Sprintf("%s/Season %02d", base, season), true
-	}
-	return "", false
+	return mediaparse.BuildTargetRelPath(category, title, season, year)
 }
 
 // OrganizePreviewRequest 目录整理预览请求

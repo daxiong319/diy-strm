@@ -518,15 +518,7 @@ const routes = [
   },
   {
     path: '/settings/moviepilot',
-    name: 'settings-moviepilot',
-    component: AppMoviePilotSettings,
-    meta: {
-      title: 'MoviePilot',
-      requiresAuth: true,
-      parent: 'settings',
-      icon: 'Film',
-      showInMenu: true,
-    },
+    redirect: '/moviepilot/settings',
   },
   {
     path: '/moviepilot',
@@ -545,6 +537,17 @@ const routes = [
     component: AppMoviePilotSubscribes,
     meta: {
       title: '订阅管理',
+      requiresAuth: true,
+      parent: 'moviepilot',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/moviepilot/settings',
+    name: 'moviepilot-settings',
+    component: AppMoviePilotSettings,
+    meta: {
+      title: '设置',
       requiresAuth: true,
       parent: 'moviepilot',
       showInMenu: true,

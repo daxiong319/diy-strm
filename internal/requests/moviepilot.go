@@ -9,15 +9,17 @@ import (
 
 // UpdateMoviePilotConfigRequest 更新 MoviePilot 配置请求
 type UpdateMoviePilotConfigRequest struct {
-	Enabled       bool   `json:"enabled"`
-	BaseUrl       string `json:"base_url"`
-	ApiToken      string `json:"api_token"`
-	DownloadRoot  string `json:"download_root"`  // MoviePilot 侧下载根目录
-	LocalViewRoot string `json:"local_view_root"` // 本容器内下载根目录
-	UploadRoot    string `json:"upload_root"`    // 139 上传目标根目录
-	PollInterval  int    `json:"poll_interval"`  // 轮询间隔分钟
-	SyncPathId    uint   `json:"sync_path_id"`   // STRM 同步目录 ID
-	NotifyEnabled bool   `json:"notify_enabled"`
+	Enabled         bool   `json:"enabled"`
+	BaseUrl         string `json:"base_url"`
+	ApiToken        string `json:"api_token"`
+	DownloadRoot    string `json:"download_root"`     // MoviePilot 侧下载根目录
+	LocalViewRoot   string `json:"local_view_root"`   // 本容器内下载根目录
+	UploadAccountId uint   `json:"upload_account_id"` // 目标网盘账号 ID
+	UploadRoot      string `json:"upload_root"`       // 目标网盘上传根目录
+	UploadRootId    string `json:"upload_root_id"`    // 目标网盘上传根目录 ID
+	StrmLocalDir    string `json:"strm_local_dir"`    // STRM 本地输出目录
+	PollInterval    int    `json:"poll_interval"`     // 轮询间隔分钟
+	NotifyEnabled   bool   `json:"notify_enabled"`
 }
 
 // Validate 校验配置

@@ -64,7 +64,7 @@
 | `new_name` | 是 | 不能为空、`.`、`..`，不能包含路径分隔符和控制字符。 |
 
 - `baidupan`、`openlist` 的 `file_id` 为完整路径，后端自动拆分为目录与旧名。
-- `guangyapan` 暂不支持重命名，返回明确错误；`pan139` 走 `/file/update` 接口（`{fileId, name}`）。
+- `pan139` 走 `/file/update` 接口（`{fileId, name}`）；`guangyapan` 走 `/userres/v1/file/rename` 接口（`{fileId, newName}`）。
 - 成功响应 `code=200`；失败返回 `code=500` 与错误信息。
 
 ## 移动
@@ -87,7 +87,7 @@
 | `file_id` | 是 | 非空且不为 `"0"`。 |
 | `target_parent_id` | 是 | 目标目录标识，非空且不为 `"0"`，不能等于 `file_id`。 |
 
-- `guangyapan` 暂不支持移动；`pan139` 走 `/file/batchMove` 接口（`{fileIds, toParentFileId}`）。
+- `pan139` 走 `/file/batchMove` 接口（`{fileIds, toParentFileId}`）；`guangyapan` 走 `/userres/v1/file/move_file` 接口（异步任务，轮询 `get_task_status` 2=成功）。
 - 成功后源父目录与目标目录缓存均失效。
 
 ## 命名对齐
@@ -154,8 +154,8 @@
 
 目录整理用于把散乱存放的媒体文件收束为 `电影/<标题> (年份)` 与 `剧集/<标题>/Season XX` 目录结构，每个文件执行「确保目标目录存在 → 移动 → 重命名为规范名」三步。
 
-- 文件名解析复用命名对齐规则：含 `S01E01` / `1x01` / `EP01` 等集数标记的判为剧集，含年份（`19xx` / `20xx`）的判为电影，其余跳过。
-- `guangyapan` 暂不支持目录整理（不支持移动），预览与应用均返回明确错误；`pan139` 支持（建目录走 `/file/create`、移动走 `/file/batchMove`、重命名走 `/file/update`）。
+- 文件名解析复用命名对齐规则（规则实现位于 `internal/mediaparse` 包，目录整理 / 命名对齐 / MoviePilot 上传整理共用）：含 `S01E01` / `1x01` / `EP01` 等集数标记的判为剧集，含年份（`19xx` / `20xx`）的判为电影，其余跳过。
+- `pan139` 支持（建目录走 `/file/create`、移动走 `/file/batchMove`、重命名走 `/file/update`）；`guangyapan` 支持（建目录走 `/file/create_dir`、移动走 `/file/move_file` 异步任务、重命名走 `/file/rename`）。
 - 扫描上限 1000 项，最多递归 3 层（`depth` 默认 2）。
 
 ### 预览
