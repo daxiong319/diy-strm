@@ -53,6 +53,25 @@ func StartMoviePilotWatcher() {
 		}
 	}()
 
+	// 启动恢复：内存队列在重启后为空，重新入队未完成的上传任务（幂等，runUploadTask 会重建文件批次）
+	go func() {
+		var unfinished []models.MoviePilotUploadTask
+		if err := db.Db.Where("status IN ?", []models.MoviePilotUploadStatus{
+			models.MoviePilotUploadPending, models.MoviePilotUploadUploading,
+		}).Find(&unfinished).Error; err == nil {
+			for i := range unfinished {
+				task := unfinished[i]
+				select {
+				case uploadQueue <- &task:
+				default:
+				}
+			}
+			if len(unfinished) > 0 {
+				helpers.AppLogger.Infof("MoviePilot 启动恢复上传任务：%d 个", len(unfinished))
+			}
+		}
+	}()
+
 	go func() {
 		cfg := models.LoadMoviePilotConfig()
 		interval := time.Duration(cfg.PollInterval) * time.Minute
