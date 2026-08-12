@@ -28,7 +28,9 @@ var (
 	// yearRe 匹配 19xx / 20xx 年份。
 	yearRe = regexp.MustCompile(`(19|20)\d{2}`)
 	// miscRe 匹配片源/画质等杂讯词。
-	miscRe = regexp.MustCompile(`(?i)(1080p|720p|2160p|4k|bluray|blu-ray|web-?dl|webrip|hdr|hdr10|dolby|atmos|ddp?|5\.1|7\.1|ac3|aac|hevc|h\.?26[45]|x26[45]|xvid|chd|chdw|hd|sdr|repack|proper|extended|remux|uhd)`)
+	// 注意：CleanTitle 已把 . _ - 等替换为空格，因此正则需要覆盖空格/可选点/可选连字符形式
+	// （如 "H 265"、"WEB DL"、"DDP5 1"、"DV"、"NF"、"HHWEB" 等 Web-DL 发布组命名残留）。
+	miscRe = regexp.MustCompile(`(?i)(1080p|720p|2160p|4k|blu-?\s*ray|web\s*-?\s*dl|web-?rip|hdr10?\+?|dolby\s+vision|\bdv\b|dolby|atmos|ddp?\s*\d*\s*\.?\s*\d*|5\s*\.?\s*1|7\s*\.?\s*1|ac3|aac|dts\b|hevc|h\s*\.?\s*26[45]|x26[45]|xvid|chd|chdw|\bhd\b|sdr|repack|proper|extended|remux|uhd|\bnf\b|\bhhweb\b|\bweb\b|\bdl\b|\bhmax\b|\bamzn\b|\bdisney\+?\b|\bhbo\b|\bhulu\b|\bcomplete\b)`)
 )
 
 // VideoExts 整理的视频扩展名（与 STRM 默认视频扩展名一致）。
