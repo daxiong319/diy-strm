@@ -21,13 +21,21 @@ func (c *Client) UploadFile(ctx context.Context, parentFileID, name string, size
 	}
 	partInfos := buildPartInfos(size)
 
+	// 139 create 单次携带分片数上限（实测 100 片，超过报"分片信息列表数量不符合标准"）；
+	// 超大文件仅带首批分片，剩余分片经 /file/getUploadUrl 分批补充上传地址
+	maxCreateParts := 100
+	createPartInfos := partInfos
+	if len(createPartInfos) > maxCreateParts {
+		createPartInfos = createPartInfos[:maxCreateParts]
+	}
+
 	var createResp personalUploadResp
 	if err := c.Request(ctx, "/file/create", map[string]interface{}{
 		"contentHash":          sha256Hex,
 		"contentHashAlgorithm": "SHA256",
 		"contentType":          "application/octet-stream",
 		"parallelUpload":       false,
-		"partInfos":            partInfos,
+		"partInfos":            createPartInfos,
 		"size":                 size,
 		"parentFileId":         parentFileID,
 		"name":                 name,
