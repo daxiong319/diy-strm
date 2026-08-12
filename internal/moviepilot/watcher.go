@@ -482,7 +482,14 @@ func waitMoviePilotBatchFinalize(task *models.MoviePilotUploadTask, account *mod
 		}
 		lastFP = fp
 		if stableCount >= 2 {
-			break // 文件集连续两次扫描一致，批次收敛
+			// 文件集连续两次扫描一致只能说明没有新增文件，不能代表上传完成：
+			// 必须等批次任务全部终态，否则会把仍在上传/卡住的任务误判为成功（假成功）
+			if moviePilotDbTasksFinished(task.ID) {
+				break // 全部终态，批次收敛
+			}
+			lastFP = ""
+			stableCount = 0
+			continue
 		}
 		if time.Now().After(deadline) {
 			helpers.AppLogger.Errorf("MoviePilot 等待批次文件稳定超时：%s", task.Title)

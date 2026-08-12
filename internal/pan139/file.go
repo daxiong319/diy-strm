@@ -159,7 +159,22 @@ func (c *Client) CreateDir(ctx context.Context, parentID, dirName string) (strin
 	if strings.TrimSpace(out.Data.FileId) == "" {
 		return "", errors.New("中国移动云盘创建目录成功但未返回目录 ID")
 	}
-	return out.Data.FileId, nil
+	newID := strings.TrimSpace(out.Data.FileId)
+	// 139 偶发返回未生效/假目录 ID（后续 create 文件会报资源不存在 code=04000010），
+	// 创建后立即校验目录可用，校验不过重试（139 列表一致性有延迟），仍不过则报错让调用方重试
+	for attempt := 0; attempt < 3; attempt++ {
+		if _, err := c.GetFiles(ctx, newID); err == nil {
+			return newID, nil
+		} else if ctx.Err() != nil {
+			return "", err
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 500 * time.Millisecond):
+		}
+	}
+	return "", fmt.Errorf("中国移动云盘创建目录后校验目录 ID 无效：%s", newID)
 }
 
 // Delete 删除文件或目录（移入回收站，异步任务，最多轮询 60 秒等待完成）
