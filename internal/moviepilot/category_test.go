@@ -1,6 +1,7 @@
 package moviepilot
 
 import (
+	"strings"
 	"testing"
 
 	"diy-strm/internal/tmdb"
@@ -130,6 +131,28 @@ func TestOrganizeRootPath(t *testing.T) {
 	for _, c := range cases {
 		if got := organizeRootPath(c.in); got != c.want {
 			t.Errorf("organizeRootPath(%q)=%q want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestJoinNetdiskPath(t *testing.T) {
+	// 与 controllers/path.go joinNetdiskPath 同规则：父路径空返回名称，否则 / 拼接
+	join := func(parent, name string) string {
+		parent = strings.TrimRight(parent, "/")
+		if parent == "" {
+			return name
+		}
+		return parent + "/" + name
+	}
+	cases := []struct{ parent, name, want string }{
+		{"", "影视", "影视"},
+		{"影视", "待整理", "影视/待整理"},
+		{"影视/待整理", "日韩剧集", "影视/待整理/日韩剧集"},
+		{"影视/待整理/", "日韩剧集", "影视/待整理/日韩剧集"},
+	}
+	for _, c := range cases {
+		if got := join(c.parent, c.name); got != c.want {
+			t.Errorf("join(%q, %q)=%q want %q", c.parent, c.name, got, c.want)
 		}
 	}
 }
