@@ -426,11 +426,16 @@ func runUploadTask(task *models.MoviePilotUploadTask) {
 }
 
 // waitMoviePilotBatchFinalize 轮询批次文件任务完成，聚合进度并执行收尾（整理/STRM/通知）
-// 批次达到终态后做增量补传扫描（下载判定完成后仍有新文件落盘的场景），直到无新增文件
+// 批次达到终态后做增量补传扫描，并校验本地文件集连续稳定（下载可能晚于完成判定落盘），
+// 待文件集不再变化且无新增任务后批次才收敛结束
 func waitMoviePilotBatchFinalize(task *models.MoviePilotUploadTask, account *models.Account, cfg *models.MoviePilotConfig) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
+	syncTicker := time.NewTicker(time.Minute)
+	defer syncTicker.Stop()
 	deadline := time.Now().Add(6 * time.Hour)
+	lastFP := ""
+	stableCount := 0
 	for {
 		// 等待当前批次全部进入终态
 		for {
@@ -452,7 +457,7 @@ func waitMoviePilotBatchFinalize(task *models.MoviePilotUploadTask, account *mod
 		if time.Now().After(deadline) {
 			break
 		}
-		// 批次终态后补齐新落盘文件；无新增则批次收敛结束
+		// 批次终态后补齐新落盘文件并判定文件集稳定性
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		created, err := createMissingUploadTasks(ctx, task, account)
 		cancel()
@@ -460,9 +465,30 @@ func waitMoviePilotBatchFinalize(task *models.MoviePilotUploadTask, account *mod
 			helpers.AppLogger.Errorf("MoviePilot 批次 %s 增量补传失败：%v", task.Title, err)
 			break
 		}
-		if created == 0 {
+		if created > 0 {
+			lastFP = ""
+			stableCount = 0
+			continue // 有新任务，回到批次等待循环
+		}
+		fp, err := localDirFingerprint(task.LocalPath)
+		if err != nil {
+			helpers.AppLogger.Errorf("MoviePilot 批次 %s 文件集扫描失败：%v", task.Title, err)
 			break
 		}
+		if fp == lastFP {
+			stableCount++
+		} else {
+			stableCount = 0
+		}
+		lastFP = fp
+		if stableCount >= 2 {
+			break // 文件集连续两次扫描一致，批次收敛
+		}
+		if time.Now().After(deadline) {
+			helpers.AppLogger.Errorf("MoviePilot 等待批次文件稳定超时：%s", task.Title)
+			break
+		}
+		<-syncTicker.C
 	}
 
 	var failedCount int64

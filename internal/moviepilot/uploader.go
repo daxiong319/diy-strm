@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 
 	"diy-strm/internal/db"
@@ -53,6 +55,30 @@ func CollectLocalFiles(root string) ([]LocalFile, error) {
 		return nil, fmt.Errorf("源目录 %s 中没有可上传的文件", root)
 	}
 	return files, nil
+}
+
+// localDirFingerprint 本地目录文件集指纹（relPath+size，含未完成临时文件，用于判定下载是否仍在写入）
+func localDirFingerprint(root string) (string, error) {
+	var parts []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		parts = append(parts, filepath.ToSlash(rel)+"="+strconv.FormatInt(info.Size(), 10))
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "|"), nil
 }
 
 // CreateMoviePilotUploadTasks 为本地目录生成文件级上传任务（走系统统一上传队列）
