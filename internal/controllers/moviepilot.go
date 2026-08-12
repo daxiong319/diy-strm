@@ -57,6 +57,7 @@ func UpdateMoviePilotConfig(c *gin.Context) {
 		StrmLocalDir:    req.StrmLocalDir,
 		PollInterval:    req.PollInterval,
 		NotifyEnabled:   req.NotifyEnabled,
+		CategoryConfig:  req.CategoryConfig,
 	})
 	if !ok {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "更新 MoviePilot 配置失败", Data: nil})

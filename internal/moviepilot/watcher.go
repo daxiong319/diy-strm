@@ -489,7 +489,9 @@ func organizeAndSyncStrm(task *models.MoviePilotUploadTask, account *models.Acco
 	if id, err := EnsureRemoteDir(ctx, account, task.RemotePath); err == nil && id != "" {
 		rootID = id
 	}
-	result := organizeUploadedDir(ctx, account, rootID, task.RemotePath, task)
+	// 整理目标根：上传根目录父级下的「已整理」（如 /影视/待整理 → 影视/已整理）
+	organizeRoot := organizeRootPath(cfg.UploadRoot)
+	result := organizeUploadedDir(ctx, account, rootID, task.RemotePath, organizeRoot, task)
 	helpers.AppLogger.Infof("MoviePilot 整理完成：%s：成功 %d 个，失败 %d 个，无法识别 %d 个", task.Title, result.Organized, result.Failed, result.Unrecognized)
 	if result.Organized == 0 {
 		task.Error = fmt.Sprintf("无整理成功的文件（失败 %d，无法识别 %d）", result.Failed, result.Unrecognized)
@@ -505,7 +507,7 @@ func organizeAndSyncStrm(task *models.MoviePilotUploadTask, account *models.Acco
 		return
 	}
 	for _, dir := range result.SuccessDirs {
-		sourcePath := strings.TrimRight(task.RemotePath, "/") + "/" + dir
+		sourcePath := strings.TrimRight(organizeRoot, "/") + "/" + dir
 		TriggerStrmSyncForDir(account, sourcePath, cfg.StrmLocalDir)
 	}
 }

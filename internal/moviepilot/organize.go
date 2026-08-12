@@ -46,11 +46,13 @@ const (
 	organizeMaxDepth   = 4
 )
 
-// organizeUploadedDir 对上传完成的网盘目录执行文件名解析整理（同"目录整理"规则）：
-// 建目标目录 → 移动 → 重命名；只处理视频文件，无法识别的不移动。
-// rootID 为整理根目录 ID（或路径语义字符串），rootPath 为整理根目录路径。
+// organizeUploadedDir 对上传完成的网盘目录执行 TMDB 校验与分类整理：
+// 建目标目录（已整理/{分类}/{标题 (年份) {tmdb=xxx}}[/Season NN]）→ 移动 → 重命名；
+// 只处理视频文件，TMDB 校验失败或无法识别的不移动。
+// rootID 为整理根目录 ID（或路径语义字符串），rootPath 为整理根目录路径，
+// organizeRoot 为已整理根目录路径（如 影视/已整理）。
 // task 非空时，识别失败的文件会尝试 AI 兜底并记录到 movie_pilot_failed_files 供手动确认。
-func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, rootPath string, task *models.MoviePilotUploadTask) *organizeMediaResult {
+func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, rootPath, organizeRoot string, task *models.MoviePilotUploadTask) *organizeMediaResult {
 	result := &organizeMediaResult{}
 	var entries []organizeEntry
 	counter := 0
@@ -71,19 +73,19 @@ func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, r
 		}
 		category, title, season, episode, year := mediaparse.ParseMedia(e.Name)
 		media := &IdentifyResult{Category: category, Title: title, Season: season, Episode: episode, Year: year}
-		dir, err := organizeOneFile(ctx, account, e, rootPath, dirIDCache, media)
+		dir, err := organizeOneFile(ctx, account, e, organizeRoot, dirIDCache, media)
 		if err == errMediaUnrecognized && aiBudget > 0 {
 			// 正则识别失败：AI 兜底
 			aiBudget--
 			if ai, ok := IdentifyFileWithAI(ctx, e.Name); ok {
 				aiConsecutiveFail = 0
-				dir, err = organizeOneFile(ctx, account, e, rootPath, dirIDCache, &ai)
+				dir, err = organizeOneFile(ctx, account, e, organizeRoot, dirIDCache, &ai)
 			} else if aiConsecutiveFail++; aiConsecutiveFail >= aiConsecutiveFailStop {
 				aiBudget = 0
 			}
 		}
 		if err != nil {
-			if err == errMediaUnrecognized {
+			if errors.Is(err, errMediaUnrecognized) {
 				result.Unrecognized++
 			} else {
 				result.Failed++
@@ -108,15 +110,26 @@ func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, r
 	return result
 }
 
-// organizeOneFile 整理单个网盘文件：建目标目录 → 移动 → 重命名。
-// media 为已解析的媒体信息；无法识别返回 errMediaUnrecognized（不移动）。
-// 返回整理成功的目标相对目录（相对整理根目录）。
+// organizeOneFile 整理单个网盘文件：TMDB 校验 → 分类 → 建目标目录 → 移动 → 重命名。
+// media 为已解析的媒体信息；无法识别（含 TMDB 校验失败）返回 errMediaUnrecognized（不移动）。
+// rootPath 为已整理根目录路径；返回整理成功的目标相对目录（相对已整理根目录）。
 func organizeOneFile(ctx context.Context, account *models.Account, e organizeEntry, rootPath string, dirCache map[string]string, media *IdentifyResult) (string, error) {
-	relDir, ok := mediaparse.BuildTargetRelPath(media.Category, media.Title, media.Season, media.Year)
-	if !ok {
+	if media == nil || strings.TrimSpace(media.Title) == "" {
 		return "", errMediaUnrecognized
 	}
-	newName := buildOrganizeNewName(media.Category, media.Title, media.Season, media.Episode, media.Year, path.Ext(e.Name))
+	officialTitle, tmdbID, tmdbYear, categoryName, err := lookupTmdbMedia(ctx, media)
+	if err != nil {
+		return "", fmt.Errorf("%w：%v", errMediaUnrecognized, err)
+	}
+	year := tmdbYear
+	if year <= 0 {
+		year = media.Year
+	}
+	relDir, ok := buildOrganizeRelDir(media.Category, officialTitle, year, media.Season, tmdbID, categoryName)
+	if !ok {
+		return "", fmt.Errorf("%w：媒体信息不完整", errMediaUnrecognized)
+	}
+	newName := buildOrganizeNewName(media.Category, officialTitle, media.Season, media.Episode, year, path.Ext(e.Name))
 
 	targetDirID, err := ensureOrganizeDirInternal(ctx, account, rootPath, relDir, dirCache)
 	if err != nil {
@@ -143,7 +156,7 @@ func saveFailedFile(task *models.MoviePilotUploadTask, account *models.Account, 
 		return
 	}
 	reason := "文件名无法识别"
-	if err != errMediaUnrecognized && err != nil {
+	if !errors.Is(err, errMediaUnrecognized) && err != nil {
 		reason = err.Error()
 	}
 	f := &models.MoviePilotFailedFile{
@@ -196,13 +209,45 @@ func ResolveFailedFile(ctx context.Context, account *models.Account, f *models.M
 		return "", fmt.Errorf("请填写媒体标题")
 	}
 	dirCache := map[string]string{}
-	return organizeOneFile(ctx, account, *entry, f.RootPath, dirCache, media)
+	organizeRoot := organizeRootPath(models.MoviePilotConfigGlobal.UploadRoot)
+	return organizeOneFile(ctx, account, *entry, organizeRoot, dirCache, media)
+}
+
+// buildOrganizeRelDir 构建整理目标相对目录（相对已整理根目录），格式：
+// 剧集：{分类}/{标题 (年份) {tmdb=xxx}}/Season NN
+// 电影：{分类}/{标题 (年份) {tmdb=xxx}}
+func buildOrganizeRelDir(category, title string, year, season int, tmdbID int64, categoryName string) (string, bool) {
+	if strings.TrimSpace(title) == "" || tmdbID <= 0 {
+		return "", false
+	}
+	titlePart := fmt.Sprintf("%s (%d) {tmdb=%d}", title, year, tmdbID)
+	if year <= 0 {
+		titlePart = fmt.Sprintf("%s {tmdb=%d}", title, tmdbID)
+	}
+	if categoryName == "" {
+		categoryName = "未分类"
+	}
+	base := fmt.Sprintf("%s/%s", categoryName, titlePart)
+	if category == "tv" {
+		if season <= 0 {
+			season = 1
+		}
+		return fmt.Sprintf("%s/Season %02d", base, season), true
+	}
+	return base, true
 }
 
 // buildOrganizeNewName 按目录整理规则生成规范化文件名
+// 剧集：标题.年份.S01E01.第1集.ext；电影：标题 (年份).ext
 func buildOrganizeNewName(category, title string, season, episode, year int, ext string) string {
 	if category == "tv" {
-		return fmt.Sprintf("%s S%02dE%02d%s", title, season, episode, ext)
+		if episode <= 0 {
+			episode = 1
+		}
+		if year > 0 {
+			return fmt.Sprintf("%s.%d.S%02dE%02d.第%d集%s", title, year, season, episode, episode, ext)
+		}
+		return fmt.Sprintf("%s.S%02dE%02d.第%d集%s", title, season, episode, episode, ext)
 	}
 	if year > 0 {
 		return fmt.Sprintf("%s (%d)%s", title, year, ext)

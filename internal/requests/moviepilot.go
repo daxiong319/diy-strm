@@ -20,6 +20,7 @@ type UpdateMoviePilotConfigRequest struct {
 	StrmLocalDir    string `json:"strm_local_dir"`    // STRM 本地输出目录
 	PollInterval    int    `json:"poll_interval"`     // 轮询间隔分钟
 	NotifyEnabled   bool   `json:"notify_enabled"`
+	CategoryConfig  string `json:"category_config"`   // 分类策略配置（MoviePilot category.yaml 风格，空=默认）
 }
 
 // Validate 校验配置

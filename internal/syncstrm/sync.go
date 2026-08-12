@@ -431,8 +431,8 @@ func (s *SyncStrm) Start() error {
 			return err
 		default:
 		}
-		// 处理完所有路径和文件后，更新最后同步时间
-		if s.SyncPathId > 0 {
+		// 处理完所有路径和文件后，更新最后同步时间（手动同步路径为临时纳秒 ID，跳过）
+		if !s.TmpSyncPath {
 			syncPath := models.GetSyncPathById(s.SyncPathId)
 			if syncPath != nil {
 				syncPath.UpdateLastSync()

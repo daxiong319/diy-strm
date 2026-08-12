@@ -68,9 +68,9 @@ func GetPathList(c *gin.Context) {
 	case models.SourceType123:
 		pathes, err = GetPan123PathList(req.ParentID, req.AccountID)
 	case models.SourceTypeGuangYaPan:
-		pathes, err = GetGuangYaPanPathList(req.ParentID, req.AccountID)
+		pathes, err = GetGuangYaPanPathList(req.ParentID, req.ParentPath, req.AccountID)
 	case models.SourceTypePan139:
-		pathes, err = GetPan139PathList(req.ParentID, req.AccountID)
+		pathes, err = GetPan139PathList(req.ParentID, req.ParentPath, req.AccountID)
 	default:
 		// 报错
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "未知的同步源类型", Data: nil})
@@ -293,7 +293,7 @@ func GetPan123PathList(parentId string, accountId uint) ([]DirResp, error) {
 }
 
 // GetPan139PathList 获取中国移动云盘目录列表
-func GetPan139PathList(parentId string, accountId uint) ([]DirResp, error) {
+func GetPan139PathList(parentId, parentPath string, accountId uint) ([]DirResp, error) {
 	account, err := models.GetAccountById(accountId)
 	if err != nil {
 		return nil, err
@@ -312,14 +312,14 @@ func GetPan139PathList(parentId string, accountId uint) ([]DirResp, error) {
 			folders = append(folders, DirResp{
 				Id:   item.GetID(),
 				Name: item.FileName,
-				Path: item.FileName,
+				Path: joinNetdiskPath(parentPath, item.FileName),
 			})
 		}
 	}
 	return folders, nil
 }
 // GetGuangYaPanPathList 获取光鸭云盘目录列表
-func GetGuangYaPanPathList(parentId string, accountId uint) ([]DirResp, error) {
+func GetGuangYaPanPathList(parentId, parentPath string, accountId uint) ([]DirResp, error) {
 	account, err := models.GetAccountById(accountId)
 	if err != nil {
 		return nil, err
@@ -338,11 +338,20 @@ func GetGuangYaPanPathList(parentId string, accountId uint) ([]DirResp, error) {
 			folders = append(folders, DirResp{
 				Id:   item.GetID(),
 				Name: item.FileName,
-				Path: item.FileName,
+				Path: joinNetdiskPath(parentPath, item.FileName),
 			})
 		}
 	}
 	return folders, nil
+}
+
+// joinNetdiskPath 拼接网盘目录完整路径（parentPath 为空时直接返回名称）
+func joinNetdiskPath(parentPath, name string) string {
+	parentPath = strings.TrimRight(parentPath, "/")
+	if parentPath == "" {
+		return name
+	}
+	return parentPath + "/" + name
 }
 
 type FileItem struct {

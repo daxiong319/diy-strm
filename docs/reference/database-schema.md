@@ -1034,6 +1034,7 @@ MoviePilot 对接配置（单行表，首次读取时自动创建默认行）。
 - `strm_local_dir`：STRM 文件本地输出目录（留空则整理成功后不生成 STRM）。
 - `poll_interval`：轮询间隔（分钟，默认 5）。
 - `notify_enabled`：完成后是否发送通知。
+- `category_config`：分类策略配置（MoviePilot `category.yaml` 风格 YAML 文本，空表示使用内置默认分类）；整理时按 TMDB 元数据匹配分类，归入「已整理/{分类}/…」。新增字段需手动迁移：`ALTER TABLE movie_pilot_configs ADD COLUMN IF NOT EXISTS category_config TEXT;`
 
 ### `movie_pilot_upload_tasks`
 

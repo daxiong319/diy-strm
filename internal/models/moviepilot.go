@@ -21,6 +21,7 @@ type MoviePilotConfig struct {
 	StrmLocalDir   string   `json:"strm_local_dir"`                  // STRM 文件本地输出目录
 	PollInterval   int      `json:"poll_interval" gorm:"default:5"`  // 轮询间隔（分钟）
 	NotifyEnabled  bool     `json:"notify_enabled" gorm:"default:true"` // 完成后是否发送通知
+	CategoryConfig string   `json:"category_config"`                 // 分类策略配置（MoviePilot category.yaml 风格，空=默认）
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -58,6 +59,7 @@ func UpdateMoviePilotConfig(req *MoviePilotConfig) (*MoviePilotConfig, bool) {
 		cfg.PollInterval = req.PollInterval
 	}
 	cfg.NotifyEnabled = req.NotifyEnabled
+	cfg.CategoryConfig = req.CategoryConfig
 	if err := db.Db.Model(cfg).Where("id = ?", cfg.ID).Save(cfg).Error; err != nil {
 		helpers.AppLogger.Errorf("更新 MoviePilot 配置失败：%v", err)
 		return nil, false

@@ -131,6 +131,20 @@
           <div class="form-help">整理成功后生成的 STRM 文件输出到本机该目录（留空则不生成 STRM）</div>
         </el-form-item>
 
+        <el-form-item label="分类策略配置" prop="category_config">
+          <el-input
+            v-model="formData.category_config"
+            type="textarea"
+            :rows="8"
+            placeholder="MoviePilot category.yaml 风格，留空使用默认分类（华语/日韩/欧美电影、国产/日韩/欧美剧集、动漫等）"
+            :disabled="loading || !formData.enabled"
+          />
+          <div class="form-help">
+            整理时按 TMDB 元数据匹配分类，归入「已整理/{分类}/{标题 (年份)
+            {tmdb=xxx}}」；格式参考 MoviePilot 的 category.yaml（movie/tv 两段，按顺序匹配，无条件项为兜底分类）
+          </div>
+        </el-form-item>
+
         <el-form-item label="轮询间隔" prop="poll_interval">
           <el-input-number
             v-model="formData.poll_interval"
@@ -241,6 +255,7 @@ interface MoviePilotSettings {
   strm_local_dir: string
   poll_interval: number
   notify_enabled: boolean
+  category_config: string
 }
 
 interface TestStatus {
@@ -274,6 +289,7 @@ const formData = reactive<MoviePilotSettings>({
   strm_local_dir: '',
   poll_interval: 5,
   notify_enabled: true,
+  category_config: '',
 })
 
 const selectedAccount = computed(() =>
@@ -398,6 +414,7 @@ const saveSettings = async () => {
       strm_local_dir: formData.strm_local_dir,
       poll_interval: formData.poll_interval,
       notify_enabled: !!formData.notify_enabled,
+      category_config: formData.category_config,
     })
     if (response?.data.code === 200) {
       ElMessage.success(formData.enabled ? 'MoviePilot 配置已保存并启用' : 'MoviePilot 联动已关闭')
@@ -433,6 +450,7 @@ const loadSettings = async () => {
       formData.strm_local_dir = data.strm_local_dir || ''
       formData.poll_interval = data.poll_interval || 5
       formData.notify_enabled = data.notify_enabled !== undefined ? !!data.notify_enabled : true
+      formData.category_config = data.category_config || ''
     }
   } catch (error) {
     console.error('加载 MoviePilot 设置错误：', error)
