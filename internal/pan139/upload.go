@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 )
 
@@ -98,7 +99,11 @@ func (c *Client) UploadFile(ctx context.Context, parentFileID, name string, size
 		uploadPartInfos = append(uploadPartInfos, urlResp.Data.PartInfos...)
 	}
 
-	// 逐片上传
+	// 逐片上传（139 返回的分片 URL 可能乱序，必须按 partNumber 升序 PUT，
+	// 否则服务端哈希链断裂报 InvalidPartOrder）
+	sort.Slice(uploadPartInfos, func(i, j int) bool {
+		return uploadPartInfos[i].PartNumber < uploadPartInfos[j].PartNumber
+	})
 	var uploaded int64
 	if progress != nil {
 		progress(0)
