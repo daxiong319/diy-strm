@@ -17,6 +17,8 @@ import (
 
 	"golang.org/x/time/rate"
 	"resty.dev/v3"
+
+	"diy-strm/internal/helpers"
 )
 
 // API 地址常量（逆向自中国移动云盘 Web 端，协议参考 alist 139Yun 驱动）
@@ -269,20 +271,26 @@ func (c *Client) ensureHost(ctx context.Context) error {
 
 // requestRoute 路由查询请求（使用 yun.139.com 头）
 func (c *Client) requestRoute(ctx context.Context, body interface{}, out interface{}) error {
-	req := c.client.R().
-		SetContext(ctx).
-		SetHeaders(webHeaders(c.GetAuthorization())).
-		SetBody(body)
-	if out != nil {
-		req.SetResult(out)
-	}
-	res, err := req.Post(RouteQueryURL)
-	if err != nil {
-		return fmt.Errorf("中国移动云盘路由查询失败：%v", err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode() >= 400 {
-		return fmt.Errorf("中国移动云盘路由查询失败：status=%d body=%s", res.StatusCode(), res.String())
+	for attempt := 0; attempt < 2; attempt++ {
+		req := c.client.R().
+			SetContext(ctx).
+			SetHeaders(webHeaders(c.GetAuthorization())).
+			SetBody(body)
+		if out != nil {
+			req.SetResult(out)
+		}
+		res, err := req.Post(RouteQueryURL)
+		if err != nil {
+			if attempt == 0 && isRetriableNetErr(err) && ctx.Err() == nil {
+				continue
+			}
+			return fmt.Errorf("中国移动云盘路由查询失败：%v", err)
+		}
+		defer res.Body.Close()
+		if res.StatusCode() >= 400 {
+			return fmt.Errorf("中国移动云盘路由查询失败：status=%d body=%s", res.StatusCode(), res.String())
+		}
+		return nil
 	}
 	return nil
 }
@@ -308,6 +316,7 @@ func webHeaders(authorization string) map[string]string {
 
 // Request 新个人盘 API 请求（自动签名 + 鉴权）
 // 返回解析后的响应（调用方继续校验 Success）
+// 幂等读请求（列表/下载链接）遇连接层瞬时错误（context canceled 等）自动重试 1 次
 func (c *Client) Request(ctx context.Context, path string, body interface{}, out interface{}) error {
 	if err := c.waitForPermission(ctx, path); err != nil {
 		return err
@@ -326,26 +335,50 @@ func (c *Client) Request(ctx context.Context, path string, body interface{}, out
 	if err != nil {
 		return fmt.Errorf("中国移动云盘请求参数序列化失败：%v", err)
 	}
-	randStr := randomString(16)
-	ts := time.Now().Format("2006-01-02 15:04:05")
-	sign := calSign(string(bodyBytes), ts, randStr)
 
-	req := c.client.R().
-		SetContext(ctx).
-		SetHeaders(personalHeaders(c.GetAuthorization(), ts, randStr, sign)).
-		SetBody(body)
-	if out != nil {
-		req.SetResult(out)
-	}
-	res, err := req.Post(host + path)
-	if err != nil {
-		return fmt.Errorf("中国移动云盘请求失败 %s：%v", path, err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode() >= 400 {
-		return fmt.Errorf("中国移动云盘请求失败：status=%d body=%s", res.StatusCode(), res.String())
+	retriable := isIdempotentReadPath(path)
+	for attempt := 0; attempt < 2; attempt++ {
+		randStr := randomString(16)
+		ts := time.Now().Format("2006-01-02 15:04:05")
+		sign := calSign(string(bodyBytes), ts, randStr)
+
+		req := c.client.R().
+			SetContext(ctx).
+			SetHeaders(personalHeaders(c.GetAuthorization(), ts, randStr, sign)).
+			SetBody(bodyBytes)
+		if out != nil {
+			req.SetResult(out)
+		}
+		res, err := req.Post(host + path)
+		if err != nil {
+			if retriable && attempt == 0 && isRetriableNetErr(err) && ctx.Err() == nil {
+				helpers.AppLogger.Warnf("中国移动云盘请求 %s 失败（%v），重试 1 次", path, err)
+				continue
+			}
+			return fmt.Errorf("中国移动云盘请求失败 %s：%v", path, err)
+		}
+		defer res.Body.Close()
+		if res.StatusCode() >= 400 {
+			return fmt.Errorf("中国移动云盘请求失败：status=%d body=%s", res.StatusCode(), res.String())
+		}
+		return nil
 	}
 	return nil
+}
+
+// isIdempotentReadPath 幂等读接口（可安全重试）
+func isIdempotentReadPath(path string) bool {
+	return path == APIFileList || path == APIDownloadURL
+}
+
+// isRetriableNetErr 连接层瞬时错误（对端重置/连接回收等），重试即可恢复
+func isRetriableNetErr(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "context canceled") ||
+		strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "eof")
 }
 
 // personalHeaders 新个人盘 API 请求头（含签名）

@@ -426,22 +426,41 @@ func runUploadTask(task *models.MoviePilotUploadTask) {
 }
 
 // waitMoviePilotBatchFinalize 轮询批次文件任务完成，聚合进度并执行收尾（整理/STRM/通知）
+// 批次达到终态后做增量补传扫描（下载判定完成后仍有新文件落盘的场景），直到无新增文件
 func waitMoviePilotBatchFinalize(task *models.MoviePilotUploadTask, account *models.Account, cfg *models.MoviePilotConfig) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	deadline := time.Now().Add(6 * time.Hour)
-	for range ticker.C {
-		if moviePilotDbTasksFinished(task.ID) {
+	for {
+		// 等待当前批次全部进入终态
+		for {
+			<-ticker.C
+			if moviePilotDbTasksFinished(task.ID) {
+				break
+			}
+			totalBytes, uploadedBytes, totalFiles, uploadedFiles := moviePilotDbTaskProgress(task.ID)
+			task.TotalBytes = totalBytes
+			task.UploadedBytes = uploadedBytes
+			task.TotalFiles = int(totalFiles)
+			task.UploadedFiles = int(uploadedFiles)
+			_ = models.UpdateMoviePilotUploadTask(task)
+			if time.Now().After(deadline) {
+				helpers.AppLogger.Errorf("MoviePilot 等待批次完成超时：%s", task.Title)
+				break
+			}
+		}
+		if time.Now().After(deadline) {
 			break
 		}
-		totalBytes, uploadedBytes, totalFiles, uploadedFiles := moviePilotDbTaskProgress(task.ID)
-		task.TotalBytes = totalBytes
-		task.UploadedBytes = uploadedBytes
-		task.TotalFiles = int(totalFiles)
-		task.UploadedFiles = int(uploadedFiles)
-		_ = models.UpdateMoviePilotUploadTask(task)
-		if time.Now().After(deadline) {
-			helpers.AppLogger.Errorf("MoviePilot 等待批次完成超时：%s", task.Title)
+		// 批次终态后补齐新落盘文件；无新增则批次收敛结束
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		created, err := createMissingUploadTasks(ctx, task, account)
+		cancel()
+		if err != nil {
+			helpers.AppLogger.Errorf("MoviePilot 批次 %s 增量补传失败：%v", task.Title, err)
+			break
+		}
+		if created == 0 {
 			break
 		}
 	}

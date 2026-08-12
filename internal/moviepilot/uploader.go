@@ -59,16 +59,22 @@ func CollectLocalFiles(root string) ([]LocalFile, error) {
 // remoteRootPath 为目标网盘上传根目录路径，remoteRootId 为根目录 ID（各网盘语义：ID 或路径）
 // 返回创建的文件任务数
 func CreateMoviePilotUploadTasks(ctx context.Context, account *models.Account, moviePilotTaskId uint, localRoot, remoteRootPath, remoteRootId string) (int, error) {
-	if account == nil {
-		return 0, fmt.Errorf("上传账号为空")
-	}
 	files, err := CollectLocalFiles(localRoot)
 	if err != nil {
 		return 0, err
 	}
+	return createUploadTasksForFiles(ctx, account, moviePilotTaskId, remoteRootPath, remoteRootId, files)
+}
+
+// createUploadTasksForFiles 为指定文件集创建上传任务（不校验本地目录，直接按文件列表建任务）
+func createUploadTasksForFiles(ctx context.Context, account *models.Account, moviePilotTaskId uint, remoteRootPath, remoteRootId string, files []LocalFile) (int, error) {
+	if account == nil {
+		return 0, fmt.Errorf("上传账号为空")
+	}
 
 	baseDirId := strings.TrimSpace(remoteRootId)
 	if baseDirId == "" {
+		var err error
 		baseDirId, err = EnsureRemoteDir(ctx, account, remoteRootPath)
 		if err != nil {
 			return 0, fmt.Errorf("定位上传根目录失败：%v", err)
@@ -116,6 +122,42 @@ func CreateMoviePilotUploadTasks(ctx context.Context, account *models.Account, m
 		}
 		created++
 	}
+	return created, nil
+}
+
+// createMissingUploadTasks 批次增量补传：扫描本地目录中尚未纳入批次的新文件并创建上传任务。
+// 用于下载任务被判定为"完成"后仍有文件陆续落盘的场景（如快照发布大文件后到）。
+func createMissingUploadTasks(ctx context.Context, task *models.MoviePilotUploadTask, account *models.Account) (int, error) {
+	files, err := CollectLocalFiles(task.LocalPath)
+	if err != nil {
+		return 0, err
+	}
+	var existing []string
+	db.Db.Model(&models.DbUploadTask{}).
+		Where("movie_pilot_task_id = ?", task.ID).
+		Pluck("local_full_path", &existing)
+	have := make(map[string]struct{}, len(existing))
+	for _, p := range existing {
+		have[filepath.Clean(p)] = struct{}{}
+	}
+	missing := make([]LocalFile, 0, len(files))
+	for _, f := range files {
+		if _, ok := have[filepath.Clean(f.AbsPath)]; !ok {
+			missing = append(missing, f)
+		}
+	}
+	if len(missing) == 0 {
+		return 0, nil
+	}
+	baseDirID, err := EnsureRemoteDir(ctx, account, task.RemotePath)
+	if err != nil {
+		return 0, fmt.Errorf("定位网盘上传目录失败：%v", err)
+	}
+	created, err := createUploadTasksForFiles(ctx, account, task.ID, task.RemotePath, baseDirID, missing)
+	if err != nil {
+		return created, err
+	}
+	helpers.AppLogger.Infof("MoviePilot 批次 %s 增量补传 %d 个新文件", task.Title, created)
 	return created, nil
 }
 
