@@ -74,14 +74,14 @@ type shareCopyReq struct {
 }
 
 // SaveShare 将分享转存到目标目录（服务端异步复制整棵分享树）。
-// 返回转存项数。
-func (c *Client) SaveShare(ctx context.Context, shareKey, sharePwd, targetParentID string) (int, error) {
+// 返回分享标题（顶级条目名）与转存项数。
+func (c *Client) SaveShare(ctx context.Context, shareKey, sharePwd, targetParentID string) (title string, total int, err error) {
 	items, err := c.ListShareDir(ctx, shareKey, sharePwd, "0")
 	if err != nil {
-		return 0, err
+		return "", 0, err
 	}
 	if len(items) == 0 {
-		return 0, fmt.Errorf("分享为空或已失效")
+		return "", 0, fmt.Errorf("分享为空或已失效")
 	}
 	fl := make([]shareCopyFile, 0, len(items))
 	for _, it := range items {
@@ -109,16 +109,20 @@ func (c *Client) SaveShare(ctx context.Context, shareKey, sharePwd, targetParent
 		})
 	})
 	if err != nil {
-		return 0, err
+		return "", 0, err
 	}
 	var resp BaseResp
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return 0, fmt.Errorf("解析转存响应失败：%w", err)
+		return "", 0, fmt.Errorf("解析转存响应失败：%w", err)
 	}
 	if resp.Code != 0 {
-		return 0, fmt.Errorf("转存失败：%s（code=%d）", resp.Message, resp.Code)
+		return "", 0, fmt.Errorf("转存失败：%s（code=%d）", resp.Message, resp.Code)
 	}
-	return len(fl), nil
+	title = shareKey
+	if len(items) > 0 && strings.TrimSpace(items[0].FileName) != "" {
+		title = items[0].FileName
+	}
+	return title, len(fl), nil
 }
 
 // FindDirByPath 在网盘根目录下查找同名目录，返回目录 FileId。

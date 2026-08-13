@@ -684,13 +684,13 @@ func handlePan123ShareSave(text string, chatID int64) helpers.CommandResponse {
 		helpers.AppLogger.Warnf("Telegram 123 转存失败：分享 %s 内容为空（chatID=%d）", shareKey, chatID)
 		return helpers.CommandResponse{Text: "❌ 分享链接内容为空，无法转存"}
 	}
-	total, err := client.SaveShare(ctx, shareKey, sharePwd, targetParentID)
+	title, total, err := client.SaveShare(ctx, shareKey, sharePwd, targetParentID)
 	if err != nil {
 		helpers.AppLogger.Errorf("Telegram 123 转存失败：转存接口调用失败（chatID=%d shareKey=%s 目标=%s）：%v", chatID, shareKey, targetParentID, err)
 		return helpers.CommandResponse{Text: "❌ 转存失败：" + htmlEscape(err.Error())}
 	}
-	helpers.AppLogger.Infof("Telegram 123 转存成功：chatID=%d shareKey=%s 共 %d 项已转存", chatID, shareKey, total)
-	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享 %s 共 %d 项到 123 云盘", htmlEscape(shareKey), total)}
+	helpers.AppLogger.Infof("Telegram 123 转存成功：chatID=%d shareKey=%s 分享「%s」共 %d 项已转存", chatID, shareKey, title, total)
+	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享「%s」共 %d 项到 123 云盘", htmlEscape(title), total)}
 }
 
 const defaultPan139SaveDir = "/影视/待整理"
