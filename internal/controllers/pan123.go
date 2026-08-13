@@ -371,6 +371,9 @@ func Pan123QRCodeConfirm(c *gin.Context) {
 	client := pan123.NewClient(account.ID, "", "")
 	defer client.Close()
 	client.SetAccessToken(token)
+	if len(token) > 24 {
+		helpers.AppLogger.Infof("123 云盘扫码确认：token 前缀=%s... 长度=%d", token[:24], len(token))
+	}
 	userInfo, err := client.GetUserInfo(c.Request.Context())
 	if err != nil {
 		helpers.AppLogger.Warnf("123 云盘扫码令牌校验/获取用户信息失败：%v", err)

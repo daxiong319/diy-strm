@@ -2,6 +2,7 @@ package pan123
 
 import (
 	"context"
+	"log"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -200,6 +201,7 @@ do:
 	}
 	if resp.Code != 0 {
 		if !isRetry && resp.Code == 401 {
+			log.Printf("pan123 401 raw url=%s status=%d body=%s", url, res.StatusCode(), string(body))
 			if err := c.Login(ctx); err != nil {
 				return nil, err
 			}
