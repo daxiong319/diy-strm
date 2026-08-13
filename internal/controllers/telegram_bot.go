@@ -637,7 +637,8 @@ const defaultPan123SaveDir = "/"
 var (
 	pan123ShareLinkPattern  = regexp.MustCompile(`(?:https?://)?(?:[a-z0-9\-]+\.)*(?:123pan\.com|123pan\.cn|123684\.com|share\.123865\.com)/(?:s|123pan)/([A-Za-z0-9\-_]{6,})(?:\.html)?`)
 	pan123SharePwdPattern   = regexp.MustCompile(`(?i)(?:提取码\s*[:：]?\s*|\bpwd\s*[:：=]?\s*)([A-Za-z0-9]{4,6})`)
-	guangyaShareLinkPattern = regexp.MustCompile(`(?:https?://)?(?:www\.)?guangyapan\.com/s/([A-Za-z0-9_\-]{6,})`)
+	guangyaShareLinkPattern   = regexp.MustCompile(`(?:https?://)?(?:www\.)?guangyapan\.com/s/([A-Za-z0-9_\-]{6,})`)
+	guangYaExtractCodePattern  = regexp.MustCompile(`[?&](?:code|shareCode)=([^&\s]+)`)
 )
 
 // parsePan123ShareText 从文本中解析 123 分享链接与提取码
@@ -693,6 +694,37 @@ func handlePan123ShareSave(text string, chatID int64) helpers.CommandResponse {
 	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享「%s」共 %d 项到 123 云盘", htmlEscape(title), total)}
 }
 
+// handleGuangYaShareSave 处理光鸭云盘分享链接转存（www.guangyapan.com/s/{shareId}）
+func handleGuangYaShareSave(text string, chatID int64) helpers.CommandResponse {
+	trimmed := strings.TrimSpace(text)
+	m := guangyaShareLinkPattern.FindStringSubmatch(trimmed)
+	if m == nil {
+		return helpers.CommandResponse{}
+	}
+	shareID := m[1]
+	shareCode := ""
+	if cm := guangYaExtractCodePattern.FindStringSubmatch(trimmed); cm != nil {
+		shareCode = cm[1]
+	}
+	var account models.Account
+	if err := db.Db.Where("source_type = ?", models.SourceTypeGuangYaPan).Order("id asc").First(&account).Error; err != nil {
+		helpers.AppLogger.Errorf("Telegram 光鸭转存失败：未配置光鸭云盘账号（chatID=%d shareID=%s）", chatID, shareID)
+		return helpers.CommandResponse{Text: "❌ 未配置光鸭云盘账号，无法转存分享链接"}
+	}
+	helpers.AppLogger.Infof("Telegram 光鸭转存：使用账号 %q（ID=%d）处理分享 %s", account.Name, account.ID, shareID)
+	client := account.GetGuangYaPanClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	title, total, err := client.SaveShare(ctx, shareID, shareCode, "")
+	if err != nil {
+		helpers.AppLogger.Errorf("Telegram 光鸭转存失败：转存接口调用失败（chatID=%d shareID=%s）：%v", chatID, shareID, err)
+		return helpers.CommandResponse{Text: "❌ 转存失败：" + htmlEscape(err.Error())}
+	}
+	helpers.AppLogger.Infof("Telegram 光鸭转存成功：chatID=%d shareID=%s 分享「%s」共 %d 项已转存", chatID, shareID, title, total)
+	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享「%s」共 %d 项到光鸭云盘", htmlEscape(title), total)}
+}
+
 const defaultPan139SaveDir = "/影视/待整理"
 
 var pan139ShareLinkPattern = regexp.MustCompile(`(?:shareweb/#/)?w/i/([A-Za-z0-9_\-]{6,})`)
@@ -727,8 +759,7 @@ func handleTelegramShareSave(text string, chatID int64, defaultDir string) helpe
 		return handlePan123ShareSave(text, chatID)
 	}
 	if guangyaShareLinkPattern.MatchString(trimmed) {
-		helpers.AppLogger.Warnf("Telegram 转存：光鸭分享转存暂未支持（chatID=%d text=%q）", chatID, trimmed)
-		return helpers.CommandResponse{Text: "❌ 光鸭云盘分享转存暂未支持，请先在光鸭云盘内保存到网盘"}
+		return handleGuangYaShareSave(text, chatID)
 	}
 
 	linkID, saveDir := parsePan139ShareText(text)
