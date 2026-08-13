@@ -99,7 +99,8 @@ const startQrPolling = () => {
       if (state === 'confirmed') {
         stopQrPolling()
         ElMessage.success('扫码成功，正在完成授权...')
-        await handleConfirmQrLogin()
+        const realToken = response?.data?.data?.token || qrToken.value
+        await handleConfirmQrLogin(realToken)
         clearQrCode()
       } else if (state === 'expired') {
         stopQrPolling()
@@ -137,18 +138,20 @@ const clearQrCode = () => {
   qrToken.value = ''
 }
 
-// 扫码确认：拿令牌完成账号授权
-const handleConfirmQrLogin = async () => {
+// 扫码确认：拿令牌完成账号授权（token 优先用轮询返回的真实 Bearer 令牌）
+const handleConfirmQrLogin = async (token = '') => {
   if (!props.accountId) {
     ElMessage.error('缺少账号信息')
     return
+  }
+  if (!token) {
+    token = qrToken.value
   }
   submitting.value = true
   try {
     const response = await http.post(`${SERVER_URL}/pan123/qrcode/confirm`, {
       account_id: props.accountId,
-      token: qrToken.value,
-    })
+      token,
     if (response?.data.code === 200) {
       ElMessage.success('123 云盘授权成功')
       visible.value = false
