@@ -47,7 +47,7 @@ func (c *Client) ListShareDir(ctx context.Context, shareKey, sharePwd, parentFil
 		}
 		all = append(all, files.Data.InfoList...)
 		nxt := files.Data.Next
-		if nxt == "" || nxt == "0" || nxt == next {
+		if nxt == "" || nxt == "0" || nxt == "-1" || nxt == next {
 			break
 		}
 		next = nxt
