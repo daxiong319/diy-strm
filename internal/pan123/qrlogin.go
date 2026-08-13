@@ -11,15 +11,18 @@ import (
 	"time"
 )
 
-// 123 云盘扫码登录（接口实测验证，参照 mediary-scout Pan123QrLoginClient）：
-//   GET https://login.123pan.com/api/user/qr-code/generate → {code:0, data:{uniID, url}}
+// 123 云盘扫码登录（接口实测验证，参照 mediary-scout Pan123QrLoginClient 与官方 SDK p123client）：
+//   GET  https://login.123pan.com/api/user/qr-code/generate → {code:0, data:{uniID, url}}
 //   二维码内容 = url?env=production&uniID=<uniID>&source=123pan&type=login
-//   GET https://login.123pan.com/api/user/qr-code/result?uniID=<uniID> → {code, data:{loginStatus, token?}}
+//   POST https://login.123pan.com/api/user/qr-code/login {uniID} → 确认扫码登录（官方 SDK 关键步骤）
+//   GET  https://login.123pan.com/api/user/qr-code/result?uniID=<uniID> → {code, data:{loginStatus, token?}}
 // loginStatus: 0 等待扫码 / 1 已扫码待确认 / 2 已取消 / 3 已确认 / 4 二维码已失效
-// token 非空即已确认（90 天 Bearer 令牌）
+// 注意：result 的 token 在未调 qr-code/login 确认前回显的是 uniID 本身；
+// 先 POST qr-code/login 确认后，result 才返回真正的 90 天 Bearer 令牌（JWT）。
 
 const (
 	QRGenerateURL = "https://login.123pan.com/api/user/qr-code/generate"
+	QRCodeLoginURL = "https://login.123pan.com/api/user/qr-code/login"
 	QRResultURL   = "https://login.123pan.com/api/user/qr-code/result"
 )
 
@@ -37,8 +40,13 @@ type QRPollResult struct {
 
 var qrHTTPClient = &http.Client{Timeout: 20 * time.Second}
 
-func qrGet(ctx context.Context, rawURL string) (map[string]any, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+func qrRequest(ctx context.Context, method, rawURL string, body map[string]any) (map[string]any, error) {
+	var reader io.Reader
+	if body != nil {
+		payload, _ := json.Marshal(body)
+		reader = strings.NewReader(string(payload))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, reader)
 	if err != nil {
 		return nil, err
 	}
@@ -53,13 +61,13 @@ func qrGet(ctx context.Context, rawURL string) (map[string]any, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 	var env map[string]any
-	if err := json.Unmarshal(body, &env); err != nil {
-		trunc := body
+	if err := json.Unmarshal(raw, &env); err != nil {
+		trunc := raw
 		if len(trunc) > 160 {
 			trunc = trunc[:160]
 		}
@@ -70,7 +78,7 @@ func qrGet(ctx context.Context, rawURL string) (map[string]any, error) {
 
 // StartQRLogin 生成扫码登录会话。
 func StartQRLogin(ctx context.Context) (*QRStartResult, error) {
-	env, err := qrGet(ctx, QRGenerateURL)
+	env, err := qrRequest(ctx, http.MethodGet, QRGenerateURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -87,17 +95,54 @@ func StartQRLogin(ctx context.Context) (*QRStartResult, error) {
 	return &QRStartResult{UniID: uniID, QRURL: qrContent}, nil
 }
 
+// isJWTToken 简单判断令牌是否为 JWT（三段式）。扫码确认前的占位 token 是 uniID（UUID），不含 "."。
+func isJWTToken(tok string) bool {
+	return strings.Count(tok, ".") == 2
+}
+
+// confirmQRLogin 确认扫码登录（POST user/qr-code/login {uniID}）。
+// 返回确认后可能携带的令牌（部分实现会在确认响应中直接返回）。
+func confirmQRLogin(ctx context.Context, uniID string) (string, error) {
+	env, err := qrRequest(ctx, http.MethodPost, QRCodeLoginURL, map[string]any{"uniID": uniID})
+	if err != nil {
+		return "", err
+	}
+	if code, _ := env["code"].(float64); code != 0 && code != 200 {
+		return "", fmt.Errorf("确认扫码登录失败：code=%v msg=%v", env["code"], env["message"])
+	}
+	if data, _ := env["data"].(map[string]any); data != nil {
+		if token, _ := data["token"].(string); token != "" && isJWTToken(token) {
+			return token, nil
+		}
+	}
+	return "", nil
+}
+
 // PollQRLogin 轮询扫码登录状态。
+// 已确认（loginStatus=3）且 token 为占位的 uniID 时，自动先 POST qr-code/login 确认
+// 再取 result 中的真实 Bearer 令牌。
 func PollQRLogin(ctx context.Context, uniID string) (*QRPollResult, error) {
 	if strings.TrimSpace(uniID) == "" {
 		return nil, fmt.Errorf("缺少扫码会话令牌")
 	}
-	env, err := qrGet(ctx, QRResultURL+"?uniID="+url.QueryEscape(uniID))
+	env, err := qrRequest(ctx, http.MethodGet, QRResultURL+"?uniID="+url.QueryEscape(uniID), nil)
 	if err != nil {
 		return nil, err
 	}
 	data, _ := env["data"].(map[string]any)
 	if token, _ := data["token"].(string); token != "" {
+		if !isJWTToken(token) {
+			// 占位 token（uniID 回显）：先确认登录，再取真实令牌
+			if _, cerr := confirmQRLogin(ctx, uniID); cerr == nil {
+				if env2, err2 := qrRequest(ctx, http.MethodGet, QRResultURL+"?uniID="+url.QueryEscape(uniID), nil); err2 == nil {
+					if d2, _ := env2["data"].(map[string]any); d2 != nil {
+						if t2, _ := d2["token"].(string); t2 != "" && isJWTToken(t2) {
+							return &QRPollResult{Status: "confirmed", Token: t2}, nil
+						}
+					}
+				}
+			}
+		}
 		return &QRPollResult{Status: "confirmed", Token: token}, nil
 	}
 	code, _ := env["code"].(float64)
