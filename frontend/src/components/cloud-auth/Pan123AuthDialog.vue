@@ -152,6 +152,7 @@ const handleConfirmQrLogin = async (token = '') => {
     const response = await http.post(`${SERVER_URL}/pan123/qrcode/confirm`, {
       account_id: props.accountId,
       token,
+    })
     if (response?.data.code === 200) {
       ElMessage.success('123 云盘授权成功')
       visible.value = false
