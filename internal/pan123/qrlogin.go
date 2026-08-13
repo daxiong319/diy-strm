@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -39,6 +40,14 @@ type QRPollResult struct {
 }
 
 var qrHTTPClient = &http.Client{Timeout: 20 * time.Second}
+
+// truncToken 日志脱敏：仅显示前 16 字符。
+func truncToken(tok string) string {
+	if len(tok) <= 16 {
+		return tok
+	}
+	return tok[:16] + "..."
+}
 
 func qrRequest(ctx context.Context, method, rawURL string, body map[string]any) (map[string]any, error) {
 	var reader io.Reader
@@ -131,12 +140,16 @@ func PollQRLogin(ctx context.Context, uniID string) (*QRPollResult, error) {
 	}
 	data, _ := env["data"].(map[string]any)
 	if token, _ := data["token"].(string); token != "" {
+		log.Printf("pan123 qr poll: loginStatus=%v tokenLen=%d tokenHead=%q isJWT=%v", data["loginStatus"], len(token), truncToken(token), isJWTToken(token))
 		if !isJWTToken(token) {
 			// 占位 token（uniID 回显）：先确认登录，再取真实令牌
-			if _, cerr := confirmQRLogin(ctx, uniID); cerr == nil {
+			tok2, cerr := confirmQRLogin(ctx, uniID)
+			log.Printf("pan123 qr confirm: err=%v tokenHead=%q", cerr, truncToken(tok2))
+			if cerr == nil {
 				if env2, err2 := qrRequest(ctx, http.MethodGet, QRResultURL+"?uniID="+url.QueryEscape(uniID), nil); err2 == nil {
 					if d2, _ := env2["data"].(map[string]any); d2 != nil {
 						if t2, _ := d2["token"].(string); t2 != "" && isJWTToken(t2) {
+							log.Printf("pan123 qr re-poll: got real JWT token")
 							return &QRPollResult{Status: "confirmed", Token: t2}, nil
 						}
 					}
