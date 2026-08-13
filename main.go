@@ -660,6 +660,9 @@ func setRouter(r *gin.Engine) {
 
 		// 123 云盘相关路由
 		api.POST("/pan123/login", controllers.Pan123Login)     // 123 云盘账号登录（邮箱/手机号 + 密码）
+		api.POST("/pan123/qrcode", controllers.Pan123QRCode)             // 123 云盘扫码登录二维码
+		api.GET("/pan123/qrcode/status", controllers.Pan123QRCodeStatus)   // 123 云盘扫码状态轮询
+		api.POST("/pan123/qrcode/confirm", controllers.Pan123QRCodeConfirm) // 123 云盘扫码登录确认保存
 		api.GET("/pan123/status", controllers.GetPan123Status) // 查询 123 云盘状态
 
 		// 光鸭云盘相关路由
