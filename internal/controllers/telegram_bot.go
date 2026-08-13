@@ -632,6 +632,67 @@ func StartListenTelegramBot() {
 	mgr.StartAll()
 }
 
+const defaultPan123SaveDir = "/"
+
+var (
+	pan123ShareLinkPattern  = regexp.MustCompile(`(?:https?://)?(?:[a-z0-9\-]+\.)*(?:123pan\.com|123pan\.cn|123684\.com|share\.123865\.com)/(?:s|123pan)/([A-Za-z0-9\-_]{6,})(?:\.html)?`)
+	pan123SharePwdPattern   = regexp.MustCompile(`(?i)(?:提取码\s*[:：]?\s*|\bpwd\s*[:：=]?\s*)([A-Za-z0-9]{4,6})`)
+	guangyaShareLinkPattern = regexp.MustCompile(`(?:https?://)?(?:www\.)?guangyapan\.com/s/([A-Za-z0-9_\-]{6,})`)
+)
+
+// parsePan123ShareText 从文本中解析 123 分享链接与提取码
+func parsePan123ShareText(text string) (shareKey, sharePwd string) {
+	trimmed := strings.TrimSpace(text)
+	if m := pan123ShareLinkPattern.FindStringSubmatch(trimmed); m != nil {
+		shareKey = m[1]
+		if p := pan123SharePwdPattern.FindStringSubmatch(trimmed); p != nil {
+			sharePwd = p[1]
+		}
+	}
+	return shareKey, sharePwd
+}
+
+// handlePan123ShareSave 处理 123 云盘分享转存
+func handlePan123ShareSave(text string, chatID int64) helpers.CommandResponse {
+	shareKey, sharePwd := parsePan123ShareText(text)
+	if shareKey == "" {
+		return helpers.CommandResponse{}
+	}
+	var account models.Account
+	if err := db.Db.Where("source_type = ?", models.SourceType123).Order("id asc").First(&account).Error; err != nil {
+		helpers.AppLogger.Errorf("Telegram 123 转存失败：未配置 123 云盘账号（chatID=%d shareKey=%s）", chatID, shareKey)
+		return helpers.CommandResponse{Text: "❌ 未配置 123 云盘账号，无法转存分享链接"}
+	}
+	helpers.AppLogger.Infof("Telegram 123 转存：使用账号 %q（ID=%d）处理分享 %s", account.Name, account.ID, shareKey)
+	client := account.Get123Client()
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	targetParentID, err := client.FindDirByPath(ctx, defaultPan123SaveDir)
+	if err != nil {
+		helpers.AppLogger.Errorf("Telegram 123 转存失败：目标目录不存在 %q（chatID=%d shareKey=%s）：%v", defaultPan123SaveDir, chatID, shareKey, err)
+		return helpers.CommandResponse{Text: "❌ 目标目录不存在：" + htmlEscape(defaultPan123SaveDir) + "（" + htmlEscape(err.Error()) + "）"}
+	}
+
+	items, err := client.ListShareDir(ctx, shareKey, sharePwd, "0")
+	if err != nil {
+		helpers.AppLogger.Errorf("Telegram 123 转存失败：查询分享内容失败（chatID=%d shareKey=%s）：%v", chatID, shareKey, err)
+		return helpers.CommandResponse{Text: "❌ 查询分享链接失败：" + htmlEscape(err.Error())}
+	}
+	if len(items) == 0 {
+		helpers.AppLogger.Warnf("Telegram 123 转存失败：分享 %s 内容为空（chatID=%d）", shareKey, chatID)
+		return helpers.CommandResponse{Text: "❌ 分享链接内容为空，无法转存"}
+	}
+	total, err := client.SaveShare(ctx, shareKey, sharePwd, targetParentID)
+	if err != nil {
+		helpers.AppLogger.Errorf("Telegram 123 转存失败：转存接口调用失败（chatID=%d shareKey=%s 目标=%s）：%v", chatID, shareKey, targetParentID, err)
+		return helpers.CommandResponse{Text: "❌ 转存失败：" + htmlEscape(err.Error())}
+	}
+	helpers.AppLogger.Infof("Telegram 123 转存成功：chatID=%d shareKey=%s 共 %d 项已转存", chatID, shareKey, total)
+	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享 %s 共 %d 项到 123 云盘", htmlEscape(shareKey), total)}
+}
+
 const defaultPan139SaveDir = "/影视/待整理"
 
 var pan139ShareLinkPattern = regexp.MustCompile(`(?:shareweb/#/)?w/i/([A-Za-z0-9_\-]{6,})`)
@@ -657,8 +718,19 @@ func parsePan139ShareText(text string) (linkID, saveDir string) {
 	return "", ""
 }
 
-// handleTelegramShareSave 处理 Telegram 普通文本消息：识别 139 分享链接并转存到指定目录
+// handleTelegramShareSave 处理 Telegram 普通文本消息：识别网盘分享链接并转存
+// 支持：123 云盘（123pan.com 等域名）、中国移动云盘（139）
 func handleTelegramShareSave(text string, chatID int64, defaultDir string) helpers.CommandResponse {
+	trimmed := strings.TrimSpace(text)
+
+	if pan123ShareLinkPattern.MatchString(trimmed) {
+		return handlePan123ShareSave(text, chatID)
+	}
+	if guangyaShareLinkPattern.MatchString(trimmed) {
+		helpers.AppLogger.Warnf("Telegram 转存：光鸭分享转存暂未支持（chatID=%d text=%q）", chatID, trimmed)
+		return helpers.CommandResponse{Text: "❌ 光鸭云盘分享转存暂未支持，请先在光鸭云盘内保存到网盘"}
+	}
+
 	linkID, saveDir := parsePan139ShareText(text)
 	if linkID == "" {
 		return helpers.CommandResponse{}
@@ -723,6 +795,7 @@ func handleTelegramShareSave(text string, chatID int64, defaultDir string) helpe
 	helpers.AppLogger.Infof("Telegram 转存成功：chatID=%d linkID=%s 分享「%s」共 %d 项已转存到 %s，任务ID=%s", chatID, linkID, info.LinkName, total, saveDir, taskID)
 	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享「%s」共 %d 项到 %s\n任务 ID：%s", htmlEscape(info.LinkName), total, htmlEscape(saveDir), htmlEscape(taskID))}
 }
+
 
 // htmlEscape 转义 Telegram HTML 消息中的特殊字符
 func htmlEscape(s string) string {
