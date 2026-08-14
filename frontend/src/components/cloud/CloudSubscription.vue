@@ -246,35 +246,34 @@
             开启（默认）：影片收录完毕后自动停用该订阅，避免重复转存；关闭：订阅持续运行，已收录的影片/链接仍会去重跳过。
           </div>
         </el-form-item>
-        <template v-if="selectedMedia">
-          <el-form-item label="洗版">
-            <el-switch v-model="form.wash" />
+        <el-form-item label="洗版">
+          <el-switch v-model="form.wash" />
+          <div class="form-help">
+            开启后：同片出现更高规格资源（4K/2160p &gt; 1080p &gt; 720p，REMUX &gt; BluRay &gt; WEB-DL &gt; WEBRip &gt; HDTV，H265 &gt; H264，DV &gt; HDR &gt; SDR，体积）时自动转存替换旧版本。
+            <span v-if="!selectedMedia" class="wash-need-media">（洗版按影片关联，请先在上方选择影片）</span>
+          </div>
+        </el-form-item>
+        <template v-if="form.wash">
+          <el-form-item label="洗版目标">
+            <el-select v-model="form.wash_target" style="width: 220px">
+              <el-option value="" label="无限制（持续升级）" />
+              <el-option value="1080p" label="1080p 及以上" />
+              <el-option value="4k" label="4K 及以上" />
+              <el-option value="4k_remux" label="4K + REMUX" />
+            </el-select>
             <div class="form-help">
-              开启后：同片出现更高规格资源（4K/2160p &gt; 1080p &gt; 720p，REMUX &gt; BluRay &gt; WEB-DL &gt; WEBRip &gt; HDTV，H265 &gt; H264，DV &gt; HDR &gt; SDR，体积）时自动转存替换旧版本。
+              已收录版本达到目标后停止洗版并自动完结；无限制时持续寻找更高规格，不会自动完结。
             </div>
           </el-form-item>
-          <template v-if="form.wash">
-            <el-form-item label="洗版目标">
-              <el-select v-model="form.wash_target" style="width: 220px">
-                <el-option value="" label="无限制（持续升级）" />
-                <el-option value="1080p" label="1080p 及以上" />
-                <el-option value="4k" label="4K 及以上" />
-                <el-option value="4k_remux" label="4K + REMUX" />
-              </el-select>
-              <div class="form-help">
-                已收录版本达到目标后停止洗版并自动完结；无限制时持续寻找更高规格，不会自动完结。
-              </div>
-            </el-form-item>
-            <el-form-item label="旧版本处理">
-              <el-radio-group v-model="form.replace_old">
-                <el-radio :value="true">转存后自动删除旧文件</el-radio>
-                <el-radio :value="false">保留共存，手动清理</el-radio>
-              </el-radio-group>
-              <div class="form-help">
-                选择保留共存时，旧版本不会被删除，可在订阅列表点击「清理旧版」按钮手动删除。
-              </div>
-            </el-form-item>
-          </template>
+          <el-form-item label="旧版本处理">
+            <el-radio-group v-model="form.replace_old">
+              <el-radio :value="true">转存后自动删除旧文件</el-radio>
+              <el-radio :value="false">保留共存，手动清理</el-radio>
+            </el-radio-group>
+            <div class="form-help">
+              选择保留共存时，旧版本不会被删除，可在订阅列表点击「清理旧版」按钮手动删除。
+            </div>
+          </el-form-item>
         </template>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
@@ -580,6 +579,10 @@ const confirmForm = async () => {
   }
   if (!channel.startsWith('@')) {
     ElMessage.warning('频道名必须以 @ 开头')
+    return
+  }
+  if (form.wash && !selectedMedia.value) {
+    ElMessage.warning('开启洗版需要先选择影片（洗版按影片关联规格比较）')
     return
   }
   formSaving.value = true
@@ -924,6 +927,9 @@ onMounted(load)
 }
 .wash-tag {
   margin-left: 6px;
+}
+.wash-need-media {
+  color: var(--el-color-warning);
 }
 .preview-input {
   display: flex;
