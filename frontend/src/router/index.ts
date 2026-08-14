@@ -140,6 +140,14 @@ const AppCloudPlaceholder = createAsyncRouteComponent(
   'AppCloudPlaceholder',
   () => import('@/components/cloud/CloudPlaceholder.vue'),
 )
+const AppHiveSubscription = createAsyncRouteComponent(
+  'AppHiveSubscription',
+  () => import('@/components/cloud/HiveSubscription.vue'),
+)
+const AppHiveSettings = createAsyncRouteComponent(
+  'AppHiveSettings',
+  () => import('@/components/cloud/HiveSettings.vue'),
+)
 const AppDiscover = createAsyncRouteComponent('AppDiscover', () => import('@/components/AppDiscover.vue'))
 
 // 定义路由元信息类型
@@ -922,6 +930,41 @@ const routes = [
       requiresAuth: true,
       parent: 'cloud-pan139',
       icon: 'Film',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/cloud-hdhive',
+    name: 'cloud-hdhive',
+    redirect: '/cloud-hdhive/subscriptions',
+    meta: {
+      title: '影巢订阅',
+      requiresAuth: true,
+      icon: 'Link',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/cloud-hdhive/subscriptions',
+    name: 'cloud-hdhive-subscriptions',
+    component: AppHiveSubscription,
+    meta: {
+      title: '资源订阅',
+      requiresAuth: true,
+      parent: 'cloud-hdhive',
+      icon: 'Link',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/cloud-hdhive/settings',
+    name: 'cloud-hdhive-settings',
+    component: AppHiveSettings,
+    meta: {
+      title: '影巢设置',
+      requiresAuth: true,
+      parent: 'cloud-hdhive',
+      icon: 'Setting',
       showInMenu: true,
     },
   },

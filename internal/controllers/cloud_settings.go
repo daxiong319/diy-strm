@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"diy-strm/internal/db"
+	"diy-strm/internal/hdhive"
 	"diy-strm/internal/models"
 )
 
@@ -49,7 +51,16 @@ func SetCloudSettingAPI(c *gin.Context) {
 
 // ListCloudSubscriptionsAPI 订阅列表（?source_type=xxx 可选）
 func ListCloudSubscriptionsAPI(c *gin.Context) {
-	subs, err := models.ListCloudSubscriptions(strings.TrimSpace(c.Query("source_type")))
+	resourceSource := strings.TrimSpace(c.Query("resource_source"))
+	var (
+		subs []models.CloudSubscription
+		err  error
+	)
+	if resourceSource != "" {
+		subs, err = models.ListSubscriptionsByResourceSource(resourceSource)
+	} else {
+		subs, err = models.ListCloudSubscriptions(strings.TrimSpace(c.Query("source_type")))
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "查询失败：" + err.Error(), Data: nil})
 		return
@@ -61,6 +72,7 @@ func ListCloudSubscriptionsAPI(c *gin.Context) {
 }
 
 // CreateCloudSubscriptionAPI 新增订阅（POST {source_type, channel, keywords, target_dir, enabled}）
+// 影巢订阅（resource_source=hdhive）无需频道名，需提供 TMDB 选片信息
 func CreateCloudSubscriptionAPI(c *gin.Context) {
 	var raw map[string]json.RawMessage
 	if err := c.ShouldBindJSON(&raw); err != nil {
@@ -84,12 +96,23 @@ func CreateCloudSubscriptionAPI(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "不支持的网盘类型：" + req.SourceType, Data: nil})
 		return
 	}
-	channel := strings.TrimSpace(req.Channel)
-	if channel == "" || !strings.HasPrefix(channel, "@") {
-		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "频道名必须以 @ 开头，例如 @dianying", Data: nil})
-		return
+	req.ResourceSource = strings.TrimSpace(req.ResourceSource)
+	if req.ResourceSource != "hdhive" {
+		req.ResourceSource = "" // 兼容旧数据：空 = TG 频道订阅
+		channel := strings.TrimSpace(req.Channel)
+		if channel == "" || !strings.HasPrefix(channel, "@") {
+			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "频道名必须以 @ 开头，例如 @dianying", Data: nil})
+			return
+		}
+		req.Channel = channel
+	} else {
+		// 影巢订阅：必须按 TMDB 影片订阅
+		if req.TMDBID <= 0 || (req.MediaType != "movie" && req.MediaType != "tv") {
+			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "影巢订阅必须选择影片（电影或剧集）", Data: nil})
+			return
+		}
+		req.Channel = ""
 	}
-	req.Channel = channel
 	req.Keywords = strings.TrimSpace(req.Keywords)
 	if err := models.CreateCloudSubscription(&req); err != nil {
 		c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "创建失败：" + err.Error(), Data: nil})
@@ -240,8 +263,75 @@ func RunSubscriptionAPI(c *gin.Context) {
 		c.JSON(http.StatusNotFound, APIResponse[any]{Code: BadRequest, Message: "订阅不存在", Data: nil})
 		return
 	}
-	msg, _ := RunSubscriptionOnce(sub)
+	var msg string
+	if sub.ResourceSource == "hdhive" {
+		msg, _ = RunHiveSubscriptionOnce(sub)
+	} else {
+		msg, _ = RunSubscriptionOnce(sub)
+	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: msg, Data: nil})
+}
+
+// GetHiveSettingsAPI 获取影巢设置（GET /cloud/hive/settings）
+func GetHiveSettingsAPI(c *gin.Context) {
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "查询成功", Data: gin.H{
+		"api_key":       models.GetHiveAPIKey(),
+		"allow_points":  models.GetHiveAllowPoints(),
+		"poll_interval": models.GetHivePollInterval(),
+	}})
+}
+
+// SetHiveSettingsAPI 保存影巢设置（POST /cloud/hive/settings {api_key, allow_points, poll_interval}）
+func SetHiveSettingsAPI(c *gin.Context) {
+	var req struct {
+		APIKey       string `json:"api_key"`
+		AllowPoints  *bool  `json:"allow_points"`
+		PollInterval int    `json:"poll_interval"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error(), Data: nil})
+		return
+	}
+	if strings.TrimSpace(req.APIKey) != "" {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveAPIKey, strings.TrimSpace(req.APIKey)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存 API Key 失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.AllowPoints != nil {
+		val := "false"
+		if *req.AllowPoints {
+			val = "true"
+		}
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveAllowPoints, val); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存解锁策略失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.PollInterval > 0 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveInterval, strconv.Itoa(req.PollInterval)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存轮询间隔失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "影巢设置已保存", Data: nil})
+}
+
+// TestHiveConnectionAPI 测试影巢 API Key 连通性（POST /cloud/hive/test）
+func TestHiveConnectionAPI(c *gin.Context) {
+	apiKey := models.GetHiveAPIKey()
+	if apiKey == "" {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "未配置影巢 API Key", Data: nil})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	client := hdhive.NewClient(apiKey)
+	if err := client.Ping(ctx); err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "连接失败：" + err.Error(), Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "连接成功，API Key 有效", Data: nil})
 }
 
 // ListChannelJobsPlaceholder 占位：订阅任务状态列表

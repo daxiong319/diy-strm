@@ -18,7 +18,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 65
+var MaxVersionCode = 66
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -31,6 +31,7 @@ var AllTables = []any{
 	DbDownloadTask{}, DbUploadTask{}, UploadSession{}, StrmGenerationTask{}, NotificationChannel{}, TelegramChannelConfig{}, MeoWChannelConfig{}, BarkChannelConfig{},
 	ServerChanChannelConfig{}, CustomWebhookChannelConfig{}, NotificationRule{},
 	MoviePilotConfig{}, MoviePilotUploadTask{}, MoviePilotFailedFile{},
+	CloudSetting{}, CloudSubscription{}, CloudTransferRecord{},
 }
 
 func (*Migrator) TableName() string {
@@ -745,6 +746,15 @@ func Migrate() {
 			return
 		}
 		helpers.AppLogger.Info("已更新订阅表：洗版开关/洗版目标/旧版本处理 + 转存记录规格字段")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 66 {
+		// 影巢（HDHive）订阅：订阅表新增资源来源字段
+		if err := db.Db.AutoMigrate(CloudSubscription{}); err != nil {
+			helpers.AppLogger.Errorf("迁移影巢订阅字段失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("已更新订阅表：资源来源（resource_source）字段")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)

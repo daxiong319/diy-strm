@@ -506,6 +506,7 @@ func initOthers() {
 	models.InitNotificationManager()     // 初始化通知管理器
 	controllers.StartListenTelegramBot() // 初始化 Telegram Bot 监听
 	controllers.StartChannelWatcher(context.Background()) // 启动 TG 频道订阅引擎
+	controllers.StartHiveWatcher(context.Background())    // 启动影巢（HDHive）订阅引擎
 	moviepilot.StartMoviePilotWatcher()  // 启动 MoviePilot 订阅下载检测
 	models.GetEmbyConfig()               // 加载 Emby 配置
 	helpers.SubscribeSync(helpers.V115TokenInValidEvent, models.HandleV115TokenInvalid)
@@ -876,6 +877,11 @@ func setRouter(r *gin.Engine) {
 		api.POST("/cloud/subscriptions/run", controllers.RunSubscriptionAPI)       // 立即执行订阅
 		api.POST("/cloud/subscriptions/clean-old", controllers.CleanOldVersionsAPI) // 清理订阅旧版本
 		api.GET("/cloud/subscriptions/jobs", controllers.ListChannelJobsPlaceholder) // 订阅任务状态
+
+		// 影巢（HDHive）订阅
+		api.GET("/cloud/hive/settings", controllers.GetHiveSettingsAPI)          // 影巢设置
+		api.POST("/cloud/hive/settings", controllers.SetHiveSettingsAPI)         // 保存影巢设置
+		api.POST("/cloud/hive/test", controllers.TestHiveConnectionAPI)          // 测试影巢 API Key
 
 		api.GET("/upload/queue", controllers.UploadList)                                             // 获取上传队列列表
 		api.POST("/upload/queue/clear-pending", controllers.ClearPendingUploadTasks)                 // 清除上传队列中未开始的任务

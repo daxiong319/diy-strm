@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +24,13 @@ type CloudSetting struct {
 // CloudSetting 设置的 key 常量
 const (
 	CloudSettingKeySaveDir = "save_dir" // 值：{"path":"/影视/待整理"}
+)
+
+// 影巢（HDHive）配置 key（source_type = "hdhive"）
+const (
+	CloudSettingKeyHiveAPIKey     = "api_key"      // 值：HDHive API Key
+	CloudSettingKeyHiveAllowPoints = "allow_points" // 值："true"/"false" 是否允许扣积分解锁
+	CloudSettingKeyHiveInterval    = "poll_interval" // 值：轮询间隔分钟数（默认 15）
 )
 
 // SaveDirSetting 转存目录设置值
@@ -89,26 +97,27 @@ func SetCloudSaveDir(sourceType, key, path string) error {
 	return SetCloudSetting(sourceType, key, string(v))
 }
 
-// CloudSubscription TG 频道资源订阅规则
+// CloudSubscription 资源订阅规则（TG 频道订阅 / 影巢订阅共用）
 type CloudSubscription struct {
 	ID           uint       `gorm:"primaryKey" json:"id"`
-	SourceType   string     `gorm:"size:32;index" json:"source_type"` // 123 / guangyapan / pan139
-	Channel      string     `gorm:"size:128;index" json:"channel"`    // 频道 @名（不带 @）或 URL
-	Keywords     string     `gorm:"type:text" json:"keywords"`        // JSON 数组
-	TargetDir    string     `gorm:"size:512" json:"target_dir"`       // 网盘内目标目录
-	MediaType    string     `gorm:"size:16" json:"media_type"`        // 选片类型：movie / tv / 空=通用订阅
+	SourceType   string     `gorm:"size:32;index" json:"source_type"`       // 目标网盘：123 / guangyapan / pan139
+	ResourceSource string   `gorm:"size:16;index" json:"resource_source"`   // 资源来源：空=TG 频道 / hdhive=影巢
+	Channel      string     `gorm:"size:128;index" json:"channel"`          // 频道 @名（不带 @）或 URL（影巢订阅为空）
+	Keywords     string     `gorm:"type:text" json:"keywords"`              // JSON 数组
+	TargetDir    string     `gorm:"size:512" json:"target_dir"`             // 网盘内目标目录
+	MediaType    string     `gorm:"size:16" json:"media_type"`              // 选片类型：movie / tv / 空=通用订阅
 	TMDBID       int64      `gorm:"index:idx_sub_tmdb" json:"tmdb_id"`
-	TMDBTitle    string     `gorm:"size:256" json:"tmdb_title"`  // 选片标题快照
-	Season       int        `json:"season"`                      // 选季：0=全部季 / N=第N季（仅 tv）
-	TotalSeasons int        `json:"total_seasons"`               // 全部季订阅时 TMDB 当前总季数快照
-	AutoFinish   bool       `json:"auto_finish"`                // 自动完结开关（收录完毕后自动停用订阅）
-	Wash         bool       `json:"wash"`                       // 洗版开关（影片级订阅）：同片更高规格自动替换
-	WashTarget   string     `gorm:"size:32" json:"wash_target"` // 洗版目标：空=无限制 / 1080p / 4k / 4k_remux
-	ReplaceOld   bool       `json:"replace_old"`                // 洗版后旧版本处理：true=删除旧文件 / false=保留共存
-	OldCount     int64      `gorm:"-" json:"old_count"`          // 待清理旧版本数（只读，由接口填充）
+	TMDBTitle    string     `gorm:"size:256" json:"tmdb_title"`   // 选片标题快照
+	Season       int        `json:"season"`                       // 选季：0=全部季 / N=第N季（仅 tv）
+	TotalSeasons int        `json:"total_seasons"`                // 全部季订阅时 TMDB 当前总季数快照
+	AutoFinish   bool       `json:"auto_finish"`                  // 自动完结开关（收录完毕后自动停用订阅）
+	Wash         bool       `json:"wash"`                         // 洗版开关（影片级订阅）：同片更高规格自动替换
+	WashTarget   string     `gorm:"size:32" json:"wash_target"`   // 洗版目标：空=无限制 / 1080p / 4k / 4k_remux
+	ReplaceOld   bool       `json:"replace_old"`                  // 洗版后旧版本处理：true=删除旧文件 / false=保留共存
+	OldCount     int64      `gorm:"-" json:"old_count"`           // 待清理旧版本数（只读，由接口填充）
 	Enabled      bool       `gorm:"default:true" json:"enabled"`
-	LastPostID   string     `gorm:"size:64" json:"last_post_id"` // 增量游标（频道帖 ID）
-	FinishedAt   *time.Time `json:"finished_at"`                 // 自动完结时间
+	LastPostID   string     `gorm:"size:64" json:"last_post_id"`  // 增量游标（频道帖 ID；影巢订阅为已处理资源 slug）
+	FinishedAt   *time.Time `json:"finished_at"`                  // 自动完结时间
 	LastRunAt    time.Time  `json:"last_run_at"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
@@ -150,6 +159,49 @@ func ListCloudSubscriptions(sourceType string) ([]CloudSubscription, error) {
 		return nil, err
 	}
 	return list, nil
+}
+
+// ListSubscriptionsByResourceSource 按资源来源查询订阅（空=TG 频道 / hdhive=影巢）
+func ListSubscriptionsByResourceSource(resourceSource string) ([]CloudSubscription, error) {
+	var list []CloudSubscription
+	if err := db.Db.Where("resource_source = ?", resourceSource).Order("id asc").Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// GetHiveAPIKey 获取影巢 API Key
+func GetHiveAPIKey() string {
+	v, err := GetCloudSetting("hdhive", CloudSettingKeyHiveAPIKey)
+	if err != nil || v == "" {
+		return ""
+	}
+	return v
+}
+
+// GetHiveAllowPoints 是否允许扣积分解锁影巢收费资源（默认允许）
+func GetHiveAllowPoints() bool {
+	v, err := GetCloudSetting("hdhive", CloudSettingKeyHiveAllowPoints)
+	if err != nil || v == "" {
+		return true
+	}
+	return strings.TrimSpace(v) == "true"
+}
+
+// GetHivePollInterval 影巢轮询间隔（分钟，默认 15）
+func GetHivePollInterval() int {
+	v, err := GetCloudSetting("hdhive", CloudSettingKeyHiveInterval)
+	if err != nil || v == "" {
+		return 15
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 5 {
+		return 15
+	}
+	if n > 1440 {
+		return 1440
+	}
+	return n
 }
 
 // SaveCloudSubscription 创建或更新订阅
@@ -198,13 +250,16 @@ func UpdateCloudSubscription(id uint, req *CloudSubscription, fields map[string]
 	normalizeKeywords(req)
 	if len(fields) == 0 {
 		fields = map[string]bool{}
-		for _, k := range []string{"source_type", "channel", "keywords", "target_dir", "media_type", "tmdb_id", "tmdb_title", "season", "total_seasons", "auto_finish", "wash", "wash_target", "replace_old", "enabled"} {
+		for _, k := range []string{"source_type", "resource_source", "channel", "keywords", "target_dir", "media_type", "tmdb_id", "tmdb_title", "season", "total_seasons", "auto_finish", "wash", "wash_target", "replace_old", "enabled"} {
 			fields[k] = true
 		}
 	}
 	has := func(k string) bool { return fields[k] }
 	if has("source_type") && req.SourceType != "" {
 		old.SourceType = req.SourceType
+	}
+	if has("resource_source") {
+		old.ResourceSource = req.ResourceSource
 	}
 	if has("channel") && req.Channel != "" {
 		old.Channel = req.Channel
