@@ -218,7 +218,13 @@
       </template>
     </el-dialog>
 
-    <CloudDirPicker v-model="pickerVisible" :source-type="form.source_type" @selected="onDirSelected" />
+    <CloudDirPicker
+      :visible="pickerVisible"
+      :source-type="form.source_type"
+      :source-name="'影巢转存'"
+      @update:visible="pickerVisible = $event"
+      @select="onDirSelected"
+    />
   </div>
 </template>
 
