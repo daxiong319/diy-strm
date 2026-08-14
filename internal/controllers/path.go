@@ -66,7 +66,7 @@ func GetPathList(c *gin.Context) {
 	case models.SourceTypeBaiduPan:
 		pathes, err = GetBaiduPanPathList(req.ParentID, req.AccountID)
 	case models.SourceType123:
-		pathes, err = GetPan123PathList(req.ParentID, req.AccountID)
+		pathes, err = GetPan123PathList(req.ParentID, req.ParentPath, req.AccountID)
 	case models.SourceTypeGuangYaPan:
 		pathes, err = GetGuangYaPanPathList(req.ParentID, req.ParentPath, req.AccountID)
 	case models.SourceTypePan139:
@@ -264,7 +264,7 @@ func GetBaiduPanPathList(parentId string, accountId uint) ([]DirResp, error) {
 }
 
 // GetPan123PathList 获取 123 云盘目录列表
-func GetPan123PathList(parentId string, accountId uint) ([]DirResp, error) {
+func GetPan123PathList(parentId, parentPath string, accountId uint) ([]DirResp, error) {
 	account, err := models.GetAccountById(accountId)
 	if err != nil {
 		return nil, err
@@ -282,11 +282,11 @@ func GetPan123PathList(parentId string, accountId uint) ([]DirResp, error) {
 	folders := make([]DirResp, 0)
 	for _, item := range files {
 		if item.IsDir() {
-			folders = append(folders, DirResp{
-				Id:   item.GetID(),
-				Name: item.FileName,
-				Path: item.FileName,
-			})
+folders = append(folders, DirResp{
+			Id:   item.GetID(),
+			Name: item.FileName,
+			Path: joinNetdiskPath(parentPath, item.FileName),
+		})
 		}
 	}
 	return folders, nil
