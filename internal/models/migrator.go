@@ -18,7 +18,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 62
+var MaxVersionCode = 65
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -709,6 +709,42 @@ func Migrate() {
 			return
 		}
 		helpers.AppLogger.Info("已创建光鸭开发者配置/接收 TOKEN/秒传任务表")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 62 {
+		// 云盘转存目录设置 + TG 频道订阅表
+		if err := db.Db.AutoMigrate(CloudSetting{}, CloudSubscription{}); err != nil {
+			helpers.AppLogger.Errorf("迁移云盘设置/订阅表失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("已创建云盘转存设置与 TG 频道订阅表")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 63 {
+		// 云盘转存记录表（订阅去重与自动完结）+ 订阅选片字段
+		if err := db.Db.AutoMigrate(CloudTransferRecord{}, CloudSubscription{}); err != nil {
+			helpers.AppLogger.Errorf("迁移云盘转存记录表失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("已创建云盘转存记录表（订阅去重/自动完结）")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 64 {
+		// 订阅自动完结开关字段
+		if err := db.Db.AutoMigrate(CloudSubscription{}); err != nil {
+			helpers.AppLogger.Errorf("迁移订阅自动完结开关字段失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("已更新订阅表：自动完结开关字段")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 65 {
+		// 订阅洗版字段 + 转存记录规格字段
+		if err := db.Db.AutoMigrate(CloudSubscription{}, CloudTransferRecord{}); err != nil {
+			helpers.AppLogger.Errorf("迁移订阅洗版字段失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("已更新订阅表：洗版开关/洗版目标/旧版本处理 + 转存记录规格字段")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)

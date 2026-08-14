@@ -1,0 +1,421 @@
+﻿package controllers
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"diy-strm/internal/db"
+	"diy-strm/internal/helpers"
+	"diy-strm/internal/models"
+	"diy-strm/internal/tgchannel"
+)
+
+// channelWatchInterval 频道订阅引擎轮询间隔
+const channelWatchInterval = 5 * time.Minute
+
+// StartChannelWatcher 启动 TG 频道订阅引擎（后台 goroutine 常驻轮询）
+func StartChannelWatcher(ctx context.Context) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				helpers.AppLogger.Errorf("TG 频道订阅引擎 panic：%v", r)
+			}
+		}()
+		time.Sleep(10 * time.Second) // 避开服务启动高峰
+		runAllSubscriptions()
+		ticker := time.NewTicker(channelWatchInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				helpers.AppLogger.Infof("TG 频道订阅引擎已停止")
+				return
+			case <-ticker.C:
+				runAllSubscriptions()
+			}
+		}
+	}()
+	helpers.AppLogger.Infof("TG 频道订阅引擎已启动，轮询间隔 %v", channelWatchInterval)
+}
+
+// runAllSubscriptions 执行全部启用中的订阅
+func runAllSubscriptions() {
+	subs, err := models.ListCloudSubscriptions("")
+	if err != nil {
+		helpers.AppLogger.Errorf("TG 频道订阅：读取订阅列表失败：%v", err)
+		return
+	}
+	active := 0
+	for i := range subs {
+		if !subs[i].Enabled {
+			continue
+		}
+		active++
+		msg, ok := RunSubscriptionOnce(&subs[i])
+		if ok {
+			helpers.AppLogger.Infof("TG 频道订阅：%s", msg)
+		} else {
+			helpers.AppLogger.Errorf("TG 频道订阅：%s", msg)
+		}
+	}
+	if active == 0 {
+		helpers.AppLogger.Infof("TG 频道订阅：本轮无启用中的订阅")
+	}
+}
+
+// RunSubscriptionOnce 对单条订阅执行一轮：抓取频道 → 增量 → 关键词匹配 → 转存
+// 返回结果摘要与是否成功（转存失败也计入成功推进游标，避免死循环）
+func RunSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
+	channel := sub.ChannelName()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	posts, err := tgchannel.ParseChannelPage(ctx, channel)
+	if err != nil {
+		return fmt.Sprintf("订阅 #%d（%s）频道 %s 抓取失败：%v", sub.ID, sub.SourceType, channel, err), false
+	}
+	if len(posts) == 0 {
+		sub.LastRunAt = time.Now()
+		_ = models.SaveCloudSubscription(sub)
+		return fmt.Sprintf("订阅 #%d（%s）频道 %s 无内容", sub.ID, sub.SourceType, channel), true
+	}
+
+	lastID := strings.TrimSpace(sub.LastPostID)
+	kws := sub.KeywordList()
+	targetDir := strings.TrimSpace(sub.TargetDir)
+	if targetDir == "" {
+		targetDir = "/"
+	}
+
+	newMaxID := lastID
+	hits := 0
+	transferred := 0
+	linkFound := 0
+	skipped := 0
+	var errs []string
+
+	// posts 新到旧；游标推进到最新帖
+	for _, p := range posts {
+		if lastID != "" && !postIDGreater(p.PostID, lastID) {
+			break // 已处理过，更旧的跳过
+		}
+		if newMaxID == "" || postIDGreater(p.PostID, newMaxID) {
+			newMaxID = p.PostID
+		}
+		if !tgchannel.MatchKeywords(p.Text, kws) {
+			continue
+		}
+		if len(p.Links) == 0 {
+			continue
+		}
+		hits++
+		for _, link := range p.Links {
+			if link.Type != sub.SourceType {
+				continue
+			}
+			linkFound++
+			// 洗版模式（影片级订阅 + 洗版开关）：同片更高规格资源自动替换转存
+			if sub.MediaType != "" && sub.Wash && sub.TMDBID > 0 {
+				old := models.LatestSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season)
+				newSpec := ParseMediaSpec(p.Text)
+				if old != nil {
+					oldSpec := recordToSpec(old)
+					if oldSpec.Score() >= WashTargetScore(sub.WashTarget) {
+						skipped++ // 已达标，不再洗版升级
+						continue
+					}
+					if !newSpec.BetterThan(oldSpec) {
+						skipped++ // 新资源不优于旧版本
+						continue
+					}
+				}
+				title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
+					continue
+				}
+				transferred++
+				recTitle := sub.TMDBTitle
+				if recTitle == "" {
+					recTitle = title
+				}
+				_ = models.CreateTransferRecord(&models.CloudTransferRecord{
+					SourceType:     sub.SourceType,
+					SubscriptionID: sub.ID,
+					MediaType:      sub.MediaType,
+					TMDBID:         sub.TMDBID,
+					Season:         sub.Season,
+					Title:          recTitle,
+					PostID:         p.PostID,
+					LinkURL:        link.URL,
+					TargetDir:      targetDir,
+					Resolution:     newSpec.Resolution,
+					Source:         newSpec.Source,
+					Codec:          newSpec.Codec,
+					Effect:         newSpec.Effect,
+					SizeGB:         newSpec.SizeGB,
+				})
+				if old != nil {
+					old.Status = "superseded"
+					_ = models.SaveTransferRecord(old)
+					if sub.ReplaceOld {
+						if n, derr := deleteOldFilesByTitle(ctx, sub.SourceType, targetDir, old.Title); derr != nil {
+							errs = append(errs, fmt.Sprintf("帖%s旧版本清理失败：%v", p.PostID, derr))
+						} else if n > 0 {
+							helpers.AppLogger.Infof("TG 频道订阅 #%d：洗版成功，已删除 %d 个旧版本文件（%s）", sub.ID, n, old.Title)
+						}
+					}
+				}
+				helpers.AppLogger.Infof("TG 频道订阅 #%v：洗版命中帖 %s，已转存更高规格「%s」共 %d 项到 %s（源 %s，目标 %s，规格分 %d）", sub.ID, p.PostID, title, total, targetDir, sub.SourceType, sub.WashTarget, newSpec.Score())
+				continue
+			}
+			// 去重：影片级订阅按（订阅,片,+季）判定已收录；通用订阅按分享链接 URL 判定
+			if sub.MediaType != "" {
+				if models.HasSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season) {
+					skipped++
+					continue
+				}
+			} else if models.HasLinkRecord(link.URL) {
+				skipped++
+				continue
+			}
+			title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
+				continue
+			}
+			transferred++
+			recTitle := sub.TMDBTitle
+			if recTitle == "" {
+				recTitle = title
+			}
+			_ = models.CreateTransferRecord(&models.CloudTransferRecord{
+				SourceType:     sub.SourceType,
+				SubscriptionID: sub.ID,
+				MediaType:      sub.MediaType,
+				TMDBID:         sub.TMDBID,
+				Season:         sub.Season,
+				Title:          recTitle,
+				PostID:         p.PostID,
+				LinkURL:        link.URL,
+				TargetDir:      targetDir,
+			})
+			helpers.AppLogger.Infof("TG 频道订阅 #%d：命中帖 %s，已转存「%s」共 %d 项到 %s（目标 %s）", sub.ID, p.PostID, title, total, sub.SourceType, targetDir)
+		}
+	}
+
+	sub.LastPostID = newMaxID
+	sub.LastRunAt = time.Now()
+	if err := models.SaveCloudSubscription(sub); err != nil {
+		return fmt.Sprintf("订阅 #%d 游标保存失败：%v", sub.ID, err), false
+	}
+
+	// 自动完结：影片级订阅收录完毕后自动停用，避免重复转存（开关 AutoFinish 关闭时不自动停用）
+	finished := false
+	if sub.AutoFinish {
+		if sub.Wash && sub.MediaType != "" {
+			// 洗版模式：所有当前生效记录均达到洗版目标才完结（无目标=永不自动完结）
+			finished = washTargetMet(sub)
+		} else if sub.MediaType == "movie" {
+			finished = models.HasSubscriptionRecord(sub.ID, sub.TMDBID, 0)
+		} else if sub.MediaType == "tv" {
+			if sub.Season > 0 {
+				finished = models.HasSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season)
+			} else if sub.TotalSeasons > 0 {
+				finished = int(models.CountSubscriptionRecords(sub.ID)) >= sub.TotalSeasons
+			}
+		}
+	}
+	if finished {
+		now := time.Now()
+		sub.Enabled = false
+		sub.FinishedAt = &now
+		sub.LastRunAt = now
+		_ = models.SaveCloudSubscription(sub)
+	}
+
+	summary := fmt.Sprintf("订阅 #%d（%s → %s）频道 %s：命中 %d 帖，链接 %d 个，转存成功 %d 次，去重跳过 %d 次，游标推进至 %s",
+		sub.ID, sub.SourceType, targetDir, channel, hits, linkFound, transferred, skipped, newMaxID)
+	if finished {
+		summary += "；已自动完结（影片已收录完毕，订阅已停用）"
+	}
+	if len(errs) > 0 {
+		summary += "；失败：" + strings.Join(errs, "；")
+		return summary, false
+	}
+	return summary, true
+}
+
+// PreviewChannel 抓取频道最近帖用于前端预览
+func PreviewChannel(channel string, limit int) ([]tgchannel.ChannelPost, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	posts, err := tgchannel.ParseChannelPage(ctx, channel)
+	if err != nil {
+		return nil, err
+	}
+	if len(posts) > limit {
+		posts = posts[:limit]
+	}
+	return posts, nil
+}
+
+// postIDGreater 帖子 ID 数值比较（a > b）。字符串数字，按长度+字典序
+func postIDGreater(a, b string) bool {
+	if len(a) != len(b) {
+		return len(a) > len(b)
+	}
+	return a > b
+}
+
+// saveShareByLink 将分享链接文本转存到指定网盘目录（订阅引擎与 TG 消息共用）
+func saveShareByLink(ctx context.Context, text, pwd, sourceType, targetDir string) (title string, total int, err error) {
+	switch sourceType {
+	case string(models.SourceType123):
+		m := pan123ShareLinkPattern.FindStringSubmatch(text)
+		if m == nil {
+			return "", 0, fmt.Errorf("未识别 123 分享链接：%s", text)
+		}
+		return savePan123Share(ctx, m[1], pwd, targetDir)
+	case string(models.SourceTypeGuangYaPan):
+		m := guangyaShareLinkPattern.FindStringSubmatch(text)
+		if m == nil {
+			return "", 0, fmt.Errorf("未识别光鸭分享链接：%s", text)
+		}
+		return saveGuangYaShare(ctx, m[1], pwd, targetDir)
+	case string(models.SourceTypePan139):
+		m := pan139ShareLinkPattern.FindStringSubmatch(text)
+		if m == nil {
+			return "", 0, fmt.Errorf("未识别 139 分享链接：%s", text)
+		}
+		return savePan139Share(ctx, m[1], targetDir)
+	default:
+		return "", 0, fmt.Errorf("不支持的网盘类型：%s", sourceType)
+	}
+}
+
+// savePan123Share 转存 123 分享到指定目录
+func savePan123Share(ctx context.Context, shareKey, sharePwd, targetDir string) (title string, total int, err error) {
+	var account models.Account
+	if err := db.Db.Where("source_type = ?", models.SourceType123).Order("id asc").First(&account).Error; err != nil {
+		return "", 0, fmt.Errorf("未配置 123 云盘账号")
+	}
+	client := account.Get123Client()
+	defer client.Close()
+	targetParentID, err := client.FindDirByPath(ctx, targetDir)
+	if err != nil {
+		return "", 0, fmt.Errorf("目标目录不存在 %q（%v）", targetDir, err)
+	}
+	return client.SaveShare(ctx, shareKey, sharePwd, targetParentID)
+}
+
+// saveGuangYaShare 转存光鸭分享到指定目录
+func saveGuangYaShare(ctx context.Context, shareID, code, targetDir string) (title string, total int, err error) {
+	var account models.Account
+	if err := db.Db.Where("source_type = ?", models.SourceTypeGuangYaPan).Order("id asc").First(&account).Error; err != nil {
+		return "", 0, fmt.Errorf("未配置光鸭云盘账号")
+	}
+	client := account.GetGuangYaPanClient()
+	parentID := ""
+	if targetDir != "" && targetDir != "/" {
+		parentID, err = client.GetPathIdByPath(ctx, targetDir)
+		if err != nil {
+			return "", 0, fmt.Errorf("目标目录不存在 %q（%v）", targetDir, err)
+		}
+	}
+	return client.SaveShare(ctx, shareID, code, parentID)
+}
+
+// savePan139Share 转存 139 分享到指定目录
+func savePan139Share(ctx context.Context, linkID, saveDir string) (title string, total int, err error) {
+	var account models.Account
+	if err := db.Db.Where("source_type = ?", models.SourceTypePan139).Order("id asc").First(&account).Error; err != nil {
+		return "", 0, fmt.Errorf("未配置中国移动云盘账号")
+	}
+	client := account.GetPan139Client()
+	targetCatalogID, err := client.GetPathIdByPath(ctx, saveDir)
+	if err != nil {
+		return "", 0, fmt.Errorf("目标目录不存在 %q（%v）", saveDir, err)
+	}
+	info, err := client.ListShareDir(ctx, linkID, "", "root")
+	if err != nil {
+		return "", 0, fmt.Errorf("查询分享链接失败：%v", err)
+	}
+	coPaths := make([]string, 0, len(info.FileList))
+	for _, item := range info.FileList {
+		if item.Path != "" {
+			coPaths = append(coPaths, item.Path)
+		}
+	}
+	caPaths := make([]string, 0, len(info.FolderList))
+	for _, item := range info.FolderList {
+		if item.Path != "" {
+			caPaths = append(caPaths, item.Path)
+		}
+	}
+	if len(coPaths) == 0 && len(caPaths) == 0 {
+		return "", 0, fmt.Errorf("分享链接内容为空")
+	}
+	taskID, err := client.SaveShareFiles(ctx, linkID, "", targetCatalogID, coPaths, caPaths)
+	if err != nil {
+		return "", 0, fmt.Errorf("转存失败：%v", err)
+	}
+	_ = taskID
+	return info.LinkName, len(coPaths) + len(caPaths), nil
+}
+
+// parseSourceTypeName 网盘类型显示名
+func parseSourceTypeName(sourceType string) string {
+	switch sourceType {
+	case string(models.SourceType123):
+		return "123 云盘"
+	case string(models.SourceTypeGuangYaPan):
+		return "光鸭云盘"
+	case string(models.SourceTypePan139):
+		return "移动云盘"
+	default:
+		return sourceType
+	}
+}
+
+// ensureSourceTypeValid 校验网盘类型是否支持订阅
+func ensureSourceTypeValid(sourceType string) bool {
+	switch sourceType {
+	case string(models.SourceType123), string(models.SourceTypeGuangYaPan), string(models.SourceTypePan139):
+		return true
+	}
+	return false
+}
+
+// strToUint 字符串转 uint（订阅命令用）
+func strToUint(s string) uint {
+	v, _ := strconv.ParseUint(strings.TrimSpace(s), 10, 64)
+	return uint(v)
+}
+
+// washTargetMet 洗版模式自动完结判定：所有当前生效记录均达到洗版目标（无目标=永不自动完结）
+func washTargetMet(sub *models.CloudSubscription) bool {
+	target := WashTargetScore(sub.WashTarget)
+	if target == 0 {
+		return false
+	}
+	recs := models.ActiveRecords(sub.ID)
+	if len(recs) == 0 {
+		return false
+	}
+	if sub.MediaType == "tv" && sub.Season == 0 && sub.TotalSeasons > 0 && len(recs) < sub.TotalSeasons {
+		return false
+	}
+	for i := range recs {
+		if recordToSpec(&recs[i]).Score() < target {
+			return false
+		}
+	}
+	return true
+}

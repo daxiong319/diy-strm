@@ -505,6 +505,7 @@ func initOthers() {
 	models.InitUQ()                      // 初始化上传队列
 	models.InitNotificationManager()     // 初始化通知管理器
 	controllers.StartListenTelegramBot() // 初始化 Telegram Bot 监听
+	controllers.StartChannelWatcher(context.Background()) // 启动 TG 频道订阅引擎
 	moviepilot.StartMoviePilotWatcher()  // 启动 MoviePilot 订阅下载检测
 	models.GetEmbyConfig()               // 加载 Emby 配置
 	helpers.SubscribeSync(helpers.V115TokenInValidEvent, models.HandleV115TokenInvalid)
@@ -660,6 +661,9 @@ func setRouter(r *gin.Engine) {
 
 		// 123 云盘相关路由
 		api.POST("/pan123/login", controllers.Pan123Login)     // 123 云盘账号登录（邮箱/手机号 + 密码）
+		api.POST("/pan123/qrcode", controllers.Pan123QRCode)             // 123 云盘扫码登录二维码
+		api.GET("/pan123/qrcode/status", controllers.Pan123QRCodeStatus)   // 123 云盘扫码状态轮询
+		api.POST("/pan123/qrcode/confirm", controllers.Pan123QRCodeConfirm) // 123 云盘扫码登录确认保存
 		api.GET("/pan123/status", controllers.GetPan123Status) // 查询 123 云盘状态
 
 		// 光鸭云盘相关路由
@@ -857,6 +861,21 @@ func setRouter(r *gin.Engine) {
 		// 中国移动云盘分享转存
 		api.POST("/pan139/share/info", controllers.Pan139ShareInfo)   // 查询 139 分享链接内容
 		api.POST("/pan139/share/save", controllers.Pan139ShareSave)   // 转存 139 分享到目标目录
+
+		// 云盘转存目录设置
+		api.GET("/cloud/settings", controllers.GetCloudSettings)            // 查询云盘转存目录设置（?source_type=）
+		api.POST("/cloud/settings", controllers.SetCloudSettingAPI)         // 保存云盘转存目录设置
+		api.POST("/cloud/settings/test-123", controllers.TestPan123Account) // 测试 123 云盘账号连通性
+
+		// TG 频道订阅引擎
+		api.GET("/cloud/subscriptions", controllers.ListCloudSubscriptionsAPI)     // 订阅列表
+		api.POST("/cloud/subscriptions", controllers.CreateCloudSubscriptionAPI)   // 新增订阅
+		api.PUT("/cloud/subscriptions/:id", controllers.UpdateCloudSubscriptionAPI) // 更新订阅
+		api.DELETE("/cloud/subscriptions/:id", controllers.DeleteCloudSubscriptionAPI) // 删除订阅
+		api.POST("/cloud/subscriptions/preview", controllers.PreviewChannelAPI)    // 预览频道最近内容
+		api.POST("/cloud/subscriptions/run", controllers.RunSubscriptionAPI)       // 立即执行订阅
+		api.POST("/cloud/subscriptions/clean-old", controllers.CleanOldVersionsAPI) // 清理订阅旧版本
+		api.GET("/cloud/subscriptions/jobs", controllers.ListChannelJobsPlaceholder) // 订阅任务状态
 
 		api.GET("/upload/queue", controllers.UploadList)                                             // 获取上传队列列表
 		api.POST("/upload/queue/clear-pending", controllers.ClearPendingUploadTasks)                 // 清除上传队列中未开始的任务

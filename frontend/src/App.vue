@@ -457,6 +457,9 @@ const defaultOpeneds = computed(() => {
   if (route.path.includes('upload-queue') || route.path.includes('download-queue'))
     openeds.push('/transfer')
   if (route.path.startsWith('/database/backup')) openeds.push('/database')
+  if (route.path.startsWith('/cloud-123')) openeds.push('/cloud-123')
+  if (route.path.startsWith('/cloud-guangyapan')) openeds.push('/cloud-guangyapan')
+  if (route.path.startsWith('/cloud-pan139')) openeds.push('/cloud-pan139')
   return openeds
 })
 
