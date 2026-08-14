@@ -76,7 +76,7 @@
         >
           <div class="pan-dir-input">
             <el-input
-              v-model="form.base_cid"
+              :model-value="selectedDirPath || form.base_cid"
               placeholder="点击选择按钮选择网盘目录"
               :disabled="loading"
               readonly
@@ -610,7 +610,7 @@
         >
           <div class="pan-dir-input">
             <el-input
-              v-model="form.base_cid"
+              :model-value="selectedDirPath || form.base_cid"
               placeholder="点击选择按钮选择网盘目录"
               :disabled="loading"
               readonly
@@ -1974,10 +1974,17 @@ const confirmSelectDir = async () => {
     updateStrmPath()
   }
 
+  const validatedTarget = directorySelectTarget.value
   showDirDialog.value = false
   tempSelectedDir.value = null
   directorySelectTarget.value = 'source'
   activeDirectoryUploadRuleClientId.value = null
+
+  if (validatedTarget === 'strmLocal' && formRef.value) {
+    void formRef.value.validateField('local_path')
+  } else if (validatedTarget === 'source' && formRef.value) {
+    void formRef.value.validateField('base_cid')
+  }
 }
 
 const handleSubmit = async () => {
