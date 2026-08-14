@@ -16,7 +16,7 @@ import (
 type ShareLink struct {
 	URL  string
 	Pwd  string
-	Type string // pan123 / guangyapan / pan139
+	Type string // 与 models.SourceType 一致：123 / guangyapan / pan139
 }
 
 // ChannelPost 频道帖子
@@ -59,7 +59,7 @@ func ExtractShareLinks(text string) []ShareLink {
 	}
 
 	for _, m := range rePan123.FindAllStringSubmatch(text, -1) {
-		add("https://www.123pan.com/s/" + m[1], "pan123")
+		add("https://www.123pan.com/s/"+m[1], "123")
 	}
 	for _, m := range reGuangY.FindAllStringSubmatch(text, -1) {
 		add("https://www.guangyapan.com/s/" + m[1], "guangyapan")
@@ -191,6 +191,7 @@ func parseMessageDiv(n *html.Node) (ChannelPost, bool) {
 	postID := ""
 	text := ""
 	dateStr := ""
+	var hrefs []string
 
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
@@ -212,9 +213,13 @@ func parseMessageDiv(n *html.Node) (ChannelPost, bool) {
 			}
 		case "a":
 			isDate := false
+			href := ""
 			for _, a := range n.Attr {
 				if a.Key == "class" && strings.Contains(a.Val, "tgme_widget_message_date") {
 					isDate = true
+				}
+				if a.Key == "href" {
+					href = a.Val
 				}
 			}
 			if isDate {
@@ -229,6 +234,10 @@ func parseMessageDiv(n *html.Node) (ChannelPost, bool) {
 					}
 				}
 				return
+			}
+			// 内联键盘按钮等元素：链接存于 href（如 123 盘分享按钮）
+			if strings.HasPrefix(href, "http") {
+				hrefs = append(hrefs, href)
 			}
 		}
 		if n.Type == html.ElementNode && n.Data == "div" {
@@ -262,7 +271,11 @@ func parseMessageDiv(n *html.Node) (ChannelPost, bool) {
 		post.Time = t
 	}
 	post.Text = text
-	post.Links = ExtractShareLinks(post.Text)
+	linkText := text
+	if len(hrefs) > 0 {
+		linkText = strings.Join(hrefs, "\n") + "\n" + text
+	}
+	post.Links = ExtractShareLinks(linkText)
 	return post, true
 }
 

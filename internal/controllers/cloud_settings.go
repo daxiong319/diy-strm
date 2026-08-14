@@ -98,13 +98,8 @@ func CreateCloudSubscriptionAPI(c *gin.Context) {
 	}
 	req.ResourceSource = strings.TrimSpace(req.ResourceSource)
 	if req.ResourceSource != "hdhive" {
-		req.ResourceSource = "" // 兼容旧数据：空 = TG 频道订阅
-		channel := strings.TrimSpace(req.Channel)
-		if channel == "" || !strings.HasPrefix(channel, "@") {
-			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "频道名必须以 @ 开头，例如 @dianying", Data: nil})
-			return
-		}
-		req.Channel = channel
+		req.ResourceSource = "" // 空 = TG 频道订阅（在所有已添加频道中搜索）
+		req.Channel = ""
 	} else {
 		// 影巢订阅：必须按 TMDB 影片订阅
 		if req.TMDBID <= 0 || (req.MediaType != "movie" && req.MediaType != "tv") {

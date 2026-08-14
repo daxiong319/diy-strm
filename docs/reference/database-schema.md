@@ -90,8 +90,16 @@
 | 57 | 58 | `sync_paths` 新增 `directory_upload_enabled`，作为目录监控上传同步目录总开关，并按已有启用规则回填。 |
 | 58 | 59 | `settings` 新增 115 直链缓存有效性检查开关和总超时。 |
 | 59 | 60 | 新增 `sync_path_idempotency_records`，用于同步目录创建的幂等重试；`emby_library_refresh_tasks` 新增 `task_key` 用于任务去重，item 定向刷新任务的 `library_id` 回填为真实媒体库 ID 或为空。 |
+| 60 | 61 | `account` 的 `token` / `refresh_token` 扩宽至 4096（光鸭 / 123 云盘访问令牌超长）。 |
+| 61 | 62 | 新增 `guangya_developer_settings`、`guangya_receiver_tokens`、`guangya_transfer_tasks`（光鸭开发者接口小号秒传）。 |
+| 62 | 63 | 新增 `cloud_settings`、`cloud_subscriptions`（云盘转存目录设置 + TG 频道订阅表）。 |
+| 63 | 64 | 新增 `cloud_transfer_records`（订阅去重与自动完结），订阅表补齐选片字段（`media_type`、`tmdb_id`、`tmdb_title`、`season`、`total_seasons`）。 |
+| 64 | 65 | 订阅表新增 `auto_finish` 自动完结开关。 |
+| 65 | 66 | 订阅表新增洗版字段（`wash`、`wash_target`、`replace_old`），转存记录新增规格字段（`resolution`、`source`、`codec`、`effect`、`size_gb`、`status`）。 |
+| 66 | 67 | 订阅表新增 `resource_source` 资源来源（空 = TG 频道 / hdhive = 影巢）。 |
+| 67 | 68 | 新增 `cloud_channels` 云盘资源频道表（TG 频道从订阅解耦，每网盘可添加多个频道）；历史订阅中的频道及最大增量游标自动迁移为频道记录。 |
 
-当前数据库版本是 `60`。
+当前数据库版本是 `67`。
 
 ## 不变量
 
@@ -151,6 +159,7 @@
 | `upload_sessions.upload_task_id` | 唯一；`account_id`、`status` 索引 | 每个上传任务最多保留一个恢复会话。 |
 | `sync_path_idempotency_records.key_hash` | 唯一；`sync_path_id`、`status` 索引 | 同步目录创建请求的幂等键不能重复。 |
 | `emby_library_sync_paths(library_id, sync_path_id)` | 联合唯一 | Emby 媒体库与同步目录的关联不能重复。 |
+| `cloud_channels(source_type, channel)` | 联合唯一；`source_type` 索引 | 同一网盘下频道 @ 名不能重复。 |
 | 各 `*_channel_configs.channel_id` | 唯一 | 一条通知渠道基础记录至多关联一份同类型配置。 |
 
 目录监控规则的重复范围由应用层校验，并没有对应的数据库联合唯一键；`notification_rules(channel_id, event_type)` 也没有联合唯一约束。
@@ -163,7 +172,18 @@
 
 - `id`：固定为 `1`。
 - `created_at` / `updated_at`：创建和更新时间。
-- `version_code`：当前数据库版本号，当前值为 `60`。
+- `version_code`：当前数据库版本号，当前值为 `67`。
+
+### `cloud_channels`
+
+云盘资源频道表。TG 频道订阅与订阅解耦后，每个网盘（`source_type`）可独立添加多个 TG 公开频道；影片订阅运行时在该网盘全部启用频道中搜索匹配资源。
+
+- `source_type`：目标网盘，`123`、`guangyapan` 或 `pan139`，与 `(channel)` 组成唯一约束。
+- `channel`：频道 @ 名（不带 `@`）。
+- `enabled`：是否参与订阅搜索，默认启用。
+- `last_post_id`：增量游标（频道帖 ID），随每轮抓取推进，避免重复扫描旧帖。
+- `last_run_at`：最近一轮抓取时间。
+- `created_at` / `updated_at`：创建和更新时间。
 
 ### `users`
 

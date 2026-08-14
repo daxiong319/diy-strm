@@ -5,8 +5,8 @@
         <div class="card-header">
           <span>{{ sourceName }} · 频道订阅</span>
           <div class="header-actions">
-            <el-button type="primary" size="small" @click="openCreate">新增订阅</el-button>
-            <el-button size="small" @click="openPreview">预览频道</el-button>
+            <el-button type="primary" size="small" @click="openChannelCreate">订阅频道</el-button>
+            <el-button type="success" size="small" plain @click="openCreate">新增订阅</el-button>
             <el-button size="small" :loading="loading" @click="load">刷新</el-button>
           </div>
         </div>
@@ -37,13 +37,42 @@
         show-icon
       />
 
+      <el-card shadow="never" class="channel-card">
+        <template #header>
+          <div class="channel-header">
+            <span>资源频道（{{ channels.length }}）</span>
+            <el-button size="small" type="primary" plain :loading="channelsLoading" @click="loadChannels">
+              刷新
+            </el-button>
+          </div>
+        </template>
+        <el-empty v-if="!channels.length" description="还没有资源频道，点击右上角「订阅频道」添加（支持 https://t.me/xxx 或 @xxx）" :image-size="60" />
+        <div v-else class="channel-list">
+          <div v-for="ch in channels" :key="ch.id" class="channel-item">
+            <div class="channel-info">
+              <span class="channel-name">@{{ ch.channel }}</span>
+              <el-tag size="small" :type="ch.enabled ? 'success' : 'info'">
+                {{ ch.enabled ? '启用' : '停用' }}
+              </el-tag>
+              <span v-if="ch.last_run_at && ch.last_run_at !== '0001-01-01T00:00:00Z'" class="channel-run muted">
+                上次运行 {{ formatTime(ch.last_run_at) }}
+              </span>
+            </div>
+            <div class="channel-ops">
+              <el-button size="small" @click="openPreview(ch.channel)">预览</el-button>
+              <el-switch
+                :model-value="ch.enabled"
+                size="small"
+                @change="(v: boolean) => toggleChannelEnabled(ch, v)"
+              />
+              <el-button size="small" type="danger" plain @click="removeChannel(ch)">删除</el-button>
+            </div>
+          </div>
+        </div>
+      </el-card>
+
       <el-table :data="subs" v-loading="loading" empty-text="暂无订阅，点击「新增订阅」创建">
         <el-table-column prop="id" label="ID" width="60" />
-        <el-table-column label="频道" min-width="140">
-          <template #default="{ row }">
-            <span>{{ row.channel }}</span>
-          </template>
-        </el-table-column>
         <el-table-column label="关键词" min-width="160">
           <template #default="{ row }">
             <template v-if="row.keywords.length">
@@ -114,11 +143,31 @@
       </el-table>
     </el-card>
 
+    <el-dialog v-model="channelFormVisible" title="订阅频道" width="520px">
+      <el-form :model="channelForm" label-width="90px">
+        <el-form-item label="频道链接" required>
+          <el-input
+            v-model="channelForm.channel"
+            placeholder="例如：https://t.me/x123panfxme 或 @x123panfxme"
+            @keyup.enter="confirmChannel"
+          />
+          <div class="form-help">
+            填写 {{ sourceName }} 的资源发布 TG 公开频道。添加后，所有影片订阅会在全部启用频道中自动搜索匹配资源。
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="channelFormVisible = false">取消</el-button>
+        <el-button type="primary" :loading="channelSaving" @click="confirmChannel">添加</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="formVisible" :title="form.id ? '编辑订阅' : '新增订阅'" width="620px">
       <el-form :model="form" label-width="90px">
-        <el-form-item label="频道名" required>
-          <el-input v-model="form.channel" placeholder="例如：@dianying" />
-          <div class="form-help">填写 TG 公开频道名（以 @ 开头），系统每 5 分钟轮询一次。</div>
+        <el-form-item v-if="form.id" label="资源频道">
+          <div class="form-help">
+            该订阅会在此 {{ sourceName }} 全部启用的资源频道中搜索匹配影片并自动转存。
+          </div>
         </el-form-item>
 
         <el-form-item label="选片">
@@ -230,7 +279,7 @@
               <el-tag v-for="k in autoKeywords" :key="k" size="small" class="kw-tag">{{ k }}</el-tag>
               <div class="finish-note">保存后自动关键词与附加关键词合并生效。</div>
             </template>
-            <template v-else>未选片时：帖子文本命中任一关键词即触发转存；留空表示该频道全部分享都转存。</template>
+            <template v-else>未选片时：帖子文本命中任一关键词即触发转存；留空表示频道全部分享都转存。</template>
           </div>
         </el-form-item>
         <el-form-item label="目标目录">
@@ -286,15 +335,12 @@
     </el-dialog>
 
     <el-dialog v-model="previewVisible" title="预览频道最近内容" width="640px">
-      <div class="preview-input">
-        <el-input
-          v-model="previewChannel"
-          placeholder="例如：@dianying"
-          @keyup.enter="doPreview"
-        />
-        <el-button type="primary" :loading="previewing" @click="doPreview">抓取</el-button>
-      </div>
-      <el-empty v-if="previewPosts.length === 0 && !previewing" description="输入频道名后点击抓取" />
+      <el-empty v-if="previewPosts.length === 0 && !previewing && !previewChannel" :image-size="60">
+        <template #description>
+          请在下方资源频道点击「预览」查看频道最近内容：
+          <span class="muted">@{{ previewChannel }}</span>
+        </template>
+      </el-empty>
       <div v-loading="previewing" class="preview-list">
         <div v-for="p in previewPosts" :key="p.post_id" class="preview-item">
           <div class="preview-head">
@@ -361,6 +407,103 @@ interface SubRow {
 const subs = ref<SubRow[]>([])
 const loading = ref(false)
 
+// ---- 资源频道 ----
+interface ChannelRow {
+  id: number
+  channel: string
+  enabled: boolean
+  last_run_at: string
+}
+
+const channels = ref<ChannelRow[]>([])
+const channelsLoading = ref(false)
+
+const loadChannels = async () => {
+  channelsLoading.value = true
+  try {
+    const resp = await http.get('/api/cloud/channels', { params: { source_type: props.sourceType } })
+    if (resp.data?.code === 200) {
+      channels.value = resp.data.data || []
+    } else {
+      ElMessage.error(resp.data?.message || '频道加载失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('频道加载失败：' + (e?.message || ''))
+  } finally {
+    channelsLoading.value = false
+  }
+}
+
+const channelFormVisible = ref(false)
+const channelSaving = ref(false)
+const channelForm = reactive({ channel: '' })
+
+const openChannelCreate = () => {
+  channelForm.channel = ''
+  channelFormVisible.value = true
+}
+
+const confirmChannel = async () => {
+  const channel = channelForm.channel.trim()
+  if (!channel) {
+    ElMessage.warning('请填写频道链接或频道名')
+    return
+  }
+  channelSaving.value = true
+  try {
+    const resp = await http.post('/api/cloud/channels', {
+      source_type: props.sourceType,
+      channel,
+    })
+    if (resp.data?.code === 200) {
+      ElMessage.success('频道已添加')
+      channelFormVisible.value = false
+      await loadChannels()
+    } else {
+      ElMessage.error(resp.data?.message || '添加失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('添加失败：' + (e?.message || ''))
+  } finally {
+    channelSaving.value = false
+  }
+}
+
+const toggleChannelEnabled = async (ch: ChannelRow, enabled: boolean) => {
+  try {
+    const resp = await http.put(`/api/cloud/channels/${ch.id}`, { enabled })
+    if (resp.data?.code === 200) {
+      ch.enabled = enabled
+      ElMessage.success(enabled ? '已启用' : '已停用')
+    } else {
+      ElMessage.error(resp.data?.message || '操作失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('操作失败：' + (e?.message || ''))
+  }
+}
+
+const removeChannel = async (ch: ChannelRow) => {
+  try {
+    await ElMessageBox.confirm(`确定删除频道 @${ch.channel} 吗？删除后该频道的增量游标将丢失，重新添加会从头重新扫描。`, '删除频道', {
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  try {
+    const resp = await http.delete(`/api/cloud/channels/${ch.id}`)
+    if (resp.data?.code === 200) {
+      ElMessage.success('频道已删除')
+      await loadChannels()
+    } else {
+      ElMessage.error(resp.data?.message || '删除失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('删除失败：' + (e?.message || ''))
+  }
+}
+
 const parseKeywords = (k: string | string[]): string[] => {
   if (Array.isArray(k)) return k
   try {
@@ -388,12 +531,13 @@ const load = async () => {
   } finally {
     loading.value = false
   }
+  await loadChannels()
 }
 
 const formVisible = ref(false)
 const formSaving = ref(false)
 const pickerVisible = ref(false)
-const form = reactive({ id: 0, channel: '', keywords: '', target_dir: '/影视/待整理', enabled: true, auto_finish: true, wash: false, wash_target: '', replace_old: true })
+const form = reactive({ id: 0, keywords: '', target_dir: '/影视/待整理', enabled: true, auto_finish: true, wash: false, wash_target: '', replace_old: true })
 
 const onDirSelected = (path: string) => {
   form.target_dir = path
@@ -522,7 +666,7 @@ const resetPick = () => {
 }
 
 const openCreate = () => {
-  Object.assign(form, { id: 0, channel: '', keywords: '', target_dir: '/影视/待整理', enabled: true, auto_finish: true, wash: false, wash_target: '', replace_old: true })
+  Object.assign(form, { id: 0, keywords: '', target_dir: '/影视/待整理', enabled: true, auto_finish: true, wash: false, wash_target: '', replace_old: true })
   resetPick()
   formVisible.value = true
 }
@@ -531,7 +675,6 @@ const openEdit = (row: SubRow) => {
   const kws = Array.isArray(row.keywords) ? row.keywords.join(' ') : String(row.keywords || '')
   Object.assign(form, {
     id: row.id,
-    channel: row.channel,
     keywords: kws,
     target_dir: row.target_dir,
     enabled: row.enabled,
@@ -572,15 +715,6 @@ const openEdit = (row: SubRow) => {
 }
 
 const confirmForm = async () => {
-  const channel = form.channel.trim()
-  if (!channel) {
-    ElMessage.warning('请填写频道名')
-    return
-  }
-  if (!channel.startsWith('@')) {
-    ElMessage.warning('频道名必须以 @ 开头')
-    return
-  }
   if (form.wash && !selectedMedia.value) {
     ElMessage.warning('开启洗版需要先选择影片（洗版按影片关联规格比较）')
     return
@@ -595,7 +729,6 @@ const confirmForm = async () => {
     const merged = [...new Set([...autoKeywords.value, ...extra])]
     const payload: any = {
       source_type: props.sourceType,
-      channel,
       keywords: merged.join(' '),
       target_dir: form.target_dir.trim() || '/',
       enabled: form.enabled,
@@ -645,7 +778,7 @@ const cleaningId = ref(0)
 const cleanOld = async (row: SubRow) => {
   try {
     await ElMessageBox.confirm(
-      `确定清理订阅 #${row.id}（${row.tmdb_title || row.channel}）的 ${row.old_count} 个旧版本文件吗？删除后不可恢复。`,
+      `确定清理订阅 #${row.id}（${row.tmdb_title || row.media_type || '通用'}）的 ${row.old_count} 个旧版本文件吗？删除后不可恢复。`,
       '清理旧版本',
       { type: 'warning' }
     )
@@ -696,7 +829,7 @@ const run = async (row: SubRow) => {
 
 const remove = async (row: SubRow) => {
   try {
-    await ElMessageBox.confirm(`确定删除订阅 #${row.id}（${row.channel}）吗？`, '删除确认', {
+    await ElMessageBox.confirm(`确定删除订阅 #${row.id}（${row.tmdb_title || '通用订阅'}）吗？`, '删除确认', {
       type: 'warning',
     })
   } catch {
@@ -720,10 +853,13 @@ const previewChannel = ref('')
 const previewing = ref(false)
 const previewPosts = ref<any[]>([])
 
-const openPreview = () => {
-  previewChannel.value = ''
+const openPreview = (channel: string) => {
+  previewChannel.value = channel || ''
   previewPosts.value = []
   previewVisible.value = true
+  if (channel) {
+    doPreview()
+  }
 }
 
 const doPreview = async () => {
@@ -931,10 +1067,49 @@ onMounted(load)
 .wash-need-media {
   color: var(--el-color-warning);
 }
-.preview-input {
-  display: flex;
-  gap: 8px;
+.channel-card {
   margin-bottom: 14px;
+}
+.channel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+}
+.channel-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.channel-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  padding: 8px 12px;
+  min-width: 260px;
+  flex: 1;
+}
+.channel-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.channel-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #303133;
+}
+.channel-run {
+  font-size: 12px;
+}
+.channel-ops {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .preview-list {
   max-height: 420px;

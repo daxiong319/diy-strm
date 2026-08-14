@@ -97,6 +97,75 @@ func SetCloudSaveDir(sourceType, key, path string) error {
 	return SetCloudSetting(sourceType, key, string(v))
 }
 
+// CloudChannel 云盘资源频道（TG 公开频道，每网盘可添加多个）
+type CloudChannel struct {
+	ID         uint       `gorm:"primaryKey" json:"id"`
+	SourceType string     `gorm:"size:32;index:idx_channel_source" json:"source_type"` // 目标网盘：123 / guangyapan / pan139
+	Channel    string     `gorm:"size:128;index:idx_channel_source,unique" json:"channel"` // 频道 @名（不带 @）
+	Enabled    bool       `gorm:"default:true" json:"enabled"`
+	LastPostID string     `gorm:"size:64" json:"last_post_id"` // 增量游标（频道帖 ID）
+	LastRunAt  time.Time  `json:"last_run_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+// ChannelName 归一化频道名（去掉 @ 与 URL 前缀）
+func (c *CloudChannel) ChannelName() string {
+	name := c.Channel
+	for _, p := range []string{"https://t.me/s/", "https://t.me/", "t.me/s/", "t.me/", "@"} {
+		name = strings.TrimPrefix(name, p)
+	}
+	name = strings.TrimRight(name, "/")
+	return name
+}
+
+// ListCloudChannels 查询频道列表
+func ListCloudChannels(sourceType string) ([]CloudChannel, error) {
+	var list []CloudChannel
+	q := db.Db
+	if sourceType != "" {
+		q = q.Where("source_type = ?", sourceType)
+	}
+	if err := q.Order("id asc").Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// ListEnabledCloudChannels 查询启用中的频道列表
+func ListEnabledCloudChannels(sourceType string) ([]CloudChannel, error) {
+	var list []CloudChannel
+	if err := db.Db.Where("source_type = ? AND enabled = ?", sourceType, true).Order("id asc").Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// GetCloudChannel 按 ID 查询频道
+func GetCloudChannel(id uint) (*CloudChannel, error) {
+	var c CloudChannel
+	if err := db.Db.First(&c, id).Error; err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// SaveCloudChannel 创建或更新频道
+func SaveCloudChannel(c *CloudChannel) error {
+	if c.ID == 0 {
+		c.CreatedAt = time.Now()
+		c.UpdatedAt = time.Now()
+		return db.Db.Create(c).Error
+	}
+	c.UpdatedAt = time.Now()
+	return db.Db.Save(c).Error
+}
+
+// DeleteCloudChannel 删除频道
+func DeleteCloudChannel(id uint) error {
+	return db.Db.Delete(&CloudChannel{}, id).Error
+}
+
 // CloudSubscription 资源订阅规则（TG 频道订阅 / 影巢订阅共用）
 type CloudSubscription struct {
 	ID           uint       `gorm:"primaryKey" json:"id"`

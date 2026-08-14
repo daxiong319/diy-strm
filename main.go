@@ -869,6 +869,10 @@ func setRouter(r *gin.Engine) {
 		api.POST("/cloud/settings/test-123", controllers.TestPan123Account) // 测试 123 云盘账号连通性
 
 		// TG 频道订阅引擎
+		api.GET("/cloud/channels", controllers.ListCloudChannelsAPI)          // 云盘频道列表
+		api.POST("/cloud/channels", controllers.CreateCloudChannelAPI)        // 添加频道（支持 https://t.me/xxx / @xxx）
+		api.PUT("/cloud/channels/:id", controllers.UpdateCloudChannelAPI)     // 更新频道（启用/禁用）
+		api.DELETE("/cloud/channels/:id", controllers.DeleteCloudChannelAPI)  // 删除频道
 		api.GET("/cloud/subscriptions", controllers.ListCloudSubscriptionsAPI)     // 订阅列表
 		api.POST("/cloud/subscriptions", controllers.CreateCloudSubscriptionAPI)   // 新增订阅
 		api.PUT("/cloud/subscriptions/:id", controllers.UpdateCloudSubscriptionAPI) // 更新订阅

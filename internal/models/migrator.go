@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"diy-strm/internal/db"
 	"diy-strm/internal/helpers"
@@ -18,7 +20,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 66
+var MaxVersionCode = 67
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -31,7 +33,7 @@ var AllTables = []any{
 	DbDownloadTask{}, DbUploadTask{}, UploadSession{}, StrmGenerationTask{}, NotificationChannel{}, TelegramChannelConfig{}, MeoWChannelConfig{}, BarkChannelConfig{},
 	ServerChanChannelConfig{}, CustomWebhookChannelConfig{}, NotificationRule{},
 	MoviePilotConfig{}, MoviePilotUploadTask{}, MoviePilotFailedFile{},
-	CloudSetting{}, CloudSubscription{}, CloudTransferRecord{},
+	CloudSetting{}, CloudSubscription{}, CloudTransferRecord{}, CloudChannel{},
 }
 
 func (*Migrator) TableName() string {
@@ -757,7 +759,73 @@ func Migrate() {
 		helpers.AppLogger.Info("已更新订阅表：资源来源（resource_source）字段")
 		migrator.UpdateVersionCode(db.Db)
 	}
+	if migrator.VersionCode == 67 {
+		// 云盘资源频道独立表：TG 频道订阅从订阅解耦
+		if err := db.Db.AutoMigrate(CloudChannel{}); err != nil {
+			helpers.AppLogger.Errorf("迁移云盘频道表失败：%v", err)
+			return
+		}
+		migrateLegacySubscriptionChannels(db.Db)
+		helpers.AppLogger.Info("已新建云盘频道表：订阅与频道解耦（历史订阅频道已迁移）")
+		migrator.UpdateVersionCode(db.Db)
+	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)
+}
+
+// migrateLegacySubscriptionChannels 把历史订阅表中的频道迁移为独立频道记录
+// 同网盘同频道只保留一条；若该频道从未成功转存过（无转存记录），游标置空以便修复后全量重扫
+func migrateLegacySubscriptionChannels(dbConn *gorm.DB) {
+	if !dbConn.Migrator().HasTable(&CloudSubscription{}) {
+		return
+	}
+	var subs []CloudSubscription
+	if err := dbConn.Where("resource_source = '' OR resource_source IS NULL").Find(&subs).Error; err != nil {
+		helpers.AppLogger.Errorf("迁移历史频道失败：读取订阅表：%v", err)
+		return
+	}
+	best := map[string]string{} // key: source_type|channel -> last_post_id
+	for i := range subs {
+		name := subs[i].ChannelName()
+		if name == "" {
+			continue
+		}
+		key := subs[i].SourceType + "|" + name
+		if cur, ok := best[key]; !ok || postIDStrGreater(subs[i].LastPostID, cur) {
+			best[key] = subs[i].LastPostID
+		}
+	}
+	for key, lastID := range best {
+		parts := strings.SplitN(key, "|", 2)
+		// 该频道所属订阅从未成功转存过 → 全量重扫（旧版链接解析 bug 修复后需要）
+		if lastID != "" {
+			var cnt int64
+			if err := dbConn.Model(&CloudTransferRecord{}).
+				Joins("JOIN cloud_subscriptions ON cloud_subscriptions.id = cloud_transfer_records.subscription_id").
+				Where("cloud_subscriptions.source_type = ? AND cloud_subscriptions.channel = ?", parts[0], parts[1]).
+				Count(&cnt).Error; err == nil && cnt == 0 {
+				lastID = ""
+			}
+		}
+		ch := CloudChannel{
+			SourceType: parts[0],
+			Channel:    parts[1],
+			Enabled:    true,
+			LastPostID: lastID,
+		}
+		ch.CreatedAt = time.Now()
+		ch.UpdatedAt = time.Now()
+		if err := dbConn.Create(&ch).Error; err != nil {
+			helpers.AppLogger.Errorf("迁移历史频道 %s 失败：%v", key, err)
+		}
+	}
+}
+
+// postIDStrGreater 数值字符串比较（a > b），长度优先
+func postIDStrGreater(a, b string) bool {
+	if len(a) != len(b) {
+		return len(a) > len(b)
+	}
+	return a > b
 }
 
 // migrateEmbyLibraryRefreshTaskKeys 将 item 刷新任务的去重键从 library_id 拆分到 task_key。

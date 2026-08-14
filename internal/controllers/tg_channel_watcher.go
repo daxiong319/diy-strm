@@ -66,24 +66,89 @@ func runAllSubscriptions() {
 	}
 }
 
-// RunSubscriptionOnce 对单条订阅执行一轮：抓取频道 → 增量 → 关键词匹配 → 转存
+// RunSubscriptionOnce 对单条订阅执行一轮：遍历该网盘全部启用频道 → 增量 → 关键词匹配 → 转存
 // 返回结果摘要与是否成功（转存失败也计入成功推进游标，避免死循环）
 func RunSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
-	channel := sub.ChannelName()
+	channels, err := models.ListEnabledCloudChannels(sub.SourceType)
+	if err != nil {
+		return fmt.Sprintf("订阅 #%d（%s）读取频道列表失败：%v", sub.ID, sub.SourceType, err), false
+	}
+	if len(channels) == 0 {
+		return fmt.Sprintf("订阅 #%d（%s）没有启用中的资源频道，请先「订阅频道」添加", sub.ID, sub.SourceType), true
+	}
+	allOK := true
+	var parts []string
+	for i := range channels {
+		msg, ok := runChannelSubscriptionOnce(sub, &channels[i])
+		parts = append(parts, msg)
+		if !ok {
+			allOK = false
+		}
+	}
+	// 游标已推进到频道表；订阅记录运行时间
+	now := time.Now()
+	sub.LastRunAt = now
+	if sub.LastPostID == "" {
+		// 兼容迁移前旧订阅：以本次频道最大游标初始化
+		for i := range channels {
+			if postIDGreater(channels[i].LastPostID, sub.LastPostID) {
+				sub.LastPostID = channels[i].LastPostID
+			}
+		}
+	}
+	_ = models.SaveCloudSubscription(sub)
+
+	// 自动完结：影片级订阅收录完毕后自动停用，避免重复转存（开关 AutoFinish 关闭时不自动停用）
+	finished := false
+	if sub.AutoFinish {
+		if sub.Wash && sub.MediaType != "" {
+			// 洗版模式：所有当前生效记录均达到洗版目标才完结（无目标=永不自动完结）
+			finished = washTargetMet(sub)
+		} else if sub.MediaType == "movie" {
+			finished = models.HasSubscriptionRecord(sub.ID, sub.TMDBID, 0)
+		} else if sub.MediaType == "tv" {
+			if sub.Season > 0 {
+				finished = models.HasSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season)
+			} else if sub.TotalSeasons > 0 {
+				finished = int(models.CountSubscriptionRecords(sub.ID)) >= sub.TotalSeasons
+			}
+		}
+	}
+	if finished {
+		now := time.Now()
+		sub.Enabled = false
+		sub.FinishedAt = &now
+		sub.LastRunAt = now
+		_ = models.SaveCloudSubscription(sub)
+	}
+
+	summary := fmt.Sprintf("订阅 #%d（%s）：%s", sub.ID, sub.SourceType, strings.Join(parts, "；"))
+	if finished {
+		summary += "；已自动完结（影片已收录完毕，订阅已停用）"
+	}
+	if !allOK {
+		return summary, false
+	}
+	return summary, true
+}
+
+// runChannelSubscriptionOnce 单订阅 × 单频道执行一轮抓取与转存
+func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudChannel) (string, bool) {
+	channel := ch.ChannelName()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	posts, err := tgchannel.ParseChannelPage(ctx, channel)
 	if err != nil {
-		return fmt.Sprintf("订阅 #%d（%s）频道 %s 抓取失败：%v", sub.ID, sub.SourceType, channel, err), false
+		return fmt.Sprintf("频道 %s 抓取失败：%v", channel, err), false
 	}
 	if len(posts) == 0 {
-		sub.LastRunAt = time.Now()
-		_ = models.SaveCloudSubscription(sub)
-		return fmt.Sprintf("订阅 #%d（%s）频道 %s 无内容", sub.ID, sub.SourceType, channel), true
+		ch.LastRunAt = time.Now()
+		_ = models.SaveCloudChannel(ch)
+		return fmt.Sprintf("频道 %s 无内容", channel), true
 	}
 
-	lastID := strings.TrimSpace(sub.LastPostID)
+	lastID := strings.TrimSpace(ch.LastPostID)
 	kws := sub.KeywordList()
 	targetDir := strings.TrimSpace(sub.TargetDir)
 	if targetDir == "" {
@@ -207,41 +272,14 @@ func RunSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		}
 	}
 
-	sub.LastPostID = newMaxID
-	sub.LastRunAt = time.Now()
-	if err := models.SaveCloudSubscription(sub); err != nil {
-		return fmt.Sprintf("订阅 #%d 游标保存失败：%v", sub.ID, err), false
+	ch.LastPostID = newMaxID
+	ch.LastRunAt = time.Now()
+	if err := models.SaveCloudChannel(ch); err != nil {
+		return fmt.Sprintf("频道 %s 游标保存失败：%v", channel, err), false
 	}
 
-	// 自动完结：影片级订阅收录完毕后自动停用，避免重复转存（开关 AutoFinish 关闭时不自动停用）
-	finished := false
-	if sub.AutoFinish {
-		if sub.Wash && sub.MediaType != "" {
-			// 洗版模式：所有当前生效记录均达到洗版目标才完结（无目标=永不自动完结）
-			finished = washTargetMet(sub)
-		} else if sub.MediaType == "movie" {
-			finished = models.HasSubscriptionRecord(sub.ID, sub.TMDBID, 0)
-		} else if sub.MediaType == "tv" {
-			if sub.Season > 0 {
-				finished = models.HasSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season)
-			} else if sub.TotalSeasons > 0 {
-				finished = int(models.CountSubscriptionRecords(sub.ID)) >= sub.TotalSeasons
-			}
-		}
-	}
-	if finished {
-		now := time.Now()
-		sub.Enabled = false
-		sub.FinishedAt = &now
-		sub.LastRunAt = now
-		_ = models.SaveCloudSubscription(sub)
-	}
-
-	summary := fmt.Sprintf("订阅 #%d（%s → %s）频道 %s：命中 %d 帖，链接 %d 个，转存成功 %d 次，去重跳过 %d 次，游标推进至 %s",
-		sub.ID, sub.SourceType, targetDir, channel, hits, linkFound, transferred, skipped, newMaxID)
-	if finished {
-		summary += "；已自动完结（影片已收录完毕，订阅已停用）"
-	}
+	summary := fmt.Sprintf("频道 %s：命中 %d 帖，链接 %d 个，转存成功 %d 次，去重跳过 %d 次，游标推进至 %s",
+		channel, hits, linkFound, transferred, skipped, newMaxID)
 	if len(errs) > 0 {
 		summary += "；失败：" + strings.Join(errs, "；")
 		return summary, false
