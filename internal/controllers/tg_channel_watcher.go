@@ -165,6 +165,7 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 	linkFound := 0
 	skipped := 0
 	var errs []string
+	var failedIDs []string
 
 	// posts 新到旧；游标推进到最新帖
 	for _, p := range posts {
@@ -233,8 +234,9 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 				}
 				title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
-					continue
+errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
+				failedIDs = append(failedIDs, p.PostID)
+				continue
 				}
 				transferred++
 				recTitle := sub.TMDBTitle
@@ -281,8 +283,9 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 				}
 				title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
-					continue
+errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
+				failedIDs = append(failedIDs, p.PostID)
+				continue
 				}
 				transferred++
 				recTitle := sub.TMDBTitle
@@ -308,8 +311,9 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 			} else {
 				title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
-					continue
+errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
+				failedIDs = append(failedIDs, p.PostID)
+				continue
 				}
 				transferred++
 				recTitle := sub.TMDBTitle
@@ -332,6 +336,13 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 		}
 	}
 
+	if len(failedIDs) > 0 {
+		// 转存失败的帖不推进游标：回退到最旧失败帖的前一位，保证下次重扫补转存
+		oldestFailed := failedIDs[len(failedIDs)-1]
+		if n, err := strconv.ParseInt(oldestFailed, 10, 64); err == nil && n > 0 {
+			newMaxID = strconv.FormatInt(n-1, 10)
+		}
+	}
 	ch.LastPostID = newMaxID
 	ch.LastRunAt = time.Now()
 	if err := models.SaveCloudChannel(ch); err != nil {
