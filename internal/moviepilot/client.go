@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -110,7 +109,7 @@ func (c *Client) ListSubscribes(ctx context.Context) ([]*Subscribe, error) {
 // CreateSubscribeRequest 添加订阅请求
 type CreateSubscribeRequest struct {
 	Name         string `json:"name"`
-	Year         int    `json:"year,omitempty"`
+	Year         string `json:"year,omitempty"`
 	Type         string `json:"type"`
 	TmdbId       int64  `json:"tmdbid"`
 	Season       int    `json:"season,omitempty"`
@@ -139,16 +138,13 @@ func (c *Client) CreateSubscribe(ctx context.Context, req *CreateSubscribeReques
 		Sites        []int  `json:"sites,omitempty"`
 	}{
 		Name:         req.Name,
-		Year:         strconv.Itoa(req.Year),
+		Year:         req.Year,
 		Type:         toMoviePilotType(req.Type),
 		TmdbId:       req.TmdbId,
 		Season:       req.Season,
 		TotalEpisode: req.TotalEpisode,
 		SavePath:     req.SavePath,
 		Sites:        req.Sites,
-	}
-	if req.Year <= 0 {
-		mpReq.Year = ""
 	}
 	var out Response
 	if err := c.do(ctx, http.MethodPost, "/api/v1/subscribe/", &mpReq, &out); err != nil {
@@ -157,8 +153,16 @@ func (c *Client) CreateSubscribe(ctx context.Context, req *CreateSubscribeReques
 	if !out.Success {
 		return 0, fmt.Errorf("MoviePilot 添加订阅失败:%s", out.Message)
 	}
-	id, _ := out.Data.(float64)
-	return int64(id), nil
+	id := int64(0)
+	switch v := out.Data.(type) {
+	case float64:
+		id = int64(v)
+	case map[string]any:
+		if n, ok := v["id"].(float64); ok {
+			id = int64(n)
+		}
+	}
+	return id, nil
 }
 
 // toMoviePilotType 将内部类型（movie/tv）转为 MP 类型值（电影/电视剧）

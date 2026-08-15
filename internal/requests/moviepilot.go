@@ -46,7 +46,7 @@ type TestMoviePilotConnectionRequest struct {
 // CreateMoviePilotSubscribeRequest 添加订阅请求
 type CreateMoviePilotSubscribeRequest struct {
 	Name         string `json:"name" binding:"required"`
-	Year         int    `json:"year"`
+	Year         string `json:"year"` // MP v2 兼容：year 为字符串（前端可能传数字或字符串）
 	Type         string `json:"type" binding:"required"` // movie/tv
 	TmdbId       int64  `json:"tmdbid"`
 	Season       int    `json:"season"`
