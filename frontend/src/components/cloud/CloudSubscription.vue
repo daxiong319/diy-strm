@@ -137,6 +137,7 @@
             <el-button size="small" type="primary" plain :loading="runningId === row.id" @click="run(row)">
               执行
             </el-button>
+            <el-button size="small" plain @click="openRecords(row)">纪录</el-button>
             <el-button size="small" type="danger" plain @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -251,10 +252,10 @@
                       该片转存一次后自动完结（已收录则不再重复转存）
                     </template>
                     <template v-else-if="selectedSeason > 0">
-                      第 {{ selectedSeason }} 季收录后自动完结（S{{ selectedSeason }} 只匹配一次）
+                      第 {{ selectedSeason }} 季全部{{ seasonEpisodeCount(selectedSeason) > 0 ? ` ${seasonEpisodeCount(selectedSeason)}` : '' }}集收录后自动完结（已转存的集不会重复转存，只转存更新集）
                     </template>
                     <template v-else>
-                      全部 {{ (selectedMedia.seasons || []).length }} 季收录后自动完结
+                      {{ selectedMedia.total_episodes > 0 ? `全剧共 ${selectedMedia.total_episodes} 集` : `全部 ${(selectedMedia.seasons || []).length} 季` }}收录后自动完结（已转存的集不会重复转存，只转存更新集）
                     </template>
                   </div>
                   <div class="pick-actions">
@@ -366,6 +367,46 @@
       @update:visible="pickerVisible = $event"
       @select="onDirSelected"
     />
+
+    <el-dialog v-model="recordsVisible" :title="`转存纪录 · 订阅 #${recordsSubId}${recordsSubTitle ? `（${recordsSubTitle}）` : ''}`" width="860px">
+      <el-table :data="records" v-loading="recordsLoading" empty-text="暂无转存纪录">
+        <el-table-column prop="created_at" label="转存时间" width="150">
+          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column prop="title" label="资源" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="episode" label="剧集" width="160">
+          <template #default="{ row }">
+            <span v-if="row.episode">{{ row.episode }}</span>
+            <span v-else class="muted">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="规格" width="150">
+          <template #default="{ row }">
+            <span v-if="specLabel(row)">{{ specLabel(row) }}</span>
+            <span v-else class="muted">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="target_dir" label="目标目录" min-width="140" show-overflow-tooltip />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag v-if="row.status === 'superseded'" size="small" type="warning">已替换</el-tag>
+            <el-tag v-else size="small" type="success">已转存</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="recordsTotal > 0" class="records-pager">
+        <el-pagination
+          layout="total, prev, pager, next"
+          :total="recordsTotal"
+          :page-size="recordsPageSize"
+          :current-page="recordsPage"
+          @current-change="loadRecords"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="recordsVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -396,6 +437,7 @@ interface SubRow {
   tmdb_title?: string
   season?: number
   total_seasons?: number
+  total_episodes?: number
   auto_finish?: boolean
   wash?: boolean
   wash_target?: string
@@ -555,6 +597,7 @@ interface PickItem {
   media_type: 'movie' | 'tvshow'
   seasons?: { season_number: number; name: string; episode_count: number; air_date: string }[]
   total_seasons?: number
+  total_episodes?: number
 }
 
 const pickKeyword = ref('')
@@ -564,6 +607,10 @@ const selectedMedia = ref<PickItem | null>(null)
 const selectedSeason = ref(0)
 
 const CN_NUMS = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二']
+
+const seasonEpisodeCount = (s: number) => {
+  return (selectedMedia.value?.seasons || []).find((x) => x.season_number === s)?.episode_count || 0
+}
 
 const autoKeywords = computed<string[]>(() => {
   const m = selectedMedia.value
@@ -638,6 +685,7 @@ const chooseMedia = async (item: PickItem) => {
           ...item,
           seasons: detail.seasons || [],
           total_seasons: (detail.seasons || []).length,
+          total_episodes: detail.number_of_episodes || 0,
         }
         return
       }
@@ -741,6 +789,12 @@ const confirmForm = async () => {
       tmdb_title: m ? m.title : '',
       season: m && m.media_type === 'tvshow' ? (selectedSeason.value || 0) : 0,
       total_seasons: m && m.media_type === 'tvshow' ? (m.seasons || []).length : 0,
+      total_episodes:
+        m && m.media_type === 'tvshow'
+          ? selectedSeason.value > 0
+            ? seasonEpisodeCount(selectedSeason.value)
+            : (m.total_episodes || 0)
+          : 0,
     }
     const resp =
       form.id > 0
@@ -880,6 +934,69 @@ const doPreview = async () => {
     ElMessage.error('抓取失败：' + (e?.message || ''))
   } finally {
     previewing.value = false
+  }
+}
+
+// ---- 转存纪录 ----
+interface RecordRow {
+  id: number
+  created_at: string
+  title: string
+  episode: string
+  resolution: number
+  source: number
+  codec: number
+  effect: number
+  size_gb: number
+  target_dir: string
+  status: string
+  post_id: string
+}
+
+const recordsVisible = ref(false)
+const recordsLoading = ref(false)
+const records = ref<RecordRow[]>([])
+const recordsTotal = ref(0)
+const recordsPage = ref(1)
+const recordsPageSize = 15
+const recordsSubId = ref(0)
+const recordsSubTitle = ref('')
+
+const specLabel = (r: RecordRow): string => {
+  const res = ['', '720p', '1080p', '4K'][r.resolution] || ''
+  const src = ['', 'HDTV', 'WEBRip', 'WEB-DL', 'BluRay', 'REMUX'][r.source] || ''
+  const codec = ['', 'H.264', 'H.265'][r.codec] || ''
+  const effect = ['', 'SDR', 'HDR', 'DV'][r.effect] || ''
+  const parts = [res, src, codec, effect].filter(Boolean)
+  if (r.size_gb > 0) parts.push(`${r.size_gb.toFixed(1)}GB`)
+  return parts.join(' ')
+}
+
+const openRecords = (row: SubRow) => {
+  recordsSubId.value = row.id
+  recordsSubTitle.value = row.tmdb_title || ''
+  recordsPage.value = 1
+  recordsVisible.value = true
+  loadRecords(1)
+}
+
+const loadRecords = async (page: number) => {
+  recordsLoading.value = true
+  try {
+    const resp = await http.get(`/api/cloud/subscriptions/${recordsSubId.value}/records`, {
+      params: { page, page_size: recordsPageSize },
+    })
+    if (resp.data?.code === 200) {
+      records.value = resp.data.data?.records || []
+      recordsTotal.value = resp.data.data?.total || 0
+      recordsPage.value = page
+    } else {
+      ElMessage.error(resp.data?.message || '纪录加载失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('纪录加载失败：' + (e?.message || ''))
+  } finally {
+    recordsLoading.value = false
   }
 }
 
@@ -1146,5 +1263,10 @@ onMounted(load)
   font-size: 12px;
   color: #409eff;
   word-break: break-all;
+}
+.records-pager {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

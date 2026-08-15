@@ -98,8 +98,9 @@
 | 65 | 66 | 订阅表新增洗版字段（`wash`、`wash_target`、`replace_old`），转存记录新增规格字段（`resolution`、`source`、`codec`、`effect`、`size_gb`、`status`）。 |
 | 66 | 67 | 订阅表新增 `resource_source` 资源来源（空 = TG 频道 / hdhive = 影巢）。 |
 | 67 | 68 | 新增 `cloud_channels` 云盘资源频道表（TG 频道从订阅解耦，每网盘可添加多个频道）；历史订阅中的频道及最大增量游标自动迁移为频道记录。 |
+| 68 | 69 | 转存记录新增 `episode`（剧集标识，按集去重/统计）；订阅表新增 `total_episodes`（TV 目标总集数快照，运行时由 TMDB 刷新，用于按总集数自动完结）。 |
 
-当前数据库版本是 `67`。
+当前数据库版本是 `68`。
 
 ## 不变量
 
@@ -172,7 +173,7 @@
 
 - `id`：固定为 `1`。
 - `created_at` / `updated_at`：创建和更新时间。
-- `version_code`：当前数据库版本号，当前值为 `67`。
+- `version_code`：当前数据库版本号，当前值为 `68`。
 
 ### `cloud_channels`
 
@@ -184,6 +185,40 @@
 - `last_post_id`：增量游标（频道帖 ID），随每轮抓取推进，避免重复扫描旧帖。
 - `last_run_at`：最近一轮抓取时间。
 - `created_at` / `updated_at`：创建和更新时间。
+
+### `cloud_subscriptions`
+
+资源订阅规则（TG 频道订阅 / 影巢订阅共用）。
+
+- `source_type`：目标网盘，`123`、`guangyapan` 或 `pan139`。
+- `resource_source`：资源来源，空 = TG 频道 / `hdhive` = 影巢。
+- `channel`：频道 @ 名（不带 `@`），影巢订阅为空。
+- `keywords`：关键词 JSON 数组，帖子文本命中任一即触发转存。
+- `target_dir`：网盘内目标目录。
+- `media_type`：选片类型 `movie` / `tv` / 空 = 通用订阅。
+- `tmdb_id` / `tmdb_title`：选片 TMDB ID 与标题快照。
+- `season`：选季，0 = 全部季 / N = 第 N 季（仅 tv）。
+- `total_seasons`：全部季订阅时 TMDB 当前总季数快照。
+- `total_episodes`：TV 订阅目标总集数快照（`season > 0` 为该季集数；`season = 0` 为全剧总集数），每轮运行时由 TMDB 刷新，用于「全部集收录后才自动完结」的判定。
+- `auto_finish`：自动完结开关，收录完毕后自动停用订阅。
+- `wash` / `wash_target` / `replace_old`：洗版开关 / 洗版目标（空 / `1080p` / `4k` / `4k_remux`）/ 洗版后旧版本处理。
+- `enabled`：是否启用。
+- `last_post_id`：增量游标（影巢订阅为已处理资源 slug）。
+- `finished_at` / `last_run_at`：自动完结时间 / 最近一轮运行时间。
+
+### `cloud_transfer_records`
+
+云盘转存记录（订阅去重、按集统计与自动完结判定）。
+
+- `source_type` / `subscription_id`：目标网盘与所属订阅。
+- `media_type` / `tmdb_id` / `season`：片信息（`season` 沿用订阅的选季）。
+- `title`：转存资源标题（优先订阅标题快照）。
+- `post_id`：TG 频道帖 ID（影巢订阅为资源 slug）。
+- `link_url`：分享链接（通用订阅去重依据）。
+- `episode`：该帖对应的剧集标识集合（逗号分隔，如 `S01E13`、`S01E24,S01E25…`；空 = 未识别到集号）。影片级订阅按集去重与统计依赖此字段。
+- `target_dir`：转存到的网盘目录。
+- `resolution` / `source` / `codec` / `effect` / `size_gb`：洗版规格（数值枚举见代码）。
+- `status`：空 = 正常 / `superseded` = 已被洗版替换（待清理旧版本）。
 
 ### `users`
 

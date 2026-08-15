@@ -20,7 +20,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 67
+var MaxVersionCode = 68
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -767,6 +767,15 @@ func Migrate() {
 		}
 		migrateLegacySubscriptionChannels(db.Db)
 		helpers.AppLogger.Info("已新建云盘频道表：订阅与频道解耦（历史订阅频道已迁移）")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 68 {
+		// 订阅按集去重/完结：转存记录新增剧集标识字段，订阅新增目标总集数快照字段
+		if err := db.Db.AutoMigrate(CloudTransferRecord{}, CloudSubscription{}); err != nil {
+			helpers.AppLogger.Errorf("迁移转存记录剧集字段失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("已更新订阅/转存记录表：剧集标识（episode）与目标总集数（total_episodes）字段")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)

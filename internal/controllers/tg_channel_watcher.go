@@ -69,6 +69,7 @@ func runAllSubscriptions() {
 // RunSubscriptionOnce 对单条订阅执行一轮：遍历该网盘全部启用频道 → 增量 → 关键词匹配 → 转存
 // 返回结果摘要与是否成功（转存失败也计入成功推进游标，避免死循环）
 func RunSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
+	refreshSubscriptionTotalEpisodes(sub)
 	channels, err := models.ListEnabledCloudChannels(sub.SourceType)
 	if err != nil {
 		return fmt.Sprintf("订阅 #%d（%s）读取频道列表失败：%v", sub.ID, sub.SourceType, err), false
@@ -107,7 +108,10 @@ func RunSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		} else if sub.MediaType == "movie" {
 			finished = models.HasSubscriptionRecord(sub.ID, sub.TMDBID, 0)
 		} else if sub.MediaType == "tv" {
-			if sub.Season > 0 {
+			// 优先按 TMDB 总集数判定：全部集已收录且洗版达标才完结
+			if sub.TotalEpisodes > 0 {
+				finished = int(models.CountDistinctEpisodes(sub.ID, sub.TMDBID, sub.Season)) >= sub.TotalEpisodes
+			} else if sub.Season > 0 {
 				finished = models.HasSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season)
 			} else if sub.TotalSeasons > 0 {
 				finished = int(models.CountSubscriptionRecords(sub.ID)) >= sub.TotalSeasons
@@ -184,17 +188,47 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 			linkFound++
 			// 洗版模式（影片级订阅 + 洗版开关）：同片更高规格资源自动替换转存
 			if sub.MediaType != "" && sub.Wash && sub.TMDBID > 0 {
-				old := models.LatestSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season)
+				var old *models.CloudTransferRecord
 				newSpec := ParseMediaSpec(p.Text)
-				if old != nil {
-					oldSpec := recordToSpec(old)
-					if oldSpec.Score() >= WashTargetScore(sub.WashTarget) {
-						skipped++ // 已达标，不再洗版升级
+				epKeys := ParseEpisodeKeys(p.Text, sub.Season)
+				if len(epKeys) > 0 {
+					// 按集判断：任一集缺失或可升级即转存；全部集已达洗版目标则跳过
+					worth := false
+					var upgrade []*models.CloudTransferRecord
+					for _, ek := range epKeys {
+						o := models.LatestEpisodeRecord(sub.ID, sub.TMDBID, sub.Season, ek)
+						if o == nil {
+							worth = true
+							continue
+						}
+						oldSpec := recordToSpec(o)
+						if oldSpec.Score() >= WashTargetScore(sub.WashTarget) {
+							continue // 该集已达标，不再升级
+						}
+						if newSpec.BetterThan(oldSpec) {
+							worth = true
+							upgrade = append(upgrade, o)
+						}
+					}
+					if !worth {
+						skipped++ // 已达标或新资源不优于旧版本
 						continue
 					}
-					if !newSpec.BetterThan(oldSpec) {
-						skipped++ // 新资源不优于旧版本
-						continue
+					if len(upgrade) > 0 {
+						old = upgrade[0]
+					}
+				} else {
+					old = models.LatestSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season)
+					if old != nil {
+						oldSpec := recordToSpec(old)
+						if oldSpec.Score() >= WashTargetScore(sub.WashTarget) {
+							skipped++ // 已达标，不再洗版升级
+							continue
+						}
+						if !newSpec.BetterThan(oldSpec) {
+							skipped++ // 新资源不优于旧版本
+							continue
+						}
 					}
 				}
 				title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
@@ -217,6 +251,7 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 					PostID:         p.PostID,
 					LinkURL:        link.URL,
 					TargetDir:      targetDir,
+					Episode:        JoinEpisodeKeys(epKeys),
 					Resolution:     newSpec.Resolution,
 					Source:         newSpec.Source,
 					Codec:          newSpec.Codec,
@@ -237,38 +272,63 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 				helpers.AppLogger.Infof("TG 频道订阅 #%v：洗版命中帖 %s，已转存更高规格「%s」共 %d 项到 %s（源 %s，目标 %s，规格分 %d）", sub.ID, p.PostID, title, total, targetDir, sub.SourceType, sub.WashTarget, newSpec.Score())
 				continue
 			}
-			// 去重：影片级订阅按（订阅,片,+季）判定已收录；通用订阅按分享链接 URL 判定
+			// 去重：影片级订阅按（订阅,片,+季/集）判定已收录；通用订阅按分享链接 URL 判定
 			if sub.MediaType != "" {
-				if models.HasSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season) {
+				epKeys := ParseEpisodeKeys(p.Text, sub.Season)
+				if models.HasEpisodeRecord(sub.ID, sub.TMDBID, sub.Season, epKeys) {
 					skipped++
 					continue
 				}
+				title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
+					continue
+				}
+				transferred++
+				recTitle := sub.TMDBTitle
+				if recTitle == "" {
+					recTitle = title
+				}
+				_ = models.CreateTransferRecord(&models.CloudTransferRecord{
+					SourceType:     sub.SourceType,
+					SubscriptionID: sub.ID,
+					MediaType:      sub.MediaType,
+					TMDBID:         sub.TMDBID,
+					Season:         sub.Season,
+					Title:          recTitle,
+					PostID:         p.PostID,
+					LinkURL:        link.URL,
+					TargetDir:      targetDir,
+					Episode:        JoinEpisodeKeys(epKeys),
+				})
+				helpers.AppLogger.Infof("TG 频道订阅 #%d：命中帖 %s，已转存「%s」共 %d 项到 %s（目标 %s）", sub.ID, p.PostID, title, total, sub.SourceType, targetDir)
 			} else if models.HasLinkRecord(link.URL) {
 				skipped++
 				continue
+			} else {
+				title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
+					continue
+				}
+				transferred++
+				recTitle := sub.TMDBTitle
+				if recTitle == "" {
+					recTitle = title
+				}
+				_ = models.CreateTransferRecord(&models.CloudTransferRecord{
+					SourceType:     sub.SourceType,
+					SubscriptionID: sub.ID,
+					MediaType:      sub.MediaType,
+					TMDBID:         sub.TMDBID,
+					Season:         sub.Season,
+					Title:          recTitle,
+					PostID:         p.PostID,
+					LinkURL:        link.URL,
+					TargetDir:      targetDir,
+				})
+				helpers.AppLogger.Infof("TG 频道订阅 #%d：命中帖 %s，已转存「%s」共 %d 项到 %s（目标 %s）", sub.ID, p.PostID, title, total, sub.SourceType, targetDir)
 			}
-			title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
-			if err != nil {
-				errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
-				continue
-			}
-			transferred++
-			recTitle := sub.TMDBTitle
-			if recTitle == "" {
-				recTitle = title
-			}
-			_ = models.CreateTransferRecord(&models.CloudTransferRecord{
-				SourceType:     sub.SourceType,
-				SubscriptionID: sub.ID,
-				MediaType:      sub.MediaType,
-				TMDBID:         sub.TMDBID,
-				Season:         sub.Season,
-				Title:          recTitle,
-				PostID:         p.PostID,
-				LinkURL:        link.URL,
-				TargetDir:      targetDir,
-			})
-			helpers.AppLogger.Infof("TG 频道订阅 #%d：命中帖 %s，已转存「%s」共 %d 项到 %s（目标 %s）", sub.ID, p.PostID, title, total, sub.SourceType, targetDir)
 		}
 	}
 
@@ -437,7 +497,7 @@ func strToUint(s string) uint {
 	return uint(v)
 }
 
-// washTargetMet 洗版模式自动完结判定：所有当前生效记录均达到洗版目标（无目标=永不自动完结）
+// washTargetMet 洗版模式自动完结判定：剧集已全部收录且所有当前生效记录均达到洗版目标（无目标=永不自动完结）
 func washTargetMet(sub *models.CloudSubscription) bool {
 	target := WashTargetScore(sub.WashTarget)
 	if target == 0 {
@@ -450,10 +510,34 @@ func washTargetMet(sub *models.CloudSubscription) bool {
 	if sub.MediaType == "tv" && sub.Season == 0 && sub.TotalSeasons > 0 && len(recs) < sub.TotalSeasons {
 		return false
 	}
+	if sub.MediaType == "tv" && sub.TotalEpisodes > 0 && int(models.CountDistinctEpisodes(sub.ID, sub.TMDBID, sub.Season)) < sub.TotalEpisodes {
+		return false // 剧集尚未全部收录
+	}
 	for i := range recs {
 		if recordToSpec(&recs[i]).Score() < target {
 			return false
 		}
 	}
 	return true
+}
+
+// refreshSubscriptionTotalEpisodes 从 TMDB 刷新 TV 订阅的目标总集数快照（Season>0 取该季集数；Season=0 取全剧总集数）
+func refreshSubscriptionTotalEpisodes(sub *models.CloudSubscription) {
+	if sub.MediaType != "tv" || sub.TMDBID <= 0 {
+		return
+	}
+	tmdbClient := models.GlobalScrapeSettings.GetTmdbClient()
+	lang := models.GlobalScrapeSettings.GetTmdbLanguage()
+	total := 0
+	if sub.Season > 0 {
+		if sd, err := tmdbClient.GetTvSeasonDetail(sub.TMDBID, sub.Season, lang); err == nil {
+			total = sd.EpisodeCount
+		}
+	} else if td, err := tmdbClient.GetTvDetail(sub.TMDBID, lang); err == nil {
+		total = td.NumberOfEpisodes
+	}
+	if total > 0 && total != sub.TotalEpisodes {
+		sub.TotalEpisodes = total
+		_ = models.SaveCloudSubscription(sub)
+	}
 }

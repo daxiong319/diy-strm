@@ -881,6 +881,7 @@ func setRouter(r *gin.Engine) {
 		api.POST("/cloud/subscriptions/run", controllers.RunSubscriptionAPI)       // 立即执行订阅
 		api.POST("/cloud/subscriptions/clean-old", controllers.CleanOldVersionsAPI) // 清理订阅旧版本
 		api.GET("/cloud/subscriptions/jobs", controllers.ListChannelJobsPlaceholder) // 订阅任务状态
+		api.GET("/cloud/subscriptions/:id/records", controllers.ListSubscriptionRecordsAPI) // 订阅转存纪录
 
 		// 影巢（HDHive）订阅
 		api.GET("/cloud/hive/settings", controllers.GetHiveSettingsAPI)          // 影巢设置

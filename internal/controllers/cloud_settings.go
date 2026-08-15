@@ -208,6 +208,28 @@ func CleanOldVersionsAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: msg, Data: nil})
 }
 
+// ListSubscriptionRecordsAPI 订阅转存纪录（GET /cloud/subscriptions/:id/records?page=&page_size=）
+func ListSubscriptionRecordsAPI(c *gin.Context) {
+	id := strToUint(c.Param("id"))
+	if id == 0 {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "无效的订阅 ID", Data: nil})
+		return
+	}
+	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
+	pageSize, _ := strconv.Atoi(strings.TrimSpace(c.Query("page_size")))
+	records, total, err := models.ListTransferRecords(id, page, pageSize)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "查询失败：" + err.Error(), Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "查询成功", Data: gin.H{
+		"records":   records,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	}})
+}
+
 // PreviewChannelAPI 预览频道最近内容（POST /cloud/subscriptions/preview {channel, limit}）
 func PreviewChannelAPI(c *gin.Context) {
 	var req struct {

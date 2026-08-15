@@ -14,6 +14,7 @@ import (
 	"diy-strm/internal/models"
 	"diy-strm/internal/requests"
 	"diy-strm/internal/synccron"
+	"diy-strm/internal/tmdb"
 
 	"github.com/gin-gonic/gin"
 )
@@ -1286,6 +1287,8 @@ type TmdbSearchResp struct {
 	PosterUrl     string  `json:"poster_url"`
 	Overview      string  `json:"overview"`
 	VoteAverage   float64 `json:"vote_average"`
+	Seasons       []tmdb.Season `json:"seasons,omitempty"`       // 剧集季列表（含每季集数）
+	NumberOfEpisodes int    `json:"number_of_episodes"`           // 剧集总集数
 }
 
 func TmdbSearch(c *gin.Context) {
@@ -1386,6 +1389,8 @@ func TmdbSearch(c *gin.Context) {
 				Year:          helpers.ParseYearFromDate(resp.FirstAirDate),
 				PosterUrl:     models.GetTmdbImageUrl(resp.PosterPath),
 				Overview:      resp.Overview,
+				Seasons:       resp.Seasons,
+				NumberOfEpisodes: resp.NumberOfEpisodes,
 			})
 			c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "获取电视剧详情成功", Data: tmdbResp})
 			return

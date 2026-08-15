@@ -179,6 +179,7 @@ type CloudSubscription struct {
 	TMDBTitle    string     `gorm:"size:256" json:"tmdb_title"`   // 选片标题快照
 	Season       int        `json:"season"`                       // 选季：0=全部季 / N=第N季（仅 tv）
 	TotalSeasons int        `json:"total_seasons"`                // 全部季订阅时 TMDB 当前总季数快照
+	TotalEpisodes int       `json:"total_episodes"`                // TV 订阅目标总集数快照（Season>0 为该季集数；Season=0 为全剧总集数，运行时由 TMDB 刷新）
 	AutoFinish   bool       `json:"auto_finish"`                  // 自动完结开关（收录完毕后自动停用订阅）
 	Wash         bool       `json:"wash"`                         // 洗版开关（影片级订阅）：同片更高规格自动替换
 	WashTarget   string     `gorm:"size:32" json:"wash_target"`   // 洗版目标：空=无限制 / 1080p / 4k / 4k_remux
@@ -319,7 +320,7 @@ func UpdateCloudSubscription(id uint, req *CloudSubscription, fields map[string]
 	normalizeKeywords(req)
 	if len(fields) == 0 {
 		fields = map[string]bool{}
-		for _, k := range []string{"source_type", "resource_source", "channel", "keywords", "target_dir", "media_type", "tmdb_id", "tmdb_title", "season", "total_seasons", "auto_finish", "wash", "wash_target", "replace_old", "enabled"} {
+		for _, k := range []string{"source_type", "resource_source", "channel", "keywords", "target_dir", "media_type", "tmdb_id", "tmdb_title", "season", "total_seasons", "total_episodes", "auto_finish", "wash", "wash_target", "replace_old", "enabled"} {
 			fields[k] = true
 		}
 	}
@@ -353,6 +354,9 @@ func UpdateCloudSubscription(id uint, req *CloudSubscription, fields map[string]
 	}
 	if has("total_seasons") {
 		old.TotalSeasons = req.TotalSeasons
+	}
+	if has("total_episodes") {
+		old.TotalEpisodes = req.TotalEpisodes
 	}
 	if has("auto_finish") {
 		old.AutoFinish = req.AutoFinish
@@ -402,6 +406,7 @@ type CloudTransferRecord struct {
 	Title          string    `gorm:"size:256" json:"title"`
 	PostID         string    `gorm:"size:64" json:"post_id"`
 	LinkURL        string    `gorm:"size:512;index" json:"link_url"`
+	Episode        string    `gorm:"size:255" json:"episode"` // 该帖对应的剧集标识集合（逗号分隔，如 S01E13 / S01E24,S01E25…；空=未识别到集号）
 TargetDir      string    `gorm:"size:512" json:"target_dir"`
 	Resolution     int       `gorm:"index" json:"resolution"` // 洗版规格：0未知 1=720p 2=1080p 3=2160p(4K)
 	Source         int       `gorm:"index" json:"source"`     // 0未知 1=HDTV 2=WEBRip 3=WEB-DL 4=BluRay 5=REMUX
@@ -483,6 +488,99 @@ func HasLinkRecord(linkURL string) bool {
 	var cnt int64
 	db.Db.Model(&CloudTransferRecord{}).Where("link_url = ?", linkURL).Count(&cnt)
 	return cnt > 0
+}
+
+// recordEpisodes 解析一条转存记录中已收录的剧集标识集合
+func recordEpisodes(r *CloudTransferRecord) map[string]bool {
+	out := map[string]bool{}
+	for _, k := range strings.Split(r.Episode, ",") {
+		if k = strings.TrimSpace(k); k != "" {
+			out[k] = true
+		}
+	}
+	return out
+}
+
+// HasEpisodeRecord 影片级订阅按集去重：给定剧集标识是否在该订阅的指定片（+季）下全部已转存。
+// epKeys 为空时退化为整片判断（HasSubscriptionRecord）。
+func HasEpisodeRecord(subID uint, tmdbID int64, season int, epKeys []string) bool {
+	if len(epKeys) == 0 {
+		return HasSubscriptionRecord(subID, tmdbID, season)
+	}
+	q := db.Db.Where("subscription_id = ? AND tmdb_id = ? AND status != ?", subID, tmdbID, "superseded")
+	if season > 0 {
+		q = q.Where("season = ?", season)
+	}
+	var rs []CloudTransferRecord
+	q.Find(&rs)
+	done := map[string]bool{}
+	for i := range rs {
+		for k := range recordEpisodes(&rs[i]) {
+			done[k] = true
+		}
+	}
+	for _, k := range epKeys {
+		if !done[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// LatestEpisodeRecord 影片级订阅指定剧集的最新有效（未被替换）转存记录
+func LatestEpisodeRecord(subID uint, tmdbID int64, season int, epKey string) *CloudTransferRecord {
+	q := db.Db.Where("subscription_id = ? AND tmdb_id = ? AND status != ?", subID, tmdbID, "superseded")
+	if season > 0 {
+		q = q.Where("season = ?", season)
+	}
+	var rs []CloudTransferRecord
+	q.Order("created_at desc").Find(&rs)
+	for i := range rs {
+		if recordEpisodes(&rs[i])[epKey] {
+			return &rs[i]
+		}
+	}
+	return nil
+}
+
+// CountDistinctEpisodes 统计订阅已转存的不同剧集数（按剧集标识去重，不含已被洗版替换的记录）
+func CountDistinctEpisodes(subID uint, tmdbID int64, season int) int {
+	q := db.Db.Where("subscription_id = ? AND tmdb_id = ? AND status != ?", subID, tmdbID, "superseded")
+	if season > 0 {
+		q = q.Where("season = ?", season)
+	}
+	var rs []CloudTransferRecord
+	q.Find(&rs)
+	seen := map[string]bool{}
+	for i := range rs {
+		for k := range recordEpisodes(&rs[i]) {
+			seen[k] = true
+		}
+	}
+	return len(seen)
+}
+
+// ListTransferRecords 分页查询订阅的转存记录（含已被洗版替换的旧记录）
+func ListTransferRecords(subID uint, page, pageSize int) ([]CloudTransferRecord, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	var total int64
+	if err := db.Db.Model(&CloudTransferRecord{}).Where("subscription_id = ?", subID).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var rs []CloudTransferRecord
+	if err := db.Db.Where("subscription_id = ?", subID).
+		Order("created_at desc").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&rs).Error; err != nil {
+		return nil, 0, err
+	}
+	return rs, total, nil
 }
 
 // CountSubscriptionRecords 统计订阅已收录数量
