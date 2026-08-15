@@ -255,7 +255,7 @@
                       第 {{ selectedSeason }} 季全部{{ seasonEpisodeCount(selectedSeason) > 0 ? ` ${seasonEpisodeCount(selectedSeason)}` : '' }}集收录后自动完结（已转存的集不会重复转存，只转存更新集）
                     </template>
                     <template v-else>
-                      {{ selectedMedia.total_episodes > 0 ? `全剧共 ${selectedMedia.total_episodes} 集` : `全部 ${(selectedMedia.seasons || []).length} 季` }}收录后自动完结（已转存的集不会重复转存，只转存更新集）
+                      {{ (selectedMedia.total_episodes ?? 0) > 0 ? `全剧共 ${selectedMedia.total_episodes} 集` : `全部 ${(selectedMedia.seasons || []).length} 季` }}收录后自动完结（已转存的集不会重复转存，只转存更新集）
                     </template>
                   </div>
                   <div class="pick-actions">
