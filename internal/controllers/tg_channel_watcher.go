@@ -417,7 +417,7 @@ func savePan123Share(ctx context.Context, shareKey, sharePwd, targetDir string) 
 	}
 	client := account.Get123Client()
 	defer client.Close()
-	targetParentID, err := client.FindDirByPath(ctx, targetDir)
+	targetParentID, err := client.EnsureDirByPath(ctx, targetDir)
 	if err != nil {
 		return "", 0, fmt.Errorf("目标目录不存在 %q（%v）", targetDir, err)
 	}
