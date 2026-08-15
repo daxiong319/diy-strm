@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -181,8 +182,20 @@ func parseChannelHTML(page string) ([]ChannelPost, error) {
 		unique = append(unique, p)
 	}
 
-	// 页面帖子新到旧（第一个是最新），保持顺序
+	// 页面帖子 DOM 顺序为旧到新；按帖子 ID 降序排序为新到旧（第一个是最新）。
+	// 调用方（订阅引擎）依赖该顺序：从最新帖向后扫描，遇「小于等于游标」即停止。
+	sort.Slice(unique, func(i, j int) bool {
+		return postIDNewer(unique[i].PostID, unique[j].PostID)
+	})
 	return unique, nil
+}
+
+// postIDNewer 帖子 ID 数值比较（a 是否晚于 b）。ID 为纯数字字符串，按长度+字典序比较。
+func postIDNewer(a, b string) bool {
+	if len(a) != len(b) {
+		return len(a) > len(b)
+	}
+	return a > b
 }
 
 // parseMessageDiv 解析单个帖子 div（tgme_widget_message）
