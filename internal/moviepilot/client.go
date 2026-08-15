@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -98,6 +99,11 @@ func (c *Client) ListSubscribes(ctx context.Context) ([]*Subscribe, error) {
 	if err := c.do(ctx, http.MethodGet, "/api/v1/subscribe/list", nil, &out); err != nil {
 		return nil, err
 	}
+	for _, s := range out {
+		if s != nil {
+			s.Type = fromMoviePilotType(s.Type)
+		}
+	}
 	return out, nil
 }
 
@@ -122,8 +128,30 @@ type Response struct {
 
 // CreateSubscribe 添加订阅，返回订阅 ID
 func (c *Client) CreateSubscribe(ctx context.Context, req *CreateSubscribeRequest) (int64, error) {
+	mpReq := struct {
+		Name         string `json:"name"`
+		Year         string `json:"year,omitempty"`
+		Type         string `json:"type"`
+		TmdbId       int64  `json:"tmdbid"`
+		Season       int    `json:"season,omitempty"`
+		TotalEpisode int    `json:"total_episode,omitempty"`
+		SavePath     string `json:"save_path,omitempty"`
+		Sites        []int  `json:"sites,omitempty"`
+	}{
+		Name:         req.Name,
+		Year:         strconv.Itoa(req.Year),
+		Type:         toMoviePilotType(req.Type),
+		TmdbId:       req.TmdbId,
+		Season:       req.Season,
+		TotalEpisode: req.TotalEpisode,
+		SavePath:     req.SavePath,
+		Sites:        req.Sites,
+	}
+	if req.Year <= 0 {
+		mpReq.Year = ""
+	}
 	var out Response
-	if err := c.do(ctx, http.MethodPost, "/api/v1/subscribe/", req, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/api/v1/subscribe/", &mpReq, &out); err != nil {
 		return 0, err
 	}
 	if !out.Success {
@@ -131,6 +159,28 @@ func (c *Client) CreateSubscribe(ctx context.Context, req *CreateSubscribeReques
 	}
 	id, _ := out.Data.(float64)
 	return int64(id), nil
+}
+
+// toMoviePilotType 将内部类型（movie/tv）转为 MP 类型值（电影/电视剧）
+func toMoviePilotType(t string) string {
+	switch t {
+	case "movie":
+		return "电影"
+	case "tv":
+		return "电视剧"
+	}
+	return t
+}
+
+// fromMoviePilotType 将 MP 类型值（电影/电视剧）转为内部类型（movie/tv）
+func fromMoviePilotType(t string) string {
+	switch t {
+	case "电影":
+		return "movie"
+	case "电视剧":
+		return "tv"
+	}
+	return t
 }
 
 // SearchSubscribe 立即搜索指定订阅
