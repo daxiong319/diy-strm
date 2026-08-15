@@ -132,7 +132,7 @@ func CreateMoviePilotSubscribe(c *gin.Context) {
 	}
 	id, err := client.CreateSubscribe(c, &moviepilot.CreateSubscribeRequest{
 		Name:         req.Name,
-		Year:         req.Year,
+		Year:         string(req.Year),
 		Type:         req.Type,
 		TmdbId:       req.TmdbId,
 		Season:       req.Season,

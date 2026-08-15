@@ -1,11 +1,32 @@
 package requests
 
 import (
+	"encoding/json"
+	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"diy-strm/internal/validation"
 )
+
+// StringOrInt 兼容 JSON 数字或字符串的字段（如订阅 year，MP v2 要求字符串、旧调用方可能传数字）
+type StringOrInt string
+
+// UnmarshalJSON 同时接受 JSON 数字与字符串
+func (s *StringOrInt) UnmarshalJSON(b []byte) error {
+	var n int64
+	if err := json.Unmarshal(b, &n); err == nil {
+		*s = StringOrInt(strconv.FormatInt(n, 10))
+		return nil
+	}
+	var str string
+	if err := json.Unmarshal(b, &str); err == nil {
+		*s = StringOrInt(str)
+		return nil
+	}
+	return errors.New("字段必须是数字或字符串")
+}
 
 // UpdateMoviePilotConfigRequest 更新 MoviePilot 配置请求
 type UpdateMoviePilotConfigRequest struct {
@@ -45,9 +66,9 @@ type TestMoviePilotConnectionRequest struct {
 
 // CreateMoviePilotSubscribeRequest 添加订阅请求
 type CreateMoviePilotSubscribeRequest struct {
-	Name         string `json:"name" binding:"required"`
-	Year         string `json:"year"` // MP v2 兼容：year 为字符串（前端可能传数字或字符串）
-	Type         string `json:"type" binding:"required"` // movie/tv
+	Name         string     `json:"name" binding:"required"`
+	Year         StringOrInt `json:"year"` // MP v2 兼容：year 为字符串（前端可能传数字或字符串）
+	Type         string     `json:"type" binding:"required"` // movie/tv
 	TmdbId       int64  `json:"tmdbid"`
 	Season       int    `json:"season"`
 	TotalEpisode int    `json:"total_episode"`
