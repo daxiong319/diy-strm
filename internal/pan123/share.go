@@ -156,37 +156,3 @@ func (c *Client) FindDirByPath(ctx context.Context, dirName string) (string, err
 	}
 	return parentID, nil
 }
-
-// EnsureDirByPath 逐级查找目录，任一级不存在则自动创建，返回最终目录 ID。
-// 空路径或 / 返回根目录 ID "0"；创建失败时返回出错位置。
-func (c *Client) EnsureDirByPath(ctx context.Context, dirName string) (string, error) {
-	name := strings.Trim(strings.TrimSpace(dirName), "/")
-	if name == "" {
-		return "0", nil
-	}
-	parentID := "0"
-	for _, part := range strings.Split(name, "/") {
-		if part == "" {
-			continue
-		}
-		files, err := c.GetFiles(ctx, parentID)
-		if err != nil {
-			return "", err
-		}
-		found := false
-		for _, f := range files {
-			if f.IsDir() && f.FileName == part {
-				parentID = f.GetID()
-				found = true
-				break
-			}
-		}
-		if !found {
-			parentID, err = c.CreateDir(ctx, parentID, part)
-			if err != nil {
-				return "", err
-			}
-		}
-	}
-	return parentID, nil
-}
