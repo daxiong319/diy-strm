@@ -102,6 +102,44 @@ func TestBaiduMakeStrmContentEncodesPathQuery(t *testing.T) {
 	}
 }
 
+func TestPan123MakeStrmContentIncludesParentID(t *testing.T) {
+	file := &SyncFileCache{
+		Path:       "media/已整理/赌金 (2026)",
+		FileName:   "赌金.2026.S01E01.mkv",
+		PickCode:   "pick-123",
+		ParentId:   "20419968",
+		SourceType: models.SourceType123,
+	}
+	s := &SyncStrm{
+		Config: SyncStrmConfig{
+			StrmBaseUrl:     "http://qmediasync:12333",
+			StrmUrlNeedPath: 2,
+		},
+		Account: &models.Account{UserId: "user-123"},
+	}
+	driver := NewPan123Driver(nil)
+	driver.SetSyncStrm(s)
+
+	content := driver.MakeStrmContent(file)
+	parsed, err := url.Parse(content)
+	if err != nil {
+		t.Fatalf("解析 STRM URL 失败：%v", err)
+	}
+	values, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		t.Fatalf("解析 STRM query 失败：%v，URL=%s", err, content)
+	}
+	if got := values.Get("parentid"); got != file.ParentId {
+		t.Fatalf("parentid 参数 = %q，期望 %q", got, file.ParentId)
+	}
+
+	// url.Values.Encode 按字母序排列 key：parentid < pickcode < userid < path（path 最后）
+	expectedRawQuery := "parentid=20419968&pickcode=pick-123&userid=user-123&path=" + strings.ReplaceAll(url.QueryEscape(file.FileName), "+", "%20")
+	if parsed.RawQuery != expectedRawQuery {
+		t.Fatalf("RawQuery = %q，期望 %q", parsed.RawQuery, expectedRawQuery)
+	}
+}
+
 func TestCompareStrmRequiresCanonicalQueryOrder(t *testing.T) {
 	file := &SyncFileCache{
 		Path:       "media/我的朋友很少 (2011)/Season 1",

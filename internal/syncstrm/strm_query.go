@@ -3,6 +3,8 @@ package syncstrm
 import (
 	"net/url"
 	"strings"
+
+	"diy-strm/internal/models"
 )
 
 func encodeStrmQuery(params url.Values) string {
@@ -38,6 +40,10 @@ func expectedStrmQueryForSyncFile(mode int, file *SyncFileCache, userID string) 
 	params := url.Values{}
 	params.Add("pickcode", file.PickCode)
 	params.Add("userid", userID)
+	// 123 云盘附带父目录 ID，与 MakeStrmContent 保持一致，避免播放时只在根目录查找
+	if file.SourceType == models.SourceType123 && file.ParentId != "" {
+		params.Add("parentid", file.ParentId)
+	}
 	if pathValue := strmPathQueryValue(mode, file); pathValue != "" {
 		params.Add("path", pathValue)
 	}

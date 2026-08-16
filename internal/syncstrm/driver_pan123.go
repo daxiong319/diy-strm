@@ -143,6 +143,10 @@ func (d *pan123Driver) MakeStrmContent(sf *SyncFileCache) string {
 	params := url.Values{}
 	params.Add("pickcode", sf.PickCode)
 	params.Add("userid", d.s.Account.UserId)
+	// 父目录 ID：播放端定位文件所在目录，避免只在根目录查找导致子目录文件播放失败
+	if sf.ParentId != "" {
+		params.Add("parentid", sf.ParentId)
+	}
 	if pathValue := strmPathQueryValue(d.s.Config.StrmUrlNeedPath, sf); pathValue != "" {
 		params.Add("path", pathValue)
 	}

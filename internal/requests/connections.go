@@ -102,6 +102,8 @@ func (r QRCodeStatusRequest) Validate() error {
 type RemoteFileURLRequest struct {
 	UserID   string `json:"userid" form:"userid"`
 	PickCode string `json:"pickcode" form:"pickcode"`
+	ParentID string `json:"parentid" form:"parentid"`
+	Path     string `json:"path" form:"path"`
 	Force    int    `json:"force" form:"force"`
 }
 

@@ -190,6 +190,7 @@ func GetPan123UrlByPickCode(c *gin.Context) {
 			return
 		}
 		fileId = pickCode
+		parentId = req.ParentID
 	}
 	if account.SourceType != models.SourceType123 {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "账号类型不是 123 云盘", Data: nil})
@@ -244,10 +245,10 @@ func GetPan123UrlByPickCode(c *gin.Context) {
 }
 
 // findPan123FileById 在父目录列表中查找指定文件 ID 的完整信息
-// parentId 为空时仅尝试根目录；通过 SyncFile 可提供父目录 ID 避免全盘遍历
+// 查找顺序：显式 parentId（新旧 STRM 均可能携带）→ 根目录 → 有限深度递归兜底（兼容旧 STRM 无 parentid 且文件位于子目录）
 func findPan123FileById(ctx context.Context, client *pan123.Client, fileId, parentId string) (*pan123.File, error) {
 	parentIds := make([]string, 0, 2)
-	if parentId != "" {
+	if parentId != "" && parentId != "0" && parentId != "root" {
 		parentIds = append(parentIds, parentId)
 	}
 	parentIds = append(parentIds, "0")
@@ -257,13 +258,62 @@ func findPan123FileById(ctx context.Context, client *pan123.Client, fileId, pare
 			continue
 		}
 		seen[pid] = true
-		files, err := client.GetFiles(ctx, pid)
+		if f := lookupFileInDir(ctx, client, pid, fileId); f != nil {
+			return f, nil
+		}
+	}
+	return findPan123FileByBFS(ctx, client, fileId)
+}
+
+// lookupFileInDir 在指定目录列表中查找文件 ID
+func lookupFileInDir(ctx context.Context, client *pan123.Client, parentId, fileId string) *pan123.File {
+	files, err := client.GetFiles(ctx, parentId)
+	if err != nil {
+		helpers.AppLogger.Warnf("查找 123 云盘目录列表失败：parentId=%s err=%v", parentId, err)
+		return nil
+	}
+	for i := range files {
+		if files[i].GetID() == fileId {
+			return &files[i]
+		}
+	}
+	return nil
+}
+
+// findPan123FileByBFS 有限深度/目录数限制的广度优先搜索，
+// 用于旧 STRM 未携带 parentid 且文件位于子目录时的兜底查找
+func findPan123FileByBFS(ctx context.Context, client *pan123.Client, fileId string) (*pan123.File, error) {
+	const (
+		maxDepth = 6
+		maxDirs  = 500
+	)
+	type dirItem struct {
+		id    string
+		depth int
+	}
+	queue := []dirItem{{id: "0", depth: 0}}
+	visited := make(map[string]bool)
+	visited["0"] = true
+	dirCount := 0
+	for len(queue) > 0 {
+		item := queue[0]
+		queue = queue[1:]
+		dirCount++
+		if dirCount > maxDirs {
+			helpers.AppLogger.Warnf("123 云盘全盘查找超过目录上限(%d)，放弃继续，fileId=%s", maxDirs, fileId)
+			break
+		}
+		files, err := client.GetFiles(ctx, item.id)
 		if err != nil {
 			continue
 		}
 		for i := range files {
 			if files[i].GetID() == fileId {
 				return &files[i], nil
+			}
+			if files[i].IsDir() && item.depth < maxDepth && !visited[files[i].GetID()] {
+				visited[files[i].GetID()] = true
+				queue = append(queue, dirItem{id: files[i].GetID(), depth: item.depth + 1})
 			}
 		}
 	}
