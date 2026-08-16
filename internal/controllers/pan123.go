@@ -262,7 +262,7 @@ func findPan123FileById(ctx context.Context, client *pan123.Client, fileId, pare
 			return f, nil
 		}
 	}
-	return findPan123FileByBFS(ctx, client, fileId)
+	return findPan123FileByDeepScan(ctx, client, fileId)
 }
 
 // lookupFileInDir 在指定目录列表中查找文件 ID
@@ -280,24 +280,25 @@ func lookupFileInDir(ctx context.Context, client *pan123.Client, parentId, fileI
 	return nil
 }
 
-// findPan123FileByBFS 有限深度/目录数限制的广度优先搜索，
-// 用于旧 STRM 未携带 parentid 且文件位于子目录时的兜底查找
-func findPan123FileByBFS(ctx context.Context, client *pan123.Client, fileId string) (*pan123.File, error) {
+// findPan123FileByDFS 有限深度/目录数限制的深度优先搜索，
+// 用于旧 STRM 未携带 parentid 且文件位于子目录时的兜底查找。
+// 深度优先（而非广度）可避免超大一级目录提前占满目录上限
+func findPan123FileByDeepScan(ctx context.Context, client *pan123.Client, fileId string) (*pan123.File, error) {
 	const (
-		maxDepth = 6
-		maxDirs  = 500
+		maxDepth = 8
+		maxDirs  = 2000
 	)
 	type dirItem struct {
 		id    string
 		depth int
 	}
-	queue := []dirItem{{id: "0", depth: 0}}
+	stack := []dirItem{{id: "0", depth: 0}}
 	visited := make(map[string]bool)
 	visited["0"] = true
 	dirCount := 0
-	for len(queue) > 0 {
-		item := queue[0]
-		queue = queue[1:]
+	for len(stack) > 0 {
+		item := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
 		dirCount++
 		if dirCount > maxDirs {
 			helpers.AppLogger.Warnf("123 云盘全盘查找超过目录上限(%d)，放弃继续，fileId=%s", maxDirs, fileId)
@@ -313,7 +314,7 @@ func findPan123FileByBFS(ctx context.Context, client *pan123.Client, fileId stri
 			}
 			if files[i].IsDir() && item.depth < maxDepth && !visited[files[i].GetID()] {
 				visited[files[i].GetID()] = true
-				queue = append(queue, dirItem{id: files[i].GetID(), depth: item.depth + 1})
+				stack = append(stack, dirItem{id: files[i].GetID(), depth: item.depth + 1})
 			}
 		}
 	}
