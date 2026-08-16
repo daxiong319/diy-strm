@@ -153,6 +153,13 @@
                 <el-button
                   size="small"
                   :disabled="!selectedAccountId"
+                  @click="openBatchRenameDialog"
+                >
+                  批量重命名
+                </el-button>
+                <el-button
+                  size="small"
+                  :disabled="!selectedAccountId"
                   @click="openCrossTransferDialog"
                 >
                   跨盘秒传
@@ -449,6 +456,15 @@
       @applied="loadFileList({ refresh: true })"
     />
 
+    <BatchRenameDialog
+      v-model="showBatchRenameDialog"
+      :account-id="selectedAccountId ?? 0"
+      :parent-id="getCurrentParentId()"
+      :files="fileList"
+      :folder-name="currentDirName"
+      @renamed="loadFileList({ refresh: true })"
+    />
+
     <OrganizeDialog
       v-model="showOrganizeDialog"
       :account-id="selectedAccountId ?? 0"
@@ -504,6 +520,7 @@ import { SERVER_URL } from '@/const'
 import ResponsivePagination from '@/components/common/ResponsivePagination.vue'
 import DirectorySelector from './DirectorySelector.vue'
 import NameAlignDialog from './NameAlignDialog.vue'
+import BatchRenameDialog from './BatchRenameDialog.vue'
 import OrganizeDialog from './OrganizeDialog.vue'
 import CrossTransferDialog from './CrossTransferDialog.vue'
 import GuangYaSmallTransferDialog from './GuangYaSmallTransferDialog.vue'
@@ -749,6 +766,7 @@ const showOrganizeDialog = ref(false)
 const showCrossTransferDialog = ref(false)
 const showSmallTransferDialog = ref(false)
 const showShareDialog = ref(false)
+const showBatchRenameDialog = ref(false)
 
 const isPan139Account = computed(() => selectedAccount.value?.source_type === 'pan139')
 
@@ -803,6 +821,11 @@ function setPathItems(items: FileSystemItem[]) {
 function getCurrentParentId() {
   return pathItems.value.length > 0 ? pathItems.value[pathItems.value.length - 1].id : ''
 }
+
+// 当前目录名（批量重命名「添加文件夹名」规则的默认值）
+const currentDirName = computed(() =>
+  pathItems.value.length > 0 ? pathItems.value[pathItems.value.length - 1].name : '',
+)
 
 function getCurrentParentPath() {
   return pathItems.value.length > 0 ? pathItems.value[pathItems.value.length - 1].path : ''
@@ -1496,6 +1519,22 @@ function openOrganizeDialog() {
   }
 
   showOrganizeDialog.value = true
+}
+
+function openBatchRenameDialog() {
+  const operationContext = createFileOperationContextSnapshot()
+
+  if (!operationContext.accountId) {
+    ElMessage.warning('请先选择网盘账号')
+    return
+  }
+
+  if (!getCurrentParentId()) {
+    ElMessage.warning('请先进入要操作的目录')
+    return
+  }
+
+  showBatchRenameDialog.value = true
 }
 
 function openCrossTransferDialog() {

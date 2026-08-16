@@ -6,7 +6,7 @@
 >
 > 修改时机：修改上述路由、请求字段、验证、缓存失效或响应契约时必须更新本文档。
 >
-> 相关代码：`backend/internal/controllers/path.go`、`backend/internal/controllers/path_ops.go`、`backend/internal/controllers/name_align.go`、`backend/internal/controllers/net_file_batch.go`、`backend/internal/controllers/organize.go`、`backend/internal/controllers/crosstransfer.go`、`backend/internal/requests/operations.go`、`frontend/src/components/AppFileManager.vue`、`frontend/src/components/NameAlignDialog.vue`、`frontend/src/components/OrganizeDialog.vue`、`frontend/src/components/CrossTransferDialog.vue`。
+> 相关代码：`backend/internal/controllers/path.go`、`backend/internal/controllers/path_ops.go`、`backend/internal/controllers/name_align.go`、`backend/internal/controllers/batch_rename.go`、`backend/internal/renamerule/rule.go`、`backend/internal/controllers/net_file_batch.go`、`backend/internal/controllers/organize.go`、`backend/internal/controllers/crosstransfer.go`、`backend/internal/requests/operations.go`、`backend/internal/requests/batch_rename.go`、`frontend/src/components/AppFileManager.vue`、`frontend/src/components/NameAlignDialog.vue`、`frontend/src/components/BatchRenameDialog.vue`、`frontend/src/components/OrganizeDialog.vue`、`frontend/src/components/CrossTransferDialog.vue`。
 
 文件操作接口位于受保护的 `/api` 路由组（JWT / Cookie 会话需通过 CSRF，API Key 可用 `X-API-Key` 或 `api_key` 查询参数）。认证边界见 [认证与浏览器会话](../architecture/authentication-sessions.md)。
 
@@ -22,6 +22,13 @@
 | 移动 | `POST /api/path/move` | 移动文件或目录到目标目录。 |
 | 命名对齐预览 | `POST /api/files/name-align/preview` | 解析文件名并生成规范化建议名，不改动文件。 |
 | 命名对齐应用 | `POST /api/files/name-align/apply` | 按预览结果批量重命名，逐条执行并汇总。 |
+| 批量重命名预览 | `POST /api/files/batch-rename/preview` | 按通用规则（12 种）计算新名称并返回校验错误，不改动文件。 |
+| 批量重命名应用 | `POST /api/files/batch-rename/apply` | 按预览结果批量重命名，写入历史记录（支持回滚）。 |
+| 批量重命名历史 | `GET /api/files/batch-rename/history` | 当前用户的历史记录（用于回滚）。 |
+| 批量重命名回滚 | `POST /api/files/batch-rename/rollback` | 按历史记录还原原名（单项失败不中断）。 |
+| 常用组合列表 | `GET /api/files/batch-rename/presets` | 当前用户的常用组合。 |
+| 常用组合保存 | `POST /api/files/batch-rename/presets` | 保存常用组合（同名覆盖）。 |
+| 常用组合删除 | `DELETE /api/files/batch-rename/presets` | 删除常用组合（`{ id }`）。 |
 | 目录整理预览 | `POST /api/organize/preview` | 扫描目录并规划整理动作（建目录 + 移动 + 重命名），不改动文件。 |
 | 目录整理应用 | `POST /api/organize/apply` | 按预览结果批量建目录、移动并重命名，逐条执行并汇总。 |
 | 跨盘秒传扫描 | `POST /api/crosstransfer/scan` | 递归扫描源目录文件并提取指纹（SHA1/MD5）。 |
@@ -149,6 +156,103 @@
 - 逐条执行，单条失败不中断；响应 `data` 为 `{ "success": [...], "failed": [...] }`。
 - `success` 条目为 `{ file_id, old_name, new_name }`；`failed` 条目为 `{ file_id, name, reason }`。
 - 成功后失效当前目录缓存。
+
+## 批量重命名
+
+批量重命名移植自 123 云盘批量重命名油猴脚本（`123-batch-rename.user.js`）的 RenameEngine，把通用规则引擎搬进服务端（`internal/renamerule` 包）：12 种规则、保留扩展名、冲突校验、历史回滚、常用组合。
+
+### 规则
+
+规则为 `rules` 数组，逐条依次应用。支持 12 种类型：
+
+| 类型 | 字段 |
+| --- | --- |
+| `replace` 查找替换 | `find`、`replace`、`case_sensitive`（默认 false 不区分）、`first_only`（仅替换第一处） |
+| `folder` 添加文件夹名 | `folder_name`（空时用请求 `folder_name`）、`separator`、`position`（`prefix`/`suffix`） |
+| `regex` 正则重命名 | `pattern`、`replace`（替换模板，如 `$1`） |
+| `setname` 名称模板 | `pattern`（支持 `{name}` 原名称、`{n}` 序号）、`start`、`digits` |
+| `number` 添加序号 | `position`（`replace`/`prefix`/`suffix`）、`start`、`digits`、`prefix`、`suffix` |
+| `separator` 添加分隔符 | `text`、`position`（`start`/`end`/`index`）、`index`（从 1 开始） |
+| `add` 添加字符 | `text`、`position`、`index` |
+| `delete` 删除字符 | `mode`（`text` 指定字符 / `range` 指定位置）、`text` 或 `start`+`length` |
+| `move` 移动字符 | `start`、`length`、`to`（均从 1 开始） |
+| `case` 大小写转换 | `mode`（`upper`/`lower`/`title`） |
+| `space` 清理空格 | `mode`（`trim`/`collapse`/`all`） |
+| `width` 全角半角转换 | `mode`（`half`/`full`） |
+
+- 全部规则作用于「去扩展名的主名称」（`keep_ext=true` 且非目录时），扩展名最后拼回；`keep_ext=false` 时扩展名作为普通字符参与规则。
+- 字符下标按 Unicode 码点计算（emoji 等按一个字符处理）。
+
+### 预览
+
+`POST /api/files/batch-rename/preview`
+
+```json
+{
+  "account_id": 12,
+  "parent_id": "12345",
+  "folder_name": "待整理",
+  "keep_ext": true,
+  "rules": [{ "type": "replace", "find": "旧", "replace": "新" }],
+  "items": [{ "file_id": "1", "name": "旧名.mkv", "type": 0, "parent_id": "12345" }],
+  "existing_names": ["其它文件.mkv"]
+}
+```
+
+| 字段 | 必填 | 规则 |
+| --- | --- | --- |
+| `account_id` | 是 | 正整数。 |
+| `parent_id` | 否 | 当前目录标识。 |
+| `folder_name` | 否 | 当前目录名，`folder` 规则未填 `folder_name` 时的默认值。 |
+| `keep_ext` | 否 | 是否保留扩展名（默认 true）。 |
+| `rules` | 是 | 1–20 条，类型必须合法；预览时校验正则、序号、模板等。 |
+| `items` | 是 | 1–2000 条，每条 `file_id`、`name` 非空；`type` 0=文件 1=目录。 |
+| `existing_names` | 否 | 当前目录除 `items` 外的已有名称，用于「同一目录已存在」冲突检测。 |
+
+响应 `data`：
+
+```json
+{
+  "items": [{ "target": { "file_id": "1", "name": "旧名.mkv", "new_name": "新名.mkv", "type": 0, "parent_id": "12345" }, "changed": true }],
+  "errors": ["第 1 条规则 的正则表达式无效"],
+  "changed_count": 1,
+  "total_count": 1
+}
+```
+
+`errors` 为空才允许应用；包含规则校验错误与目标冲突（空名、非法字符、超 255 字符、同目录重名、交换冲突、已存在）。
+
+### 应用
+
+`POST /api/files/batch-rename/apply`
+
+```json
+{
+  "account_id": 12,
+  "parent_id": "12345",
+  "label": "批量重命名",
+  "keep_ext": true,
+  "rules": [{ "type": "replace", "find": "旧", "replace": "新" }],
+  "items": [{ "file_id": "1", "name": "旧名.mkv", "new_name": "新名.mkv", "parent_id": "12345" }]
+}
+```
+
+- `items` 为预览中 `changed=true` 的条目；`new_name` 通过目录名校验。
+- 逐条执行，单条失败不中断；响应 `data` 为 `{ "success": [...], "failed": [...], "success_count", "fail_count" }`。
+- 成功条目写入 `rename_histories`（按当前登录用户隔离，含规则快照与成功条目，用于回滚）；命中同名常用组合时累计 `use_count`。
+- 成功后失效当前目录缓存。
+
+### 历史与回滚
+
+- `GET /api/files/batch-rename/history`：当前用户最近 80 条，`data` 为 `[{ id, name, rules, keep_ext, item_count, change_count, created_at }]`。
+- `POST /api/files/batch-rename/rollback`：`{ "account_id": 12, "history_id": 7 }`。逐条还原原名，单条失败不中断；已还原条目从历史移除，全部还原则删除该历史。
+- 历史按用户隔离（`rename_histories.user_id`）。
+
+### 常用组合
+
+- `GET /api/files/batch-rename/presets`：当前用户组合列表 `[{ id, name, rules, keep_ext, use_count }]`。
+- `POST /api/files/batch-rename/presets`：`{ "name", "keep_ext", "rules" }`，同名覆盖（保留创建时间）；最长 64 字符。
+- `DELETE /api/files/batch-rename/presets`：`{ "id": 3 }`。
 
 ## 目录整理
 

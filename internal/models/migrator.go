@@ -20,7 +20,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 68
+var MaxVersionCode = 69
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -776,6 +776,15 @@ func Migrate() {
 			return
 		}
 		helpers.AppLogger.Info("已更新订阅/转存记录表：剧集标识（episode）与目标总集数（total_episodes）字段")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 69 {
+		// 批量重命名：历史记录（回滚）与常用组合表
+		if err := db.Db.AutoMigrate(RenameHistory{}, RenamePreset{}); err != nil {
+			helpers.AppLogger.Errorf("迁移批量重命名表失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("已创建批量重命名历史记录与常用组合表")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)

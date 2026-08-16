@@ -703,6 +703,13 @@ func setRouter(r *gin.Engine) {
 		api.POST("/path/move", controllers.MoveFile)                                        // 移动网盘文件或目录
 		api.POST("/files/name-align/preview", controllers.NameAlignPreview)                 // 命名对齐预览
 		api.POST("/files/name-align/apply", controllers.NameAlignApply)                     // 命名对齐应用
+		api.POST("/files/batch-rename/preview", controllers.BatchRenamePreview)             // 批量重命名预览
+		api.POST("/files/batch-rename/apply", controllers.BatchRenameApply)                 // 批量重命名应用
+		api.GET("/files/batch-rename/history", controllers.BatchRenameHistoryList)          // 批量重命名历史记录
+		api.POST("/files/batch-rename/rollback", controllers.BatchRenameRollback)           // 批量重命名回滚
+		api.GET("/files/batch-rename/presets", controllers.BatchRenamePresetList)           // 批量重命名常用组合列表
+		api.POST("/files/batch-rename/presets", controllers.BatchRenamePresetSave)          // 批量重命名常用组合保存
+		api.DELETE("/files/batch-rename/presets", controllers.BatchRenamePresetDelete)      // 批量重命名常用组合删除
 		api.POST("/user/change", controllers.ChangePassword)                                // 修改当前用户密码
 
 		api.POST("/setting/http-proxy", controllers.UpdateHttpProxy)    // 更改 HTTP 代理

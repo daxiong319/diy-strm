@@ -99,8 +99,9 @@
 | 66 | 67 | 订阅表新增 `resource_source` 资源来源（空 = TG 频道 / hdhive = 影巢）。 |
 | 67 | 68 | 新增 `cloud_channels` 云盘资源频道表（TG 频道从订阅解耦，每网盘可添加多个频道）；历史订阅中的频道及最大增量游标自动迁移为频道记录。 |
 | 68 | 69 | 转存记录新增 `episode`（剧集标识，按集去重/统计）；订阅表新增 `total_episodes`（TV 目标总集数快照，运行时由 TMDB 刷新，用于按总集数自动完结）。 |
+| 69 | 70 | 新增 `rename_histories`（批量重命名历史，支持按原名回滚）与 `rename_presets`（批量重命名常用组合），均按用户隔离。 |
 
-当前数据库版本是 `68`。
+当前数据库版本是 `69`。
 
 ## 不变量
 
@@ -219,6 +220,28 @@
 - `target_dir`：转存到的网盘目录。
 - `resolution` / `source` / `codec` / `effect` / `size_gb`：洗版规格（数值枚举见代码）。
 - `status`：空 = 正常 / `superseded` = 已被洗版替换（待清理旧版本）。
+
+### `rename_histories`
+
+批量重命名历史记录（用于按原名回滚），按用户隔离。
+
+- `user_id`：所属用户（回滚与查询按用户隔离）。
+- `name`：操作名称（默认「批量重命名」）。
+- `rules`：规则快照 JSON（`renamerule.Rule` 数组）。
+- `keep_ext`：当时是否保留扩展名。
+- `targets`：成功条目 JSON（`file_id` / 原名 / 新名 / `parent_id`，回滚时互为交换）。
+- `item_count`：本次提交总条目数；`change_count`：实际改名成功数。
+- 回滚成功的条目会从 `targets` 移除，全部还原则删除该历史。
+
+### `rename_presets`
+
+批量重命名常用组合（规则快照），按用户隔离。
+
+- `user_id`：所属用户。
+- `name`：组合名称（同名保存即覆盖）。
+- `rules`：规则 JSON（`renamerule.Rule` 数组）。
+- `keep_ext`：是否保留扩展名。
+- `use_count`：累计使用次数（应用历史时按规则签名 +1）。
 
 ### `users`
 
