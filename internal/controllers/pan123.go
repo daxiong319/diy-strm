@@ -280,43 +280,52 @@ func lookupFileInDir(ctx context.Context, client *pan123.Client, parentId, fileI
 	return nil
 }
 
-// findPan123FileByDFS 有限深度/目录数限制的深度优先搜索，
+// findPan123FileByDeepScan 有限深度/目录数限制的深度优先遍历，
 // 用于旧 STRM 未携带 parentid 且文件位于子目录时的兜底查找。
-// 深度优先（而非广度）可避免超大一级目录提前占满目录上限
+// 按 GetFiles 返回顺序正序深入，与整盘遍历探测一致，能在目录数较小时快速命中
 func findPan123FileByDeepScan(ctx context.Context, client *pan123.Client, fileId string) (*pan123.File, error) {
 	const (
 		maxDepth = 8
 		maxDirs  = 2000
 	)
-	type dirItem struct {
-		id    string
-		depth int
-	}
-	stack := []dirItem{{id: "0", depth: 0}}
 	visited := make(map[string]bool)
-	visited["0"] = true
 	dirCount := 0
-	for len(stack) > 0 {
-		item := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
+	visited["0"] = true
+
+	var dfs func(parentID string, depth int) *pan123.File
+	dfs = func(parentID string, depth int) *pan123.File {
 		dirCount++
 		if dirCount > maxDirs {
-			helpers.AppLogger.Warnf("123 云盘全盘查找超过目录上限(%d)，放弃继续，fileId=%s", maxDirs, fileId)
-			break
+			return nil
 		}
-		files, err := client.GetFiles(ctx, item.id)
+		files, err := client.GetFiles(ctx, parentID)
 		if err != nil {
-			continue
+			return nil
 		}
 		for i := range files {
 			if files[i].GetID() == fileId {
-				return &files[i], nil
-			}
-			if files[i].IsDir() && item.depth < maxDepth && !visited[files[i].GetID()] {
-				visited[files[i].GetID()] = true
-				stack = append(stack, dirItem{id: files[i].GetID(), depth: item.depth + 1})
+				return &files[i]
 			}
 		}
+		if depth >= maxDepth {
+			return nil
+		}
+		for i := range files {
+			if files[i].IsDir() && !visited[files[i].GetID()] {
+				visited[files[i].GetID()] = true
+				if f := dfs(files[i].GetID(), depth+1); f != nil {
+					return f
+				}
+			}
+		}
+		return nil
+	}
+
+	if f := dfs("0", 0); f != nil {
+		return f, nil
+	}
+	if dirCount > maxDirs {
+		helpers.AppLogger.Warnf("123 云盘全盘查找超过目录上限(%d)，放弃继续，fileId=%s", maxDirs, fileId)
 	}
 	return nil, fmt.Errorf("未找到文件 ID %s", fileId)
 }
