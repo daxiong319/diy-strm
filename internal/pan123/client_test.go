@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -366,6 +367,35 @@ func TestResolveDownloadURLDirect(t *testing.T) {
 	}
 }
 
+func TestResolveDownloadURLLargeStreamDoesNotReadAll(t *testing.T) {
+	// 模拟 CDN 直接以 200 返回超大视频流（非 JSON）：
+	// 实现应只读取限量字节判断 JSON，直接返回原 URL，而不是把整个响应体读入内存
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := w.Header()
+		header.Set("Content-Type", "application/octet-stream")
+		chunk := make([]byte, 64*1024) // 64KB 垃圾数据
+		// 写 20MB 模拟大视频流
+		for i := 0; i < 320; i++ {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(1, "test@example.com", "pwd")
+	client.SetBaseURL("http://localhost:1", "http://localhost:1")
+	defer client.Close()
+
+	got, err := client.ResolveDownloadURL(context.Background(), server.URL+"/big.mkv")
+	if err != nil {
+		t.Fatalf("解析下载链接失败：%v", err)
+	}
+	if got != server.URL+"/big.mkv" {
+		t.Errorf("非 JSON 200 响应应返回原 URL：%s", got)
+	}
+}
+
 func TestMD5File(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "test.txt")
@@ -523,10 +553,25 @@ func TestRequestReloginNotifiesAuthChanged(t *testing.T) {
 	}
 }
 
-func TestGetDownloadInfoPrefersDownloadUrl(t *testing.T) {
+func TestGetDownloadInfoAlwaysCallsAPI(t *testing.T) {
 	client, _, _ := newTestClient(t, nil,
 		func(w http.ResponseWriter, r *http.Request) {
-			t.Errorf("列表自带 DownloadUrl 时不应调用 download_info 接口：%s", r.URL.Path)
+			if r.URL.Path != "/file/download_info" {
+				t.Errorf("路径错误：%s", r.URL.Path)
+			}
+			// 列表自带的 DownloadUrl 是缩略图链接，必须忽略并调用 download_info 接口
+			body, _ := io.ReadAll(r.Body)
+			var req map[string]interface{}
+			if err := json.Unmarshal(body, &req); err != nil {
+				t.Errorf("请求体解析失败：%v", err)
+			}
+			if int(req["fileId"].(float64)) != 1001 {
+				t.Errorf("请求体 fileId 错误：%v", req["fileId"])
+			}
+			writeJSON(w, 200, map[string]interface{}{
+				"code": 0, "message": "success",
+				"data": map[string]interface{}{"DownloadUrl": "https://api.example.com/dl?sign=1"},
+			})
 		},
 	)
 	client.SetAccessToken("token")
@@ -536,13 +581,13 @@ func TestGetDownloadInfoPrefersDownloadUrl(t *testing.T) {
 		FileName:    "movie.mkv",
 		Etag:        "abc",
 		S3KeyFlag:   "flag",
-		DownloadUrl: "https://download.example.com/movie.mkv",
+		DownloadUrl: "https://download-cdn.example.com/xxx?w=24&h=24&trade_key=123pan-thumbnail",
 	})
 	if err != nil {
 		t.Fatalf("获取下载信息失败：%v", err)
 	}
-	if info.Data.DownloadUrl != "https://download.example.com/movie.mkv" {
-		t.Errorf("应直接使用列表 DownloadUrl：%s", info.Data.DownloadUrl)
+	if info.Data.DownloadUrl != "https://api.example.com/dl?sign=1" {
+		t.Errorf("应忽略列表缩略图 DownloadUrl 并返回接口直链：%s", info.Data.DownloadUrl)
 	}
 }
 

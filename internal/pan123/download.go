@@ -13,13 +13,10 @@ import (
 )
 
 // GetDownloadInfo 获取文件下载信息
-// 文件列表中自带的 DownloadUrl 通常可直接使用（省一次 download_info 调用），为空时回退查询下载信息接口
+// 注意：文件列表接口（/file/list/new）返回的 DownloadUrl 是缩略图预览链接
+// （特征 trade_key=123pan-thumbnail&cache_type=1&w=24&h=24），不能直接用于播放/下载，
+// 因此这里必须总是调用 /file/download_info 接口获取真正的下载直链。
 func (c *Client) GetDownloadInfo(ctx context.Context, file File) (*DownloadInfoResp, error) {
-	if file.DownloadUrl != "" {
-		var resp DownloadInfoResp
-		resp.Data.DownloadUrl = file.DownloadUrl
-		return &resp, nil
-	}
 	data := map[string]interface{}{
 		"driveId":   0,
 		"etag":      file.Etag,
@@ -98,8 +95,9 @@ func (c *Client) ResolveDownloadURL(ctx context.Context, rawUrl string) (string,
 		}
 		return location, nil
 	case res.StatusCode < http.StatusMultipleChoices:
-		// 200 响应，可能是 JSON（data.redirect_url）或直接可下载
-		resBody, _ := io.ReadAll(res.Body)
+		// 200 响应：可能是 JSON（data.redirect_url）包装，也可能是直接可下载的视频流。
+		// 只读取前 4KB 判断是否为 JSON，避免把超大视频流整体读入内存。
+		resBody, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
 		var redirectResp struct {
 			Data struct {
 				RedirectURL string `json:"redirect_url"`
