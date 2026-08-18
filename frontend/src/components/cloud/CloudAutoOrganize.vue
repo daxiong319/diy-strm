@@ -5,7 +5,6 @@
         <div class="card-header">
           <span>{{ sourceName }} · 自动整理分类</span>
           <div class="header-actions">
-            <el-button type="primary" size="small" :loading="runningAny" @click="runAllNow">整理全部账号</el-button>
             <el-button size="small" :loading="loadingAccounts" @click="loadData">刷新</el-button>
           </div>
         </div>
@@ -220,7 +219,6 @@ const accounts = ref<NetdiskAccount[]>([])
 const configs = ref<AutoOrganizeConfig[]>([])
 const savingAccountId = ref(0)
 const runningAccountId = ref(0)
-const runningAny = computed(() => runningAccountId.value !== 0)
 
 // 目录选择器状态（每个账号每个字段独立弹窗浏览网盘目录）
 const pickerVisible = ref(false)
@@ -413,38 +411,6 @@ const runNow = async (accountId: number) => {
       } else {
         ElMessage.info('整理完成：待整理目录为空或全部跳过')
       }
-      await loadData()
-    } else {
-      ElMessage.error(resp.data.message || '整理失败')
-    }
-  } catch (error) {
-    console.error(error)
-    ElMessage.error('整理失败')
-  } finally {
-    runningAccountId.value = 0
-  }
-}
-
-const runAllNow = async () => {
-  const enabledOnes = accounts.value.filter((a) => getConfig(a.id)?.enabled)
-  if (enabledOnes.length === 0) {
-    ElMessage.warning('请先在账号卡片中启用自动整理并保存配置')
-    return
-  }
-  runningAccountId.value = -1
-  try {
-    const resp = await http.post(`${SERVER_URL}/auto-organize/run`, {})
-    if (resp.data.code === 200) {
-      const results = (resp.data.data || []) as any[]
-      const sum = results.reduce(
-        (acc, r) => ({
-          organized: acc.organized + (r.organized || 0),
-          unrecognized: acc.unrecognized + (r.unrecognized || 0),
-          failed: acc.failed + (r.failed || 0),
-        }),
-        { organized: 0, unrecognized: 0, failed: 0 },
-      )
-      ElMessage.success(`整理完成：成功 ${sum.organized} 个，识别失败 ${sum.unrecognized} 个，失败 ${sum.failed} 个`)
       await loadData()
     } else {
       ElMessage.error(resp.data.message || '整理失败')
