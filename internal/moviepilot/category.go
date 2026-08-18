@@ -273,25 +273,67 @@ func lookupTmdbMedia(ctx context.Context, media *IdentifyResult) (officialTitle 
 // （自动整理功能每个云盘账号可单独配置分类策略 yaml）。
 func lookupTmdbMediaWithRules(ctx context.Context, media *IdentifyResult, rules categoryRules) (officialTitle string, tmdbID int64, tmdbYear int, categoryName string, err error) {
 	isMovie := media.Category != "tv"
+	client := models.GlobalScrapeSettings.GetTmdbClient()
+	lang := models.GlobalScrapeSettings.GetTmdbLanguage()
+
 	var checkName string
 	var checkID int64
 	var checkYear int
-	if isMovie {
-		movieImpl := scrape.NewTmdbMovieImpl(nil, ctx)
-		checkName, checkID, checkYear, err = movieImpl.CheckByNameAndYear(media.Title, media.Year, true)
-	} else {
-		tvImpl := scrape.NewTmdbTvShowImpl(nil, ctx)
-		checkName, checkID, checkYear, err = tvImpl.CheckByNameAndYear(media.Title, media.Year, true)
-	}
-	if err != nil || checkID <= 0 {
-		if err == nil {
-			err = fmt.Errorf("TMDB 校验失败")
+
+	// 优先使用目录/文件名中内嵌的 TMDB ID（如 {tmdbid-287496} / {tmdb=287496}）直接查详情，
+	// 避免把标记混入标题导致名称搜索失败，也避免同名不同片歧义
+	if media.TmdbId > 0 {
+		if isMovie {
+			detail, dErr := client.GetMovieDetail(media.TmdbId, lang)
+			if dErr == nil && detail != nil && detail.SearchMovie.ID > 0 {
+				checkID = detail.SearchMovie.ID
+				checkName = detail.SearchMovie.Title
+				if checkName == "" {
+					checkName = detail.SearchMovie.OriginalTitle
+				}
+				checkYear = yearFromTMDBDate(detail.SearchMovie.ReleaseDate)
+				if checkYear <= 0 {
+					checkYear = media.Year
+				}
+			} else {
+				helpers.AppLogger.Warnf("自动整理：TMDB 按 ID 查电影详情失败（%d）：%v，回退名称搜索", media.TmdbId, dErr)
+			}
+		} else {
+			detail, dErr := client.GetTvDetail(media.TmdbId, lang)
+			if dErr == nil && detail != nil && detail.SearchTv.ID > 0 {
+				checkID = detail.SearchTv.ID
+				checkName = detail.SearchTv.Name
+				if checkName == "" {
+					checkName = detail.SearchTv.OriginalName
+				}
+				checkYear = yearFromTMDBDate(detail.SearchTv.FirstAirDate)
+				if checkYear <= 0 {
+					checkYear = media.Year
+				}
+			} else {
+				helpers.AppLogger.Warnf("自动整理：TMDB 按 ID 查剧集详情失败（%d）：%v，回退名称搜索", media.TmdbId, dErr)
+			}
 		}
-		return "", 0, 0, "", err
 	}
-	client := models.GlobalScrapeSettings.GetTmdbClient()
+
+	if checkID <= 0 {
+		if isMovie {
+			movieImpl := scrape.NewTmdbMovieImpl(nil, ctx)
+			checkName, checkID, checkYear, err = movieImpl.CheckByNameAndYear(media.Title, media.Year, true)
+		} else {
+			tvImpl := scrape.NewTmdbTvShowImpl(nil, ctx)
+			checkName, checkID, checkYear, err = tvImpl.CheckByNameAndYear(media.Title, media.Year, true)
+		}
+		if err != nil || checkID <= 0 {
+			if err == nil {
+				err = fmt.Errorf("TMDB 校验失败")
+			}
+			return "", 0, 0, "", err
+		}
+	}
+
 	if isMovie {
-		detail, dErr := client.GetMovieDetail(checkID, models.GlobalScrapeSettings.GetTmdbLanguage())
+		detail, dErr := client.GetMovieDetail(checkID, lang)
 		if dErr != nil {
 			helpers.AppLogger.Warnf("MoviePilot 获取 TMDB 电影详情失败（%d）：%v", checkID, dErr)
 			categoryName = fallbackCategory(rules.Movie)
@@ -299,7 +341,7 @@ func lookupTmdbMediaWithRules(ctx context.Context, media *IdentifyResult, rules 
 			categoryName = rules.matchMovie(detail)
 		}
 	} else {
-		detail, dErr := client.GetTvDetail(checkID, models.GlobalScrapeSettings.GetTmdbLanguage())
+		detail, dErr := client.GetTvDetail(checkID, lang)
 		if dErr != nil {
 			helpers.AppLogger.Warnf("MoviePilot 获取 TMDB 剧集详情失败（%d）：%v", checkID, dErr)
 			categoryName = fallbackCategory(rules.Tv)

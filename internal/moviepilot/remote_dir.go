@@ -137,6 +137,16 @@ func ensureDirById(ctx context.Context, path string, mkdir func(ctx context.Cont
 			if err != nil {
 				return "", fmt.Errorf("创建目录 %s 失败：%v", part, err)
 			}
+			// 部分网盘创建接口返回的 ID 不可靠（123 空目录 upload_request 响应不含 FileId，返回 0），
+			// 重新列出父目录按名称取回真实 ID
+			if relist, rErr := list(parentID); rErr == nil {
+				for _, e := range relist {
+					if e.isDir && e.name == part {
+						found = e.id
+						break
+					}
+				}
+			}
 		}
 		parentID = found
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -113,8 +114,10 @@ func RunAutoOrganize(ctx context.Context, cfg *models.AutoOrganizeConfig) *AutoO
 // processAutoOrganizeDir 整理一个顶层目录资源（转存分享树根目录）。
 // 收集目录内视频文件逐个整理；整理结束后空目录删除、有残留则整体移入失败目录。
 func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, dir *organizeEntry, organizedRoot string, rules *categoryRules, dirCache map[string]string, aiBudget *int) {
-	// 目录名解析（标题/年份优先从目录名取，季集优先从文件名取）
-	dirCategory, dirTitle, dirSeason, _, dirYear := mediaparse.ParseMedia(dir.Name)
+	// 目录名解析（标题/年份优先从目录名取，季集优先从文件名取）；
+	// 先剥离目录名中内嵌的 TMDB 标记（{tmdbid-xxx}），避免污染标题搜索
+	cleanDirName := stripTmdbTag(dir.Name)
+	dirCategory, dirTitle, dirSeason, _, dirYear := mediaparse.ParseMedia(cleanDirName)
 
 	videos := make([]*organizeEntry, 0)
 	{
@@ -145,6 +148,7 @@ func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *m
 		Title:    dirTitle,
 		Season:   dirSeason,
 		Year:     dirYear,
+		TmdbId:   extractTmdbIDFromName(dir.Name),
 	}
 	for _, v := range videos {
 		if err := ctx.Err(); err != nil {
@@ -187,6 +191,39 @@ type autoDirMedia struct {
 	Title    string
 	Season   int
 	Year     int
+	TmdbId   int64
+}
+
+var (
+	// autoTmdbTagRe 匹配目录/文件名中内嵌的 TMDB ID 标记：{tmdbid-287496} / {tmdb=287496} / {tmdb:287496}
+	autoTmdbTagRe = regexp.MustCompile(`(?i)\{tmdb(?:id)?[=:_\- ]*(\d{4,8})\}`)
+)
+
+// extractTmdbIDFromName 从目录/文件名提取内嵌的 TMDB ID，无则返回 0
+func extractTmdbIDFromName(name string) int64 {
+	m := autoTmdbTagRe.FindStringSubmatch(name)
+	if len(m) == 2 {
+		id, err := strconv.ParseInt(m[1], 10, 64)
+		if err == nil {
+			return id
+		}
+	}
+	return 0
+}
+
+// stripTmdbTag 移除目录/文件名中的 TMDB 标记（保留为空格，不影响后续分词）
+func stripTmdbTag(name string) string {
+	return autoTmdbTagRe.ReplaceAllString(name, " ")
+}
+
+// yearFromTMDBDate 从 TMDB 日期字符串取年份，如 "2026-05-01" → 2026
+func yearFromTMDBDate(dateStr string) int {
+	if len(dateStr) >= 4 {
+		if y, err := strconv.Atoi(dateStr[:4]); err == nil && y > 1900 && y < 3000 {
+			return y
+		}
+	}
+	return 0
 }
 
 // organizeAutoVideoFile 整理单个视频文件：
@@ -203,6 +240,9 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 			media = &ai
 			if dirCtx != nil && dirCtx.Year > 0 && media.Year <= 0 {
 				media.Year = dirCtx.Year
+			}
+			if media.TmdbId <= 0 && dirCtx != nil && dirCtx.TmdbId > 0 {
+				media.TmdbId = dirCtx.TmdbId
 			}
 		}
 	}
@@ -272,10 +312,17 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 // buildAutoMedia 由文件名 + 目录级信息组装媒体信息。
 // 标题/年份优先目录级（目录名通常更规范），季/集优先文件级。
 func buildAutoMedia(fileName string, dirCtx *autoDirMedia) (*IdentifyResult, error) {
-	fileCategory, fileTitle, _, fileEpisode, fileYear := mediaparse.ParseMedia(fileName)
-	fileParsed, hasEp := mediaparse.ParseEpisode(fileName)
+	cleanFileName := stripTmdbTag(fileName)
+	fileCategory, fileTitle, _, fileEpisode, fileYear := mediaparse.ParseMedia(cleanFileName)
+	fileParsed, hasEp := mediaparse.ParseEpisode(cleanFileName)
 
 	media := &IdentifyResult{Category: "tv", Season: 1, Episode: 0}
+	// 内嵌 TMDB ID：目录级优先，其次文件级
+	if dirCtx != nil && dirCtx.TmdbId > 0 {
+		media.TmdbId = dirCtx.TmdbId
+	} else if id := extractTmdbIDFromName(fileName); id > 0 {
+		media.TmdbId = id
+	}
 	// 标题：目录级优先
 	if dirCtx != nil && strings.TrimSpace(dirCtx.Title) != "" {
 		media.Title = dirCtx.Title
@@ -469,8 +516,14 @@ func moveEntryToFailedDir(ctx context.Context, account *models.Account, cfg *mod
 		result.Details = append(result.Details, fmt.Sprintf("[识别失败] %s（%s，上下文取消无法移动）", entry.Name, reason))
 		return
 	}
-	// 失败目录由用户显式配置，不存在时自动创建
+	// 失败目录由用户显式配置，不存在时自动创建。
+	// 部分网盘创建接口返回的 ID 不可靠（123 空目录返回 0），创建后重新按路径解析真实 ID，避免移动时报「请输入ParentFileId」
 	targetID, err := EnsureRemoteDir(ctx, account, failedDir)
+	if err == nil && (targetID == "" || targetID == "0") {
+		if id, fErr := findRemoteDirID(ctx, account, failedDir); fErr == nil && id != "" && id != "0" {
+			targetID = id
+		}
+	}
 	if err != nil {
 		helpers.AppLogger.Warnf("自动整理移入失败目录失败（账号 %d）：%s → %s：%v", cfg.AccountID, entry.Name, failedDir, err)
 		result.Details = append(result.Details, fmt.Sprintf("[识别失败] %s 移入失败目录失败：%v", entry.Name, err))

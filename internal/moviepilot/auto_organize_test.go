@@ -144,3 +144,66 @@ func TestParseEpisodeCompatible(t *testing.T) {
 		t.Errorf("ParseEpisode = %+v, %v", ep2, ok)
 	}
 }
+func TestExtractTmdbIDFromName(t *testing.T) {
+	cases := []struct {
+		name string
+		want int64
+	}{
+		{"花开锦绣 (2026) {tmdbid-287496}", 287496},
+		{"花开锦绣 {tmdbid-287496} 2160p", 287496},
+		{"我家的弟弟们真是让您费心了 (2026) {tmdbid-307585}", 307585},
+		{"{tmdb=287496} 花开锦绣", 287496},
+		{"Some.Show.{tmdb:287496}.2026", 287496},
+		{"花开锦绣 (2026)", 0},
+		{"花开锦绣 {tmdbid-abc}", 0},
+		{"花开锦绣 {tmdbid-12}", 0}, // 小于 4 位不匹配
+	}
+	for _, c := range cases {
+		if got := extractTmdbIDFromName(c.name); got != c.want {
+			t.Errorf("extractTmdbIDFromName(%q) = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+func TestStripTmdbTag(t *testing.T) {
+	got := stripTmdbTag("花开锦绣 (2026) {tmdbid-287496}")
+	if got != "花开锦绣 (2026)  " {
+		t.Errorf("stripTmdbTag = %q", got)
+	}
+}
+
+func TestBuildAutoMediaWithDirTmdbTag(t *testing.T) {
+	// 目录名内嵌 {tmdbid-xxx}：应剥离标签解析标题，并带出 TmdbId 供 TMDB 按 ID 直查
+	dirCtx := &autoDirMedia{
+		Title:  "花开锦绣",
+		Year:   2026,
+		TmdbId: 287496,
+	}
+	media, err := buildAutoMedia("第1集.2160p.WEB-DL.H.265.60fps-Ocat.mp4", dirCtx)
+	if err != nil {
+		t.Fatalf("buildAutoMedia err: %v", err)
+	}
+	if media.Title != "花开锦绣" {
+		t.Errorf("Title = %q", media.Title)
+	}
+	if media.TmdbId != 287496 {
+		t.Errorf("TmdbId = %d, want 287496", media.TmdbId)
+	}
+	if media.Season != 1 || media.Episode != 1 {
+		t.Errorf("unexpected season/ep: %d/%d", media.Season, media.Episode)
+	}
+}
+
+func TestBuildAutoMediaWithFileTmdbTag(t *testing.T) {
+	// 无目录级 tag 时，从文件名提取 tmdb id，并剥离后再解析标题
+	media, err := buildAutoMedia("花开锦绣.S01E01.第1集.{tmdbid-287496}.2160p.mkv", nil)
+	if err != nil {
+		t.Fatalf("buildAutoMedia err: %v", err)
+	}
+	if media.Title != "花开锦绣" {
+		t.Errorf("Title = %q", media.Title)
+	}
+	if media.TmdbId != 287496 {
+		t.Errorf("TmdbId = %d, want 287496", media.TmdbId)
+	}
+}
