@@ -185,17 +185,48 @@ func RunAutoOrganizeNow(c *gin.Context) {
 		return
 	}
 
-	results := make([]*moviepilot.AutoOrganizeResult, 0, len(configs))
+	started := make([]uint, 0, len(configs))
+	busySkipped := make([]uint, 0)
 	for i := range configs {
-		// 手动触发不占用后台轮询的防重入标记，但等待上一轮完成
-		autoOrganizeRunMu.Lock()
-		busy := autoOrganizeBusy[configs[i].AccountID]
-		autoOrganizeRunMu.Unlock()
-		if busy {
-			results = append(results, &moviepilot.AutoOrganizeResult{AccountID: configs[i].AccountID})
-			continue
+		if startAutoOrganizeInBackground(configs[i]) {
+			started = append(started, configs[i].AccountID)
+		} else {
+			busySkipped = append(busySkipped, configs[i].AccountID)
 		}
-		results = append(results, moviepilot.RunAutoOrganize(c.Request.Context(), &configs[i]))
 	}
-	c.JSON(200, APIResponse[any]{Code: Success, Message: "整理完成", Data: results})
+	if len(started) == 0 {
+		c.JSON(200, APIResponse[any]{Code: BadRequest, Message: "该账号正在整理中，请稍后再试", Data: map[string]any{"busy": busySkipped}})
+		return
+	}
+	c.JSON(200, APIResponse[any]{Code: Success, Message: "已开始整理", Data: map[string]any{"started": started, "busy": busySkipped}})
+}
+
+// startAutoOrganizeInBackground 在后台 goroutine 中异步执行一次整理：
+// 运行使用独立 context（不随 HTTP 请求取消，避免请求超时/断连导致整理中断），
+// 完成后写回配置的 last_run_at / last_result 供前端轮询展示。
+// 返回 false 表示该账号已有整理在运行（防重入，跳过本次触发）。
+func startAutoOrganizeInBackground(cfg models.AutoOrganizeConfig) bool {
+	autoOrganizeRunMu.Lock()
+	if autoOrganizeBusy[cfg.AccountID] {
+		autoOrganizeRunMu.Unlock()
+		return false
+	}
+	autoOrganizeBusy[cfg.AccountID] = true
+	autoOrganizeRunMu.Unlock()
+
+	go func(cfg models.AutoOrganizeConfig) {
+		defer func() {
+			if r := recover(); r != nil {
+				helpers.AppLogger.Errorf("云盘自动整理账号 %d 执行异常：%v", cfg.AccountID, r)
+			}
+			autoOrganizeRunMu.Lock()
+			delete(autoOrganizeBusy, cfg.AccountID)
+			autoOrganizeRunMu.Unlock()
+		}()
+		result := moviepilot.RunAutoOrganize(context.Background(), &cfg)
+		if len(result.Details) > 0 {
+			helpers.AppLogger.Infof("云盘自动整理完成（账号 %d）：成功 %d / 识别失败 %d / 失败 %d", cfg.AccountID, result.Organized, result.Unrecognized, result.Failed)
+		}
+	}(cfg)
+	return true
 }

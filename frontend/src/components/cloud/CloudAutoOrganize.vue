@@ -402,25 +402,63 @@ const runNow = async (accountId: number) => {
   try {
     const resp = await http.post(`${SERVER_URL}/auto-organize/run`, { account_id: accountId })
     if (resp.data.code === 200) {
-      const results = (resp.data.data || []) as any[]
-      const r = results[0]
-      if (r && r.organized) {
-        ElMessage.success(`整理完成：成功 ${r.organized} 个，识别失败 ${r.unrecognized || 0} 个`)
-      } else if (r && (r.unrecognized || r.moved_to_failed)) {
-        ElMessage.warning(`整理完成：无成功项，识别失败 ${r.unrecognized || 0} 个`)
-      } else {
-        ElMessage.info('整理完成：待整理目录为空或全部跳过')
-      }
-      await loadData()
+      ElMessage.success('已开始整理，正在后台执行…')
+      await waitForRunResult(accountId)
     } else {
       ElMessage.error(resp.data.message || '整理失败')
     }
   } catch (error) {
     console.error(error)
-    ElMessage.error('整理失败')
+    ElMessage.error('整理请求失败，请稍后重试')
   } finally {
     runningAccountId.value = 0
   }
+}
+
+// 仅刷新运行结果字段（last_run_at / last_result），不覆盖其他正在编辑的表单项
+const refreshRunResult = async () => {
+  try {
+    const resp = await http.get(`${SERVER_URL}/auto-organize/configs`)
+    const all = (resp.data.data || []) as AutoOrganizeConfig[]
+    configs.value = all.filter((c) => accounts.value.some((a) => a.id === c.account_id))
+    for (const c of configs.value) {
+      const f = form[c.account_id]
+      if (f) {
+        f.id = c.id
+        f.last_run_at = c.last_run_at
+        f.last_result = c.last_result
+      }
+    }
+  } catch (error) {
+    console.error('刷新整理结果失败：', error)
+  }
+}
+
+// 整理是后台异步执行的：轮询配置的 last_run_at，出现新结果后汇总提示
+const waitForRunResult = async (accountId: number) => {
+  const before = getConfig(accountId)?.last_run_at || ''
+  for (let i = 0; i < 50; i++) {
+    await new Promise((r) => setTimeout(r, 3000))
+    await refreshRunResult()
+    const cfg = getConfig(accountId)
+    if (cfg?.last_run_at && cfg.last_run_at !== before) {
+      const res = parseResult(cfg.last_result)
+      const total =
+        (res.organized || 0) + (res.unrecognized || 0) + (res.moved_to_failed || 0) + (res.failed || 0) + (res.skipped_overwrite || 0)
+      if (total === 0) {
+        ElMessage.info('整理完成：待整理目录为空或全部跳过')
+      } else {
+        const parts = [`整理完成：成功 ${res.organized || 0} 个`]
+        if (res.unrecognized) parts.push(`识别失败 ${res.unrecognized} 个`)
+        if (res.moved_to_failed) parts.push(`移入失败目录 ${res.moved_to_failed} 个`)
+        if (res.skipped_overwrite) parts.push(`跳过 ${res.skipped_overwrite} 个`)
+        if (res.failed) parts.push(`失败 ${res.failed} 个`)
+        ElMessage.success(parts.join('，'))
+      }
+      return
+    }
+  }
+  ElMessage.info('整理任务仍在后台执行，可稍后点击「刷新」或在卡片底部查看最近一次整理结果')
 }
 
 const parseResult = (raw?: string) => {
