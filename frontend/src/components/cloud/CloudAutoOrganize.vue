@@ -70,26 +70,35 @@
             </el-form-item>
 
             <el-form-item label="待整理目录" required>
-              <el-input
-                v-model="formOf(account.id).pending_dir"
-                placeholder="例如 媒体库/待整理（频道/订阅转存的落盘目录）"
-              />
-              <div class="form-help">监控程序扫描该目录下新增资源；请填写网盘中的路径（不含开头的 /）</div>
+              <div class="dir-input-row">
+                <el-input
+                  v-model="formOf(account.id).pending_dir"
+                  placeholder="例如 媒体库/待整理（频道/订阅转存的落盘目录）"
+                />
+                <el-button @click="openPicker(account.id, 'pending_dir')">选择目录</el-button>
+              </div>
+              <div class="form-help">监控程序扫描该目录下新增资源；可通过「选择目录」在网盘中浏览选取</div>
             </el-form-item>
 
             <el-form-item label="已整理根目录">
-              <el-input
-                v-model="formOf(account.id).organized_root"
-                placeholder="留空自动推导：所在父目录/已整理"
-              />
+              <div class="dir-input-row">
+                <el-input
+                  v-model="formOf(account.id).organized_root"
+                  placeholder="留空自动推导：所在父目录/已整理"
+                />
+                <el-button @click="openPicker(account.id, 'organized_root')">选择目录</el-button>
+              </div>
               <div class="form-help">资源整理到的根目录；例如待整理目录为「媒体库/待整理」，留空则使用「媒体库/已整理」</div>
             </el-form-item>
 
             <el-form-item label="失败目录">
-              <el-input
-                v-model="formOf(account.id).failed_dir"
-                placeholder="例如 媒体库/整理失败（留空则识别失败原地保留，仅记录）"
-              />
+              <div class="dir-input-row">
+                <el-input
+                  v-model="formOf(account.id).failed_dir"
+                  placeholder="例如 媒体库/整理失败（留空则识别失败原地保留，仅记录）"
+                />
+                <el-button @click="openPicker(account.id, 'failed_dir')">选择目录</el-button>
+              </div>
               <div class="form-help">识别失败 / TMDB 查不到 / 有非视频残留的资源整体移入该目录；不存在会自动创建</div>
             </el-form-item>
 
@@ -146,6 +155,26 @@
           </el-collapse>
         </el-card>
       </div>
+
+      <el-dialog
+        v-model="pickerVisible"
+        :title="`选择 ${sourceName} 目录`"
+        :width="checkIsMobile ? '92%' : '620px'"
+        :close-on-click-modal="false"
+        @closed="pickerField = ''"
+      >
+        <div v-if="pickerLabel" class="picker-form-label">
+          保存到字段：{{ pickerLabel }}
+        </div>
+        <DirectorySelector
+          :key="`${pickerAccountId}-${pickerField}-${pickerRefreshKey}`"
+          v-model="pickerDir"
+          :source-type="sourceType"
+          :account-id="pickerAccountId"
+          @select="onDirPicked"
+          @cancel="pickerVisible = false"
+        />
+      </el-dialog>
     </el-card>
   </div>
 </template>
@@ -155,6 +184,9 @@ import { reactive, ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { SERVER_URL } from '@/const'
 import { useHttpClient } from '@/http/client'
+import { isMobile } from '@/utils/deviceUtils'
+import DirectorySelector from '../DirectorySelector.vue'
+import type { DirInfo } from '@/typing'
 
 const props = defineProps<{
   sourceType: string
@@ -182,12 +214,50 @@ interface AutoOrganizeConfig {
 }
 
 const http = useHttpClient()
+const checkIsMobile = ref(isMobile())
 const loadingAccounts = ref(false)
 const accounts = ref<NetdiskAccount[]>([])
 const configs = ref<AutoOrganizeConfig[]>([])
 const savingAccountId = ref(0)
 const runningAccountId = ref(0)
 const runningAny = computed(() => runningAccountId.value !== 0)
+
+// 目录选择器状态（每个账号每个字段独立弹窗浏览网盘目录）
+const pickerVisible = ref(false)
+const pickerAccountId = ref(0)
+const pickerField = ref('')
+const pickerRefreshKey = ref(0)
+const pickerDir = ref<DirInfo | null>(null)
+const pickerLabel = computed(() => {
+  switch (pickerField.value) {
+    case 'pending_dir':
+      return '待整理目录'
+    case 'organized_root':
+      return '已整理根目录'
+    case 'failed_dir':
+      return '失败目录'
+    default:
+      return ''
+  }
+})
+
+const openPicker = (accountId: number, field: 'pending_dir' | 'organized_root' | 'failed_dir') => {
+  pickerAccountId.value = accountId
+  pickerField.value = field
+  pickerDir.value = null
+  pickerRefreshKey.value++
+  pickerVisible.value = true
+}
+
+const onDirPicked = () => {
+  const f = formOf(pickerAccountId.value)
+  if (pickerDir.value?.path) {
+    const field = pickerField.value as 'pending_dir' | 'organized_root' | 'failed_dir'
+    f[field] = pickerDir.value.path
+    ElMessage.success(`已选择：${pickerDir.value.path}`)
+  }
+  pickerVisible.value = false
+}
 
 const defaultCategoryYaml = `# 电影分类策略（留空使用默认分类）
 movie:
@@ -441,6 +511,22 @@ onMounted(loadData)
   color: #909399;
   line-height: 1.5;
   margin-top: 4px;
+}
+
+.dir-input-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.dir-input-row .el-input {
+  flex: 1;
+}
+
+.picker-form-label {
+  font-size: 13px;
+  color: #606266;
+  margin-bottom: 8px;
 }
 
 .enable-switch {
