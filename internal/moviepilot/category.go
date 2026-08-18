@@ -330,3 +330,14 @@ func organizeRootPath(uploadRoot string) string {
 	}
 	return "已整理"
 }
+
+// failedRootPath 由待整理目录推导默认失败目录：父目录下的「整理失败」
+// 例如 /影视/待整理 → 影视/整理失败
+func failedRootPath(uploadRoot string) string {
+	p := strings.TrimRight(uploadRoot, "/")
+	idx := strings.LastIndex(p, "/")
+	if idx > 0 {
+		return p[:idx] + "/整理失败"
+	}
+	return "整理失败"
+}

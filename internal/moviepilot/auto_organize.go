@@ -19,16 +19,16 @@ import (
 // AutoOrganizeResult 一次自动整理运行的结果摘要（同时持久化到配置的 LastResult 供前端展示）
 type AutoOrganizeResult struct {
 	AccountID        uint     `json:"account_id"`
-	Organized        int      `json:"organized"`          // 成功整理（移动+重命名）的视频数
-	Failed           int      `json:"failed"`             // 整理失败（流程错误）数
-	Unrecognized     int      `json:"unrecognized"`       // 识别失败/TMDB 查不到，已移入失败目录数
-	SkippedOverwrite int      `json:"skipped_overwrite"`  // 目标已存在同片且非洗版模式，跳过数
-	NonMedia         int      `json:"non_media"`          // 非视频条目跳过数
-	DeletedEmptySrc  int      `json:"deleted_empty_src"`  // 整理后清空的源目录删除数
-	MovedToFailed    int      `json:"moved_to_failed"`    // 整体移入失败目录的资源数（目录/文件）
-	SuccessDirs      []string `json:"success_dirs"`       // 整理成功的目标相对目录（相对已整理根目录）
-	FailedNames      []string `json:"failed_names"`       // 移入失败目录/处理失败的资源名
-	Details          []string `json:"details"`            // 明细（前端展示/日志）
+	Organized        int      `json:"organized"`         // 成功整理（移动+重命名）的视频数
+	Failed           int      `json:"failed"`            // 整理失败（流程错误）数
+	Unrecognized     int      `json:"unrecognized"`      // 识别失败/TMDB 查不到，已移入失败目录数
+	SkippedOverwrite int      `json:"skipped_overwrite"` // 目标已存在同片且非洗版模式，跳过数
+	NonMedia         int      `json:"non_media"`         // 非视频条目跳过数
+	DeletedEmptySrc  int      `json:"deleted_empty_src"` // 整理后清空的源目录删除数
+	MovedToFailed    int      `json:"moved_to_failed"`   // 整体移入失败目录的资源数（目录/文件）
+	SuccessDirs      []string `json:"success_dirs"`      // 整理成功的目标相对目录（相对已整理根目录）
+	FailedNames      []string `json:"failed_names"`      // 移入失败目录/处理失败的资源名
+	Details          []string `json:"details"`           // 明细（前端展示/日志）
 }
 
 // RunAutoOrganize 对指定账号执行一轮自动整理：
@@ -60,6 +60,12 @@ func RunAutoOrganize(ctx context.Context, cfg *models.AutoOrganizeConfig) *AutoO
 	if organizedRoot == "" {
 		organizedRoot = organizeRootPath(pendingDir)
 	}
+	// 失败目录留空时默认使用 待整理目录同级/整理失败（运行时生效，不写回配置；不存在会自动创建）
+	effectiveCfg := *cfg
+	if strings.TrimSpace(effectiveCfg.FailedDir) == "" {
+		effectiveCfg.FailedDir = failedRootPath(pendingDir)
+	}
+	cfg = &effectiveCfg
 	rules := parseCategoryRules(cfg.CategoryConfig)
 	dirCache := make(map[string]string)
 	aiBudget := aiTryBudget
@@ -452,6 +458,7 @@ func resolveNameConflict(ctx context.Context, account *models.Account, targetDir
 // moveEntryToFailedDir 把识别失败的资源（文件或目录）整体移入失败目录（用户手动设定）。
 // 失败目录为空时不移动（原地保留，仅记录），避免擅自改变用户目录结构。
 func moveEntryToFailedDir(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, entry *organizeEntry, result *AutoOrganizeResult, reason string) {
+	helpers.AppLogger.Warnf("自动整理识别失败（账号 %d）：%s（%s）", cfg.AccountID, entry.Name, reason)
 	failedDir := strings.Trim(cfg.FailedDir, "/")
 	if failedDir == "" {
 		result.Details = append(result.Details, fmt.Sprintf("[识别失败] %s（%s，失败目录未配置，原地保留）", entry.Name, reason))
@@ -464,10 +471,12 @@ func moveEntryToFailedDir(ctx context.Context, account *models.Account, cfg *mod
 	// 失败目录由用户显式配置，不存在时自动创建
 	targetID, err := EnsureRemoteDir(ctx, account, failedDir)
 	if err != nil {
+		helpers.AppLogger.Warnf("自动整理移入失败目录失败（账号 %d）：%s → %s：%v", cfg.AccountID, entry.Name, failedDir, err)
 		result.Details = append(result.Details, fmt.Sprintf("[识别失败] %s 移入失败目录失败：%v", entry.Name, err))
 		return
 	}
 	if err := moveNetdiskFileInternal(account, entry.ID, entry.ParentID, targetID); err != nil {
+		helpers.AppLogger.Warnf("自动整理移动失败（账号 %d）：%s → %s：%v", cfg.AccountID, entry.Name, failedDir, err)
 		result.Details = append(result.Details, fmt.Sprintf("[识别失败] 移动 %s 到失败目录失败：%v", entry.Name, err))
 		return
 	}
@@ -486,6 +495,10 @@ func finishAutoOrganizeResult(cfg *models.AutoOrganizeConfig, result *AutoOrgani
 	data, err := json.Marshal(result)
 	if err == nil {
 		models.UpdateAutoOrganizeLastRun(cfg.ID, string(data))
+	}
+	// 明细逐条写日志，便于在日志页/通知中定位失败原因
+	for _, d := range result.Details {
+		helpers.AppLogger.Infof("自动整理明细（账号 %d）：%s", cfg.AccountID, d)
 	}
 	if result.Organized+result.Unrecognized+result.MovedToFailed+result.Failed > 0 {
 		sendAutoOrganizeNotify(cfg, result)
@@ -517,6 +530,16 @@ func sendAutoOrganizeNotify(cfg *models.AutoOrganizeConfig, result *AutoOrganize
 	}
 	if result.DeletedEmptySrc > 0 {
 		lines = append(lines, fmt.Sprintf("清理空源目录：%d 个", result.DeletedEmptySrc))
+	}
+	if len(result.Details) > 0 {
+		lines = append(lines, "── 明细 ──")
+		const maxDetails = 40
+		if len(result.Details) > maxDetails {
+			lines = append(lines, result.Details[:maxDetails]...)
+			lines = append(lines, fmt.Sprintf("…共 %d 条，其余详见系统日志", len(result.Details)))
+		} else {
+			lines = append(lines, result.Details...)
+		}
 	}
 	lines = append(lines, fmt.Sprintf("⏰ 时间：%s", time.Now().Format("2006-01-02 15:04:05")))
 	sendSystemNotification(title, strings.Join(lines, "\n"))

@@ -94,11 +94,11 @@
               <div class="dir-input-row">
                 <el-input
                   v-model="formOf(account.id).failed_dir"
-                  placeholder="例如 媒体库/整理失败（留空则识别失败原地保留，仅记录）"
+                  placeholder="例如 媒体库/整理失败（留空默认 待整理同级/整理失败 并自动创建）"
                 />
                 <el-button @click="openPicker(account.id, 'failed_dir')">选择目录</el-button>
               </div>
-              <div class="form-help">识别失败 / TMDB 查不到 / 有非视频残留的资源整体移入该目录；不存在会自动创建</div>
+              <div class="form-help">识别失败 / TMDB 查不到 / 有非视频残留的资源整体移入该目录；留空默认使用「待整理目录同级/整理失败」，不存在会自动创建</div>
             </el-form-item>
 
             <el-form-item label="覆盖（洗版）">
