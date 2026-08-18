@@ -125,6 +125,7 @@ func ensureDirById(ctx context.Context, path string, mkdir func(ctx context.Cont
 		}
 		entries, err := list(parentID)
 		if err != nil {
+			helpers.AppLogger.Warnf("建目录路径处理：路径=%s 当前层级=%s 父ID=%q 列表失败：%v", path, part, parentID, err)
 			return "", err
 		}
 		found := ""
@@ -134,9 +135,11 @@ func ensureDirById(ctx context.Context, path string, mkdir func(ctx context.Cont
 				break
 			}
 		}
+		helpers.AppLogger.Infof("建目录路径处理：路径=%s 当前层级=%s 父ID=%q 已存在=%s", path, part, parentID, found)
 		if found == "" {
 			createdID, err := mkdir(ctx, parentID, part)
 			if err != nil {
+				helpers.AppLogger.Warnf("建目录路径处理：路径=%s 当前层级=%s 父ID=%q 创建失败：%v", path, part, parentID, err)
 				return "", fmt.Errorf("创建目录 %s 失败：%v", part, err)
 			}
 			// 部分网盘创建接口返回的 ID 不可靠（123 空目录 upload_request 响应不含 FileId，返回 0），

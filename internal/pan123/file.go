@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"resty.dev/v3"
+
+	"diy-strm/internal/helpers"
 )
 
 // ListFiles 分页获取目录下的文件列表
@@ -92,8 +95,11 @@ func (c *Client) CreateDir(ctx context.Context, parentFileId, dirName string) (s
 		req.SetBody(body)
 	})
 	if err != nil {
+		helpers.AppLogger.Errorf("123 创建目录失败（parentFileId=%q dirName=%q）：%v", parentFileId, dirName, err)
 		return "", err
 	}
+	// 调试：记录建目录原始响应，便于核对空目录返回结构
+	log.Printf("pan123 CreateDir parentFileId=%q dirName=%q resp=%s", parentFileId, dirName, string(respBody))
 	var resp UploadResp
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return "", fmt.Errorf("解析创建目录响应失败：%w", err)
