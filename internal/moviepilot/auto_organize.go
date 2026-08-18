@@ -66,6 +66,7 @@ func RunAutoOrganize(ctx context.Context, cfg *models.AutoOrganizeConfig) *AutoO
 		effectiveCfg.FailedDir = failedRootPath(pendingDir)
 	}
 	cfg = &effectiveCfg
+	helpers.AppLogger.Infof("自动整理开始（账号 %d）：待整理目录=%s 已整理根目录=%s 失败目录=%s", cfg.AccountID, pendingDir, organizedRoot, cfg.FailedDir)
 	rules := parseCategoryRules(cfg.CategoryConfig)
 	dirCache := make(map[string]string)
 	aiBudget := aiTryBudget
