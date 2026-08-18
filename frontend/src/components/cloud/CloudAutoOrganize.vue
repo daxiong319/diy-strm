@@ -399,11 +399,13 @@ const removeConfig = async (accountId: number) => {
 
 const runNow = async (accountId: number) => {
   runningAccountId.value = accountId
+  // 在触发前记录当前 last_run_at，用于本次运行完成后轮询识别
+  const before = getConfig(accountId)?.last_run_at || ''
   try {
     const resp = await http.post(`${SERVER_URL}/auto-organize/run`, { account_id: accountId })
     if (resp.data.code === 200) {
       ElMessage.success('已开始整理，正在后台执行…')
-      await waitForRunResult(accountId)
+      await waitForRunResult(accountId, before)
     } else {
       ElMessage.error(resp.data.message || '整理失败')
     }
@@ -435,8 +437,7 @@ const refreshRunResult = async () => {
 }
 
 // 整理是后台异步执行的：轮询配置的 last_run_at，出现新结果后汇总提示
-const waitForRunResult = async (accountId: number) => {
-  const before = getConfig(accountId)?.last_run_at || ''
+const waitForRunResult = async (accountId: number, before: string) => {
   for (let i = 0; i < 50; i++) {
     await new Promise((r) => setTimeout(r, 3000))
     await refreshRunResult()
