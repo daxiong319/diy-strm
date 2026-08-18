@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"diy-strm/internal/helpers"
@@ -27,6 +29,121 @@ type OldLogsResponse struct {
 	Entries  []LogEntry `json:"entries"`
 	Pos      int64      `json:"pos"`
 	StartPos int64      `json:"start_pos"`
+}
+
+// LogFileInfo 是日志文件清单条目。
+type LogFileInfo struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	Size  int64  `json:"size"`
+	MTime int64  `json:"mtime"`
+}
+
+// ListLogFiles 列出可查看的日志文件（顶层 *.log 与同步任务日志目录下的 *.log）。
+func ListLogFiles(c *gin.Context) {
+	infos, err := scanLogFiles(filepath.Join(helpers.ConfigDir, "logs"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("扫描日志目录失败：%v", err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"files": infos})
+}
+
+// isScannableLogFile 判断文件名是否是可展示的日志文件。
+func isScannableLogFile(name string) bool {
+	if name == "" || strings.HasPrefix(name, ".") {
+		return false
+	}
+	if !strings.HasSuffix(name, ".log") {
+		return false
+	}
+	// 跳过本地调试遗留的 console_run* 日志
+	return !strings.HasPrefix(name, "console_run")
+}
+
+// scanLogFiles 递归扫描日志目录：仅包含顶层与 sync/libs 目录下的 .log 文件，
+// 与日志读取接口的路径白名单保持一致。
+func scanLogFiles(logsDir string) ([]LogFileInfo, error) {
+	infos := []LogFileInfo{}
+	err := filepath.Walk(logsDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			// 单个条目不可读时跳过，不影响整体清单
+			return nil
+		}
+		if info.IsDir() {
+			if path == logsDir {
+				return nil
+			}
+			rel, relErr := filepath.Rel(logsDir, path)
+			if relErr != nil {
+				return filepath.SkipDir
+			}
+			rel = filepath.ToSlash(rel)
+			if rel != helpers.SyncLogRelativeDir() && rel != helpers.LegacySyncLogRelativeDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !isScannableLogFile(info.Name()) {
+			return nil
+		}
+		rel, relErr := filepath.Rel(logsDir, path)
+		if relErr != nil {
+			return nil
+		}
+		infos = append(infos, LogFileInfo{
+			Name:  info.Name(),
+			Path:  filepath.ToSlash(rel),
+			Size:  info.Size(),
+			MTime: info.ModTime().Unix(),
+		})
+		return nil
+	})
+	sort.Slice(infos, func(i, j int) bool {
+		iTop := !strings.Contains(infos[i].Path, "/")
+		jTop := !strings.Contains(infos[j].Path, "/")
+		if iTop != jTop {
+			return iTop
+		}
+		return infos[i].Path < infos[j].Path
+	})
+	return infos, err
+}
+
+// ClearLogFile 清空指定日志文件内容（truncate 保留文件与写入句柄，不删除文件）。
+func ClearLogFile(c *gin.Context) {
+	var req requests.LogFileRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
+		return
+	}
+	if err := req.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	fullLogPath, err := helpers.SafeJoin(filepath.Join(helpers.ConfigDir, "logs"), req.Path)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("日志文件路径不合法：%v", err)})
+		return
+	}
+	stat, err := os.Stat(fullLogPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "日志文件不存在"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("读取日志文件失败：%v", err)})
+		}
+		return
+	}
+	if !stat.Mode().IsRegular() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "日志目标不是普通文件"})
+		return
+	}
+	if err := os.Truncate(fullLogPath, 0); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("清空日志文件失败：%v", err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
 // GetOldLogs 通过 HTTP 接口获取旧日志，返回 JSON 格式。

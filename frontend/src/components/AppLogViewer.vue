@@ -10,6 +10,32 @@
           <div class="header-title-group">
             <h2 class="card-title">日志查看器</h2>
             <LogLevelFilter v-model="selectedLogLevels" />
+            <div class="status-toggle" role="group" aria-label="日志状态筛选">
+              <button
+                type="button"
+                class="status-toggle-item"
+                :class="{ 'is-active': statusFilter === 'all' }"
+                @click="statusFilter = 'all'"
+              >
+                全部
+              </button>
+              <button
+                type="button"
+                class="status-toggle-item is-normal"
+                :class="{ 'is-active': statusFilter === 'normal' }"
+                @click="statusFilter = 'normal'"
+              >
+                正常
+              </button>
+              <button
+                type="button"
+                class="status-toggle-item is-error"
+                :class="{ 'is-active': statusFilter === 'error' }"
+                @click="statusFilter = 'error'"
+              >
+                异常
+              </button>
+            </div>
           </div>
           <div class="header-actions">
             <LogActionToolbar
@@ -78,6 +104,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, shallowRef, watch, useTemplateRef } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import LogActionToolbar from '@/components/log/LogActionToolbar.vue'
 import LogLevelFilter from '@/components/log/LogLevelFilter.vue'
 import { useLogFileActions } from '@/composables/useLogFileActions'
@@ -113,11 +140,12 @@ const logViewerStyle = computed<Record<string, string>>(() => ({
 const stream = shallowRef<EventSource | null>(null)
 const logLines = ref<LogEntry[]>([])
 const selectedLogLevels = ref<LogLevel[]>([...DEFAULT_VISIBLE_LOG_LEVELS])
+const statusFilter = ref<'all' | 'normal' | 'error'>('all')
 const streamConnectionState = ref<StreamConnectionState>('idle')
 const isConnected = computed(() => streamConnectionState.value === 'connected')
 const loading = ref(false)
 const logsContainer = useTemplateRef<HTMLElement>('logsContainer')
-const { downloadLogFile } = useLogFileActions()
+const { downloadLogFile, clearLogFile } = useLogFileActions()
 
 // 日志数量限制配置
 const MAX_LOG_ENTRIES = 2000
@@ -150,7 +178,13 @@ const readLogResponseError = async (response: Response) => {
 
 // 限制显示的日志条目
 const limitedLogLines = computed(() => {
-  return filterLogEntriesByLevels(logLines.value, selectedLogLevels.value).slice(0, MAX_LOG_ENTRIES)
+  let visible = logLines.value
+  if (statusFilter.value === 'normal') {
+    visible = visible.filter((entry) => entry.level === 'info' || entry.level === 'debug')
+  } else if (statusFilter.value === 'error') {
+    visible = visible.filter((entry) => entry.level === 'error' || entry.level === 'warn')
+  }
+  return filterLogEntriesByLevels(visible, selectedLogLevels.value).slice(0, MAX_LOG_ENTRIES)
 })
 
 const resetLogState = () => {
@@ -462,9 +496,28 @@ const loadOldLogs = () => {
     })
 }
 
-// 清空日志
-const clearLogs = () => {
-  logLines.value = []
+// 清空日志（服务端 truncate + 清空本地显示）
+const clearLogs = async () => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要清空服务端日志文件「${props.logPath}」吗？清空后不可恢复。`,
+      '清空日志',
+      {
+        type: 'warning',
+        confirmButtonText: '清空',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+  } catch {
+    return
+  }
+  const ok = await clearLogFile(props.logPath, {
+    errorPrefix: '清空日志失败',
+  })
+  if (ok) {
+    logLines.value = []
+  }
 }
 
 // 下载日志文件
@@ -526,6 +579,48 @@ defineExpose({
   font-size: 20px;
   font-weight: 600;
   color: #303133;
+}
+
+/* 状态筛选：全部/正常/异常 */
+.status-toggle {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #dcdfe6;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.status-toggle-item {
+  border: none;
+  background: #ffffff;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #606266;
+  cursor: pointer;
+  line-height: 1;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.status-toggle-item + .status-toggle-item {
+  border-left: 1px solid #dcdfe6;
+}
+
+.status-toggle-item.is-active {
+  background: #f4f4f5;
+  color: #303133;
+}
+
+.status-toggle-item.is-normal.is-active {
+  background: #e1f3d8;
+  color: #67c23a;
+}
+
+.status-toggle-item.is-error.is-active {
+  background: #fde2e2;
+  color: #f56c6c;
 }
 
 .log-content {

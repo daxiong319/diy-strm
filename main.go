@@ -629,6 +629,8 @@ func setRouter(r *gin.Engine) {
 		api.GET("/sync/tasks/:id/stream", controllers.SyncTaskStream)      // 同步任务详情实时流
 		api.GET("/logs/old", controllers.GetOldLogs)                       // 通过 HTTP 获取旧日志
 		api.GET("/logs/download", controllers.DownloadLogFile)             // 下载日志文件
+		api.GET("/logs/files", controllers.ListLogFiles)                   // 日志文件清单
+		api.POST("/logs/clear", controllers.ClearLogFile)                  // 清空日志文件
 		api.GET("/path/is-fn-os", controllers.IsFnOS)                      // 查询是否是飞牛环境
 
 		// 获取应用版本与运行环境信息
