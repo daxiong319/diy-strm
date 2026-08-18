@@ -95,10 +95,6 @@ const AppMoviePilotFailed = createAsyncRouteComponent(
   'AppMoviePilotFailed',
   () => import('@/components/AppMoviePilotFailed.vue'),
 )
-const AppAutoOrganize = createAsyncRouteComponent(
-  'AppAutoOrganize',
-  () => import('@/components/AppAutoOrganize.vue'),
-)
 const AppApiKeys = createAsyncRouteComponent(
   'AppApiKeys',
   () => import('@/components/AppApiKeys.vue'),
@@ -151,6 +147,10 @@ const AppHiveSubscription = createAsyncRouteComponent(
 const AppHiveSettings = createAsyncRouteComponent(
   'AppHiveSettings',
   () => import('@/components/cloud/HiveSettings.vue'),
+)
+const AppCloudAutoOrganize = createAsyncRouteComponent(
+  'AppCloudAutoOrganize',
+  () => import('@/components/cloud/CloudAutoOrganize.vue'),
 )
 const AppDiscover = createAsyncRouteComponent('AppDiscover', () => import('@/components/AppDiscover.vue'))
 
@@ -593,18 +593,6 @@ const routes = [
     },
   },
   {
-    path: '/moviepilot/auto-organize',
-    name: 'moviepilot-auto-organize',
-    component: AppAutoOrganize,
-    meta: {
-      title: '自动整理',
-      requiresAuth: true,
-      parent: 'moviepilot',
-      icon: 'FolderOpened',
-      showInMenu: true,
-    },
-  },
-  {
     path: '/settings/emby',
     name: 'settings-emby',
     component: AppEmbySettings,
@@ -677,6 +665,30 @@ const routes = [
     },
   },
   {
+    path: '/cloud-115',
+    name: 'cloud-115',
+    redirect: '/cloud-115/organize',
+    meta: {
+      title: '115 网盘',
+      requiresAuth: true,
+      icon: 'Folder',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/cloud-115/organize',
+    name: 'cloud-115-organize',
+    component: AppCloudAutoOrganize,
+    props: { sourceType: '115', sourceName: '115 网盘' },
+    meta: {
+      title: '自动整理分类',
+      requiresAuth: true,
+      parent: 'cloud-115',
+      icon: 'Operation',
+      showInMenu: true,
+    },
+  },
+  {
     path: '/cloud-123',
     name: 'cloud-123',
     redirect: '/cloud-123/dir-settings',
@@ -734,13 +746,8 @@ const routes = [
   {
     path: '/cloud-123/organize',
     name: 'cloud-123-organize',
-    component: AppCloudPlaceholder,
-    props: {
-      sourceName: '123 云盘',
-      title: '自动整理分类',
-      description: '该功能开发中。后续将支持按规则自动整理转存目录中的文件。',
-      related: [],
-    },
+    component: AppCloudAutoOrganize,
+    props: { sourceType: '123', sourceName: '123 云盘' },
     meta: {
       title: '自动整理分类',
       requiresAuth: true,
@@ -916,13 +923,8 @@ const routes = [
   {
     path: '/cloud-pan139/organize',
     name: 'cloud-pan139-organize',
-    component: AppCloudPlaceholder,
-    props: {
-      sourceName: '移动云盘',
-      title: '自动整理分类',
-      description: '该功能开发中。后续将支持按规则自动整理转存目录中的文件。',
-      related: [],
-    },
+    component: AppCloudAutoOrganize,
+    props: { sourceType: 'pan139', sourceName: '移动云盘' },
     meta: {
       title: '自动整理分类',
       requiresAuth: true,

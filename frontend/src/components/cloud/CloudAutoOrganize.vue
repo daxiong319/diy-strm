@@ -1,24 +1,34 @@
 <template>
-  <div>
-    <div class="main-content-container auto-organize-container">
+  <div class="main-content-container cloud-page">
+    <el-card shadow="never" class="cloud-card">
+      <template #header>
+        <div class="card-header">
+          <span>{{ sourceName }} · 自动整理分类</span>
+          <div class="header-actions">
+            <el-button type="primary" size="small" :loading="runningAny" @click="runAllNow">整理全部账号</el-button>
+            <el-button size="small" :loading="loadingAccounts" @click="loadData">刷新</el-button>
+          </div>
+        </div>
+      </template>
+
       <el-alert
         type="info"
         :show-icon="true"
         style="margin-bottom: 12px"
-        title="云盘自动整理说明"
-        description="监控程序把频道/订阅转存到「待整理目录」的资源，按本页配置自动整理到「已整理根目录」下的分类目录，并重命名（保留 2160p.WEB-DL.H.265 等质量标签）。识别失败或 TMDB 查不到的资源会移入「失败目录」；目标目录已有同一部影片时按「覆盖（洗版）」设置决定覆盖或跳过。分类策略在保存后立即生效，每 5 分钟自动扫描一次，也可手动触发。"
+        :title="`${sourceName} 自动整理说明`"
+        description="监控程序扫描「待整理目录」中新增的转存资源，按本页配置的分类策略 yaml 自动整理到「已整理根目录」下的分类目录，并重命名（保留 2160p.WEB-DL.H.265.60fps-Ocat 等质量标签）。识别失败或 TMDB 查不到的资源移入「失败目录」；目标目录已有同一部影片时按「覆盖（洗版）」设置处理。每 5 分钟自动执行一次，也可手动触发。"
       />
 
       <div v-if="loadingAccounts" class="loading-tip">加载账号中...</div>
 
-      <el-empty v-else-if="accounts.length === 0" description="暂无可配置的网盘账号（支持 123 云盘 / 115 / 中国移动云盘 139）" />
+      <el-empty v-else-if="accounts.length === 0" :description="`暂无可配置的${sourceName}账号，请先在「网盘账号管理」中添加`" />
 
       <div v-else class="account-card-list">
         <el-card v-for="account in accounts" :key="account.id" class="account-card" shadow="hover">
           <template #header>
             <div class="card-header">
               <div class="card-title">
-                <span class="account-badge">{{ accountLabel(account) }}</span>
+                <span class="account-badge">{{ account.name || account.username || '未命名' }}</span>
                 <el-tag v-if="getConfig(account.id)?.enabled" type="success" size="small" effect="light">已启用</el-tag>
                 <el-tag v-else type="info" size="small" effect="light">未启用</el-tag>
               </div>
@@ -99,10 +109,10 @@
                 v-model="formOf(account.id).category_config"
                 type="textarea"
                 :rows="10"
-                placeholder="MoviePilot category.yaml 风格，留空使用默认分类（各网盘可单独配置）"
+                placeholder="MoviePilot category.yaml 风格，留空使用默认分类（每个账号可单独配置）"
               />
               <div class="form-help">
-                与「影视订阅-设置-分类策略」格式一致：movie/tv 两段，按顺序匹配，无条件项为兜底分类。
+                movie/tv 两段，按顺序匹配，无条件项为兜底分类。
                 整理到 已整理根目录/分类名/标题 (年份) {tmdb=xxx}[/Season NN]
               </div>
             </el-form-item>
@@ -136,21 +146,26 @@
           </el-collapse>
         </el-card>
       </div>
-    </div>
+    </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { SERVER_URL } from '@/const'
 import { useHttpClient } from '@/http/client'
+
+const props = defineProps<{
+  sourceType: string
+  sourceName: string
+}>()
 
 interface NetdiskAccount {
   id: number
   name: string
   username: string
-  source_type: '115' | '123' | 'openlist' | 'baidupan' | 'pan139' | 'guangyapan'
+  source_type: string
 }
 
 interface AutoOrganizeConfig {
@@ -172,6 +187,7 @@ const accounts = ref<NetdiskAccount[]>([])
 const configs = ref<AutoOrganizeConfig[]>([])
 const savingAccountId = ref(0)
 const runningAccountId = ref(0)
+const runningAny = computed(() => runningAccountId.value !== 0)
 
 const defaultCategoryYaml = `# 电影分类策略（留空使用默认分类）
 movie:
@@ -211,16 +227,6 @@ tv:
   未分类:
 `
 
-const accountLabel = (account: NetdiskAccount) => {
-  const typeMap: Record<string, string> = {
-    '115': '115 网盘',
-    '123': '123 云盘',
-    pan139: '中国移动云盘',
-  }
-  const typeName = typeMap[account.source_type] || account.source_type
-  return `${account.name || account.username || '未命名'}（${typeName}）`
-}
-
 const getConfig = (accountId: number) =>
   configs.value.find((c) => c.account_id === accountId)
 
@@ -245,11 +251,11 @@ const loadData = async () => {
   try {
     const accountResp = await http.get(`${SERVER_URL}/account/list`)
     const allAccounts = (accountResp.data.data || []) as NetdiskAccount[]
-    accounts.value = allAccounts.filter((a) =>
-      ['123', '115', 'pan139'].includes(a.source_type),
-    )
+    accounts.value = allAccounts.filter((a) => a.source_type === props.sourceType)
     const configResp = await http.get(`${SERVER_URL}/auto-organize/configs`)
-    configs.value = (configResp.data.data || []) as AutoOrganizeConfig[]
+    configs.value = ((configResp.data.data || []) as AutoOrganizeConfig[]).filter(
+      (c) => accounts.value.some((a) => a.id === c.account_id),
+    )
     for (const c of configs.value) {
       form[c.account_id] = {
         id: c.id,
@@ -349,6 +355,38 @@ const runNow = async (accountId: number) => {
   }
 }
 
+const runAllNow = async () => {
+  const enabledOnes = accounts.value.filter((a) => getConfig(a.id)?.enabled)
+  if (enabledOnes.length === 0) {
+    ElMessage.warning('请先在账号卡片中启用自动整理并保存配置')
+    return
+  }
+  runningAccountId.value = -1
+  try {
+    const resp = await http.post(`${SERVER_URL}/auto-organize/run`, {})
+    if (resp.data.code === 200) {
+      const results = (resp.data.data || []) as any[]
+      const sum = results.reduce(
+        (acc, r) => ({
+          organized: acc.organized + (r.organized || 0),
+          unrecognized: acc.unrecognized + (r.unrecognized || 0),
+          failed: acc.failed + (r.failed || 0),
+        }),
+        { organized: 0, unrecognized: 0, failed: 0 },
+      )
+      ElMessage.success(`整理完成：成功 ${sum.organized} 个，识别失败 ${sum.unrecognized} 个，失败 ${sum.failed} 个`)
+      await loadData()
+    } else {
+      ElMessage.error(resp.data.message || '整理失败')
+    }
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('整理失败')
+  } finally {
+    runningAccountId.value = 0
+  }
+}
+
 const parseResult = (raw?: string) => {
   if (!raw) return {} as any
   try {
@@ -367,6 +405,14 @@ onMounted(loadData)
 </script>
 
 <style scoped>
+.cloud-page {
+  padding: 16px;
+}
+
+.cloud-card {
+  max-width: 1100px;
+}
+
 .account-card-list {
   display: flex;
   flex-direction: column;
@@ -427,5 +473,10 @@ onMounted(loadData)
   padding: 24px;
   text-align: center;
   color: #909399;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
 }
 </style>
