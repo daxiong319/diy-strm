@@ -36,7 +36,7 @@ var userAgents = []string{
 
 // 分享链接正则（与 telegram_bot 一致）
 var (
-	rePan123 = regexp.MustCompile(`(?:https?://)?(?:[a-z0-9\-]+\.)*(?:123pan\.com|123pan\.cn|123684\.com|share\.123865\.com)/(?:s|123pan)/([A-Za-z0-9\-_]{6,})(?:\.html)?`)
+	rePan123 = regexp.MustCompile(`(?:https?://)?(?:[a-z0-9\-]+\.)*(?:123pan\.com|123pan\.cn|123684\.com|123865\.com)/(?:s|123pan|share)/([A-Za-z0-9\-_]{6,})(?:\.html)?`)
 	reGuangY = regexp.MustCompile(`(?:https?://)?(?:www\.)?guangyapan\.com/s/([A-Za-z0-9_\-]{6,})`)
 	rePan139 = regexp.MustCompile(`(?:shareweb/#/)?w/i/([A-Za-z0-9_\-]{6,})`)
 	rePwd    = regexp.MustCompile(`(?i)(?:提取码\s*[:：]?\s*|\bpwd\s*[:：=]?\s*|pwd=)([A-Za-z0-9]{4,8})`)
