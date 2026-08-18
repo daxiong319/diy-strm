@@ -95,6 +95,10 @@ const AppMoviePilotFailed = createAsyncRouteComponent(
   'AppMoviePilotFailed',
   () => import('@/components/AppMoviePilotFailed.vue'),
 )
+const AppAutoOrganize = createAsyncRouteComponent(
+  'AppAutoOrganize',
+  () => import('@/components/AppAutoOrganize.vue'),
+)
 const AppApiKeys = createAsyncRouteComponent(
   'AppApiKeys',
   () => import('@/components/AppApiKeys.vue'),
@@ -585,6 +589,18 @@ const routes = [
       title: '识别失败',
       requiresAuth: true,
       parent: 'moviepilot',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/moviepilot/auto-organize',
+    name: 'moviepilot-auto-organize',
+    component: AppAutoOrganize,
+    meta: {
+      title: '自动整理',
+      requiresAuth: true,
+      parent: 'moviepilot',
+      icon: 'FolderOpened',
       showInMenu: true,
     },
   },

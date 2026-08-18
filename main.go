@@ -508,6 +508,7 @@ func initOthers() {
 	controllers.StartChannelWatcher(context.Background()) // 启动 TG 频道订阅引擎
 	controllers.StartHiveWatcher(context.Background())    // 启动影巢（HDHive）订阅引擎
 	moviepilot.StartMoviePilotWatcher()  // 启动 MoviePilot 订阅下载检测
+	controllers.StartAutoOrganizeWatcher(context.Background()) // 启动云盘自动整理监控
 	models.GetEmbyConfig()               // 加载 Emby 配置
 	helpers.SubscribeSync(helpers.V115TokenInValidEvent, models.HandleV115TokenInvalid)
 	helpers.SubscribeSync(helpers.SaveOpenListTokenEvent, models.HandleOpenListTokenSaveSync)
@@ -738,6 +739,10 @@ func setRouter(r *gin.Engine) {
 		api.POST("/moviepilot/failed-files/:id/identify", controllers.IdentifyMoviePilotFailedFile) // AI 识别失败文件
 		api.POST("/moviepilot/failed-files/:id/resolve", controllers.ResolveMoviePilotFailedFile)  // 确认整理失败文件
 		api.POST("/moviepilot/failed-files/:id/skip", controllers.SkipMoviePilotFailedFile)        // 跳过失败文件
+		api.GET("/auto-organize/configs", controllers.GetAutoOrganizeConfigs)                      // 查询云盘自动整理配置
+		api.POST("/auto-organize/config", controllers.SaveAutoOrganizeConfig)                      // 保存云盘自动整理配置
+		api.POST("/auto-organize/config/:id/delete", controllers.DeleteAutoOrganizeConfig)         // 删除云盘自动整理配置
+		api.POST("/auto-organize/run", controllers.RunAutoOrganizeNow)                             // 手动触发云盘自动整理
 		api.POST("/setting/notification/channels/telegram", controllers.CreateTelegramChannel)     // 创建 Telegram 渠道
 		api.GET("/setting/notification/channels/telegram/:id", controllers.GetTelegramChannel)     // 查询 Telegram 渠道
 		api.PUT("/setting/notification/channels/telegram", controllers.UpdateTelegramChannel)      // 更新 Telegram 渠道

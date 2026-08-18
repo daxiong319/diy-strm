@@ -63,6 +63,10 @@ func Migrate() {
 		helpers.AppLogger.Errorf("自动迁移 MoviePilot 表失败：%v", err)
 	}
 	db.Db.Statement.PrepareStmt = true
+	if err := db.Db.AutoMigrate(&AutoOrganizeConfig{}); err != nil {
+		helpers.AppLogger.Errorf("自动迁移云盘自动整理配置表失败：%v", err)
+	}
+	db.Db.Statement.PrepareStmt = true
 	if migrator.VersionCode == 1 {
 		// 数据库版本低于最大版本，需要升级
 		db.Db.AutoMigrate(DbDownloadTask{}, DbUploadTask{}, SyncPath{}, Sync{})

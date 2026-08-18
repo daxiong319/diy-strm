@@ -264,8 +264,14 @@ func getCategoryRules() categoryRules {
 
 // lookupTmdbMedia 对已解析媒体执行 TMDB 校验并确定分类：
 // 返回 TMDB 官方标题（当前语言）、TMDB ID、TMDB 年份、分类名。
-// TMDB 校验失败返回错误（由调用方按无法识别处理）。
+// 分类策略使用 MoviePilot 全局配置；TMDB 校验失败返回错误（由调用方按无法识别处理）。
 func lookupTmdbMedia(ctx context.Context, media *IdentifyResult) (officialTitle string, tmdbID int64, tmdbYear int, categoryName string, err error) {
+	return lookupTmdbMediaWithRules(ctx, media, getCategoryRules())
+}
+
+// lookupTmdbMediaWithRules 与 lookupTmdbMedia 相同，但分类策略由调用方指定
+// （自动整理功能每个云盘账号可单独配置分类策略 yaml）。
+func lookupTmdbMediaWithRules(ctx context.Context, media *IdentifyResult, rules categoryRules) (officialTitle string, tmdbID int64, tmdbYear int, categoryName string, err error) {
 	isMovie := media.Category != "tv"
 	var checkName string
 	var checkID int64
@@ -284,7 +290,6 @@ func lookupTmdbMedia(ctx context.Context, media *IdentifyResult) (officialTitle 
 		return "", 0, 0, "", err
 	}
 	client := models.GlobalScrapeSettings.GetTmdbClient()
-	rules := getCategoryRules()
 	if isMovie {
 		detail, dErr := client.GetMovieDetail(checkID, models.GlobalScrapeSettings.GetTmdbLanguage())
 		if dErr != nil {
