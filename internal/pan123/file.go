@@ -15,10 +15,14 @@ import (
 )
 
 // ListFiles 分页获取目录下的文件列表
-// parentFileId 为目录 ID（根目录为 0）
+// parentFileId 为目录 ID（根目录为 0；空字符串按根目录处理，
+// /file/list/new 接口对空 parentFileId 会报「请输入ParentFileId」）
 func (c *Client) ListFiles(ctx context.Context, parentFileId string, page int) (*Files, error) {
 	if err := c.waitForPermission(ctx, c.api("/file/list/new")); err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(parentFileId) == "" {
+		parentFileId = "0"
 	}
 	query := map[string]string{
 		"driveId":              "0",
