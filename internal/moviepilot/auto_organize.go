@@ -533,6 +533,16 @@ func findRemoteDirID(ctx context.Context, account *models.Account, path string) 
 	case models.SourceType123:
 		client := account.Get123Client()
 		return client.GetPathIdByPath(ctx, path)
+	case models.SourceTypeGuangYaPan:
+		client := account.GetGuangYaPanClient()
+		id, err := client.GetPathIdByPath(ctx, path)
+		if err != nil {
+			return "", err
+		}
+		if id == "" {
+			return "", fmt.Errorf("目录 %s 不存在", path)
+		}
+		return id, nil
 	case models.SourceType115:
 		client := account.Get115Client()
 		cur := ""
@@ -605,6 +615,9 @@ func deleteNetdiskFileInternal(account *models.Account, fileID, parentID string)
 		if client == nil {
 			return fmt.Errorf("获取中国移动云盘客户端失败")
 		}
+		return client.Delete(ctx, []string{fileID})
+	case models.SourceTypeGuangYaPan:
+		client := account.GetGuangYaPanClient()
 		return client.Delete(ctx, []string{fileID})
 	default:
 		return fmt.Errorf("该网盘类型暂不支持删除")

@@ -832,13 +832,8 @@ const routes = [
   {
     path: '/cloud-guangyapan/organize',
     name: 'cloud-guangyapan-organize',
-    component: AppCloudPlaceholder,
-    props: {
-      sourceName: '光鸭云盘',
-      title: '自动整理分类',
-      description: '该功能开发中。后续将支持按规则自动整理转存目录中的文件。',
-      related: [],
-    },
+    component: AppCloudAutoOrganize,
+    props: { sourceType: 'guangyapan', sourceName: '光鸭云盘' },
     meta: {
       title: '自动整理分类',
       requiresAuth: true,
