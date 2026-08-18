@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
+	"diy-strm/internal/helpers"
 	"diy-strm/internal/models"
 )
 
@@ -133,22 +135,41 @@ func ensureDirById(ctx context.Context, path string, mkdir func(ctx context.Cont
 			}
 		}
 		if found == "" {
-			found, err = mkdir(ctx, parentID, part)
+			createdID, err := mkdir(ctx, parentID, part)
 			if err != nil {
 				return "", fmt.Errorf("创建目录 %s 失败：%v", part, err)
 			}
 			// 部分网盘创建接口返回的 ID 不可靠（123 空目录 upload_request 响应不含 FileId，返回 0），
-			// 重新列出父目录按名称取回真实 ID
-			if relist, rErr := list(parentID); rErr == nil {
-				for _, e := range relist {
-					if e.isDir && e.name == part {
-						found = e.id
-						break
-					}
-				}
+			// 且列表接口存在最终一致性：创建后立即列出可能看不到新目录。
+			// 重试按名称在父目录中定位，取得真实 ID（每次间隔 1 秒，最多 4 次）
+			found = createdID
+			if createdID == "" || createdID == "0" {
+				found = retryFindDirID(list, parentID, part, 4)
+				helpers.AppLogger.Infof("建目录 %s 返回 ID 无效（%q），重试按名称定位 → %q", part, createdID, found)
 			}
+		}
+		if found == "" || found == "0" {
+			return "", fmt.Errorf("目录 %s 创建后无法取得有效 ID", part)
 		}
 		parentID = found
 	}
 	return parentID, nil
+}
+
+// retryFindDirID 在父目录中按名称查找目录 ID，找不到时短暂等待后重试，
+// 应对部分网盘（123）列表接口的最终一致性延迟。
+func retryFindDirID(list func(parentID string) ([]dirEntry, error), parentID, name string, attempts int) string {
+	for i := 0; i < attempts; i++ {
+		if entries, err := list(parentID); err == nil {
+			for _, e := range entries {
+				if e.isDir && e.name == name {
+					return e.id
+				}
+			}
+		}
+		if i < attempts-1 {
+			time.Sleep(time.Second)
+		}
+	}
+	return ""
 }

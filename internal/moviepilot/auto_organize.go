@@ -119,6 +119,13 @@ func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *m
 	cleanDirName := stripTmdbTag(dir.Name)
 	dirCategory, dirTitle, dirSeason, _, dirYear := mediaparse.ParseMedia(cleanDirName)
 
+	dirStart := time.Now()
+	helpers.AppLogger.Infof("自动整理开始目录（账号 %d）：%s（目录级：类别=%s 标题=%s 季=%d 年份=%d，TMDB ID=%d）",
+		cfg.AccountID, dir.Name, dirCategory, dirTitle, dirSeason, dirYear, extractTmdbIDFromName(dir.Name))
+	defer func() {
+		helpers.AppLogger.Infof("自动整理目录结束（账号 %d）：%s（耗时 %.1fs）", cfg.AccountID, dir.Name, time.Since(dirStart).Seconds())
+	}()
+
 	videos := make([]*organizeEntry, 0)
 	{
 		var all []organizeEntry
@@ -230,6 +237,11 @@ func yearFromTMDBDate(dateStr string) int {
 // 目录级信息 + 文件级季集解析 → TMDB 校验 → 分类 → 建目录 → 移动 → 重命名（保留质量标签）。
 // 返回 errMediaUnrecognized 表示识别失败/TMDB 查不到（调用方负责移入失败目录）。
 func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, entry *organizeEntry, dirCtx *autoDirMedia, organizedRoot string, rules *categoryRules, dirCache map[string]string, aiBudget *int) error {
+	vidStart := time.Now()
+	helpers.AppLogger.Infof("自动整理开始文件（账号 %d）：%s", cfg.AccountID, entry.Name)
+	defer func() {
+		helpers.AppLogger.Infof("自动整理文件结束（账号 %d）：%s（耗时 %.1fs）", cfg.AccountID, entry.Name, time.Since(vidStart).Seconds())
+	}()
 	media, err := buildAutoMedia(entry.Name, dirCtx)
 	if err != nil {
 		return err
@@ -524,6 +536,7 @@ func moveEntryToFailedDir(ctx context.Context, account *models.Account, cfg *mod
 			targetID = id
 		}
 	}
+	helpers.AppLogger.Infof("自动整理失败目录解析（账号 %d）：%s → targetID=%q err=%v", cfg.AccountID, failedDir, targetID, err)
 	if err != nil {
 		helpers.AppLogger.Warnf("自动整理移入失败目录失败（账号 %d）：%s → %s：%v", cfg.AccountID, entry.Name, failedDir, err)
 		result.Details = append(result.Details, fmt.Sprintf("[识别失败] %s 移入失败目录失败：%v", entry.Name, err))

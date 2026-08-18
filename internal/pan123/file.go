@@ -98,6 +98,10 @@ func (c *Client) CreateDir(ctx context.Context, parentFileId, dirName string) (s
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return "", fmt.Errorf("解析创建目录响应失败：%w", err)
 	}
+	// 123 的 upload_request 对空目录返回 data.FileId=0，真实目录 ID 在 data.Info.FileId 中
+	if resp.Data.Info != nil && resp.Data.Info.FileId > 0 {
+		return strconv.FormatInt(resp.Data.Info.FileId, 10), nil
+	}
 	return strconv.FormatInt(resp.Data.FileId, 10), nil
 }
 

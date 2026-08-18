@@ -50,6 +50,14 @@ type UploadResp struct {
 		EndPoint        string `json:"EndPoint"`
 		StorageNode     string `json:"StorageNode"`
 		UploadId        string `json:"UploadId"`
+		// Info 为目录/占位对象信息。123 的 upload_request 对空目录（type=1）返回的
+		// data.FileId 为 0，真实目录 FileId 在 data.Info.FileId 中（参考 litepan 123_Reverse 实现）
+		Info *struct {
+			FileId   int64  `json:"FileId"`
+			FileName string `json:"FileName"`
+			Size     int64  `json:"Size"`
+			Type     int    `json:"Type"`
+		} `json:"Info"`
 	} `json:"data"`
 }
 

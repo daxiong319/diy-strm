@@ -17,11 +17,11 @@ import (
 
 // organizeMediaResult 网盘端整理结果
 type organizeMediaResult struct {
-	Organized     int      // 整理成功（移动+重命名）的视频数
-	Failed        int      // 整理失败数
-	Unrecognized  int      // 文件名无法识别数（不移动，保留原目录）
-	FailedNames   []string // 失败/无法识别的文件名（前端展示）
-	SuccessDirs   []string // 整理成功的目标相对目录（相对整理根目录），用于 STRM 同步
+	Organized    int      // 整理成功（移动+重命名）的视频数
+	Failed       int      // 整理失败数
+	Unrecognized int      // 文件名无法识别数（不移动，保留原目录）
+	FailedNames  []string // 失败/无法识别的文件名（前端展示）
+	SuccessDirs  []string // 整理成功的目标相对目录（相对整理根目录），用于 STRM 同步
 }
 
 // organizeEntry 网盘目录项
@@ -375,7 +375,10 @@ func ensureOrganizeDirInternal(ctx context.Context, account *models.Account, roo
 	if err != nil {
 		return "", err
 	}
-	dirCache[relDir] = id
+	// 无效 ID（空/0）不入缓存，避免后续视频误用无效父目录导致移动失败
+	if id != "" && id != "0" {
+		dirCache[relDir] = id
+	}
 	return id, nil
 }
 
