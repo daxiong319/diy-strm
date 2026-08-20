@@ -190,6 +190,10 @@ const loadSubs = async () => {
 const openAuth = async (row?: any) => {
   authing.value = true
   try {
+    if (row && (!row.id || Number.isNaN(Number(row.id)))) {
+      ElMessage.error('子账号 ID 无效，请刷新列表后重试')
+      return
+    }
     let url = ''
     if (row) {
       const resp = await http.post(`/api/cloud/hive/sub-accounts/${row.id}/auth-url`)
@@ -199,13 +203,21 @@ const openAuth = async (row?: any) => {
       url = resp.data?.data?.auth_url || ''
     }
     if (url) {
-      window.open(url, '_blank')
+      const win = window.open(url, '_blank')
+      if (!win) {
+        ElMessage.warning('浏览器拦截了弹窗：请允许本站弹窗后重试，或手动复制下方链接打开')
+        ElMessage('授权链接：' + url)
+        return
+      }
       ElMessage.warning('请在打开的页面完成授权，完成后点击「刷新状态」')
     } else {
       ElMessage.error('生成授权链接失败')
     }
   } catch (e: any) {
-    ElMessage.error('授权失败：' + (e?.message || ''))
+    // 优先展示后端返回的具体错误（如“无效的账号 ID”），axios 默认文案没有诊断价值
+    const status = e?.response?.status
+    const detail = e?.response?.data?.message
+    ElMessage.error(`授权失败${status ? '（HTTP ' + status + '）' : ''}：${detail || e?.message || '未知错误'}`)
   } finally {
     authing.value = false
   }

@@ -90,7 +90,7 @@ func (app *App) Start() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
-	r.Use(controllers.Cors())
+	r.Use(controllers.Cors(), controllers.RequestErrorLogger())
 	setRouter(r)
 	app.StartHttpServer(r)
 	app.StartHttpsServer(r)
