@@ -977,8 +977,12 @@ func initEnv() bool {
 	if helpers.IsFirstRun {
 		// 检查是否有旧的数据库配置和记录，有的话生成配置文件，跳过配置流程
 		oldPostgresDataDir := filepath.Join(helpers.ConfigDir, "postgres")
-		if helpers.PathExists(oldPostgresDataDir) {
-			log.Printf("发现旧的数据库数据目录：%s", oldPostgresDataDir)
+		if helpers.PathExists(oldPostgresDataDir) || helpers.HasEnvFile() {
+			if helpers.HasEnvFile() {
+				log.Printf("检测到 config/.env 文件，直接生成配置文件")
+			} else {
+				log.Printf("发现旧的数据库数据目录：%s", oldPostgresDataDir)
+			}
 			// 生成新的配置文件
 			if err := helpers.MakeOldConfig(); err != nil {
 				log.Printf("生成新的配置文件失败：%v", err)

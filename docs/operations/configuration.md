@@ -10,11 +10,41 @@
 
 ## 配置文件与默认端口
 
-- 主配置为 `config/config.yaml`，兼容旧 `config.yml`。首次启动缺少主配置时会启动配置向导，当前可选择 SQLite 或外部 PostgreSQL，保存后生成 `config/config.yaml`。
+- 主配置为 `config/config.yaml`，兼容旧 `config.yml`。首次启动缺少主配置时会启动配置向导，当前可选择 SQLite 或外部 PostgreSQL，保存后生成 `config/config.yaml`；检测到 `config/.env` 或旧 `config/postgres` 数据目录时跳过向导，直接用默认值加环境变量生成配置。
 - Web 默认端口：HTTP `12333`、HTTPS `12332`；Emby 302 代理默认端口：HTTP `8095`、HTTPS `8094`。
 - 完整字段示例见 [config.yaml](../examples/config.yaml)。示例仅说明字段，运行时以 `config/config.yaml` 为准。
 - 代码默认数据库配置为 `postgres + embedded`。Docker 镜像安装 `postgresql15`；裸二进制和本地开发环境不携带 PostgreSQL 二进制，使用 PostgreSQL 时应安装 PostgreSQL 15 及以上、配置外部数据库，或自行保证内嵌模式依赖的命令可用。
 - 数据库引擎、备份恢复和修复操作见 [数据库运维](database.md)；表、版本和迁移语义见 [数据库 schema 与迁移](../reference/database-schema.md)。
+
+## 环境变量覆盖（.env / Docker 环境变量）
+
+配置支持「YAML 基线 + 环境变量覆盖」：启动时先读取 `config/config.yaml`，再以进程环境变量覆盖同名配置项；环境变量非空时生效，未设置或留空则保留 YAML 值。`config/.env`（`KEY=VALUE` 格式，`#` 注释）在启动时自动加载并注入进程环境，Docker 部署时也可用 `env_file` / `-e` 提供相同变量。优先级：环境变量 / `config/.env` > `config/config.yaml` > 内置默认值。
+
+完整变量清单见仓库根目录 [.env.example](../../.env.example)。常用项：
+
+| 环境变量 | 对应 YAML 字段 | 说明 |
+| --- | --- | --- |
+| `DB_ENGINE` | `db.engine` | `postgres` 或 `sqlite` |
+| `DB_SQLITE_FILE` | `db.sqliteFile` | SQLite 文件名 |
+| `DB_POSTGRES_TYPE` | `db.postgresType` | `embedded`（默认）或 `external` |
+| `DB_HOST` / `DB_PORT` | `db.postgresConfig.host/port` | 外部 PostgreSQL 连接地址 |
+| `DB_USER` / `DB_PASSWORD` | `db.postgresConfig.user/password` | 数据库账号 |
+| `DB_NAME` | `db.postgresConfig.database` | 数据库名 |
+| `DB_SSLMODE` | `db.postgresConfig.ssl` | `require` 等开启 SSL，`disable` 关闭 |
+| `DB_MAX_OPEN_CONNS` / `DB_MAX_IDLE_CONNS` | `db.postgresConfig.maxOpenConns/maxIdleConns` | 连接池大小 |
+| `HTTP_HOST` / `HTTPS_HOST` | `httpHost` / `httpsHost` | 监听地址 |
+| `JWT_SECRET` | `jwtSecret` | 为空时仍自动生成并写回 YAML |
+| `CACHE_SIZE` | `cacheSize` | 缓存大小（字节） |
+| `TRUSTED_ORIGINS` | `trustedOrigins` | 逗号分隔的跨源来源列表 |
+| `STRM_VIDEO_EXT` / `STRM_META_EXT` | `strm.videoExt` / `strm.metaExt` | 逗号分隔的扩展名列表 |
+| `STRM_MIN_VIDEO_SIZE` | `strm.minVideoSize` | 最小视频大小（MB） |
+| `STRM_CRON` | `strm.cron` | STRM 定时 cron |
+| `LOG_LEVEL` / `LOG_MAX_SIZE_MB` / `LOG_MAX_BACKUPS` / `LOG_MAX_AGE_DAYS` | `log.level` 等 | 日志配置 |
+| `AUTH_SERVER` / `NEW_AUTH_SERVER` | `authServer` / `newAuthServer` | 认证服务地址 |
+| `BAIDUPAN_APP_ID` | `baiDuPanAppId` | 百度网盘应用标识 |
+| `EMBY302_INSECURE_SKIP_VERIFY` | `emby302.insecure_skip_verify` | `true` / `1` 开启跳过证书校验 |
+
+首次启动时若存在 `config/.env`，程序会以默认值加环境变量直接生成 `config/config.yaml`，跳过配置向导——纯 `.env` 部署不需要先访问 Web 完成初始化。
 
 ## 115 运行参数
 

@@ -39,13 +39,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM alpine:3.20
 ENV TZ=Asia/Shanghai \
-    PATH=/app:$PATH \
-    DB_HOST=localhost \
-    DB_PORT=5432 \
-    DB_USER=qms \
-    DB_PASSWORD=qms123456 \
-    DB_NAME=qms \
-    DB_SSLMODE=disable
+    PATH=/app:$PATH
 
 RUN apk add --no-cache ca-certificates tzdata inotify-tools postgresql15 su-exec && \
     addgroup -S -g 12331 qms && \

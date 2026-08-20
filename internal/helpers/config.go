@@ -140,6 +140,124 @@ func HasConfigFile() bool {
 	return PathExists(ConfigFilePath()) || PathExists(filepath.Join(ConfigDir, legacyConfigFileName))
 }
 
+// HasEnvFile 检查 config/.env 是否存在
+func HasEnvFile() bool {
+	return PathExists(filepath.Join(ConfigDir, ".env"))
+}
+
+// overrideConfigFromEnv 用环境变量（config/.env 或 Docker env）覆盖 YAML 基线配置。
+// 变量非空时生效；空值或未设置则保留 YAML 值。
+func overrideConfigFromEnv(cfg *Config) {
+	if v := os.Getenv("DB_ENGINE"); v != "" {
+		cfg.Db.Engine = DbEngine(v)
+	}
+	if v := os.Getenv("DB_SQLITE_FILE"); v != "" {
+		cfg.Db.SqliteFile = v
+	}
+	if v := os.Getenv("DB_POSTGRES_TYPE"); v != "" {
+		cfg.Db.PostgresType = PostgresType(v)
+	}
+	if v := os.Getenv("DB_HOST"); v != "" {
+		cfg.Db.PostgresConfig.Host = v
+	}
+	if v := os.Getenv("DB_PORT"); v != "" {
+		cfg.Db.PostgresConfig.Port = StringToInt(v)
+	}
+	if v := os.Getenv("DB_USER"); v != "" {
+		cfg.Db.PostgresConfig.User = v
+	}
+	if v := os.Getenv("DB_PASSWORD"); v != "" {
+		cfg.Db.PostgresConfig.Password = v
+	}
+	if v := os.Getenv("DB_NAME"); v != "" {
+		cfg.Db.PostgresConfig.Database = v
+	}
+	if v := os.Getenv("DB_SSLMODE"); v != "" {
+		switch strings.ToLower(v) {
+		case "require", "verify-ca", "verify-full", "true", "1":
+			cfg.Db.PostgresConfig.SSL = true
+		case "disable", "allow", "prefer", "false", "0":
+			cfg.Db.PostgresConfig.SSL = false
+		}
+	}
+	if v := os.Getenv("DB_MAX_OPEN_CONNS"); v != "" {
+		cfg.Db.PostgresConfig.MaxOpenConns = StringToInt(v)
+	}
+	if v := os.Getenv("DB_MAX_IDLE_CONNS"); v != "" {
+		cfg.Db.PostgresConfig.MaxIdleConns = StringToInt(v)
+	}
+	if v := os.Getenv("HTTP_HOST"); v != "" {
+		cfg.HttpHost = v
+	}
+	if v := os.Getenv("HTTPS_HOST"); v != "" {
+		cfg.HttpsHost = v
+	}
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		cfg.JwtSecret = v
+	}
+	if v := os.Getenv("CACHE_SIZE"); v != "" {
+		cfg.CacheSize = StringToInt(v)
+	}
+	if v := os.Getenv("TRUSTED_ORIGINS"); v != "" {
+		parts := strings.Split(v, ",")
+		origins := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if trimmed := strings.TrimSpace(p); trimmed != "" {
+				origins = append(origins, trimmed)
+			}
+		}
+		cfg.TrustedOrigins = origins
+	}
+	if v := os.Getenv("STRM_VIDEO_EXT"); v != "" {
+		cfg.Strm.VideoExt = splitCommaEnv(v)
+	}
+	if v := os.Getenv("STRM_META_EXT"); v != "" {
+		cfg.Strm.MetaExt = splitCommaEnv(v)
+	}
+	if v := os.Getenv("STRM_MIN_VIDEO_SIZE"); v != "" {
+		cfg.Strm.MinVideoSize = StringToInt64(v)
+	}
+	if v := os.Getenv("STRM_CRON"); v != "" {
+		cfg.Strm.Cron = v
+	}
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		cfg.Log.Level = v
+	}
+	if v := os.Getenv("LOG_MAX_SIZE_MB"); v != "" {
+		cfg.Log.MaxSizeMB = StringToInt(v)
+	}
+	if v := os.Getenv("LOG_MAX_BACKUPS"); v != "" {
+		cfg.Log.MaxBackups = StringToInt(v)
+	}
+	if v := os.Getenv("LOG_MAX_AGE_DAYS"); v != "" {
+		cfg.Log.MaxAgeDays = StringToInt(v)
+	}
+	if v := os.Getenv("AUTH_SERVER"); v != "" {
+		cfg.AuthServer = v
+	}
+	if v := os.Getenv("NEW_AUTH_SERVER"); v != "" {
+		cfg.NewAuthServer = v
+	}
+	if v := os.Getenv("BAIDUPAN_APP_ID"); v != "" {
+		cfg.BaiDuPanAppId = v
+	}
+	if v := os.Getenv("EMBY302_INSECURE_SKIP_VERIFY"); v != "" {
+		cfg.Emby302.InsecureSkipVerify = v == "true" || v == "1"
+	}
+}
+
+// splitCommaEnv 将逗号分隔的环境变量值解析为 []string，去除空白项。
+func splitCommaEnv(v string) []string {
+	parts := strings.Split(v, ",")
+	res := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			res = append(res, trimmed)
+		}
+	}
+	return res
+}
+
 func InitConfig() error {
 	configPath := ExistingConfigFilePath()
 	// 从配置文件加载
@@ -165,6 +283,8 @@ func InitConfig() error {
 	if GlobalConfig.NewAuthServer == "" {
 		GlobalConfig.NewAuthServer = "https://oauth.qmediasync.cn"
 	}
+	// 环境变量（config/.env 或 Docker env）覆盖 YAML 基线，放在默认值填充之后保证 env 最终生效
+	overrideConfigFromEnv(&GlobalConfig)
 	normalizeLogConfig(&GlobalConfig.Log)
 	logLevel, _ := ParseLogLevel(GlobalConfig.Log.Level)
 	SetGlobalLogLevel(logLevel)
@@ -249,27 +369,8 @@ func loadYaml(configPath string, cfg interface{}) error {
 
 func MakeOldConfig() error {
 	yamlConfig := MakeDefaultConfig()
-	host := os.Getenv("DB_HOST")
-	if host != "" {
-		yamlConfig.Db.PostgresConfig.Host = host
-	}
-	port := os.Getenv("DB_PORT")
-	if port != "" {
-		yamlConfig.Db.PostgresConfig.Port = StringToInt(port)
-	}
-	user := os.Getenv("DB_USER")
-	if user != "" {
-		yamlConfig.Db.PostgresConfig.User = user
-	}
-	password := os.Getenv("DB_PASSWORD")
-	if password != "" {
-		yamlConfig.Db.PostgresConfig.Password = password
-	}
-	database := os.Getenv("DB_NAME")
-	if database != "" {
-		yamlConfig.Db.PostgresConfig.Database = database
-	}
-
+	// 用环境变量覆盖默认值（config/.env 已在 initEnv 中加载）
+	overrideConfigFromEnv(yamlConfig)
 	return SaveConfig(yamlConfig)
 }
 

@@ -39,6 +39,7 @@
 - [STRM Webhook](reference/strm-webhook.md)：外部程序创建 STRM 任务的 API、字段、响应和幂等边界。
 - [任务来源](reference/task-sources.md)：下载、上传和同步队列的机器值与前端映射。
 - [完整配置示例](examples/config.yaml)：`config/config.yaml` 的主配置项和注释。
+- [环境变量模板](../.env.example)：`.env` / Docker 环境变量覆盖配置的完整变量清单。
 - [变更日志](../CHANGELOG.md)：历史版本的功能、修复和性能变更。
 
 ## 代码内文档

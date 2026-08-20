@@ -1,6 +1,7 @@
 # QMediaSync 主配置示例。
 # 运行时配置文件通常位于 config/config.yaml；从 backend 目录本地运行时通常位于 backend/config/config.yaml。
 # 本文件仅作为示例，请不要把真实密码、Token 或生产密钥提交到仓库。
+# 配置优先级：环境变量 / config/.env > 本文件 > 内置默认值；环境变量变量清单见仓库根目录 .env.example。
 
 log:
   # 日志等级，可选值：debug、info、warn、error；首次管理员初始化码等运行必需启动警告仍会写入。

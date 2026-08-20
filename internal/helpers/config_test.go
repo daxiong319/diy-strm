@@ -349,3 +349,70 @@ func writeTestConfig(t *testing.T, path, jwtSecret string) {
 		t.Fatalf("write test config %s: %v", path, err)
 	}
 }
+
+func TestInitConfigEnvOverridesYaml(t *testing.T) {
+	withTempConfigDir(t, func(configDir string) {
+		writeTestConfig(t, filepath.Join(configDir, "config.yaml"), "from-yaml")
+		t.Setenv("JWT_SECRET", "from-env")
+		t.Setenv("HTTP_HOST", ":9999")
+		t.Setenv("DB_POSTGRES_TYPE", "external")
+		t.Setenv("DB_HOST", "db.example.com")
+		t.Setenv("STRM_CRON", "0 */2 * * *")
+		t.Setenv("TRUSTED_ORIGINS", "https://a.example.com, https://b.example.com")
+
+		if err := InitConfig(); err != nil {
+			t.Fatalf("InitConfig() error = %v", err)
+		}
+
+		if GlobalConfig.JwtSecret != "from-env" {
+			t.Errorf("JwtSecret = %q, want env override %q", GlobalConfig.JwtSecret, "from-env")
+		}
+		if GlobalConfig.HttpHost != ":9999" {
+			t.Errorf("HttpHost = %q, want %q", GlobalConfig.HttpHost, ":9999")
+		}
+		if GlobalConfig.Db.PostgresType != PostgresTypeExternal {
+			t.Errorf("PostgresType = %q, want external", GlobalConfig.Db.PostgresType)
+		}
+		if GlobalConfig.Db.PostgresConfig.Host != "db.example.com" {
+			t.Errorf("DB Host = %q, want db.example.com", GlobalConfig.Db.PostgresConfig.Host)
+		}
+		if GlobalConfig.Strm.Cron != "0 */2 * * *" {
+			t.Errorf("Strm.Cron = %q, want env value", GlobalConfig.Strm.Cron)
+		}
+		if len(GlobalConfig.TrustedOrigins) != 2 ||
+			GlobalConfig.TrustedOrigins[0] != "https://a.example.com" ||
+			GlobalConfig.TrustedOrigins[1] != "https://b.example.com" {
+			t.Errorf("TrustedOrigins = %v, want trimmed two origins", GlobalConfig.TrustedOrigins)
+		}
+	})
+}
+
+func TestInitConfigEnvUnsetKeepsYaml(t *testing.T) {
+	withTempConfigDir(t, func(configDir string) {
+		writeTestConfig(t, filepath.Join(configDir, "config.yaml"), "from-yaml")
+
+		// 不设置任何环境变量，确保 YAML 值保留
+		if err := InitConfig(); err != nil {
+			t.Fatalf("InitConfig() error = %v", err)
+		}
+
+		if GlobalConfig.JwtSecret != "from-yaml" {
+			t.Errorf("JwtSecret = %q, want yaml value %q", GlobalConfig.JwtSecret, "from-yaml")
+		}
+	})
+}
+
+func TestHasEnvFile(t *testing.T) {
+	withTempConfigDir(t, func(configDir string) {
+		if HasEnvFile() {
+			t.Fatal("HasEnvFile() = true, want false for empty dir")
+		}
+		envPath := filepath.Join(configDir, ".env")
+		if err := os.WriteFile(envPath, []byte("JWT_SECRET=x\n"), 0644); err != nil {
+			t.Fatalf("write .env: %v", err)
+		}
+		if !HasEnvFile() {
+			t.Fatal("HasEnvFile() = false, want true after creating .env")
+		}
+	})
+}
