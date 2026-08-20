@@ -13,7 +13,7 @@
         type="info"
         :closable="false"
         class="cloud-alert"
-        title="通过 TgtoDrive 影巢授权通道完成 OAuth 授权后，可启用每日自动签到（普通/赌狗模式）。授权前请先到 hdhive.com 注册影巢账号。"
+        title="完成影巢 OAuth 授权后，可启用每日自动签到（普通/赌狗模式）。授权前请先到 hdhive.com 注册影巢账号。"
         show-icon
       />
 
