@@ -10,7 +10,7 @@
 
 ## 配置文件与默认端口
 
-- 主配置为 `config/config.yaml`，兼容旧 `config.yml`。首次启动缺少主配置时会启动配置向导，当前可选择 SQLite 或外部 PostgreSQL，保存后生成 `config/config.yaml`；检测到 `config/.env` 或旧 `config/postgres` 数据目录时跳过向导，直接用默认值加环境变量生成配置。
+- 主配置为 `config/config.yaml`，兼容旧 `config.yml`。首次启动缺少主配置时不再进入配置向导，直接用默认值（内嵌 PostgreSQL）加环境变量生成配置并启动；仅当显式设置 `QMS_SETUP_WIZARD=1` 时才启动旧配置向导（可选择 SQLite 或外部 PostgreSQL）。
 - Web 默认端口：HTTP `12333`、HTTPS `12332`；Emby 302 代理默认端口：HTTP `8095`、HTTPS `8094`。
 - 完整字段示例见 [config.yaml](../examples/config.yaml)。示例仅说明字段，运行时以 `config/config.yaml` 为准。
 - 代码默认数据库配置为 `postgres + embedded`。Docker 镜像安装 `postgresql15`；裸二进制和本地开发环境不携带 PostgreSQL 二进制，使用 PostgreSQL 时应安装 PostgreSQL 15 及以上、配置外部数据库，或自行保证内嵌模式依赖的命令可用。
@@ -44,7 +44,7 @@
 | `BAIDUPAN_APP_ID` | `baiDuPanAppId` | 百度网盘应用标识 |
 | `EMBY302_INSECURE_SKIP_VERIFY` | `emby302.insecure_skip_verify` | `true` / `1` 开启跳过证书校验 |
 
-首次启动时若存在 `config/.env`，程序会以默认值加环境变量直接生成 `config/config.yaml`，跳过配置向导——纯 `.env` 部署不需要先访问 Web 完成初始化。
+首次启动时程序直接以默认值加环境变量生成 `config/config.yaml` 并启动（内嵌 PostgreSQL 单容器零配置）；需要旧式 Web 配置向导时设置 `QMS_SETUP_WIZARD=1`。
 
 ## 115 运行参数
 

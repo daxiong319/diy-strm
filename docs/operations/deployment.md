@@ -29,7 +29,7 @@
 ```bash
 mkdir -p config media
 
-# 方式一：配置向导（首次访问 HTTP 12333 完成初始化）
+# 方式一：零配置（默认内嵌 PostgreSQL，开箱即用）
 docker run -d \
   --name qmediasync \
   --restart unless-stopped \
@@ -43,7 +43,7 @@ docker run -d \
 
 ```bash
 # 方式二：config/.env 配置（仿 tgto123 风格，纯 .env 驱动）
-# 复制 .env.example 为 config/.env 后修改，启动时自动生成 config.yaml 并跳过配置向导
+# 复制 .env.example 为 config/.env 后修改，启动时自动生成 config.yaml（可选，纯 .env 驱动）
 cp .env.example config/.env
 docker run -d \
   --name qmediasync \
@@ -56,7 +56,7 @@ docker run -d \
   ghcr.io/daxiong319/qmediasync:latest
 ```
 
-DockerHub 用户也可以把镜像名替换为 `afengj/diy-strm:latest`，两者构建自同一源码。首次运行没有 `config/config.yaml` 时，访问 HTTP `12333` 完成配置向导；若 `config/.env` 存在则跳过向导，直接以默认值加环境变量生成配置。使用内置 HTTPS 时还需显式映射 `-p 12332:12332`，并将证书文件放入已挂载的 `config/` 目录。
+DockerHub 用户也可以把镜像名替换为 `afengj/diy-strm:latest`，两者构建自同一源码。首次运行没有 `config/config.yaml` 时，程序直接用默认配置（内嵌 PostgreSQL）加环境变量生成配置并启动，无需访问 Web；需要旧式配置向导时设置环境变量 `QMS_SETUP_WIZARD=1`。使用内置 HTTPS 时还需显式映射 `-p 12332:12332`，并将证书文件放入已挂载的 `config/` 目录。
 
 容器入口脚本以 root 完成初始目录检查；可选环境变量 `GUID`、`GPID` 为数值 UID/GID。设置后脚本会在容器内创建对应用户或组（如不存在），并在值变化时递归修正 `/app/config` 的所有者，再以 `GUID` 运行主进程。例如：
 
@@ -93,7 +93,7 @@ sudo scripts/install/linux-init.sh -i
 systemctl status qmediasync
 ```
 
-脚本创建的服务从当前目录执行 `QMediaSync`，并从 `/etc/qmediasync/postgres.env` 读取旧式 PostgreSQL 环境变量。新实例仍应通过首次配置向导或 `config/config.yaml` 确认数据库模式和连接信息；配置文件是当前运行时的权威来源。
+脚本创建的服务从当前目录执行 `QMediaSync`，并从 `/etc/qmediasync/postgres.env` 读取旧式 PostgreSQL 环境变量。新实例默认使用内嵌 PostgreSQL 零配置启动，也可通过 `config/config.yaml` 确认数据库模式和连接信息；配置文件是当前运行时的权威来源。
 
 ## 飞牛 FPK
 

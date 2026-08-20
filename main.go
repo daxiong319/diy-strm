@@ -973,29 +973,29 @@ func initEnv() bool {
 	// 检查配置文件是否存在
 	configPath := helpers.ExistingConfigFilePath()
 	helpers.IsFirstRun = !helpers.HasConfigFile()
-	// 如果不存在，启动一个简易 Web 服务来配置数据库连接信息
+	// 首次启动（无 config.yaml）：默认直接以默认值（内嵌 PostgreSQL）加环境变量生成配置，
+	// 开箱即用不再进入 Web 配置向导；仅当显式设置 QMS_SETUP_WIZARD=1 时仍走旧向导。
 	if helpers.IsFirstRun {
-		// 检查是否有旧的数据库配置和记录，有的话生成配置文件，跳过配置流程
-		oldPostgresDataDir := filepath.Join(helpers.ConfigDir, "postgres")
-		if helpers.PathExists(oldPostgresDataDir) || helpers.HasEnvFile() {
-			if helpers.HasEnvFile() {
-				log.Printf("检测到 config/.env 文件，直接生成配置文件")
-			} else {
-				log.Printf("发现旧的数据库数据目录：%s", oldPostgresDataDir)
-			}
-			// 生成新的配置文件
-			if err := helpers.MakeOldConfig(); err != nil {
-				log.Printf("生成新的配置文件失败：%v", err)
-				return false
-			}
-			configPath = helpers.ConfigFilePath()
-			log.Printf("已生成配置文件：%s", configPath)
-			helpers.IsFirstRun = false
-		} else {
-			log.Printf("配置文件不存在，启动简单配置服务：%s", helpers.ConfigFilePath())
+		if os.Getenv("QMS_SETUP_WIZARD") == "1" {
+			log.Printf("检测到 QMS_SETUP_WIZARD=1，启动简单配置服务：%s", helpers.ConfigFilePath())
 			StartConfigWebServer()
 			return false
 		}
+		if helpers.HasEnvFile() {
+			log.Printf("检测到 config/.env 文件，直接生成配置文件")
+		} else if helpers.PathExists(filepath.Join(helpers.ConfigDir, "postgres")) {
+			log.Printf("发现旧的数据库数据目录：%s", filepath.Join(helpers.ConfigDir, "postgres"))
+		} else {
+			log.Printf("首次启动，使用默认配置（内嵌 PostgreSQL）生成配置文件")
+		}
+		// 生成新的配置文件
+		if err := helpers.MakeOldConfig(); err != nil {
+			log.Printf("生成新的配置文件失败：%v", err)
+			return false
+		}
+		configPath = helpers.ConfigFilePath()
+		log.Printf("已生成配置文件：%s", configPath)
+		helpers.IsFirstRun = false
 	}
 	configPath = helpers.ExistingConfigFilePath()
 	log.Printf("配置文件存在，加载配置文件：%s", configPath)
