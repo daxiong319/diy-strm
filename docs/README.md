@@ -27,6 +27,7 @@
 
 - [部署与持久化](operations/deployment.md)：Docker、发布二进制和飞牛运行方式，以及端口、挂载目录和数据保留边界。
 - [配置、密钥与日志](operations/configuration.md)：配置文件、端口、第三方密钥、日志和运行参数。
+- [影巢 OAuth 授权与每日签到](operations/hdhive-oauth.md)：OAuth 授权、每日签到（普通/赌狗）、子账号管理与相关 API。
 - [反向代理与 SSE](operations/reverse-proxy.md)：同源部署、可信代理和 SSE 缓冲 / 超时配置。
 - [数据库运维](operations/database.md)：数据库初始化、修复、清库、备份和恢复。
 - [发布流程](operations/release.md)：版本发布、GitHub Actions、changelog 和 FPK 打包。

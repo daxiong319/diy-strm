@@ -351,6 +351,11 @@ func InitCron() {
 		}
 	})
 
+	GlobalCron.AddFunc("0 8 * * *", func() {
+		// 每天 8 点影巢（HDHive）OAuth 每日签到
+		helpers.Publish(helpers.HiveDailyCheckinEvent, nil)
+	})
+
 	addBackupCron()
 
 	GlobalCron.Start()

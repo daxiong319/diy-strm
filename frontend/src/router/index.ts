@@ -148,6 +148,10 @@ const AppHiveSettings = createAsyncRouteComponent(
   'AppHiveSettings',
   () => import('@/components/cloud/HiveSettings.vue'),
 )
+const AppHiveOAuth = createAsyncRouteComponent(
+  'AppHiveOAuth',
+  () => import('@/components/cloud/HiveOAuth.vue'),
+)
 const AppCloudAutoOrganize = createAsyncRouteComponent(
   'AppCloudAutoOrganize',
   () => import('@/components/cloud/CloudAutoOrganize.vue'),
@@ -978,6 +982,18 @@ const routes = [
       requiresAuth: true,
       parent: 'cloud-hdhive',
       icon: 'Setting',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/cloud-hdhive/oauth',
+    name: 'cloud-hdhive-oauth',
+    component: AppHiveOAuth,
+    meta: {
+      title: '授权签到',
+      requiresAuth: true,
+      parent: 'cloud-hdhive',
+      icon: 'Key',
       showInMenu: true,
     },
   },

@@ -557,6 +557,10 @@ func initOthers() {
 	helpers.Subscribe(helpers.BackupCronEevent, func(event helpers.Event) {
 		backup.Backup("定时", "定时备份")
 	})
+	helpers.Subscribe(helpers.HiveDailyCheckinEvent, func(event helpers.Event) {
+		// 影巢（HDHive）OAuth 每日签到：主账号 + 启用中的子账号
+		controllers.RunHiveDailyCheckins()
+	})
 	helpers.Subscribe(helpers.StrmSyncCompleteEvent, func(event helpers.Event) {
 		// 触发关联的刮削任务
 		scrapePathIds := event.Data.([]uint)
@@ -901,6 +905,22 @@ func setRouter(r *gin.Engine) {
 		api.GET("/cloud/hive/settings", controllers.GetHiveSettingsAPI)          // 影巢设置
 		api.POST("/cloud/hive/settings", controllers.SetHiveSettingsAPI)         // 保存影巢设置
 		api.POST("/cloud/hive/test", controllers.TestHiveConnectionAPI)          // 测试影巢 API Key
+
+		// 影巢（HDHive）OAuth 授权与签到
+		api.GET("/cloud/hive/oauth/status", controllers.HiveOAuthStatusAPI)          // OAuth 授权状态
+		api.POST("/cloud/hive/oauth/refresh", controllers.HiveOAuthRefreshAPI)       // 刷新授权状态
+		api.POST("/cloud/hive/oauth/auth-url", controllers.HiveOAuthAuthURLAPI)      // 生成授权 URL
+		api.POST("/cloud/hive/oauth/checkin", controllers.HiveCheckinAPI)            // 手动签到
+		api.POST("/cloud/hive/oauth/checkin-all", controllers.HiveCheckinAllAPI)     // 全部账号签到
+
+		// 影巢子账号管理
+		api.GET("/cloud/hive/sub-accounts", controllers.HiveSubAccountsAPI)                     // 子账号列表
+		api.POST("/cloud/hive/sub-accounts", controllers.HiveSubAccountAddAPI)                  // 新增子账号
+		api.PUT("/cloud/hive/sub-accounts/:id", controllers.HiveSubAccountUpdateAPI)            // 更新子账号
+		api.DELETE("/cloud/hive/sub-accounts/:id", controllers.HiveSubAccountDeleteAPI)         // 删除子账号
+		api.POST("/cloud/hive/sub-accounts/:id/auth-url", controllers.HiveSubAccountAuthURLAPI) // 子账号授权 URL
+		api.POST("/cloud/hive/sub-accounts/:id/refresh", controllers.HiveSubAccountRefreshAPI)  // 刷新子账号状态
+		api.POST("/cloud/hive/sub-accounts/:id/checkin", controllers.HiveSubAccountCheckinAPI)  // 子账号签到
 
 		api.GET("/upload/queue", controllers.UploadList)                                             // 获取上传队列列表
 		api.POST("/upload/queue/clear-pending", controllers.ClearPendingUploadTasks)                 // 清除上传队列中未开始的任务
