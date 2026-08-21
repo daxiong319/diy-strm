@@ -869,7 +869,7 @@ const run = async (row: SubRow) => {
   try {
     const resp = await http.post('/api/cloud/subscriptions/run', { id: row.id })
     if (resp.data?.code === 200) {
-      ElMessage.success({ message: resp.data.message || '执行完成', duration: 8000, showClose: true })
+      ElMessage.success({ message: resp.data.message || '已提交执行，稍后刷新查看结果', duration: 8000, showClose: true })
     } else {
       ElMessage.error(resp.data?.message || '执行失败')
     }

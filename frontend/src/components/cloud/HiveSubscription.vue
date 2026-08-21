@@ -508,7 +508,12 @@ const toggleEnabled = async (row: any) => {
 const runOnce = async (row: any) => {
   try {
     const resp = await http.post('/api/cloud/subscriptions/run', { id: row.id })
-    ElMessage.success(resp.data?.message || '已执行')
+    if (resp.data?.code === 200) {
+      ElMessage.success({ message: resp.data.message || '已提交执行，稍后刷新查看结果', duration: 8000, showClose: true })
+    } else {
+      ElMessage.error(resp.data?.message || '执行失败')
+    }
+    await load()
   } catch (e: any) {
     ElMessage.error('执行失败：' + (e?.message || ''))
   }

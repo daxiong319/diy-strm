@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"diy-strm/internal/db"
+	"diy-strm/internal/helpers"
 	"diy-strm/internal/models"
 )
 
@@ -265,7 +267,12 @@ func PreviewChannelAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "抓取成功", Data: list})
 }
 
+// subscriptionRunLocks 手动执行防重入锁（key: 订阅 ID，执行中再次点击直接提示）
+var subscriptionRunLocks sync.Map
+
 // RunSubscriptionAPI 手动立即执行一条订阅（POST /cloud/subscriptions/run {id}）
+// 订阅执行耗时可能远超前端请求超时（逐资源查询/解锁/转存），故改为异步执行：
+// 接口立即返回“已提交”，执行在后台完成，结果写入日志并更新订阅的最近执行时间（列表刷新可见）。
 func RunSubscriptionAPI(c *gin.Context) {
 	var req struct {
 		ID uint `json:"id"`
@@ -279,13 +286,31 @@ func RunSubscriptionAPI(c *gin.Context) {
 		c.JSON(http.StatusNotFound, APIResponse[any]{Code: BadRequest, Message: "订阅不存在", Data: nil})
 		return
 	}
-	var msg string
-	if sub.ResourceSource == "hdhive" {
-		msg, _ = RunHiveSubscriptionOnce(sub)
-	} else {
-		msg, _ = RunSubscriptionOnce(sub)
+	if _, running := subscriptionRunLocks.LoadOrStore(req.ID, struct{}{}); running {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "该订阅正在执行中，请稍后再试", Data: nil})
+		return
 	}
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: msg, Data: nil})
+	runAuthBackgroundTask(func() {
+		defer subscriptionRunLocks.Delete(req.ID)
+		defer func() {
+			if r := recover(); r != nil {
+				helpers.AppLogger.Errorf("订阅 #%d 手动执行 panic：%v", req.ID, r)
+			}
+		}()
+		var msg string
+		var ok bool
+		if sub.ResourceSource == "hdhive" {
+			msg, ok = RunHiveSubscriptionOnce(sub)
+		} else {
+			msg, ok = RunSubscriptionOnce(sub)
+		}
+		if ok {
+			helpers.AppLogger.Infof("手动执行订阅：%s", msg)
+		} else {
+			helpers.AppLogger.Errorf("手动执行订阅：%s", msg)
+		}
+	})
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "已提交执行，稍后刷新列表可查看最近执行时间", Data: nil})
 }
 
 // GetHiveSettingsAPI 获取影巢设置（GET /cloud/hive/settings）
