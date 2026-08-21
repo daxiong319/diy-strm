@@ -22,13 +22,14 @@ docker run -d \
   --name diy-strm \
   --restart unless-stopped \
   -p 12333:12333 \
-  -p 8095:8095 \
   -v "$(pwd)/config:/app/config" \
   -v "$(pwd)/media:/media" \
   afengj/diy-strm:latest
 ```
 
 启动后访问 `http://服务器IP:12333` 进入 Web 管理界面。所有运行数据持久化在 `./config`，容器重建不丢失。
+
+> **单端口架构**：Web 管理界面与 Emby 302 代理共用 `12333` 一个端口。Emby 播放器/反代地址填 `http://服务器IP:12333` 即可；将证书文件放入 `config/server.crt` 与 `config/server.key` 后重启容器，同一端口同时支持 HTTPS。
 
 ### 通过 .env 自定义配置（可选）
 
@@ -42,7 +43,6 @@ docker run -d \
   --name diy-strm \
   --restart unless-stopped \
   -p 12333:12333 \
-  -p 8095:8095 \
   -v "$(pwd)/config:/app/config" \
   -v "$(pwd)/media:/media" \
   --env-file ./config/.env \
@@ -60,8 +60,7 @@ services:
     container_name: diy-strm
     restart: unless-stopped
     ports:
-      - "12333:12333"  # Web 管理界面
-      - "8095:8095"    # Emby 302 代理
+      - "12333:12333"  # Web 管理界面 + Emby 302 代理 (单端口; 配置证书后同端口支持 https)
     volumes:
       - ./config:/app/config
       - ./media:/media

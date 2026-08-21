@@ -4,10 +4,7 @@ services:
     container_name: diy-strm
     restart: unless-stopped
     ports:
-      - "12333:12333"  # Web 管理界面 (http)
-      - "12332:12332"  # Web 管理界面 (https)
-      - "8095:8095"    # Emby 302 代理 (http)
-      - "8094:8094"    # Emby 302 代理 (https)
+      - "12333:12333"  # Web 管理界面 + Emby 302 代理 (单端口; 配置证书后同端口支持 https)
     # 配置方式一：config/.env（推荐，仿 tgto123）
     # 将 .env.example 复制为 config/.env，按需修改后重启容器生效
     # env_file:

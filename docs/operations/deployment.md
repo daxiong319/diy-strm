@@ -18,7 +18,7 @@
 
 配置文件、SQLite 数据库、内嵌 PostgreSQL 数据、备份、日志、本机加密密钥和用户设置都依赖配置目录。升级、迁移或重建容器前必须备份并保留该目录；不能只保留可执行文件或镜像层。
 
-默认 HTTP 端口为 `12333`。Docker 和发布二进制部署中，主程序只有在运行目录 `config/server.crt` 和 `config/server.key` 都存在时才额外监听 HTTPS `12332`。Emby 302 服务使用 `8095`（HTTP）和 `8094`（HTTPS）；仅在已配置 Emby 时启动。端口、证书和代理层细节分别见 [配置、密钥与日志](configuration.md) 与 [反向代理与 SSE](reverse-proxy.md)。
+默认端口为 `12333`，Web 管理界面与 Emby 302 代理共用该端口（单端口架构）。Docker 和发布二进制部署中，主程序只有在运行目录 `config/server.crt` 和 `config/server.key` 都存在时才在同一端口上同时提供 HTTP 与 HTTPS 服务（按连接自动分诊，无需额外端口）；无证书时仅提供 HTTP。端口、证书和代理层细节分别见 [配置、密钥与日志](configuration.md) 与 [反向代理与 SSE](reverse-proxy.md)。
 
 ## Docker
 
@@ -34,8 +34,6 @@ docker run -d \
   --name qmediasync \
   --restart unless-stopped \
   -p 12333:12333 \
-  -p 8095:8095 \
-  -p 8094:8094 \
   -v "$(pwd)/config:/app/config" \
   -v "$(pwd)/media:/media" \
   ghcr.io/daxiong319/qmediasync:latest
@@ -49,14 +47,12 @@ docker run -d \
   --name qmediasync \
   --restart unless-stopped \
   -p 12333:12333 \
-  -p 8095:8095 \
-  -p 8094:8094 \
   -v "$(pwd)/config:/app/config" \
   -v "$(pwd)/media:/media" \
   ghcr.io/daxiong319/qmediasync:latest
 ```
 
-DockerHub 用户也可以把镜像名替换为 `afengj/diy-strm:latest`，两者构建自同一源码。首次运行没有 `config/config.yaml` 时，程序直接用默认配置（内嵌 PostgreSQL）加环境变量生成配置并启动，无需访问 Web；需要旧式配置向导时设置环境变量 `QMS_SETUP_WIZARD=1`。使用内置 HTTPS 时还需显式映射 `-p 12332:12332`，并将证书文件放入已挂载的 `config/` 目录。
+DockerHub 用户也可以把镜像名替换为 `afengj/diy-strm:latest`，两者构建自同一源码。首次运行没有 `config/config.yaml` 时，程序直接用默认配置（内嵌 PostgreSQL）加环境变量生成配置并启动，无需访问 Web；需要旧式配置向导时设置环境变量 `QMS_SETUP_WIZARD=1`。使用内置 HTTPS 时，将证书文件放入已挂载的 `config/` 目录（`server.crt` / `server.key`）即可，HTTP 与 HTTPS 共用 `12333` 端口，无需额外端口映射。
 
 容器入口脚本以 root 完成初始目录检查；可选环境变量 `GUID`、`GPID` 为数值 UID/GID。设置后脚本会在容器内创建对应用户或组（如不存在），并在值变化时递归修正 `/app/config` 的所有者，再以 `GUID` 运行主进程。例如：
 

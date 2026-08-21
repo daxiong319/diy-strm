@@ -11,7 +11,7 @@
 ## 配置文件与默认端口
 
 - 主配置为 `config/config.yaml`，兼容旧 `config.yml`。首次启动缺少主配置时不再进入配置向导，直接用默认值（内嵌 PostgreSQL）加环境变量生成配置并启动；仅当显式设置 `QMS_SETUP_WIZARD=1` 时才启动旧配置向导（可选择 SQLite 或外部 PostgreSQL）。
-- Web 默认端口：HTTP `12333`、HTTPS `12332`；Emby 302 代理默认端口：HTTP `8095`、HTTPS `8094`。
+- 默认端口：`12333`，Web 管理界面与 Emby 302 代理共用（单端口架构）。无证书时仅提供 HTTP；存在 `config/server.crt` 与 `config/server.key` 时，同一端口同时提供 HTTP 与 HTTPS。
 - 完整字段示例见 [config.yaml](../examples/config.yaml)。示例仅说明字段，运行时以 `config/config.yaml` 为准。
 - 代码默认数据库配置为 `postgres + embedded`。Docker 镜像安装 `postgresql15`；裸二进制和本地开发环境不携带 PostgreSQL 二进制，使用 PostgreSQL 时应安装 PostgreSQL 15 及以上、配置外部数据库，或自行保证内嵌模式依赖的命令可用。
 - 数据库引擎、备份恢复和修复操作见 [数据库运维](database.md)；表、版本和迁移语义见 [数据库 schema 与迁移](../reference/database-schema.md)。
@@ -32,7 +32,7 @@
 | `DB_NAME` | `db.postgresConfig.database` | 数据库名 |
 | `DB_SSLMODE` | `db.postgresConfig.ssl` | `require` 等开启 SSL，`disable` 关闭 |
 | `DB_MAX_OPEN_CONNS` / `DB_MAX_IDLE_CONNS` | `db.postgresConfig.maxOpenConns/maxIdleConns` | 连接池大小 |
-| `HTTP_HOST` / `HTTPS_HOST` | `httpHost` / `httpsHost` | 监听地址 |
+| `HTTP_HOST` | `httpHost` | 监听地址（HTTPS 与之共用，无需单独配置） |
 | `JWT_SECRET` | `jwtSecret` | 为空时仍自动生成并写回 YAML |
 | `CACHE_SIZE` | `cacheSize` | 缓存大小（字节） |
 | `TRUSTED_ORIGINS` | `trustedOrigins` | 逗号分隔的跨源来源列表 |
