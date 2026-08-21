@@ -41,6 +41,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Login to DockerHub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Login to GHCR
         uses: docker/login-action@v4
         with:
@@ -48,32 +54,64 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to DockerHub
-        uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # DockerHub 为主推送目标（服务器从这里拉取）：构建 + 推送失败自动重试 3 次
+      - name: Build and push Docker image (DockerHub)
+        id: dockerhub
+        shell: bash
+        run: |
+          set -e
+          for attempt in 1 2 3; do
+            echo "=== build+push attempt ${attempt}/3 ==="
+            if docker buildx build \
+              --platform linux/amd64,linux/arm64 \
+              --provenance false \
+              --sbom false \
+              --push \
+              --cache-from type=gha \
+              --cache-to type=gha,mode=max \
+              --tag "${{ env.DOCKER_IMAGE }}:latest" \
+              --tag "${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.tag }}" \
+              --build-arg VERSION=latest \
+              --build-arg BUILD_DATE=${{ steps.meta.outputs.build_date }} \
+              --build-arg FANART_API_KEY=${{ secrets.FANART_API_KEY }} \
+              --build-arg TMDB_ACCESS_TOKEN=${{ secrets.TMDB_ACCESS_TOKEN }} \
+              --build-arg TMDB_API_KEY=${{ secrets.TMDB_API_KEY }} \
+              --build-arg SC_API_KEY=${{ secrets.SC_API_KEY }} \
+              .; then
+              echo "DockerHub build+push OK"
+              exit 0
+            fi
+            echo "build+push failed (attempt ${attempt}), retrying in 30s..."
+            sleep 30
+          done
+          echo "::error::DockerHub build+push failed after 3 attempts"
+          exit 1
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          tags: |
-            ${{ env.DOCKER_IMAGE }}:latest
-            ${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.tag }}
-            ghcr.io/${{ github.repository_owner }}/qmediasync:latest
-          platforms: linux/amd64,linux/arm64
-          build-args: |
-            VERSION=latest
-            BUILD_DATE=${{ steps.meta.outputs.build_date }}
-            FANART_API_KEY=${{ secrets.FANART_API_KEY }}
-            TMDB_ACCESS_TOKEN=${{ secrets.TMDB_ACCESS_TOKEN }}
-            TMDB_API_KEY=${{ secrets.TMDB_API_KEY }}
-            SC_API_KEY=${{ secrets.SC_API_KEY }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # GHCR 为镜像备份推送：失败不阻塞部署（服务器只从 DockerHub 拉取）
+      - name: Push to GHCR (best-effort)
+        if: steps.dockerhub.outcome == 'success'
+        shell: bash
+        run: |
+          set -e
+          for attempt in 1 2; do
+            echo "=== GHCR push attempt ${attempt}/2 ==="
+            if docker buildx imagetools create \
+              --tag "ghcr.io/${{ github.repository_owner }}/qmediasync:latest" \
+              --tag "ghcr.io/${{ github.repository_owner }}/qmediasync:${{ steps.meta.outputs.tag }}" \
+              "${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.tag }}"; then
+              echo "GHCR push OK"
+              exit 0
+            fi
+            echo "GHCR push failed (attempt ${attempt}), retrying in 20s..."
+            sleep 20
+          done
+          echo "::warning::GHCR push failed after 2 attempts (non-blocking)"
+          exit 0
+
+      - name: Verify DockerHub image
+        shell: bash
+        run: |
+          docker buildx imagetools inspect "${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.tag }}" --format 'image {{.Name}} platforms={{join .Image.Manifests ", "}}'
 
   deploy:
     runs-on: ubuntu-latest
@@ -95,12 +133,31 @@ jobs:
               echo "::error::/opt/diy-strm/docker-compose.yml not found"
               exit 1
             fi
-            docker pull ${{ env.DOCKER_IMAGE }}:latest
+            # 拉取镜像：网络抖动自动重试 3 次
+            attempt=1
+            until docker pull ${{ env.DOCKER_IMAGE }}:latest; do
+              if [ "$attempt" -ge 3 ]; then
+                echo "::error::docker pull failed after $attempt attempts"
+                exit 1
+              fi
+              echo "docker pull attempt $attempt failed, retrying in 15s..."
+              attempt=$((attempt+1))
+              sleep 15
+            done
             docker compose up -d
-            sleep 5
+            sleep 8
             if ! docker ps --filter "name=^diy-strm$" --filter "status=running" --format '{{.Names}}' | grep -q '^diy-strm$'; then
               echo "::error::diy-strm container is not running after deploy"
               docker compose ps
+              docker logs --tail 50 diy-strm || true
+              exit 1
+            fi
+            # 健康检查：管理页 HTTP 200
+            if ! curl -fsS -o /dev/null --max-time 10 http://127.0.0.1:12333/; then
+              echo "::error::diy-strm web not responding after deploy"
+              docker logs --tail 50 diy-strm || true
               exit 1
             fi
             echo "diy-strm deployed: $(docker inspect --format '{{.Image}}' diy-strm)"
+            # 清理历史遗留镜像（仅 dangling），避免磁盘被反复部署堆满
+            docker image prune -f || true
