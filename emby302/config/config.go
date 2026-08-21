@@ -66,8 +66,21 @@ func ReadFromFile(bytes []byte) error {
 	return nil
 }
 
+// InternalHost 内部自请求 Host, 合并部署后由主服务在 startEmby302 中设置
+// 格式: http://127.0.0.1:12333
+var InternalHost string
+
+// SetInternalHost 设置内部自请求 Host (合并部署后指向管理页 HTTP 端口)
+func SetInternalHost(host string) {
+	InternalHost = host
+}
+
 // ServerInternalRequestHost 返回服务内部自请求 Host
 func ServerInternalRequestHost() string {
+	if InternalHost != "" {
+		return InternalHost
+	}
+	// 旧 fallback: 独立端口模式
 	p := "http://127.0.0.1:" + webport.HTTP
 	if C == nil {
 		return p

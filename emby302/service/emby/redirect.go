@@ -111,8 +111,16 @@ func Redirect2OpenlistLink(c *gin.Context) {
 	if strmUrl == "" {
 		strmUrl = embyPath
 	}
+
+	// 4 尝试直接解析 STRM 内容获取直链
+	// 支持 tgto123 指针格式 (play115:// 等) 与 diy-strm 自家直链 URL,
+	// 直接调用网盘直链接口, 避免内部二次 HTTP 请求
+	if handled := redirectByStrmContent(c, strmUrl); handled {
+		return
+	}
+
 	isProxyUrl := ""
-	// 4 如果是远程地址 (STRM) 且不包含 QMediaSync 的本地代理播放链接, 则重定向处理。
+	// 5 如果是远程地址 (STRM) 且不包含 QMediaSync 的本地代理播放链接, 则重定向处理。
 	if urls.IsRemote(strmUrl) || strings.HasPrefix(strmUrl, "http") || strings.HasPrefix(strmUrl, "nfs:") {
 		finalPath := getFinalRedirectLink(strmUrl, c.Request.Header.Clone())
 		if !strings.Contains(finalPath, "/proxy-115") {

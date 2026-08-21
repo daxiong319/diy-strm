@@ -19,7 +19,6 @@ import (
 
 	"diy-strm/emby302/config"
 	emby302https "diy-strm/emby302/util/https"
-	"diy-strm/emby302/util/logs/colors"
 	"diy-strm/emby302/web"
 	"diy-strm/internal/backup"
 	"diy-strm/internal/controllers"
@@ -47,6 +46,10 @@ var TMDB_API_KEY = ""
 var SC_API_KEY = ""
 var OAuthRelayEncryptionKey = ""
 var Update bool = false
+
+// emby302Enabled 表示是否已加载 Emby 302 配置
+// 启用时将 Emby 反代路由以兜底方式挂载到管理页同一个端口上
+var emby302Enabled bool
 
 var AppName string = "QMediaSync"
 var QMSApp *App
@@ -444,7 +447,7 @@ func startEmby302() {
 		log.Fatal(err)
 	}
 	if models.GlobalEmbyConfig == nil || models.GlobalEmbyConfig.EmbyUrl == "" {
-		helpers.AppLogger.Warnf("Emby 302 未配置 Emby 地址，跳过启动 Emby 302 服务")
+		helpers.AppLogger.Warnf("Emby 302 未配置 Emby 地址，跳过加载 Emby 302 路由")
 		return
 	}
 	emby302https.ConfigureClient(emby302https.ClientOptions{
@@ -455,24 +458,20 @@ func startEmby302() {
 	}
 	config.C.Emby.Host = models.GlobalEmbyConfig.EmbyUrl
 	config.C.Emby.EpisodesUnplayPrior = false // 关闭剧集排序
-	certFile := filepath.Join(dataRoot, "server.crt")
-	keyFile := filepath.Join(dataRoot, "server.key")
-	if helpers.PathExists(certFile) && helpers.PathExists(keyFile) {
-		config.C.Ssl.Enable = true
-		config.C.Ssl.SinglePort = false
-		config.C.Ssl.Crt = "server.crt"
-		config.C.Ssl.Key = "server.key"
+	// 合并部署后, 内部自请求指向管理页 HTTP 端口
+	internalPort := helpers.GlobalConfig.HttpHost
+	if idx := strings.LastIndex(internalPort, ":"); idx >= 0 {
+		internalPort = internalPort[idx:]
+	} else {
+		internalPort = ":12333"
 	}
+	config.SetInternalHost("http://127.0.0.1" + internalPort)
 	config.BasePath = dataRoot
 	config.C.Emby.LocalMediaRoot = "/"
 	config.C.VideoPreview.Enable = true
 	config.C.VideoPreview.Containers = []string{"strm"}
-	go func() {
-		if err := web.Listen(); err != nil {
-			log.Fatal(colors.ToRed(err.Error()))
-		}
-	}()
-
+	emby302Enabled = true
+	helpers.AppLogger.Infof("Emby 302 已加载: %s", config.C.Emby.Host)
 }
 
 func initLogger() {
@@ -949,6 +948,12 @@ func setRouter(r *gin.Engine) {
 		api.PUT("/backup/config", controllers.UpdateBackupConfig)        // 更新备份配置
 		api.GET("/backup/status", controllers.GetBackupStatus)           // 获取备份状态
 
+	}
+
+	// 挂载 Emby 302 反代兜底路由, 与管理页共用端口
+	// 管理页的具体路由优先匹配, 其余请求 (Emby 反代 / 播放 302) 进入 emby302 分发器
+	if emby302Enabled {
+		web.InitRouter(r)
 	}
 }
 

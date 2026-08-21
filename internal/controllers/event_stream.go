@@ -82,7 +82,12 @@ func setSSEHeaders(c *gin.Context) {
 }
 
 func setSSEWriteDeadline(c *gin.Context) error {
-	return http.NewResponseController(c.Writer).SetWriteDeadline(time.Now().Add(sseWriteTimeout))
+	err := http.NewResponseController(c.Writer).SetWriteDeadline(time.Now().Add(sseWriteTimeout))
+	// HTTP/2 下不支持 SetWriteDeadline, 忽略该错误, 连接本身不受影响
+	if errors.Is(err, http.ErrNotSupported) {
+		return nil
+	}
+	return err
 }
 
 func writeSSEComment(c *gin.Context, comment string) error {
