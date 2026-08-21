@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -70,24 +71,45 @@ func runAllHiveSubscriptions() {
 
 // RunHiveSubscriptionOnce 对单条影巢订阅执行一轮：查资源 → 规格筛选 → 解锁 → 转存
 // 返回结果摘要与是否成功。
+// 资源查询走 OAuth 代理通道（hdhive-open.tgtodrive.top，与 tgto123 一致），
+// 不再依赖 hdhive.com Open API 的 X-API-Key（该密钥可能被上游禁用）。
 func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
-	apiKey := models.GetHiveAPIKey()
-	if apiKey == "" {
+	mainAcc, err := models.GetHiveMainAccount()
+	if err != nil {
 		sub.LastRunAt = time.Now()
 		_ = models.SaveCloudSubscription(sub)
-		return fmt.Sprintf("订阅 #%d（影巢）未配置 API Key，跳过", sub.ID), false
+		return fmt.Sprintf("订阅 #%d（影巢）获取主账号失败：%v", sub.ID, err), false
+	}
+	if !mainAcc.Authorized {
+		return fmt.Sprintf("订阅 #%d（影巢）主账号未授权，请先在影巢设置中完成 OAuth 授权", sub.ID), false
 	}
 	if sub.TMDBID <= 0 || (sub.MediaType != "movie" && sub.MediaType != "tv") {
 		return fmt.Sprintf("订阅 #%d（影巢）缺少影片信息（TMDB ID/类型），跳过", sub.ID), false
 	}
-	allowPoints := models.GetHiveAllowPoints()
-	client := hdhive.NewClient(apiKey)
+	client := hdhive.NewOAuthClient(mainAcc.InstallID)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	resources, err := client.GetResources(ctx, sub.MediaType, strconv.FormatInt(sub.TMDBID, 10))
+	// 查询资源列表（OAuth 代理通道）
+	resourcesResp, err := client.GetResources(ctx, sub.MediaType, strconv.FormatInt(sub.TMDBID, 10))
 	if err != nil {
 		return fmt.Sprintf("订阅 #%d（影巢 %s %d）查询资源失败：%v", sub.ID, sub.MediaType, sub.TMDBID, err), false
+	}
+	if !resourcesResp.Success {
+		msg := resourcesResp.Message
+		if msg == "" {
+			msg = resourcesResp.Description
+		}
+		if msg == "" {
+			msg = "请求失败"
+		}
+		return fmt.Sprintf("订阅 #%d（影巢 %s %d）查询资源失败：%s", sub.ID, sub.MediaType, sub.TMDBID, msg), false
+	}
+	var resources []hdhive.Resource
+	if len(resourcesResp.Data) > 0 && string(resourcesResp.Data) != "null" {
+		if err := json.Unmarshal(resourcesResp.Data, &resources); err != nil {
+			return fmt.Sprintf("订阅 #%d（影巢 %s %d）解析资源列表失败：%v", sub.ID, sub.MediaType, sub.TMDBID, err), false
+		}
 	}
 	// 过滤无效资源（失效链接），并按规格分降序取最优候选
 	candidates := make([]hdhive.Resource, 0, len(resources))
@@ -129,9 +151,18 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			continue
 		}
 		// 通过分享详情获取网盘类型，必须与订阅目标网盘一致
-		detail, derr := client.GetShare(ctx, res.Slug)
-		if derr != nil {
-			errs = append(errs, fmt.Sprintf("%s 详情获取失败：%v", res.Slug, derr))
+		shareResp, serr := client.GetShareDetail(ctx, res.Slug)
+		if serr != nil {
+			errs = append(errs, fmt.Sprintf("%s 详情获取失败：%v", res.Slug, serr))
+			continue
+		}
+		if !shareResp.Success {
+			errs = append(errs, fmt.Sprintf("%s 详情获取失败：%s", res.Slug, shareResp.Message))
+			continue
+		}
+		var detail hdhive.ShareDetail
+		if err := json.Unmarshal(shareResp.Data, &detail); err != nil {
+			errs = append(errs, fmt.Sprintf("%s 详情解析失败", res.Slug))
 			continue
 		}
 		panType := hivePanTypeToSourceType(detail.PanType)
@@ -145,9 +176,18 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			continue
 		}
 		// 解锁
-		unlock, uerr := client.Unlock(ctx, res.Slug, allowPoints)
+		unlockResp, uerr := client.UnlockResource(ctx, res.Slug)
 		if uerr != nil {
 			errs = append(errs, fmt.Sprintf("%s 解锁失败：%v", res.Slug, uerr))
+			continue
+		}
+		if !unlockResp.Success {
+			errs = append(errs, fmt.Sprintf("%s 解锁失败：%s", res.Slug, unlockResp.Message))
+			continue
+		}
+		var unlock hdhive.UnlockResult
+		if err := json.Unmarshal(unlockResp.Data, &unlock); err != nil {
+			errs = append(errs, fmt.Sprintf("%s 解锁结果解析失败", res.Slug))
 			continue
 		}
 		linkURL := strings.TrimSpace(unlock.FullURL)
