@@ -156,6 +156,10 @@ const AppCloudAutoOrganize = createAsyncRouteComponent(
   'AppCloudAutoOrganize',
   () => import('@/components/cloud/CloudAutoOrganize.vue'),
 )
+const AppOrganizeHistory = createAsyncRouteComponent(
+  'AppOrganizeHistory',
+  () => import('@/components/AppOrganizeHistory.vue'),
+)
 const AppDiscover = createAsyncRouteComponent('AppDiscover', () => import('@/components/AppDiscover.vue'))
 
 // 定义路由元信息类型
@@ -397,6 +401,17 @@ const routes = [
     },
   },
 
+  {
+    path: '/organize-history',
+    name: 'organize-history',
+    component: AppOrganizeHistory,
+    meta: {
+      title: '整理历史',
+      requiresAuth: true,
+      icon: 'Clock',
+      showInMenu: true,
+    },
+  },
   {
     path: '/transfer',
     name: 'transfer',

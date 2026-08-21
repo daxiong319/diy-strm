@@ -791,16 +791,25 @@ func Migrate() {
 		helpers.AppLogger.Info("已创建批量重命名历史记录与常用组合表")
 		migrator.UpdateVersionCode(db.Db)
 	}
-	if migrator.VersionCode == 70 {
-		// 影巢 OAuth 授权账号（主账号 + 子账号）
-		if err := db.Db.AutoMigrate(HiveOAuthAccount{}); err != nil {
-			helpers.AppLogger.Errorf("迁移影巢 OAuth 账号表失败：%v", err)
-			return
+if migrator.VersionCode == 70 {
+			// 影巢 OAuth 授权账号（主账号 + 子账号）
+			if err := db.Db.AutoMigrate(HiveOAuthAccount{}); err != nil {
+				helpers.AppLogger.Errorf("迁移影巢 OAuth 账号表失败：%v", err)
+				return
+			}
+			helpers.AppLogger.Info("已创建影巢 OAuth 账号表（主账号 + 子账号）")
+			migrator.UpdateVersionCode(db.Db)
 		}
-		helpers.AppLogger.Info("已创建影巢 OAuth 账号表（主账号 + 子账号）")
-		migrator.UpdateVersionCode(db.Db)
-	}
-	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)
+		if migrator.VersionCode == 71 {
+			// 整理历史（来源/状态/时间/媒体信息，对齐 tgto123 的 organize_history_records）
+			if err := db.Db.AutoMigrate(OrganizeHistoryRecord{}); err != nil {
+				helpers.AppLogger.Errorf("迁移整理历史表失败：%v", err)
+				return
+			}
+			helpers.AppLogger.Info("已创建整理历史表（organize_history_records）")
+			migrator.UpdateVersionCode(db.Db)
+		}
+		helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)
 }
 
 // migrateLegacySubscriptionChannels 把历史订阅表中的频道迁移为独立频道记录

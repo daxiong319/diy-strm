@@ -928,6 +928,16 @@ func setRouter(r *gin.Engine) {
 		api.PUT("/backup/config", controllers.UpdateBackupConfig)        // 更新备份配置
 		api.GET("/backup/status", controllers.GetBackupStatus)           // 获取备份状态
 
+		// 整理历史（对齐 tgto123 的整理历史功能）
+		api.GET("/organize-history", controllers.ListOrganizeHistory)                      // 整理历史列表
+		api.GET("/organize-history/detail", controllers.GetOrganizeHistoryDetail)          // 整理历史详情
+		api.POST("/organize-history/delete", controllers.DeleteOrganizeHistory)            // 删除整理历史记录（单条/批量）
+		api.POST("/organize-history/clear", controllers.ClearOrganizeHistory)              // 按来源/日期清理整理历史
+		api.POST("/organize-history/run", controllers.RunOrganizeHistory)                  // 手动触发整理
+		api.POST("/organize-history/reorganize", controllers.ReorganizeOrganizeHistory)    // 手动指定 TMDB 重新整理（异步）
+		api.GET("/organize-history/task-status", controllers.OrganizeHistoryTaskStatus)    // 重整理任务状态（轮询）
+		api.POST("/organize-history/recognize-test", controllers.RecognizeTestOrganize)    // 识别测试
+
 	}
 
 	// 挂载 Emby 302 反代兜底路由, 与管理页共用端口

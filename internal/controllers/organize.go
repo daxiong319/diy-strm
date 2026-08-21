@@ -2,10 +2,12 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/mediaparse"
@@ -302,27 +304,73 @@ func OrganizeApply(c *gin.Context) {
 	}
 	dirCache := map[string]string{} // relPath -> 目录 ID
 	ctx := context.Background()
+	sourceDisplay := models.SourceDisplayName(account.SourceType)
 	for _, item := range req.Items {
 		// 1. 确保目标目录存在
 		targetDirID, err := ensureOrganizeDir(ctx, account, req.Path, req.TargetPath, item.RelPath, dirCache)
 		if err != nil {
 			result.Failed = append(result.Failed, organizeApplyFailed{FileID: item.FileID, Name: item.RelPath, Reason: "创建目标目录失败：" + err.Error()})
+			recordManualOrganizeHistory(account, sourceDisplay, item, req, models.OrganizeStatusFailed, "", "创建目标目录失败："+err.Error())
 			continue
 		}
 		// 2. 移动
 		if err := moveNetdiskFile(account, item.FileID, targetDirID); err != nil {
 			result.Failed = append(result.Failed, organizeApplyFailed{FileID: item.FileID, Name: item.RelPath, Reason: "移动失败：" + err.Error()})
+			recordManualOrganizeHistory(account, sourceDisplay, item, req, models.OrganizeStatusFailed, "", "移动失败："+err.Error())
 			continue
 		}
 		// 3. 重命名
 		if err := renameNetdiskFile(account, item.FileID, item.NewName); err != nil {
 			result.Failed = append(result.Failed, organizeApplyFailed{FileID: item.FileID, Name: item.RelPath, Reason: "重命名失败：" + err.Error()})
+			recordManualOrganizeHistory(account, sourceDisplay, item, req, models.OrganizeStatusFailed, "", "重命名失败："+err.Error())
 			continue
 		}
 		result.Success = append(result.Success, item)
+		recordManualOrganizeHistory(account, sourceDisplay, item, req, models.OrganizeStatusSuccess, "手动整理成功", "")
 	}
 	invalidateNetFileCacheForDeletedPath(account.SourceType, req.AccountID, req.Path, "")
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: fmt.Sprintf("整理完成：成功 %d 个，失败 %d 个", len(result.Success), len(result.Failed)), Data: result})
+}
+
+// recordManualOrganizeHistory 手动目录整理埋点（写整理历史）
+func recordManualOrganizeHistory(account *models.Account, sourceDisplay string, item organizeApplyItem, req OrganizeApplyRequest, status, message, errMsg string) {
+	category, title, season, episode, year := mediaparse.ParseMedia(item.NewName)
+	mediaType := ""
+	if category == "movie" {
+		mediaType = "Movie"
+	} else if category == "tv" {
+		mediaType = "TV"
+	}
+	extra, _ := json.Marshal(map[string]any{
+		"account_id":  account.ID,
+		"source_type": string(account.SourceType),
+		"source_path": req.Path,
+	})
+	targetPath := item.RelPath
+	if req.TargetPath != "" {
+		targetPath = req.TargetPath + "/" + item.RelPath
+	}
+	rec := &models.OrganizeHistoryRecord{
+		Source:           sourceDisplay,
+		Status:           status,
+		EventTime:        time.Now(),
+		FileID:           item.FileID,
+		FileName:         item.NewName,
+		OriginalFileName: item.NewName,
+		SourcePath:       req.Path + "/" + item.RelPath,
+		TargetPath:       targetPath + "/" + item.NewName,
+		Title:            title,
+		Year:             year,
+		MediaType:        mediaType,
+		SeasonNum:        season,
+		EpisodeNum:       episode,
+		Message:          message,
+		ErrorMessage:     errMsg,
+		ExtraJSON:        string(extra),
+	}
+	if err := models.CreateOrganizeHistoryRecord(rec); err != nil {
+		helpers.AppLogger.Errorf("写入整理历史失败：%v", err)
+	}
 }
 
 // ensureOrganizeDir 确保目标目录存在，返回目录 ID（或路径语义）。

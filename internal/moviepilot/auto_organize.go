@@ -242,8 +242,11 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 	defer func() {
 		helpers.AppLogger.Infof("自动整理文件结束（账号 %d）：%s（耗时 %.1fs）", cfg.AccountID, entry.Name, time.Since(vidStart).Seconds())
 	}()
+	extra := baseOrganizeExtra(account, entry.ParentID, 0)
+	sourcePath := strings.TrimRight(cfg.PendingDir, "/") + "/" + entry.Name
 	media, err := buildAutoMedia(entry.Name, dirCtx)
 	if err != nil {
+		recordSkipped(account, *entry, sourcePath, "", "", 0, 0, 0, 0, "", "文件名无法识别", extra)
 		return err
 	}
 	if strings.TrimSpace(media.Title) == "" && *aiBudget > 0 {
@@ -259,11 +262,13 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 		}
 	}
 	if strings.TrimSpace(media.Title) == "" {
+		recordSkipped(account, *entry, sourcePath, "", "", 0, 0, 0, 0, "", "文件名无法识别（AI 未启用或未命中）", extra)
 		return errMediaUnrecognized
 	}
 
 	officialTitle, tmdbID, tmdbYear, categoryName, err := lookupTmdbMediaWithRules(ctx, media, *rules)
 	if err != nil {
+		recordSkipped(account, *entry, sourcePath, media.Category, media.Title, media.Year, media.Season, media.Episode, 0, "", "TMDB 未找到匹配结果："+err.Error(), extra)
 		return fmt.Errorf("%w：%v", errMediaUnrecognized, err)
 	}
 	year := tmdbYear
@@ -272,6 +277,7 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 	}
 	relDir, ok := buildOrganizeRelDir(media.Category, officialTitle, year, media.Season, tmdbID, categoryName)
 	if !ok {
+		recordSkipped(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "", "媒体信息不完整，无法构建目标目录", extra)
 		return fmt.Errorf("%w：媒体信息不完整", errMediaUnrecognized)
 	}
 
@@ -286,23 +292,28 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 		if !cfg.Overwrite {
 			result.SkippedOverwrite++
 			result.Details = append(result.Details, fmt.Sprintf("目标已存在且非洗版模式，跳过：%s → %s", entry.Name, baseRel))
+			recordSkipped(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "目标已存在且非洗版模式，跳过（保留现有版本）", "", extra)
 			return nil
 		}
 		removed := deleteVideosUnderDir(ctx, account, existingBaseID)
 		result.Details = append(result.Details, fmt.Sprintf("洗版删除旧文件 %d 个：%s", removed, baseRel))
+		extra["replace"] = true
 	}
 
 	targetDirID, err := ensureOrganizeDirInternal(ctx, account, organizedRoot, relDir, dirCache)
 	if err != nil {
+		recordFailed(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "创建目标目录失败："+err.Error(), extra)
 		return fmt.Errorf("创建目标目录 %s 失败：%v", relDir, err)
 	}
 	newName := buildAutoOrganizeNewName(media.Category, officialTitle, media.Season, media.Episode, year, entry.Name)
 	newName = resolveNameConflict(ctx, account, targetDirID, newName)
 
 	if err := moveNetdiskFileInternal(account, entry.ID, entry.ParentID, targetDirID); err != nil {
+		recordFailed(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "移动失败："+err.Error(), extra)
 		return fmt.Errorf("移动 %s 失败：%v", entry.Name, err)
 	}
 	if err := renameNetdiskFileInternal(account, entry.ID, entry.ParentID, targetDirID, newName); err != nil {
+		recordFailed(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "重命名失败："+err.Error(), extra)
 		return fmt.Errorf("重命名 %s 失败：%v", entry.Name, err)
 	}
 	result.Organized++
@@ -318,6 +329,7 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 	}
 	result.Details = append(result.Details, fmt.Sprintf("✓ %s → %s/%s", entry.Name, relDir, newName))
 	helpers.AppLogger.Infof("自动整理成功：%s → %s/%s", entry.Name, relDir, newName)
+	recordSuccess(account, *entry, sourcePath, relDir+"/"+newName, media.Category, officialTitle, year, media.Season, media.Episode, tmdbID, newName, "整理成功", extra)
 	return nil
 }
 

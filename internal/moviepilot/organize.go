@@ -114,11 +114,15 @@ func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, r
 // media 为已解析的媒体信息；无法识别（含 TMDB 校验失败）返回 errMediaUnrecognized（不移动）。
 // rootPath 为已整理根目录路径；返回整理成功的目标相对目录（相对已整理根目录）。
 func organizeOneFile(ctx context.Context, account *models.Account, e organizeEntry, rootPath string, dirCache map[string]string, media *IdentifyResult) (string, error) {
+	extra := baseOrganizeExtra(account, e.ParentID, 0)
+	sourcePath := e.ParentID + "/" + e.Name
 	if media == nil || strings.TrimSpace(media.Title) == "" {
+		recordSkipped(account, e, sourcePath, "", "", 0, 0, 0, 0, "", "文件名无法识别", extra)
 		return "", errMediaUnrecognized
 	}
 	officialTitle, tmdbID, tmdbYear, categoryName, err := lookupTmdbMedia(ctx, media)
 	if err != nil {
+		recordSkipped(account, e, sourcePath, media.Category, media.Title, media.Year, media.Season, media.Episode, 0, "", "TMDB 未找到匹配结果："+err.Error(), extra)
 		return "", fmt.Errorf("%w：%v", errMediaUnrecognized, err)
 	}
 	year := tmdbYear
@@ -127,20 +131,25 @@ func organizeOneFile(ctx context.Context, account *models.Account, e organizeEnt
 	}
 	relDir, ok := buildOrganizeRelDir(media.Category, officialTitle, year, media.Season, tmdbID, categoryName)
 	if !ok {
+		recordSkipped(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "", "媒体信息不完整，无法构建目标目录", extra)
 		return "", fmt.Errorf("%w：媒体信息不完整", errMediaUnrecognized)
 	}
 	newName := buildOrganizeNewName(media.Category, officialTitle, media.Season, media.Episode, year, path.Ext(e.Name))
 
 	targetDirID, err := ensureOrganizeDirInternal(ctx, account, rootPath, relDir, dirCache)
 	if err != nil {
+		recordFailed(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "创建目标目录失败："+err.Error(), extra)
 		return "", fmt.Errorf("创建目标目录 %s 失败：%v", relDir, err)
 	}
 	if err := moveNetdiskFileInternal(account, e.ID, e.ParentID, targetDirID); err != nil {
+		recordFailed(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "移动失败："+err.Error(), extra)
 		return "", fmt.Errorf("移动 %s 失败：%v", e.Name, err)
 	}
 	if err := renameNetdiskFileInternal(account, e.ID, e.ParentID, targetDirID, newName); err != nil {
+		recordFailed(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "重命名失败："+err.Error(), extra)
 		return "", fmt.Errorf("重命名 %s 失败：%v", e.Name, err)
 	}
+	recordSuccess(account, e, sourcePath, relDir+"/"+newName, media.Category, officialTitle, year, media.Season, media.Episode, tmdbID, newName, "整理成功", extra)
 	return relDir, nil
 }
 
