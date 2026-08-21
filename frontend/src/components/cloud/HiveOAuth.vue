@@ -25,7 +25,7 @@
         <!-- 未授权 -->
         <template v-if="!main.authorized">
           <el-empty description="尚未完成影巢 OAuth 授权" :image-size="80">
-            <el-button type="primary" :loading="authing" @click="openAuth">前往授权</el-button>
+            <el-button type="primary" :loading="authing" @click="openAuth()">前往授权</el-button>
             <el-button :loading="refreshing" @click="refreshMain">刷新状态</el-button>
           </el-empty>
         </template>
@@ -190,15 +190,17 @@ const loadSubs = async () => {
 const openAuth = async (row?: any) => {
   authing.value = true
   try {
-    if (row && (!row.id || Number.isNaN(Number(row.id)))) {
-      ElMessage.error('子账号 ID 无效，请刷新列表后重试')
-      return
-    }
     let url = ''
-    if (row) {
+    if (row && typeof row.id !== 'undefined') {
+      // 子账号授权：只有带 id 的账号行才走此分支（主按钮用 @click="openAuth()" 不会传入事件对象）
+      if (!row.id || Number.isNaN(Number(row.id))) {
+        ElMessage.error('子账号 ID 无效，请刷新列表后重试')
+        return
+      }
       const resp = await http.post(`/api/cloud/hive/sub-accounts/${row.id}/auth-url`)
       url = resp.data?.data?.auth_url || ''
     } else {
+      // 主账号授权
       const resp = await http.post('/api/cloud/hive/oauth/auth-url')
       url = resp.data?.data?.auth_url || ''
     }
