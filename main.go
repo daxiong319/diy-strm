@@ -96,7 +96,6 @@ func (app *App) Start() {
 	r.Use(controllers.Cors(), controllers.RequestErrorLogger())
 	setRouter(r)
 	app.StartHttpServer(r)
-	app.StartHttpsServer(r)
 	if runtime.GOOS == "windows" {
 		// 监听 Ctrl+C 信号
 		go func() {
@@ -162,41 +161,22 @@ func (app *App) shutdownHTTPServers() {
 	}
 }
 
-func (app *App) StartHttpsServer(r *gin.Engine) {
-	certFile := filepath.Join(helpers.RootDir, "config", "server.crt")
-	keyFile := filepath.Join(helpers.RootDir, "config", "server.key")
-	if !helpers.PathExists(certFile) || !helpers.PathExists(keyFile) {
-		return
-	}
-	go func() {
-		// 在 12332 端口上启动 HTTPS 服务
-		sslHost := ""
-		// 启动 Web Server
-		if !helpers.IsRelease {
-			sslHost = "localhost:12332"
-		} else {
-			sslHost = helpers.GlobalConfig.HttpsHost
-		}
-		app.httpsServer = &http.Server{
-			Addr:    sslHost,
-			Handler: r,
-		}
-		// 没有证书则回退到普通 HTTP
-		weberr := app.httpsServer.ListenAndServeTLS(certFile, keyFile)
-		if weberr != nil {
-			fmt.Println("ListenAndServe error:", weberr)
-		}
-	}()
-}
-
 func (app *App) StartHttpServer(r *gin.Engine) {
 	host := helpers.GlobalConfig.HttpHost
-	// 同时在 12333 端口上启动 HTTP 服务
 	app.httpServer = &http.Server{
 		Addr:    host,
 		Handler: r,
 	}
 	go func() {
+		// 配置了证书时, 在同一个端口上同时提供 HTTP 与 HTTPS 服务
+		certFile := filepath.Join(helpers.RootDir, "config", "server.crt")
+		keyFile := filepath.Join(helpers.RootDir, "config", "server.key")
+		if helpers.PathExists(certFile) && helpers.PathExists(keyFile) {
+			if err := serveDualProto(host, certFile, keyFile, r, app); err != nil {
+				fmt.Println("DualProto Listen error:", err)
+			}
+			return
+		}
 		weberr := app.httpServer.ListenAndServe()
 		if weberr != nil {
 			fmt.Println("ListenAndServe error:", weberr)
