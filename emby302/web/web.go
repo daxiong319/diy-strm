@@ -10,9 +10,12 @@ import (
 
 // InitRouter 将 Emby 302 反代路由挂载到外部 gin.Engine 上
 //
-// 以兜底路由 (/*vars) 的方式注册, 管理页的具体路由优先匹配,
+// 通过 NoRoute 兜底注册: 管理页的具体路由优先匹配,
 // 其余请求 (Emby 反代 / 播放 302) 全部进入本分发器。
-// 中间件只作用于兜底路由, 不影响管理页接口。
+// 中间件只作用于兜底请求, 不影响管理页接口。
+//
+// 注意: 不能使用 r.Any("/*vars") 注册, 会与已注册的静态路由
+// (如 /assets) 冲突导致 gin 路由树 panic。
 func InitRouter(r *gin.Engine) {
 	initRulePatterns()
 
@@ -26,5 +29,5 @@ func InitRouter(r *gin.Engine) {
 	}
 	handlers = append(handlers, globalDftHandler)
 
-	r.Any("/*vars", handlers...)
+	r.NoRoute(handlers...)
 }
