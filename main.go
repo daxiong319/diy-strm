@@ -575,11 +575,19 @@ func setRouter(r *gin.Engine) {
 	// if helpers.IsFnOS {
 	// 	webStatisPath = filepath.Join(helpers.RootDir, "www")
 	// }
+	// 前端静态资源缓存策略：assets 带内容哈希文件名可永久缓存，index.html 必须每次回源验证
+	r.Use(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/assets/") {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		c.Next()
+	})
 	r.LoadHTMLFiles(filepath.Join(webStatisPath, "index.html"))
 	r.StaticFile("/favicon.ico", filepath.Join(webStatisPath, "favicon.ico")) // 提供站点图标
 	r.StaticFS("/assets", http.Dir(filepath.Join(webStatisPath, "assets")))   // 提供前端静态资源
 	// 返回前端单页应用入口
 	r.GET("/", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache") // 不缓存页面，部署新版本后刷新即可生效
 		c.HTML(200, "index.html", gin.H{})
 	})
 	r.POST("/emby/webhook", controllers.Webhook)                               // 接收 Emby 事件回调
