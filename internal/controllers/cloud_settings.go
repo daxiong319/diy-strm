@@ -304,23 +304,24 @@ func GetHiveSettingsAPI(c *gin.Context) {
 }
 
 // SetHiveSettingsAPI 保存影巢设置（POST /cloud/hive/settings）
+// 整型字段用指针：未提交的字段保持原值，避免部分更新被默认值覆盖。
 func SetHiveSettingsAPI(c *gin.Context) {
 	var req struct {
-		PollInterval       int    `json:"poll_interval"`
-		DailyCheckinEnabled *bool `json:"daily_checkin_enabled"`
-		DailyCheckinMode   string `json:"daily_checkin_mode"`
-		DailyCheckinHour   int    `json:"daily_checkin_hour"`
-		SubCheckinEnabled  *bool  `json:"sub_checkin_enabled"`
-		SubCheckinMode     string `json:"sub_checkin_mode"`
-		SubCheckinHour     int    `json:"sub_checkin_hour"`
-		MaxPoints          int    `json:"max_points"`
+		PollInterval        *int   `json:"poll_interval"`
+		DailyCheckinEnabled *bool  `json:"daily_checkin_enabled"`
+		DailyCheckinMode    string `json:"daily_checkin_mode"`
+		DailyCheckinHour    *int   `json:"daily_checkin_hour"`
+		SubCheckinEnabled   *bool  `json:"sub_checkin_enabled"`
+		SubCheckinMode      string `json:"sub_checkin_mode"`
+		SubCheckinHour      *int   `json:"sub_checkin_hour"`
+		MaxPoints           *int   `json:"max_points"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error(), Data: nil})
 		return
 	}
-	if req.PollInterval > 0 {
-		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveInterval, strconv.Itoa(req.PollInterval)); err != nil {
+	if req.PollInterval != nil && *req.PollInterval > 0 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveInterval, strconv.Itoa(*req.PollInterval)); err != nil {
 			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存轮询间隔失败：" + err.Error(), Data: nil})
 			return
 		}
@@ -337,8 +338,8 @@ func SetHiveSettingsAPI(c *gin.Context) {
 			return
 		}
 	}
-	if req.DailyCheckinHour >= 0 && req.DailyCheckinHour <= 23 {
-		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveCheckinHour, strconv.Itoa(req.DailyCheckinHour)); err != nil {
+	if req.DailyCheckinHour != nil && *req.DailyCheckinHour >= 0 && *req.DailyCheckinHour <= 23 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveCheckinHour, strconv.Itoa(*req.DailyCheckinHour)); err != nil {
 			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存主账号签到时间失败：" + err.Error(), Data: nil})
 			return
 		}
@@ -355,14 +356,14 @@ func SetHiveSettingsAPI(c *gin.Context) {
 			return
 		}
 	}
-	if req.SubCheckinHour >= 0 && req.SubCheckinHour <= 23 {
-		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveSubCheckinHour, strconv.Itoa(req.SubCheckinHour)); err != nil {
+	if req.SubCheckinHour != nil && *req.SubCheckinHour >= 0 && *req.SubCheckinHour <= 23 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveSubCheckinHour, strconv.Itoa(*req.SubCheckinHour)); err != nil {
 			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存子账号签到时间失败：" + err.Error(), Data: nil})
 			return
 		}
 	}
-	if req.MaxPoints >= 0 {
-		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveMaxPoints, strconv.Itoa(req.MaxPoints)); err != nil {
+	if req.MaxPoints != nil && *req.MaxPoints >= 0 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveMaxPoints, strconv.Itoa(*req.MaxPoints)); err != nil {
 			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存解锁积分上限失败：" + err.Error(), Data: nil})
 			return
 		}
