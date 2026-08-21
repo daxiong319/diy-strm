@@ -111,7 +111,9 @@ jobs:
       - name: Verify DockerHub image
         shell: bash
         run: |
-          docker buildx imagetools inspect "${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.tag }}" --format 'image {{.Name}} platforms={{join .Image.Manifests ", "}}'
+          # 多平台镜像 inspect：退出码非零即镜像不可用（.Image 是单平台结构，勿在 format 中使用）
+          docker buildx imagetools inspect "${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.tag }}"
+          echo "verified: ${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.tag }}"
 
   deploy:
     runs-on: ubuntu-latest
