@@ -175,6 +175,11 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			skipped++ // 网盘类型与订阅目标不一致
 			continue
 		}
+		// 解锁积分上限（0=不限，对应 tgto123 的 HDHIVE_MAX_POINTS）
+		if maxPts := models.GetHiveMaxPoints(); maxPts > 0 && res.UnlockPoints > maxPts {
+			skipped++ // 解锁积分超过上限
+			continue
+		}
 		// 解锁
 		unlockResp, uerr := client.UnlockResource(ctx, res.Slug)
 		if uerr != nil {

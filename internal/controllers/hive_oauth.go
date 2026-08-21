@@ -445,27 +445,37 @@ func HiveSubAccountCheckinAPI(c *gin.Context) {
 }
 
 // RunHiveDailyCheckins 定时任务：主账号 + 启用子账号每日签到
+// 开关 / 签到时间 / 签到模式均读取影巢设置（与 tgto123 的 HDHIVE_CHECKIN_ENABLE/TIME/TYPE、
+// HDHIVE_SUB_CHECKIN_ENABLE/TIME/TYPE 一致），不在设置时间内时直接跳过。
 func RunHiveDailyCheckins() {
+	now := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	mode := hdhive.ResolveCheckinMode("")
-	mainAcc, err := models.GetHiveMainAccount()
-	if err == nil && mainAcc.Authorized {
-		if ok, msg := RunHiveCheckin(ctx, mainAcc, mode); ok {
-			helpers.AppLogger.Infof("影巢定时签到：主账号签到成功（%s）", msg)
-		} else {
-			helpers.AppLogger.Errorf("影巢定时签到：主账号签到失败：%s", msg)
+
+	if models.GetHiveCheckinEnabled() && now.Hour() == models.GetHiveCheckinHour() {
+		mode := hdhive.ResolveCheckinMode(models.GetHiveCheckinMode())
+		mainAcc, err := models.GetHiveMainAccount()
+		if err == nil && mainAcc.Authorized {
+			if ok, msg := RunHiveCheckin(ctx, mainAcc, mode); ok {
+				helpers.AppLogger.Infof("影巢定时签到：主账号签到成功（%s）", msg)
+			} else {
+				helpers.AppLogger.Errorf("影巢定时签到：主账号签到失败：%s", msg)
+			}
 		}
 	}
-	subs, _ := models.ListHiveSubAccounts()
-	for i := range subs {
-		if !subs[i].Enabled {
-			continue
-		}
-		if ok, msg := RunHiveCheckin(ctx, &subs[i], mode); ok {
-			helpers.AppLogger.Infof("影巢定时签到：%s 签到成功（%s）", subs[i].Label, msg)
-		} else {
-			helpers.AppLogger.Errorf("影巢定时签到：%s 签到失败：%s", subs[i].Label, msg)
+
+	if models.GetHiveSubCheckinEnabled() && now.Hour() == models.GetHiveSubCheckinHour() {
+		mode := hdhive.ResolveCheckinMode(models.GetHiveSubCheckinMode())
+		subs, _ := models.ListHiveSubAccounts()
+		for i := range subs {
+			if !subs[i].Enabled {
+				continue
+			}
+			if ok, msg := RunHiveCheckin(ctx, &subs[i], mode); ok {
+				helpers.AppLogger.Infof("影巢定时签到：%s 签到成功（%s）", subs[i].Label, msg)
+			} else {
+				helpers.AppLogger.Errorf("影巢定时签到：%s 签到失败：%s", subs[i].Label, msg)
+			}
 		}
 	}
 }

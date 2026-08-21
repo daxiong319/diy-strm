@@ -902,9 +902,8 @@ func setRouter(r *gin.Engine) {
 		api.GET("/cloud/subscriptions/:id/records", controllers.ListSubscriptionRecordsAPI) // 订阅转存纪录
 
 		// 影巢（HDHive）订阅
-		api.GET("/cloud/hive/settings", controllers.GetHiveSettingsAPI)          // 影巢设置
-		api.POST("/cloud/hive/settings", controllers.SetHiveSettingsAPI)         // 保存影巢设置
-		api.POST("/cloud/hive/test", controllers.TestHiveConnectionAPI)          // 测试影巢 API Key
+		api.GET("/cloud/hive/settings", controllers.GetHiveSettingsAPI)  // 影巢设置
+		api.POST("/cloud/hive/settings", controllers.SetHiveSettingsAPI) // 保存影巢设置
 
 		// 影巢（HDHive）OAuth 授权与签到
 		api.GET("/cloud/hive/oauth/status", controllers.HiveOAuthStatusAPI)          // OAuth 授权状态

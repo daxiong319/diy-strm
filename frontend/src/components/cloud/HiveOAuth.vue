@@ -5,7 +5,10 @@
       <template #header>
         <div class="card-header">
           <span>影巢 · OAuth 授权</span>
-          <span v-if="main.user" class="nickname">{{ main.user.nickname }}</span>
+          <span v-if="main.user" class="nickname">
+            <img v-if="main.user.avatar_url" :src="main.user.avatar_url" class="avatar" alt="" />
+            {{ main.user.nickname }}
+          </span>
         </div>
       </template>
 
@@ -47,6 +50,7 @@
             <el-descriptions-item label="周免费额度">
               {{ main.user?.weekly_free_quota_unlimited ? '不限' : formatQuota(main.user) }}
             </el-descriptions-item>
+            <el-descriptions-item label="奖励额度">{{ formatNum(main.user?.bonus_quota) }}</el-descriptions-item>
             <el-descriptions-item label="分享数">{{ main.user?.share_num ?? '-' }}</el-descriptions-item>
           </el-descriptions>
 
@@ -90,8 +94,13 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="账号" min-width="120">
-          <template #default="{ row }">{{ row.user?.nickname || '-' }}</template>
+        <el-table-column label="账号" min-width="140">
+          <template #default="{ row }">
+            <span class="cell-user">
+              <img v-if="row.user?.avatar_url" :src="row.user.avatar_url" class="avatar" alt="" />
+              {{ row.user?.nickname || '-' }}
+            </span>
+          </template>
         </el-table-column>
         <el-table-column label="签到" min-width="160">
           <template #default="{ row }">
@@ -362,6 +371,19 @@ onMounted(() => {
   font-weight: 400;
   color: var(--el-text-color-secondary);
   font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+}
+.avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.cell-user {
+  display: inline-flex;
+  align-items: center;
 }
 .cloud-alert {
   margin-bottom: 16px;

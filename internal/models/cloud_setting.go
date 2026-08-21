@@ -28,9 +28,14 @@ const (
 
 // 影巢（HDHive）配置 key（source_type = "hdhive"）
 const (
-	CloudSettingKeyHiveAPIKey     = "api_key"      // 值：HDHive API Key
-	CloudSettingKeyHiveAllowPoints = "allow_points" // 值："true"/"false" 是否允许扣积分解锁
-	CloudSettingKeyHiveInterval    = "poll_interval" // 值：轮询间隔分钟数（默认 15）
+	CloudSettingKeyHiveInterval          = "poll_interval"         // 值：轮询间隔分钟数（默认 15）
+	CloudSettingKeyHiveCheckinEnabled    = "daily_checkin_enabled" // 值："true"/"false" 主账号每日自动签到
+	CloudSettingKeyHiveCheckinMode       = "daily_checkin_mode"    // 值：daily/gamble 主账号签到模式
+	CloudSettingKeyHiveCheckinHour       = "daily_checkin_hour"    // 值：0-23 主账号签到小时
+	CloudSettingKeyHiveSubCheckinEnabled = "sub_checkin_enabled"   // 值："true"/"false" 子账号每日自动签到
+	CloudSettingKeyHiveSubCheckinMode    = "sub_checkin_mode"      // 值：daily/gamble 子账号签到模式
+	CloudSettingKeyHiveSubCheckinHour    = "sub_checkin_hour"      // 值：0-23 子账号签到小时
+	CloudSettingKeyHiveMaxPoints         = "max_points"            // 值：解锁积分上限（0=不限）
 )
 
 // SaveDirSetting 转存目录设置值
@@ -240,24 +245,6 @@ func ListSubscriptionsByResourceSource(resourceSource string) ([]CloudSubscripti
 	return list, nil
 }
 
-// GetHiveAPIKey 获取影巢 API Key
-func GetHiveAPIKey() string {
-	v, err := GetCloudSetting("hdhive", CloudSettingKeyHiveAPIKey)
-	if err != nil || v == "" {
-		return ""
-	}
-	return v
-}
-
-// GetHiveAllowPoints 是否允许扣积分解锁影巢收费资源（默认允许）
-func GetHiveAllowPoints() bool {
-	v, err := GetCloudSetting("hdhive", CloudSettingKeyHiveAllowPoints)
-	if err != nil || v == "" {
-		return true
-	}
-	return strings.TrimSpace(v) == "true"
-}
-
 // GetHivePollInterval 影巢轮询间隔（分钟，默认 15）
 func GetHivePollInterval() int {
 	v, err := GetCloudSetting("hdhive", CloudSettingKeyHiveInterval)
@@ -272,6 +259,78 @@ func GetHivePollInterval() int {
 		return 1440
 	}
 	return n
+}
+
+// hiveSettingBool 影巢布尔值设置读取（带默认值）
+func hiveSettingBool(key string, def bool) bool {
+	v, err := GetCloudSetting("hdhive", key)
+	if err != nil || v == "" {
+		return def
+	}
+	return strings.TrimSpace(v) == "true"
+}
+
+// hiveSettingInt 影巢整数设置读取（带默认值及范围限制）
+func hiveSettingInt(key string, def, min, max int) int {
+	v, err := GetCloudSetting("hdhive", key)
+	if err != nil || v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return def
+	}
+	if n < min {
+		return min
+	}
+	if n > max {
+		return max
+	}
+	return n
+}
+
+// hiveSettingStr 影巢字符串设置读取（带默认值）
+func hiveSettingStr(key, def string) string {
+	v, err := GetCloudSetting("hdhive", key)
+	if err != nil || v == "" {
+		return def
+	}
+	return strings.TrimSpace(v)
+}
+
+// GetHiveCheckinEnabled 主账号每日自动签到是否启用（默认启用）
+func GetHiveCheckinEnabled() bool {
+	return hiveSettingBool(CloudSettingKeyHiveCheckinEnabled, true)
+}
+
+// GetHiveCheckinMode 主账号签到模式（默认 daily）
+func GetHiveCheckinMode() string {
+	return hiveSettingStr(CloudSettingKeyHiveCheckinMode, "daily")
+}
+
+// GetHiveCheckinHour 主账号签到小时（默认 8，范围 0-23）
+func GetHiveCheckinHour() int {
+	return hiveSettingInt(CloudSettingKeyHiveCheckinHour, 8, 0, 23)
+}
+
+// GetHiveSubCheckinEnabled 子账号每日自动签到是否启用（默认启用）
+func GetHiveSubCheckinEnabled() bool {
+	return hiveSettingBool(CloudSettingKeyHiveSubCheckinEnabled, true)
+}
+
+// GetHiveSubCheckinMode 子账号签到模式（默认 daily）
+func GetHiveSubCheckinMode() string {
+	return hiveSettingStr(CloudSettingKeyHiveSubCheckinMode, "daily")
+}
+
+// GetHiveSubCheckinHour 子账号签到小时（默认 8，范围 0-23）
+func GetHiveSubCheckinHour() int {
+	return hiveSettingInt(CloudSettingKeyHiveSubCheckinHour, 8, 0, 23)
+}
+
+// GetHiveMaxPoints 解锁积分上限（0=不限，默认 0）
+func GetHiveMaxPoints() int {
+	return hiveSettingInt(CloudSettingKeyHiveMaxPoints, 0, 0, 999999)
 }
 
 // SaveCloudSubscription 创建或更新订阅

@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"diy-strm/internal/db"
-	"diy-strm/internal/hdhive"
 	"diy-strm/internal/models"
 )
 
@@ -290,40 +289,35 @@ func RunSubscriptionAPI(c *gin.Context) {
 }
 
 // GetHiveSettingsAPI 获取影巢设置（GET /cloud/hive/settings）
+// 与 tgto123 一致：自动签到（主/子账号的开关/时间/模式）、订阅引擎轮询间隔、解锁积分上限。
 func GetHiveSettingsAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "查询成功", Data: gin.H{
-		"api_key":       models.GetHiveAPIKey(),
-		"allow_points":  models.GetHiveAllowPoints(),
-		"poll_interval": models.GetHivePollInterval(),
+		"poll_interval":        models.GetHivePollInterval(),
+		"daily_checkin_enabled": models.GetHiveCheckinEnabled(),
+		"daily_checkin_mode":    models.GetHiveCheckinMode(),
+		"daily_checkin_hour":    models.GetHiveCheckinHour(),
+		"sub_checkin_enabled":   models.GetHiveSubCheckinEnabled(),
+		"sub_checkin_mode":      models.GetHiveSubCheckinMode(),
+		"sub_checkin_hour":      models.GetHiveSubCheckinHour(),
+		"max_points":            models.GetHiveMaxPoints(),
 	}})
 }
 
-// SetHiveSettingsAPI 保存影巢设置（POST /cloud/hive/settings {api_key, allow_points, poll_interval}）
+// SetHiveSettingsAPI 保存影巢设置（POST /cloud/hive/settings）
 func SetHiveSettingsAPI(c *gin.Context) {
 	var req struct {
-		APIKey       string `json:"api_key"`
-		AllowPoints  *bool  `json:"allow_points"`
-		PollInterval int    `json:"poll_interval"`
+		PollInterval       int    `json:"poll_interval"`
+		DailyCheckinEnabled *bool `json:"daily_checkin_enabled"`
+		DailyCheckinMode   string `json:"daily_checkin_mode"`
+		DailyCheckinHour   int    `json:"daily_checkin_hour"`
+		SubCheckinEnabled  *bool  `json:"sub_checkin_enabled"`
+		SubCheckinMode     string `json:"sub_checkin_mode"`
+		SubCheckinHour     int    `json:"sub_checkin_hour"`
+		MaxPoints          int    `json:"max_points"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error(), Data: nil})
 		return
-	}
-	if strings.TrimSpace(req.APIKey) != "" {
-		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveAPIKey, strings.TrimSpace(req.APIKey)); err != nil {
-			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存 API Key 失败：" + err.Error(), Data: nil})
-			return
-		}
-	}
-	if req.AllowPoints != nil {
-		val := "false"
-		if *req.AllowPoints {
-			val = "true"
-		}
-		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveAllowPoints, val); err != nil {
-			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存解锁策略失败：" + err.Error(), Data: nil})
-			return
-		}
 	}
 	if req.PollInterval > 0 {
 		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveInterval, strconv.Itoa(req.PollInterval)); err != nil {
@@ -331,24 +325,49 @@ func SetHiveSettingsAPI(c *gin.Context) {
 			return
 		}
 	}
+	if req.DailyCheckinEnabled != nil {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveCheckinEnabled, strconv.FormatBool(*req.DailyCheckinEnabled)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存主账号签到设置失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.DailyCheckinMode == "daily" || req.DailyCheckinMode == "gamble" {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveCheckinMode, req.DailyCheckinMode); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存主账号签到模式失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.DailyCheckinHour >= 0 && req.DailyCheckinHour <= 23 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveCheckinHour, strconv.Itoa(req.DailyCheckinHour)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存主账号签到时间失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.SubCheckinEnabled != nil {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveSubCheckinEnabled, strconv.FormatBool(*req.SubCheckinEnabled)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存子账号签到设置失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.SubCheckinMode == "daily" || req.SubCheckinMode == "gamble" {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveSubCheckinMode, req.SubCheckinMode); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存子账号签到模式失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.SubCheckinHour >= 0 && req.SubCheckinHour <= 23 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveSubCheckinHour, strconv.Itoa(req.SubCheckinHour)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存子账号签到时间失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.MaxPoints >= 0 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveMaxPoints, strconv.Itoa(req.MaxPoints)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存解锁积分上限失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "影巢设置已保存", Data: nil})
-}
-
-// TestHiveConnectionAPI 测试影巢 API Key 连通性（POST /cloud/hive/test）
-func TestHiveConnectionAPI(c *gin.Context) {
-	apiKey := models.GetHiveAPIKey()
-	if apiKey == "" {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "未配置影巢 API Key", Data: nil})
-		return
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-	defer cancel()
-	client := hdhive.NewClient(apiKey)
-	if err := client.Ping(ctx); err != nil {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "连接失败：" + err.Error(), Data: nil})
-		return
-	}
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "连接成功，API Key 有效", Data: nil})
 }
 
 // ListChannelJobsPlaceholder 占位：订阅任务状态列表

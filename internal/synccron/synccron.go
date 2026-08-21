@@ -351,8 +351,9 @@ func InitCron() {
 		}
 	})
 
-	GlobalCron.AddFunc("0 8 * * *", func() {
-		// 每天 8 点影巢（HDHive）OAuth 每日签到
+	GlobalCron.AddFunc("0 * * * *", func() {
+		// 影巢（HDHive）OAuth 每日签到：每小时触发一次，
+		// 由处理方按设置（启用开关 / 签到时间 / 签到模式，与 tgto123 的 HDHIVE_CHECKIN_* 一致）决定是否执行
 		helpers.Publish(helpers.HiveDailyCheckinEvent, nil)
 	})
 
