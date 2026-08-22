@@ -365,8 +365,10 @@ func parseSymediaResponse(text []byte, statusCode int) *OAuthAPIResponse {
 	out.Message = env.Message
 	if len(env.Data) > 0 {
 		out.Data = env.Data
-	} else if out.Success && len(text) > 0 && env.Success == nil {
-		// 无 data 字段的平铺对象/数组（如 {"authorized":true,...}），整体作为 data
+	} else if out.Success && len(text) > 0 {
+		// 无 data 字段的平铺对象/数组（如 {"authorize_url":...,"success":true}、
+		// {"authorized":true,...}），整体作为 data。注意成功响应即使带 success
+		// 字段（平铺格式）也可能无 data，需一并兜底。
 		out.Data = text
 	}
 	return out

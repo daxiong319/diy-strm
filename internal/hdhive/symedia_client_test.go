@@ -111,7 +111,8 @@ func TestSymediaHandshakeAndSignedRequest(t *testing.T) {
 				t.Errorf("X-Proxy-User-Key = %q，期望 k1", r.Header.Get("X-Proxy-User-Key"))
 			}
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"success":true,"data":{"authorize_url":"https://hdhive.com/authorize?x=1"}}`)
+			// 真实服务器返回平铺格式（无 data 信封）：authorize_url 在顶层
+			fmt.Fprint(w, `{"authorize_url":"https://hdhive.com/authorize?x=1","success":true}`)
 			return
 		}
 		http.NotFound(w, r)
