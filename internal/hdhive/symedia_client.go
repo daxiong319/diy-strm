@@ -279,8 +279,12 @@ func (c *SymediaClient) request(ctx context.Context, method, path string, payloa
 		c.mu.Unlock()
 
 		bodyHash := bodySHA256(bodyBytes)
+		// 签名路径必须与服务端收到的 URL 完全一致：含 query（如 /api/v1/oauth/start?callback=...）
 		parsed, _ := url.Parse(path)
 		pathURL := parsed.Path
+		if parsed.RawQuery != "" {
+			pathURL += "?" + parsed.RawQuery
+		}
 		if pathURL == "" {
 			pathURL = path
 		}

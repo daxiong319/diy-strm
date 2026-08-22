@@ -5,7 +5,9 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -45,15 +47,25 @@ func TestSymediaProofFormat(t *testing.T) {
 	}
 }
 
-// TestSymediaHandshakeAndSignedRequest 端到端：mock 服务器验证握手请求与签名头、序列号递增
+// TestSymediaHandshakeAndSignedRequest 端到端：mock 服务器按真实协议重建会话密钥，
+// 校验签名路径必须含 query（/api/v1/oauth/start?callback=...），并验证序列号递增
 func TestSymediaHandshakeAndSignedRequest(t *testing.T) {
 	var mu sync.Mutex
 	seqs := []string{}
 	handshakes := 0
+	var clientNonce string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/auth/session" {
 			handshakes++
+			var req struct {
+				ClientNonce string `json:"client_nonce"`
+			}
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &req)
+			mu.Lock()
+			clientNonce = req.ClientNonce
+			mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			mac := hmac.New(sha256.New, []byte("test-secret"))
 			mac.Write([]byte("hdhive-openproxy-proof\nserver\nsrv-nonce"))
@@ -61,7 +73,34 @@ func TestSymediaHandshakeAndSignedRequest(t *testing.T) {
 			fmt.Fprintf(w, `{"success":true,"data":{"session_id":"sess-abc","server_nonce":"srv-nonce","server_proof":"%s","expires_in":21600}}`, serverProof)
 			return
 		}
-		if r.URL.Path == "/api/v1/open/u1/resources/movie/123" {
+		if r.URL.Path == "/api/v1/oauth/start" {
+			// 重建会话密钥（与客户端同一派生逻辑），校验签名与「含 query 的完整路径」一致
+			mu.Lock()
+			cn := clientNonce
+			mu.Unlock()
+			salt := []byte("hdhive-openproxy-session:" + cn + ":srv-nonce")
+			key := hkdfSHA256([]byte("test-secret"), salt, []byte("hdhive-openproxy-session-key"), 32)
+			pathWithQuery := r.URL.Path
+			if r.URL.RawQuery != "" {
+				pathWithQuery += "?" + r.URL.RawQuery
+			}
+			msg := strings.Join([]string{
+				"POST", pathWithQuery,
+				r.Header.Get("X-Proxy-Session"),
+				r.Header.Get("X-Proxy-Sequence"),
+				r.Header.Get("X-Proxy-Body-SHA256"),
+				r.Header.Get("X-Proxy-User-Key"),
+			}, "\n")
+			expect := hmac.New(sha256.New, key)
+			expect.Write([]byte(msg))
+			wantSig := hex.EncodeToString(expect.Sum(nil))
+			if got := r.Header.Get("X-Proxy-Signature"); got != wantSig {
+				t.Errorf("签名校验失败：\n  got=%s\n want=%s\n（签名路径必须含 query）", got, wantSig)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				fmt.Fprint(w, `{"success":false,"message":"密钥错误或签名无效"}`)
+				return
+			}
 			mu.Lock()
 			seqs = append(seqs, r.Header.Get("X-Proxy-Sequence"))
 			mu.Unlock()
@@ -71,14 +110,8 @@ func TestSymediaHandshakeAndSignedRequest(t *testing.T) {
 			if r.Header.Get("X-Proxy-User-Key") != "k1" {
 				t.Errorf("X-Proxy-User-Key = %q，期望 k1", r.Header.Get("X-Proxy-User-Key"))
 			}
-			if r.Header.Get("X-Proxy-Body-SHA256") == "" {
-				t.Error("X-Proxy-Body-SHA256 为空")
-			}
-			if r.Header.Get("X-Proxy-Signature") == "" {
-				t.Error("X-Proxy-Signature 为空")
-			}
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"success":true,"data":[{"slug":"s1"}]}`)
+			fmt.Fprint(w, `{"success":true,"data":{"authorize_url":"https://hdhive.com/authorize?x=1"}}`)
 			return
 		}
 		http.NotFound(w, r)
@@ -89,20 +122,20 @@ func TestSymediaHandshakeAndSignedRequest(t *testing.T) {
 	c.BaseURL = srv.URL
 	c.secret = []byte("test-secret")
 
-	resp, err := c.GetResources(context.Background(), "movie", "123")
+	authURL, err := c.StartOAuth(context.Background(), "http://127.0.0.1:8094/hive-symedia/callback")
 	if err != nil {
-		t.Fatalf("GetResources 失败：%v", err)
+		t.Fatalf("StartOAuth 失败：%v", err)
 	}
-	if !resp.Success {
-		t.Fatalf("GetResources 未成功：%s", resp.Message)
+	if authURL == "" {
+		t.Fatal("StartOAuth 返回空 authorize_url")
 	}
 	if handshakes != 1 {
 		t.Fatalf("握手次数 %d，期望 1（会话应复用）", handshakes)
 	}
 
 	// 再请求一次：序列号递增，不重复握手
-	if _, err := c.GetResources(context.Background(), "movie", "123"); err != nil {
-		t.Fatalf("第二次 GetResources 失败：%v", err)
+	if _, err := c.StartOAuth(context.Background(), "http://127.0.0.1:8094/hive-symedia/callback"); err != nil {
+		t.Fatalf("第二次 StartOAuth 失败：%v", err)
 	}
 	if handshakes != 1 {
 		t.Fatalf("第二次请求后握手次数 %d，期望仍为 1", handshakes)
