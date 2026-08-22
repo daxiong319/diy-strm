@@ -24,8 +24,10 @@ type HiveOAuthAccount struct {
 	Label             string     `gorm:"size:80" json:"label"` // 账号标签（主账号/小号1）
 	IsMain            bool       `gorm:"index" json:"is_main"` // 是否主账号（每库仅一条）
 	Enabled           bool       `gorm:"default:true" json:"enabled"`
-	Channel           string     `gorm:"size:16;index;default:tgtodrive" json:"channel"` // 通道：tgtodrive（默认，install_id 签名中转）/ official（官方 OpenAPI）
+	Channel           string     `gorm:"size:16;index;default:tgtodrive" json:"channel"` // 通道：symedia（主渠道）/ tgtodrive（备用渠道，默认）
 	InstallID         string     `gorm:"size:128" json:"-"` // 独立 install_id（tgtodrive 通道，不对外暴露）
+	SymediaUserID     string     `gorm:"size:64" json:"-"`  // hdhive 用户 ID（symedia 通道，OAuth 回调回传）
+	ProxyUserKey      string     `gorm:"type:text" json:"-"` // symedia 通道用户密钥（OAuth 回调回传）
 	AccessToken       string     `gorm:"type:text" json:"-"`  // 官方通道用户 Access Token
 	RefreshToken      string     `gorm:"type:text" json:"-"`  // 官方通道 Refresh Token
 	TokenExpiresAt    *time.Time `json:"token_expires_at"`    // 官方通道 Access Token 过期时间
@@ -104,16 +106,16 @@ func GetHiveAccountByID(id uint) (*HiveOAuthAccount, error) {
 }
 
 // SaveHiveAccount 保存账号
-// FindOrCreateHiveOfficialAccount 获取或创建官方通道账号（channel=official 固定一条）
-func FindOrCreateHiveOfficialAccount(label string) *HiveOAuthAccount {
+// FindOrCreateHiveSymediaAccount 获取或创建 symedia 通道账号（channel=symedia，唯一一条）
+func FindOrCreateHiveSymediaAccount(label string) *HiveOAuthAccount {
 	var acc HiveOAuthAccount
-	if err := db.Db.Where("channel = ?", HiveChannelOfficial).First(&acc).Error; err == nil {
+	if err := db.Db.Where("channel = ?", HiveChannelSymedia).First(&acc).Error; err == nil {
 		return &acc
 	}
 	acc = HiveOAuthAccount{
-		Label:    label,
-		Channel:  HiveChannelOfficial,
-		Enabled:  true,
+		Label:   label,
+		Channel: HiveChannelSymedia,
+		Enabled: true,
 	}
 	_ = db.Db.Create(&acc).Error
 	return &acc

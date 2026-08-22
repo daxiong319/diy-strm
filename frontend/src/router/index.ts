@@ -164,9 +164,9 @@ const AppMonitorHistory = createAsyncRouteComponent(
   'AppMonitorHistory',
   () => import('@/components/AppMonitorHistory.vue'),
 )
-const HiveOfficialCallback = createAsyncRouteComponent(
-  'HiveOfficialCallback',
-  () => import('@/components/HiveOfficialCallback.vue'),
+const HiveSymediaCallback = createAsyncRouteComponent(
+  'HiveSymediaCallback',
+  () => import('@/components/HiveSymediaCallback.vue'),
 )
 const AppDiscover = createAsyncRouteComponent('AppDiscover', () => import('@/components/AppDiscover.vue'))
 
@@ -421,11 +421,11 @@ const routes = [
     },
   },
   {
-    path: '/hive-official/callback',
-    name: 'hive-official-callback',
-    component: HiveOfficialCallback,
+    path: '/hive-symedia/callback',
+    name: 'hive-symedia-callback',
+    component: HiveSymediaCallback,
     meta: {
-      title: '影巢官方授权回调',
+      title: '影巢授权回调',
       requiresAuth: false,
       showInMenu: false,
     },

@@ -55,6 +55,7 @@ func ResolveCheckinMode(checkinMode string) CheckinMode {
 
 // MeUserInfo /api/me 返回的用户信息（关键字段）
 type MeUserInfo struct {
+	Username                string   `json:"username"` // symedia 通道 status 返回
 	Nickname                string   `json:"nickname"`
 	AvatarURL               string   `json:"avatar_url"`
 	Points                  float64  `json:"points"`
@@ -77,8 +78,12 @@ func FormatUserSnapshot(user *MeUserInfo) string {
 	if user == nil {
 		return ""
 	}
+	displayName := user.Nickname
+	if displayName == "" {
+		displayName = user.Username
+	}
 	lines := []string{
-		fmt.Sprintf("账号: %s", user.Nickname),
+		fmt.Sprintf("账号: %s", displayName),
 		fmt.Sprintf("等级: %s", formatLevel(user)),
 		fmt.Sprintf("积分: %s", formatNumber(user.Points, "")),
 		fmt.Sprintf("签到: %s，累计 %s", formatCheckin(user), formatNumber(float64(user.CheckinDaysTotal), "天")),

@@ -3,7 +3,7 @@
     <el-card shadow="never" class="callback-card">
       <div v-if="processing" class="callback-status">
         <el-icon class="is-loading"><Loading /></el-icon>
-        <p>正在完成影巢官方通道授权…</p>
+        <p>正在完成影巢授权…</p>
       </div>
       <div v-else-if="done" class="callback-status success">
         <el-icon color="var(--el-color-success)"><CircleCheckFilled /></el-icon>
@@ -22,7 +22,6 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { Loading, CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
-import { SERVER_URL } from '@/const'
 import { useHttpClient } from '@/http/client'
 
 const http = useHttpClient()
@@ -33,19 +32,19 @@ const message = ref('')
 
 let handled = false
 
-const finish = async (code: string, state: string, redirectUri: string) => {
+const finish = async (userid: string, proxyUserKey: string, refreshExpiresAt?: number) => {
   if (handled) return
   handled = true
   processing.value = true
   try {
-    const resp = await http.post(`${SERVER_URL}/cloud/hive/official/callback`, {
-      code,
-      state,
-      redirect_uri: redirectUri,
+    const resp = await http.post('/api/cloud/hive/symedia/callback', {
+      userid,
+      proxy_user_key: proxyUserKey,
+      refresh_expires_at: refreshExpiresAt || 0,
     })
     if (resp?.data?.code === 200) {
       done.value = true
-      message.value = '官方通道授权成功'
+      message.value = resp.data.message || '主渠道授权成功'
     } else {
       message.value = resp?.data?.message || '授权失败'
     }
@@ -56,33 +55,23 @@ const finish = async (code: string, state: string, redirectUri: string) => {
   }
 }
 
-const onMessage = (ev: MessageEvent) => {
-  // hdhive 授权页 postMessage 回传 {code, state}（回调模式：页面消息）
-  const d = ev?.data
-  if (d && typeof d === 'object' && d.code && d.state) {
-    finish(String(d.code), String(d.state), window.location.origin + '/hive-official/callback')
-  }
-}
-
 onMounted(() => {
-  window.addEventListener('message', onMessage)
-  // 降级 redirect：URL 带 code/state 时直接处理
-  const code = route.query.code as string
-  const state = route.query.state as string
-  if (code && state) {
-    finish(code, state, window.location.origin + '/hive-official/callback')
+  // symedia 服务端授权完成后回跳 callback 并带 userid/proxy_user_key 参数
+  const userid = (route.query.userid as string) || (route.query.user_id as string) || ''
+  const proxyUserKey = (route.query.proxy_user_key as string) || ''
+  if (userid && proxyUserKey) {
+    finish(userid, proxyUserKey, Number(route.query.refresh_expires_at || 0))
   } else {
-    // 等待 postMessage（弹窗模式）；5 秒无消息提示
-    setTimeout(() => {
+    // 等待 postMessage（弹窗模式）；8 秒无消息提示
+    const timer = setTimeout(() => {
       if (!handled) {
         processing.value = false
         message.value = '未收到授权结果，请重试或改用电脑浏览器完成授权'
       }
-    }, 5000)
+    }, 8000)
+    onUnmounted(() => clearTimeout(timer))
   }
 })
-
-onUnmounted(() => window.removeEventListener('message', onMessage))
 </script>
 
 <style scoped>
@@ -103,5 +92,8 @@ onUnmounted(() => window.removeEventListener('message', onMessage))
 .callback-status .hint {
   color: var(--el-text-color-secondary);
   font-size: 13px;
+}
+.is-loading {
+  font-size: 32px;
 }
 </style>

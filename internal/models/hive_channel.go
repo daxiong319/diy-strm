@@ -4,84 +4,33 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"time"
 
 	"diy-strm/internal/db"
 	"diy-strm/internal/hdhive"
 )
 
 // ---------------------------------------------------------------------------
-// 影巢双通道：tgtodrive 中转（install_id 签名）与官方 OpenAPI（X-API-Key + Bearer）
+// 影巢双通道：symedia 中转（主渠道，握手+会话签名）与 tgtodrive 中转（备用渠道，install_id 签名）
 // ---------------------------------------------------------------------------
 
-// 官方通道配置存于 cloud_settings（source=hdhive）
+// HiveChannelSymedia / HiveChannelTgtodrive 通道常量
 const (
-	CloudSettingKeyHiveOfficialClientID   = "official_client_id"
-	CloudSettingKeyHiveOfficialAppSecret  = "official_app_secret"
-	CloudSettingKeyHiveOfficialBaseURL    = "official_base_url"
-	CloudSettingKeyHiveOfficialRedirectURI = "official_redirect_uri"
+	HiveChannelSymedia   = "symedia"   // 主渠道：hdhive.symedia.top（会话握手 + HMAC 签名）
+	HiveChannelTgtodrive = "tgtodrive" // 备用渠道：hdhive-open.tgtodrive.top（install_id 签名，tgto123 同款）
 )
 
-// HiveChannelTgtodrive / HiveChannelOfficial 通道常量
-const (
-	HiveChannelTgtodrive = "tgtodrive"
-	HiveChannelOfficial  = "official"
-)
-
-// GetHiveOfficialConfig 读取官方通道配置
-func GetHiveOfficialConfig() hdhive.OfficialConfig {
-	get := func(key string) string {
-		v, err := GetCloudSetting("hdhive", key)
-		if err != nil {
-			return ""
-		}
-		return v
+// hiveChannelPriority 通道优先级（0 优先，用于主备调度：symedia 主渠道在前）
+func hiveChannelPriority(ch string) int {
+	if ch == HiveChannelSymedia {
+		return 0
 	}
-	return hdhive.OfficialConfig{
-		BaseURL:     get(CloudSettingKeyHiveOfficialBaseURL),
-		ClientID:    get(CloudSettingKeyHiveOfficialClientID),
-		AppSecret:   get(CloudSettingKeyHiveOfficialAppSecret),
-		RedirectURI: get(CloudSettingKeyHiveOfficialRedirectURI),
-	}
-}
-
-// SetHiveOfficialConfig 保存官方通道配置（空字段跳过）
-func SetHiveOfficialConfig(clientID, appSecret, baseURL, redirectURI string) error {
-	pairs := map[string]string{
-		CloudSettingKeyHiveOfficialClientID:    clientID,
-		CloudSettingKeyHiveOfficialAppSecret:   appSecret,
-		CloudSettingKeyHiveOfficialBaseURL:     baseURL,
-		CloudSettingKeyHiveOfficialRedirectURI: redirectURI,
-	}
-	for k, v := range pairs {
-		if v == "" {
-			continue
-		}
-		if err := SetCloudSetting("hdhive", k, v); err != nil {
-			return err
-		}
-	}
-	return nil
+	return 1
 }
 
 // HiveClientForAccount 按账号通道构建客户端
-// official 通道注入账号 token，并在刷新成功后回写数据库
 func HiveClientForAccount(acc *HiveOAuthAccount) hdhive.ChannelClient {
-	if acc != nil && acc.Channel == HiveChannelOfficial {
-		cfg := GetHiveOfficialConfig()
-		client := hdhive.NewOfficialClient(cfg)
-		client.AccessToken = acc.AccessToken
-		client.RefreshToken = acc.RefreshToken
-		client.OnTokenRefreshed = func(access, refresh string, expiresIn int) {
-			acc.AccessToken = access
-			acc.RefreshToken = refresh
-			if expiresIn > 0 {
-				t := time.Now().Add(time.Duration(expiresIn) * time.Second)
-				acc.TokenExpiresAt = &t
-			}
-			_ = db.Db.Save(acc).Error
-		}
-		return client
+	if acc != nil && acc.Channel == HiveChannelSymedia {
+		return hdhive.NewSymediaClient(acc.SymediaUserID, acc.ProxyUserKey)
 	}
 	return hdhive.NewOAuthClient(acc.InstallID)
 }
@@ -93,7 +42,7 @@ func HiveClientForAccount(acc *HiveOAuthAccount) hdhive.ChannelClient {
 var hiveChannelHealthMu sync.Mutex
 var hiveChannelFails = map[string]int{} // channel -> 连续失败次数
 
-// hiveChannelFailbadChannel 记录通道失败
+// hiveChannelFailed 记录通道失败
 func hiveChannelFailed(channel string) {
 	hiveChannelHealthMu.Lock()
 	defer hiveChannelHealthMu.Unlock()
@@ -112,7 +61,7 @@ func HiveChannelHealth() map[string]int {
 	hiveChannelHealthMu.Lock()
 	defer hiveChannelHealthMu.Unlock()
 	out := map[string]int{}
-	for _, ch := range []string{HiveChannelTgtodrive, HiveChannelOfficial} {
+	for _, ch := range []string{HiveChannelSymedia, HiveChannelTgtodrive} {
 		out[ch] = hiveChannelFails[ch]
 	}
 	return out
@@ -125,8 +74,20 @@ func HasAuthorizedHiveChannelAccount() bool {
 	return cnt > 0
 }
 
+// hiveChannelUsable 通道是否参与查询调度（symedia/tgtodrive；official 等历史通道不再使用）
+func hiveChannelUsable(ch string) bool {
+	switch ch {
+	case HiveChannelSymedia, HiveChannelTgtodrive:
+		return true
+	case "":
+		return true // 默认 tgtodrive
+	}
+	return false
+}
+
 // ListHiveAccountsForQuery 返回可用于资源查询的账号（启用+已授权），
-// 按通道健康度排序（连续失败少的通道优先；同通道内主账号在前），保证双通道互为备份
+// 按主备调度排序：通道优先级（symedia 主渠道在前）→ 通道失败数升序 → 主账号在前 → id 升序，
+// 保证主渠道故障时自动降级到备用渠道
 func ListHiveAccountsForQuery() []*HiveOAuthAccount {
 	var accs []HiveOAuthAccount
 	if err := db.Db.Where("enabled = ? AND authorized = ?", true, true).
@@ -142,16 +103,21 @@ func ListHiveAccountsForQuery() []*HiveOAuthAccount {
 	out := make([]*HiveOAuthAccount, 0, len(accs))
 	for i := range accs {
 		a := accs[i]
+		if !hiveChannelUsable(a.Channel) {
+			continue
+		}
 		if a.Channel == "" {
 			a.Channel = HiveChannelTgtodrive
 		}
 		out = append(out, &a)
 	}
-	// 稳定排序：通道失败数升序 → is_main 优先 → id 升序
+	// 稳定排序：通道优先级升序 → 通道失败数升序 → is_main 优先 → id 升序
 	for i := 0; i < len(out); i++ {
 		for j := i + 1; j < len(out); j++ {
+			pi, pj := hiveChannelPriority(out[i].Channel), hiveChannelPriority(out[j].Channel)
 			fi, fj := fails[out[i].Channel], fails[out[j].Channel]
-			if fj < fi || (fj == fi && out[j].IsMain && !out[i].IsMain) {
+			if pj < pi || (pj == pi && fj < fi) ||
+				(pj == pi && fj == fi && out[j].IsMain && !out[i].IsMain) {
 				out[i], out[j] = out[j], out[i]
 			}
 		}
@@ -166,8 +132,8 @@ type HiveQueryResult struct {
 	Resp    *hdhive.OAuthAPIResponse
 }
 
-// HiveQueryResourcesWithFailover 双通道资源查询：按健康度逐账号尝试，
-// 网络错误 / HTTP≥500 / 401（通道级故障）时自动切换下一个通道；
+// HiveQueryResourcesWithFailover 双通道资源查询：按主备调度逐账号尝试，
+// 网络错误（含超时）/ HTTP≥500 / 401（通道级故障）时自动切换下一个通道；
 // 业务失败（success=false 但 HTTP 200）视为有效结果直接返回
 func HiveQueryResourcesWithFailover(ctx context.Context, mediaType, tmdbID string) (*HiveQueryResult, error) {
 	accs := ListHiveAccountsForQuery()

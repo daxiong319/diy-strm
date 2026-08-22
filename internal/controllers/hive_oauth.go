@@ -20,16 +20,31 @@ import (
 // OAuth 授权状态
 // ---------------------------------------------------------------------------
 
-// hiveAuthURLFor tgtodrive 通道账号生成授权 URL；官方通道返回空（走官方授权入口）
-func hiveAuthURLFor(acc *models.HiveOAuthAccount) string {
-	if oc, ok := models.HiveClientForAccount(acc).(*hdhive.OAuthClient); ok {
-		return oc.BuildAuthURL()
+// hiveAuthURLFor 按账号通道生成授权 URL：
+// symedia 通道走会话握手 OAuth（回调指向本站 /hive-symedia/callback）；
+// tgtodrive 通道直接生成 install_id 签名授权链接
+func hiveAuthURLFor(ctx context.Context, acc *models.HiveOAuthAccount, origin string) (string, error) {
+	if sc, ok := models.HiveClientForAccount(acc).(*hdhive.SymediaClient); ok {
+		callback := ""
+		if origin != "" {
+			callback = strings.TrimRight(origin, "/") + "/hive-symedia/callback"
+		}
+		return sc.StartOAuth(ctx, callback)
 	}
-	return ""
+	if oc, ok := models.HiveClientForAccount(acc).(*hdhive.OAuthClient); ok {
+		return oc.BuildAuthURL(), nil
+	}
+	return "", nil
 }
 
-// hiveTokenStatusFor 按通道取 token 状态：官方通道以 Me 可达性代替
+// hiveTokenStatusFor 按通道取 token 状态：symedia 通道以 proxy_user_key 是否绑定代替，
+// tgtodrive 通道调 token/status
 func hiveTokenStatusFor(ctx context.Context, acc *models.HiveOAuthAccount, client hdhive.ChannelClient) (*hdhive.OAuthAPIResponse, error) {
+	if sc, ok := client.(*hdhive.SymediaClient); ok {
+		hasTok := sc.ProxyUserKey != ""
+		expIn := int64(0)
+		return &hdhive.OAuthAPIResponse{Success: true, HasAccessToken: &hasTok, ExpiresInSeconds: &expIn}, nil
+	}
 	if oc, ok := client.(*hdhive.OAuthClient); ok {
 		return oc.TokenStatus(ctx)
 	}
@@ -51,7 +66,16 @@ func HiveOAuthStatusAPI(c *gin.Context) {
 		"account": pub,
 	}
 	if !pub.Authorized {
-		data["auth_url"] = hiveAuthURLFor(acc)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+		defer cancel()
+		origin := c.Request.Header.Get("Origin")
+		if origin == "" {
+			origin = "http://" + c.Request.Host
+		}
+		authURL, aerr := hiveAuthURLFor(ctx, acc, origin)
+		if aerr == nil {
+			data["auth_url"] = authURL
+		}
 	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "查询成功", Data: data})
 }
@@ -146,11 +170,16 @@ func HiveOAuthRefreshAPI(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 	pub, ok, msg := HiveOAuthStatusByAccount(ctx, acc)
+	origin := c.Request.Header.Get("Origin")
+	if origin == "" {
+		origin = "http://" + c.Request.Host
+	}
+	authURL, _ := hiveAuthURLFor(ctx, acc, origin)
 	if !ok {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: msg, Data: gin.H{
 			"authorized": false,
 			"account":    pub,
-			"auth_url":   hiveAuthURLFor(acc),
+			"auth_url":   authURL,
 		}})
 		return
 	}
@@ -164,7 +193,18 @@ func HiveOAuthAuthURLAPI(c *gin.Context) {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取主账号失败：" + err.Error(), Data: nil})
 		return
 	}
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "生成成功", Data: gin.H{"auth_url": hiveAuthURLFor(acc)}})
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	origin := c.Request.Header.Get("Origin")
+	if origin == "" {
+		origin = "http://" + c.Request.Host
+	}
+	authURL, aerr := hiveAuthURLFor(ctx, acc, origin)
+	if aerr != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "生成授权链接失败：" + aerr.Error(), Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "生成成功", Data: gin.H{"auth_url": authURL}})
 }
 
 // ---------------------------------------------------------------------------
@@ -401,7 +441,18 @@ func HiveSubAccountAuthURLAPI(c *gin.Context) {
 		c.JSON(http.StatusNotFound, APIResponse[any]{Code: BadRequest, Message: "账号不存在", Data: nil})
 		return
 	}
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "生成成功", Data: gin.H{"auth_url": hiveAuthURLFor(acc)}})
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	origin := c.Request.Header.Get("Origin")
+	if origin == "" {
+		origin = "http://" + c.Request.Host
+	}
+	authURL, aerr := hiveAuthURLFor(ctx, acc, origin)
+	if aerr != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "生成授权链接失败：" + aerr.Error(), Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "生成成功", Data: gin.H{"auth_url": authURL}})
 }
 
 // HiveSubAccountRefreshAPI 刷新子账号状态（POST /cloud/hive/sub-accounts/:id/refresh）
@@ -419,11 +470,16 @@ func HiveSubAccountRefreshAPI(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 	pub, ok, msg := HiveOAuthStatusByAccount(ctx, acc)
+	origin := c.Request.Header.Get("Origin")
+	if origin == "" {
+		origin = "http://" + c.Request.Host
+	}
+	authURL, _ := hiveAuthURLFor(ctx, acc, origin)
 	if !ok {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: msg, Data: gin.H{
 			"authorized": false,
 			"account":    pub,
-			"auth_url":   hiveAuthURLFor(acc),
+			"auth_url":   authURL,
 		}})
 		return
 	}

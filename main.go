@@ -893,15 +893,18 @@ func setRouter(r *gin.Engine) {
 
 		// 影巢（HDHive）OAuth 授权与签到
 		api.GET("/cloud/hive/oauth/status", controllers.HiveOAuthStatusAPI)          // OAuth 授权状态
-		api.GET("/cloud/hive/official/config", controllers.HiveOfficialConfigAPI)   // 官方通道配置（脱敏）
-		api.POST("/cloud/hive/official/config", controllers.HiveOfficialConfigSaveAPI) // 保存官方通道配置
-		api.POST("/cloud/hive/official/test", controllers.HiveOfficialTestAPI)      // 官方通道连通性测试
-		api.POST("/cloud/hive/official/start", controllers.HiveOfficialStartAPI)    // 官方通道发起授权
-		api.POST("/cloud/hive/official/callback", controllers.HiveOfficialCallbackAPI) // 官方通道授权回调
 		api.POST("/cloud/hive/oauth/refresh", controllers.HiveOAuthRefreshAPI)       // 刷新授权状态
 		api.POST("/cloud/hive/oauth/auth-url", controllers.HiveOAuthAuthURLAPI)      // 生成授权 URL
 		api.POST("/cloud/hive/oauth/checkin", controllers.HiveCheckinAPI)            // 手动签到
 		api.POST("/cloud/hive/oauth/checkin-all", controllers.HiveCheckinAllAPI)     // 全部账号签到
+
+		// 影巢 symedia 主渠道（hdhive.symedia.top，与 tgtodrive 备用渠道互为备份）
+		api.GET("/cloud/hive/symedia/status", controllers.HiveSymediaStatusAPI)      // 主渠道状态 + 授权 URL
+		api.POST("/cloud/hive/symedia/start", controllers.HiveSymediaStartAPI)       // 发起授权
+		api.POST("/cloud/hive/symedia/callback", controllers.HiveSymediaCallbackAPI) // 授权回调落库
+		api.POST("/cloud/hive/symedia/refresh", controllers.HiveSymediaRefreshAPI)   // 刷新状态
+		api.POST("/cloud/hive/symedia/checkin", controllers.HiveSymediaCheckinAPI)   // 签到
+		api.POST("/cloud/hive/symedia/test", controllers.HiveSymediaTestAPI)         // 连通性测试
 
 		// 影巢子账号管理
 		api.GET("/cloud/hive/sub-accounts", controllers.HiveSubAccountsAPI)                     // 子账号列表

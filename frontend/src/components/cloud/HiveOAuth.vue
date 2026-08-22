@@ -1,14 +1,15 @@
 <template>
   <div class="main-content-container cloud-page">
-    <!-- 主账号 OAuth 授权 -->
+    <!-- 主渠道（symedia 中转，优先调度） -->
     <el-card shadow="never" class="cloud-card">
       <template #header>
         <div class="card-header">
-          <span>影巢 · OAuth 授权</span>
-          <span v-if="main.user" class="nickname">
-            <img v-if="main.user.avatar_url" :src="main.user.avatar_url" class="avatar" alt="" />
-            {{ main.user.nickname }}
-          </span>
+          <span>主渠道</span>
+          <div class="header-actions">
+            <el-tag size="small" :type="channelHealth.symedia === 0 ? 'success' : 'danger'">
+              主渠道{{ channelHealth.symedia === 0 ? '正常' : `连续失败 ${channelHealth.symedia} 次` }}
+            </el-tag>
+          </div>
         </div>
       </template>
 
@@ -16,7 +17,7 @@
         type="info"
         :closable="false"
         class="cloud-alert"
-        title="完成影巢 OAuth 授权后，可启用每日自动签到（普通/赌狗模式）。授权前请先到 hdhive.com 注册影巢账号。"
+        title="资源查询优先走主渠道；主渠道超时或故障时自动切换备用渠道。授权前请先到 hdhive.com 注册影巢账号。"
         show-icon
       />
 
@@ -27,8 +28,8 @@
       <template v-else>
         <!-- 未授权 -->
         <template v-if="!main.authorized">
-          <el-empty description="尚未完成影巢 OAuth 授权" :image-size="80">
-            <el-button type="primary" :loading="authing" @click="openAuth()">前往授权</el-button>
+          <el-empty description="尚未完成授权" :image-size="80">
+            <el-button type="primary" :loading="authing" @click="openAuth()">授权</el-button>
             <el-button :loading="refreshing" @click="refreshMain">刷新状态</el-button>
           </el-empty>
         </template>
@@ -37,7 +38,7 @@
         <template v-else>
           <el-descriptions :column="2" border class="user-snapshot">
             <el-descriptions-item label="账号">
-              {{ main.user?.nickname || '-' }}
+              {{ main.user?.nickname || main.user?.username || '-' }}
             </el-descriptions-item>
             <el-descriptions-item label="等级">
               {{ main.user?.level || '-' }}
@@ -73,17 +74,14 @@
       </template>
     </el-card>
 
-    <!-- 官方 OpenAPI 通道（与 tgtodrive 中转互为备份） -->
+    <!-- 备用渠道（tgtodrive 中转） -->
     <el-card shadow="never" class="cloud-card sub-card">
       <template #header>
         <div class="card-header">
-          <span>官方 OpenAPI 通道（备用通道）</span>
+          <span>备用渠道</span>
           <div class="header-actions">
-            <el-tag size="small" :type="officialHealth.tgtodrive === 0 ? 'success' : 'danger'">
-              中转通道{{ officialHealth.tgtodrive === 0 ? '正常' : `连续失败 ${officialHealth.tgtodrive} 次` }}
-            </el-tag>
-            <el-tag size="small" :type="officialHealth.official === 0 ? 'success' : 'danger'">
-              官方通道{{ officialHealth.official === 0 ? '正常' : `连续失败 ${officialHealth.official} 次` }}
+            <el-tag size="small" :type="channelHealth.tgtodrive === 0 ? 'success' : 'danger'">
+              备用渠道{{ channelHealth.tgtodrive === 0 ? '正常' : `连续失败 ${channelHealth.tgtodrive} 次` }}
             </el-tag>
           </div>
         </div>
@@ -93,43 +91,45 @@
         type="info"
         :closable="false"
         class="cloud-alert"
-        title="影巢订阅资源查询会在两个通道间自动切换：主通道失败（网络/服务异常）时自动改走另一通道。官方通道需在 hdhive.com「我的应用」注册 OpenAPI 应用并审核通过后填入 Client ID 与 Secret。"
+        title="主渠道超时或故障时自动切换备用渠道，不影响订阅与签到。"
         show-icon
       />
 
-      <el-form label-width="110px" class="official-form">
-        <el-row :gutter="12">
-          <el-col :span="12">
-            <el-form-item label="Client ID">
-              <el-input v-model="officialForm.client_id" placeholder="app_xxxxxxxxxxxxxxxx" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="应用 Secret">
-              <el-input v-model="officialForm.app_secret" :placeholder="officialForm._secret_masked || 'X-API-Key 密钥'" show-password />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-row :gutter="12">
-          <el-col :span="12">
-            <el-form-item label="Base URL">
-              <el-input v-model="officialForm.base_url" placeholder="默认 https://hdhive.com" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="回调地址">
-              <el-input v-model="officialForm.redirect_uri" placeholder="留空自动使用当前站点 /hive-official/callback" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <div class="action-row">
-          <el-button type="primary" :loading="officialSaving" @click="saveOfficial">保存配置</el-button>
-          <el-button :loading="officialTesting" @click="testOfficial">测试连通性</el-button>
-          <el-button type="success" :loading="officialStarting" :disabled="!officialConfigured" @click="startOfficialAuth">
-            发起官方授权
-          </el-button>
-        </div>
-      </el-form>
+      <div v-if="backupLoading" class="loading-box">
+        <el-skeleton :rows="3" animated />
+      </div>
+
+      <template v-else>
+        <!-- 未授权 -->
+        <template v-if="!backup.authorized">
+          <el-empty description="尚未完成授权" :image-size="80">
+            <el-button type="primary" :loading="backupAuthing" @click="openBackupAuth()">授权</el-button>
+            <el-button :loading="backupRefreshing" @click="refreshBackup">刷新状态</el-button>
+          </el-empty>
+        </template>
+
+        <!-- 已授权：用户快照 -->
+        <template v-else>
+          <el-descriptions :column="2" border class="user-snapshot">
+            <el-descriptions-item label="账号">
+              {{ backup.user?.nickname || backup.user?.username || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="等级">
+              {{ backup.user?.level || '-' }}
+              <el-tag v-if="backup.user?.is_forever_vip" size="small" type="warning" class="vip-tag">终身VIP</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="积分">{{ formatNum(backup.user?.points) }}</el-descriptions-item>
+            <el-descriptions-item label="签到">
+              {{ backup.user?.checked_in_today ? '已签到' : '未签到' }}（累计 {{ backup.user?.checkin_days_total || 0 }} 天）
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <div class="action-row">
+            <el-button type="primary" :loading="backupCheckining" @click="doBackupCheckin()">立即签到</el-button>
+            <el-button :loading="backupRefreshing" @click="refreshBackup">刷新状态</el-button>
+          </div>
+        </template>
+      </template>
     </el-card>
 
     <!-- 子账号管理 -->
@@ -157,7 +157,7 @@
           <template #default="{ row }">
             <span class="cell-user">
               <img v-if="row.user?.avatar_url" :src="row.user.avatar_url" class="avatar" alt="" />
-              {{ row.user?.nickname || '-' }}
+              {{ row.user?.nickname || row.user?.username || '-' }}
             </span>
           </template>
         </el-table-column>
@@ -176,7 +176,7 @@
         </el-table-column>
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="!row.authorized" size="small" type="primary" link @click="openAuth(row)">
+            <el-button v-if="!row.authorized" size="small" type="primary" link @click="openSubAuth(row)">
               授权
             </el-button>
             <el-button size="small" link @click="refreshSub(row)">刷新</el-button>
@@ -209,112 +209,24 @@ import { useHttpClient } from '@/http/client'
 
 const http = useHttpClient()
 
-// ---- 官方 OpenAPI 通道 ----
-const officialForm = ref<any>({ client_id: '', app_secret: '', base_url: '', redirect_uri: '', _secret_masked: '' })
-const officialHealth = ref<any>({ tgtodrive: 0, official: 0 })
-const officialConfigured = ref(false)
-const officialSaving = ref(false)
-const officialTesting = ref(false)
-const officialStarting = ref(false)
-
-const loadOfficial = async () => {
-  try {
-    const resp = await http.get('/api/cloud/hive/official/config')
-    if (resp?.data?.code === 200) {
-      const d = resp.data.data || {}
-      officialForm.value = {
-        client_id: d.client_id || '',
-        app_secret: '',
-        base_url: d.base_url || '',
-        redirect_uri: d.redirect_uri || '',
-        _secret_masked: d.app_secret || '',
-      }
-      officialConfigured.value = !!d.configured
-      officialHealth.value = d.channel_health || { tgtodrive: 0, official: 0 }
-    }
-  } catch {
-    /* 静默 */
-  }
-}
-
-const saveOfficial = async () => {
-  officialSaving.value = true
-  try {
-    const body: any = {
-      client_id: officialForm.value.client_id,
-      base_url: officialForm.value.base_url || 'https://hdhive.com',
-      redirect_uri: officialForm.value.redirect_uri,
-    }
-    if (officialForm.value.app_secret) body.app_secret = officialForm.value.app_secret
-    const resp = await http.post('/api/cloud/hive/official/config', body)
-    if (resp?.data?.code === 200) {
-      ElMessage.success(resp.data.message || '已保存')
-      officialConfigured.value = true
-      await loadOfficial()
-    } else {
-      ElMessage.error(resp?.data?.message || '保存失败')
-    }
-  } finally {
-    officialSaving.value = false
-  }
-}
-
-const testOfficial = async () => {
-  officialTesting.value = true
-  try {
-    const resp = await http.post('/api/cloud/hive/official/test')
-    if (resp?.data?.code === 200) {
-      ElMessage.success(resp.data.message || '连接正常')
-    } else {
-      ElMessage.warning(resp?.data?.message || '测试失败')
-    }
-  } finally {
-    officialTesting.value = false
-  }
-}
-
-const startOfficialAuth = async () => {
-  officialStarting.value = true
-  try {
-    const resp = await http.post('/api/cloud/hive/official/start')
-    if (resp?.data?.code === 200) {
-      const url = resp.data.data?.authorize_url
-      if (!url) {
-        ElMessage.error('未取得授权地址')
-        return
-      }
-      window.open(url, '_blank', 'noopener')
-      ElMessage.success('已打开授权页，完成后将自动回传结果')
-    } else {
-      ElMessage.error(resp?.data?.message || '发起授权失败')
-    }
-  } finally {
-    officialStarting.value = false
-  }
-}
-
+// ---- 主渠道（symedia） ----
 const main = reactive<any>({})
 const mainLoading = ref(false)
 const refreshing = ref(false)
 const authing = ref(false)
 const checkining = ref(false)
 const checkinMode = ref('daily')
-
-const subs = ref<any[]>([])
-const subsLoading = ref(false)
-const adding = ref(false)
-const checkinAllLoading = ref(false)
-const showAdd = ref(false)
-const newLabel = ref('')
+const channelHealth = ref<any>({ symedia: 0, tgtodrive: 0 })
 
 const loadMain = async () => {
   mainLoading.value = true
   try {
-    const resp = await http.get('/api/cloud/hive/oauth/status')
+    const resp = await http.get('/api/cloud/hive/symedia/status')
     if (resp.data?.code === 200) {
       const d = resp.data.data || {}
       Object.assign(main, d.account || {})
       main.auth_url = d.auth_url || ''
+      channelHealth.value = d.channel_health || { symedia: 0, tgtodrive: 0 }
     } else {
       ElMessage.error(resp.data?.message || '加载失败')
     }
@@ -324,6 +236,171 @@ const loadMain = async () => {
     mainLoading.value = false
   }
 }
+
+const openAuth = async () => {
+  authing.value = true
+  try {
+    const resp = await http.post('/api/cloud/hive/symedia/start')
+    const url = resp.data?.data?.authorize_url || resp.data?.data?.auth_url || ''
+    if (!url) {
+      ElMessage.error(resp.data?.message || '生成授权链接失败')
+      return
+    }
+    const win = window.open(url, '_blank')
+    if (!win) {
+      ElMessage.warning('浏览器拦截了弹窗：请允许本站弹窗后重试，或手动复制下方链接打开')
+      ElMessage('授权链接：' + url)
+      return
+    }
+    ElMessage.warning('请在打开的页面完成授权，完成后点击「刷新状态」')
+  } catch (e: any) {
+    const status = e?.response?.status
+    const detail = e?.response?.data?.message
+    ElMessage.error(`授权失败${status ? '（HTTP ' + status + '）' : ''}：${detail || e?.message || '未知错误'}`)
+  } finally {
+    authing.value = false
+  }
+}
+
+const refreshMain = async () => {
+  refreshing.value = true
+  try {
+    const resp = await http.post('/api/cloud/hive/symedia/refresh')
+    ElMessage.info(resp.data?.message || '已刷新')
+    await loadMain()
+  } catch (e: any) {
+    ElMessage.error('刷新失败：' + (e?.message || ''))
+  } finally {
+    refreshing.value = false
+  }
+}
+
+const openSubAuth = async (row: any) => {
+  if (!row || !row.id) {
+    ElMessage.error('子账号 ID 无效，请刷新列表后重试')
+    return
+  }
+  try {
+    const resp = await http.post(`/api/cloud/hive/sub-accounts/${row.id}/auth-url`)
+    const url = resp.data?.data?.auth_url || ''
+    if (!url) {
+      ElMessage.error(resp.data?.message || '生成授权链接失败')
+      return
+    }
+    const win = window.open(url, '_blank')
+    if (!win) {
+      ElMessage.warning('浏览器拦截了弹窗：请允许本站弹窗后重试，或手动复制下方链接打开')
+      ElMessage('授权链接：' + url)
+      return
+    }
+    ElMessage.warning('请在打开的页面完成授权，完成后点击「刷新」')
+  } catch (e: any) {
+    const status = e?.response?.status
+    const detail = e?.response?.data?.message
+    ElMessage.error(`授权失败${status ? '（HTTP ' + status + '）' : ''}：${detail || e?.message || '未知错误'}`)
+  }
+}
+
+const doCheckin = async (row?: any) => {
+  checkining.value = true
+  try {
+    const payload: any = { mode: checkinMode.value }
+    const url = row
+      ? `/api/cloud/hive/sub-accounts/${row.id}/checkin`
+      : '/api/cloud/hive/symedia/checkin'
+    if (row) payload.account_id = row.id
+    const resp = await http.post(url, payload)
+    ElMessage.info(resp.data?.message || '签到完成')
+    await Promise.all([loadMain(), loadSubs()])
+  } catch (e: any) {
+    ElMessage.error('签到失败：' + (e?.message || ''))
+  } finally {
+    checkining.value = false
+  }
+}
+
+// ---- 备用渠道（tgtodrive 主账号） ----
+const backup = reactive<any>({})
+const backupLoading = ref(false)
+const backupAuthing = ref(false)
+const backupRefreshing = ref(false)
+const backupCheckining = ref(false)
+
+const loadBackup = async () => {
+  backupLoading.value = true
+  try {
+    const resp = await http.get('/api/cloud/hive/oauth/status')
+    if (resp.data?.code === 200) {
+      const d = resp.data.data || {}
+      Object.assign(backup, d.account || {})
+      backup.auth_url = d.auth_url || ''
+      if (d.channel_health) {
+        channelHealth.value = d.channel_health
+      }
+    }
+  } catch (e: any) {
+    ElMessage.error('备用渠道加载失败：' + (e?.message || ''))
+  } finally {
+    backupLoading.value = false
+  }
+}
+
+const openBackupAuth = async () => {
+  backupAuthing.value = true
+  try {
+    const resp = await http.post('/api/cloud/hive/oauth/auth-url')
+    const url = resp.data?.data?.auth_url || ''
+    if (!url) {
+      ElMessage.error(resp.data?.message || '生成授权链接失败')
+      return
+    }
+    const win = window.open(url, '_blank')
+    if (!win) {
+      ElMessage.warning('浏览器拦截了弹窗：请允许本站弹窗后重试，或手动复制下方链接打开')
+      ElMessage('授权链接：' + url)
+      return
+    }
+    ElMessage.warning('请在打开的页面完成授权，完成后点击「刷新状态」')
+  } catch (e: any) {
+    ElMessage.error('授权失败：' + (e?.message || ''))
+  } finally {
+    backupAuthing.value = false
+  }
+}
+
+const refreshBackup = async () => {
+  backupRefreshing.value = true
+  try {
+    const resp = await http.post('/api/cloud/hive/oauth/refresh')
+    ElMessage.info(resp.data?.message || '已刷新')
+    await loadBackup()
+  } catch (e: any) {
+    ElMessage.error('刷新失败：' + (e?.message || ''))
+  } finally {
+    backupRefreshing.value = false
+  }
+}
+
+const doBackupCheckin = async () => {
+  backupCheckining.value = true
+  try {
+    const resp = await http.post('/api/cloud/hive/oauth/checkin', { mode: checkinMode.value })
+    ElMessage.info(resp.data?.message || '签到完成')
+    await loadBackup()
+  } catch (e: any) {
+    ElMessage.error('签到失败：' + (e?.message || ''))
+  } finally {
+    backupCheckining.value = false
+  }
+}
+
+// ---- 子账号 ----
+const subs = ref<any[]>([])
+const subsLoading = ref(false)
+const adding = ref(false)
+const checkinAllLoading = ref(false)
+const showAdd = ref(false)
+const newLabel = ref('')
 
 const loadSubs = async () => {
   subsLoading.value = true
@@ -336,88 +413,6 @@ const loadSubs = async () => {
     ElMessage.error('子账号加载失败：' + (e?.message || ''))
   } finally {
     subsLoading.value = false
-  }
-}
-
-const openAuth = async (row?: any) => {
-  authing.value = true
-  try {
-    let url = ''
-    if (row && typeof row.id !== 'undefined') {
-      // 子账号授权：只有带 id 的账号行才走此分支（主按钮用 @click="openAuth()" 不会传入事件对象）
-      if (!row.id || Number.isNaN(Number(row.id))) {
-        ElMessage.error('子账号 ID 无效，请刷新列表后重试')
-        return
-      }
-      const resp = await http.post(`/api/cloud/hive/sub-accounts/${row.id}/auth-url`)
-      url = resp.data?.data?.auth_url || ''
-    } else {
-      // 主账号授权
-      const resp = await http.post('/api/cloud/hive/oauth/auth-url')
-      url = resp.data?.data?.auth_url || ''
-    }
-    if (url) {
-      const win = window.open(url, '_blank')
-      if (!win) {
-        ElMessage.warning('浏览器拦截了弹窗：请允许本站弹窗后重试，或手动复制下方链接打开')
-        ElMessage('授权链接：' + url)
-        return
-      }
-      ElMessage.warning('请在打开的页面完成授权，完成后点击「刷新状态」')
-    } else {
-      ElMessage.error('生成授权链接失败')
-    }
-  } catch (e: any) {
-    // 优先展示后端返回的具体错误（如“无效的账号 ID”），axios 默认文案没有诊断价值
-    const status = e?.response?.status
-    const detail = e?.response?.data?.message
-    ElMessage.error(`授权失败${status ? '（HTTP ' + status + '）' : ''}：${detail || e?.message || '未知错误'}`)
-  } finally {
-    authing.value = false
-  }
-}
-
-const refreshMain = async () => {
-  refreshing.value = true
-  try {
-    const resp = await http.post('/api/cloud/hive/oauth/refresh')
-    ElMessage.info(resp.data?.message || '已刷新')
-    await loadMain()
-  } catch (e: any) {
-    ElMessage.error('刷新失败：' + (e?.message || ''))
-  } finally {
-    refreshing.value = false
-  }
-}
-
-const doCheckin = async (row?: any) => {
-  checkining.value = true
-  try {
-    const payload: any = { mode: checkinMode.value }
-    const url = row
-      ? `/api/cloud/hive/sub-accounts/${row.id}/checkin`
-      : '/api/cloud/hive/oauth/checkin'
-    if (row) payload.account_id = row.id
-    const resp = await http.post(url, payload)
-    ElMessage.info(resp.data?.message || '签到完成')
-    await Promise.all([loadMain(), loadSubs()])
-  } catch (e: any) {
-    ElMessage.error('签到失败：' + (e?.message || ''))
-  } finally {
-    checkining.value = false
-  }
-}
-
-const checkinAll = async () => {
-  checkinAllLoading.value = true
-  try {
-    const resp = await http.post('/api/cloud/hive/oauth/checkin-all', { mode: checkinMode.value })
-    ElMessage.success(resp.data?.message || '全部签到完成')
-    await Promise.all([loadMain(), loadSubs()])
-  } catch (e: any) {
-    ElMessage.error('批量签到失败：' + (e?.message || ''))
-  } finally {
-    checkinAllLoading.value = false
   }
 }
 
@@ -470,6 +465,20 @@ const removeSub = async (row: any) => {
   }
 }
 
+const checkinAll = async () => {
+  checkinAllLoading.value = true
+  try {
+    const resp = await http.post('/api/cloud/hive/oauth/checkin-all', { mode: checkinMode.value })
+    ElMessage.success(resp.data?.message || '全部签到完成')
+    await Promise.all([loadMain(), loadBackup(), loadSubs()])
+  } catch (e: any) {
+    ElMessage.error('批量签到失败：' + (e?.message || ''))
+  } finally {
+    checkinAllLoading.value = false
+  }
+}
+
+// ---- 工具 ----
 const formatNum = (v: any) => {
   if (v === undefined || v === null) return '-'
   const n = Number(v)
@@ -491,8 +500,8 @@ const formatTime = (t?: string) => {
 }
 
 onMounted(() => {
-  loadOfficial()
   loadMain()
+  loadBackup()
   loadSubs()
 })
 </script>
