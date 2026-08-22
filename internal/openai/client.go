@@ -1,10 +1,12 @@
-package openai
+﻿package openai
 
 import (
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	"diy-strm/internal/helpers"
 
 	"resty.dev/v3"
 )
@@ -112,6 +114,41 @@ type OpenAIError struct {
 	Message string `json:"message"`
 }
 
+// extractOpenAIErrorMessage 兼容多种 OpenAI 兼容服务的错误响应格式，
+// 全部无法识别时返回截断后的原始文本，保证用户能看到服务商的真实错误信息
+func extractOpenAIErrorMessage(body []byte) string {
+	var nested struct {
+		Error struct {
+			Message string          `json:"message"`
+			Code    json.RawMessage `json:"code"`
+		} `json:"error"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &nested); err == nil {
+		if msg := strings.TrimSpace(nested.Error.Message); msg != "" {
+			if len(nested.Error.Code) > 0 && string(nested.Error.Code) != "null" {
+				return fmt.Sprintf("%s（code=%s）", msg, strings.Trim(string(nested.Error.Code), `"`))
+			}
+			return msg
+		}
+		if msg := strings.TrimSpace(nested.Message); msg != "" {
+			return msg
+		}
+	}
+	var strErr string
+	if err := json.Unmarshal(body, &strErr); err == nil && strings.TrimSpace(strErr) != "" {
+		return strErr
+	}
+	text := strings.TrimSpace(string(body))
+	if text == "" {
+		return "响应体为空"
+	}
+	if len(text) > 300 {
+		text = text[:300] + "..."
+	}
+	return text
+}
+
 // DefaultRequestConfig 返回默认请求配置。
 func DefaultRequestConfig() *RequestConfig {
 	return &RequestConfig{
@@ -178,6 +215,9 @@ func (c *Client) TakeMoiveName(filename string, prompt string) (*MediaInfoAI, er
 	if err != nil {
 		return nil, err
 	}
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("AI 响应缺少 choices（内容：%s）", resp.ID)
+	}
 	jsonContent := resp.Choices[0].Message.Content
 	var mediaInfo MediaInfoAI
 	// 先去掉首尾的特殊字符
@@ -193,7 +233,11 @@ func (c *Client) TakeMoiveName(filename string, prompt string) (*MediaInfoAI, er
 
 // CreateChatCompletion 创建聊天补全。
 func (c *Client) CreateChatCompletion(message []Message, options *RequestConfig) (*ChatCompletionResponse, error) {
-	url := fmt.Sprintf("%s/v1/chat/completions", c.baseURL)
+	// Base URL 兼容处理：服务商文档有的给 https://x.com/v1 有的给 https://x.com，
+	// 统一去掉尾部斜杠与 /v1 后再拼标准路径，避免 /v1/v1/chat/completions 404
+	base := strings.TrimRight(strings.TrimSpace(c.baseURL), "/")
+	base = strings.TrimSuffix(base, "/v1")
+	url := fmt.Sprintf("%s/v1/chat/completions", base)
 
 	// 准备请求
 	r := c.resty.R().SetHeader("Authorization", fmt.Sprintf("Bearer %s", c.apiKey)).SetMethod("POST")
@@ -218,12 +262,10 @@ func (c *Client) CreateChatCompletion(message []Message, options *RequestConfig)
 
 	// 检查响应是否成功
 	if !response.IsStatusSuccess() {
-		fmt.Printf("OpenAI API 错误：状态码 %d，响应体：%s", response.StatusCode(), response.String())
-		var openAIError OpenAIError
-		if err := json.Unmarshal(response.Bytes(), &openAIError); err != nil {
-			return nil, fmt.Errorf("%v", err)
-		}
-		return nil, fmt.Errorf("%s", openAIError.Message)
+		helpers.AppLogger.Errorf("OpenAI API 错误：状态码 %d，响应体：%s", response.StatusCode(), response.String())
+		// 错误体格式随服务商而异：标准嵌套 {"error":{"message":...}}、扁平 {"message":...}、
+		// 纯 JSON 字符串、非 JSON 文本都有——不能按单一结构硬解（否则把解析错误当结果返回给用户）
+		return nil, fmt.Errorf("HTTP %d：%s", response.StatusCode(), extractOpenAIErrorMessage(response.Bytes()))
 	}
 	// helpers.AppLogger.Infof("OpenAI API response: %+v", resp)
 	return &resp, nil

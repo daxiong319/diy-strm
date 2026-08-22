@@ -1,4 +1,4 @@
-package requests
+﻿package requests
 
 import (
 	"encoding/json"
@@ -115,6 +115,7 @@ type ResolveMoviePilotFailedFileRequest struct {
 	Title     string `json:"title"`      // 媒体标题
 	Year      int    `json:"year"`       // 年份（可选）
 	Season    int    `json:"season"`     // 季号（剧集，可选，缺省 1）
+	TmdbID    int64  `json:"tmdb_id"`    // TMDB ID（可选；从候选列表选中时传入，避免同名歧义）
 }
 
 // Validate 校验确认整理参数

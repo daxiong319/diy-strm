@@ -1,4 +1,4 @@
-package controllers
+﻿package controllers
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 
 	"diy-strm/internal/db"
 	"diy-strm/internal/helpers"
+	"diy-strm/internal/mediaparse"
 	"diy-strm/internal/models"
 	"diy-strm/internal/moviepilot"
 	"diy-strm/internal/requests"
@@ -360,8 +361,9 @@ func ListMoviePilotFailedFiles(c *gin.Context) {
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "获取识别失败文件成功", Data: map[string]any{"list": list, "total": total}})
 }
 
-// IdentifyMoviePilotFailedFile AI 辅助识别失败文件，返回建议的媒体信息
-// @Summary AI 识别失败文件
+// IdentifyMoviePilotFailedFile 识别失败文件：AI 优先、正则兜底，返回建议媒体信息 + TMDB 候选列表
+// （对齐 tgto123 识别测试：解析结果与候选并出，候选可一键选中避免同名歧义）
+// @Summary 识别失败文件（AI + 正则 + TMDB 候选）
 // @Tags MoviePilot
 // @Success 200 {object} APIResponse[any]
 // @Router /moviepilot/failed-files/:id/identify [post]
@@ -380,12 +382,92 @@ func IdentifyMoviePilotFailedFile(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c, 120*time.Second)
 	defer cancel()
-	res, ok := moviepilot.IdentifyFileWithAI(ctx, f.FileName)
-	if !ok {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "AI 识别失败，请在下方手动填写媒体信息", Data: nil})
+
+	// 解析来源标记：AI 命中 / 正则命中 / 均未命中
+	source := "none"
+	parsed := moviepilot.IdentifyResult{Episode: 1}
+	if res, ok := moviepilot.IdentifyFileWithAI(ctx, f.FileName); ok {
+		parsed = res
+		source = "ai"
+	} else if category, title, season, episode, year := mediaparse.ParseMedia(f.FileName); strings.TrimSpace(title) != "" {
+		parsed = moviepilot.IdentifyResult{Category: category, Title: title, Season: season, Episode: episode, Year: year, TmdbId: 0}
+		if parsed.Episode <= 0 {
+			parsed.Episode = 1
+		}
+		source = "regex"
+	}
+	if parsed.Title == "" {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "AI 与正则均未识别出标题，请手动填写并搜索 TMDB", Data: nil})
 		return
 	}
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "AI 识别成功", Data: res})
+	candidates := searchTmdbCandidatesForFailed(ctx, parsed.Title, parsed.Year, parsed.Category)
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "识别完成", Data: map[string]any{
+		"category":    parsed.Category,
+		"title":       parsed.Title,
+		"year":        parsed.Year,
+		"season":      parsed.Season,
+		"episode":     parsed.Episode,
+		"tmdb_id":     parsed.TmdbId,
+		"source":      source,
+		"candidates":  candidates,
+	}})
+}
+
+// searchTmdbCandidatesForFailed 按标题+年份搜 TMDB 候选（电影+剧集并查，带海报/简介）
+func searchTmdbCandidatesForFailed(ctx context.Context, title string, year int, category string) []gin.H {
+	client := models.GlobalScrapeSettings.GetTmdbClient()
+	lang := models.GlobalScrapeSettings.GetTmdbLanguage()
+	imageBase := strings.TrimRight(models.GlobalScrapeSettings.GetTmdbImageUrl(), "/")
+	out := make([]gin.H, 0, 10)
+	add := func(t, original string, y int, tmdbID int64, mediaType, posterPath, overview string) {
+		item := gin.H{
+			"title":        t,
+			"year":         y,
+			"tmdb_id":      tmdbID,
+			"media_type":   mediaType,
+			"poster_url":   "",
+			"poster_path":  posterPath,
+			"overview":     overview,
+		}
+		if posterPath != "" {
+			item["poster_url"] = imageBase + "/t/p/w185" + posterPath
+		}
+		if original != "" && original != t {
+			item["original_title"] = original
+		}
+		out = append(out, item)
+	}
+	if category != "tv" {
+		if resp, err := client.SearchMovie(title, year, lang, true, true); err == nil && resp != nil {
+			for i, m := range resp.Results {
+				if i >= 5 {
+					break
+				}
+				add(m.Title, m.OriginalTitle, tmdbYearFromDate(m.ReleaseDate), m.ID, "movie", m.PosterPath, m.Overview)
+			}
+		}
+	}
+	if category != "movie" {
+		if resp, err := client.SearchTv(title, year, lang, true); err == nil && resp != nil {
+			for i, t := range resp.Results {
+				if i >= 5 {
+					break
+				}
+				add(t.Name, t.OriginalName, tmdbYearFromDate(t.FirstAirDate), t.ID, "tv", t.PosterPath, t.Overview)
+			}
+		}
+	}
+	return out
+}
+
+// tmdbYearFromDate 从 TMDB 日期字符串取年份
+func tmdbYearFromDate(dateStr string) int {
+	if len(dateStr) >= 4 {
+		if y, err := strconv.Atoi(dateStr[:4]); err == nil {
+			return y
+		}
+	}
+	return 0
 }
 
 // ResolveMoviePilotFailedFile 确认媒体信息并重新整理识别失败的文件
@@ -422,7 +504,7 @@ func ResolveMoviePilotFailedFile(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c, 10*time.Minute)
 	defer cancel()
-	dir, err := moviepilot.ResolveFailedFile(ctx, &account, f, req.MediaType, req.Title, req.Year, req.Season)
+	dir, err := moviepilot.ResolveFailedFile(ctx, &account, f, req.MediaType, req.Title, req.Year, req.Season, req.TmdbID)
 	if err != nil {
 		f.Reason = "确认整理失败：" + err.Error()
 		f.Status = string(models.MoviePilotFailedPending)
@@ -435,6 +517,7 @@ func ResolveMoviePilotFailedFile(c *gin.Context) {
 	f.Title = req.Title
 	f.Year = req.Year
 	f.Season = req.Season
+	f.TmdbId = req.TmdbID
 	f.Reason = ""
 	_ = models.UpdateMoviePilotFailedFile(f)
 	// 整理成功的目标目录触发 STRM 同步

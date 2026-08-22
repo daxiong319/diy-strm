@@ -1,4 +1,4 @@
-package moviepilot
+﻿package moviepilot
 
 import (
 	"context"
@@ -184,7 +184,7 @@ func saveFailedFile(task *models.MoviePilotUploadTask, account *models.Account, 
 
 // ResolveFailedFile 手动确认媒体信息后重新整理识别失败的文件（识别失败独立菜单"确认整理"）。
 // 返回整理成功的目标相对目录（相对整理根目录）。
-func ResolveFailedFile(ctx context.Context, account *models.Account, f *models.MoviePilotFailedFile, mediaType, title string, year, season int) (string, error) {
+func ResolveFailedFile(ctx context.Context, account *models.Account, f *models.MoviePilotFailedFile, mediaType, title string, year, season int, tmdbID int64) (string, error) {
 	if f.Status == string(models.MoviePilotFailedResolved) {
 		return "", fmt.Errorf("该文件已整理完成")
 	}
@@ -205,7 +205,7 @@ func ResolveFailedFile(ctx context.Context, account *models.Account, f *models.M
 	if mediaType != "tv" && mediaType != "movie" {
 		mediaType = "movie"
 	}
-	media := &IdentifyResult{Category: mediaType, Title: title, Year: year, Season: season, Episode: 1}
+	media := &IdentifyResult{Category: mediaType, Title: title, Year: year, Season: season, Episode: 1, TmdbId: tmdbID}
 	if parsed, ok := mediaparse.ParseEpisode(f.FileName); ok {
 		if parsed.Season > 0 {
 			media.Season = parsed.Season

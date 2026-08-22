@@ -70,7 +70,7 @@
       />
     </div>
 
-    <el-dialog v-model="resolveDialogVisible" title="确认整理" width="520px" :close-on-click-modal="false">
+    <el-dialog v-model="resolveDialogVisible" title="确认整理（可选 TMDB 候选）" width="640px" :close-on-click-modal="false">
       <el-form :model="resolveForm" label-width="110px">
         <el-form-item label="文件名">
           <el-input :model-value="currentFile?.file_name" disabled />
@@ -82,13 +82,54 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item label="标题" required>
-          <el-input v-model="resolveForm.title" placeholder="媒体标题，如：遮天" />
+          <div style="display: flex; gap: 8px; width: 100%">
+            <el-input v-model="resolveForm.title" placeholder="媒体标题，如：遮天" @keyup.enter="searchTmdb" />
+            <el-button :loading="searching" @click="searchTmdb">搜索 TMDB</el-button>
+          </div>
         </el-form-item>
         <el-form-item label="年份">
           <el-input-number v-model="resolveForm.year" :min="0" :max="2100" :controls="false" placeholder="可选" style="width: 100%" />
         </el-form-item>
         <el-form-item v-if="resolveForm.media_type === 'tv'" label="季号">
           <el-input-number v-model="resolveForm.season" :min="1" :max="100" :controls="false" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="TMDB ID">
+          <div style="display: flex; align-items: center; gap: 8px; width: 100%">
+            <el-input-number
+              v-model="resolveForm.tmdb_id"
+              :min="0"
+              :controls="false"
+              placeholder="可选；从下方候选点击自动填入，避免同名歧义"
+              style="width: 100%"
+            />
+            <el-tag v-if="resolveForm.tmdb_id > 0" type="success" size="small">精确匹配</el-tag>
+          </div>
+        </el-form-item>
+        <el-form-item v-if="candidates.length || searching" label="TMDB 候选">
+          <div v-loading="searching" class="candidate-list">
+            <div
+              v-for="cand in candidates"
+              :key="cand.media_type + cand.tmdb_id"
+              class="candidate-card"
+              :class="{ active: resolveForm.tmdb_id === cand.tmdb_id && resolveForm.media_type === cand.media_type }"
+              @click="selectCandidate(cand)"
+            >
+              <img v-if="cand.poster_url" :src="cand.poster_url" class="candidate-poster" loading="lazy" referrerpolicy="no-referrer" />
+              <div v-else class="candidate-poster candidate-poster-empty">无海报</div>
+              <div class="candidate-body">
+                <div class="candidate-title">
+                  <span>{{ cand.title }}</span>
+                  <span v-if="cand.year" class="candidate-year">({{ cand.year }})</span>
+                  <el-tag size="small" :type="cand.media_type === 'tv' ? 'success' : 'warning'" style="margin-left: 6px">
+                    {{ cand.media_type === 'tv' ? '剧集' : '电影' }}
+                  </el-tag>
+                </div>
+                <div class="candidate-overview">{{ cand.overview || '暂无简介' }}</div>
+                <div class="candidate-tmdb">tmdb={{ cand.tmdb_id }}</div>
+              </div>
+            </div>
+            <div v-if="!candidates.length && !searching" class="candidate-empty">未搜到候选，可修改标题后重试</div>
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -117,7 +158,71 @@ const statusFilter = ref('')
 const resolveDialogVisible = ref(false)
 const resolving = ref(false)
 const currentFile = ref<any>(null)
-const resolveForm = ref<any>({ media_type: 'movie', title: '', year: 0, season: 1 })
+const resolveForm = ref<any>({ media_type: 'movie', title: '', year: 0, season: 1, tmdb_id: 0 })
+
+// TMDB 候选（对齐 tgto123 识别测试：候选卡片一键选中，避免同名歧义）
+interface TmdbCandidate {
+  title: string
+  original_title?: string
+  year: number
+  tmdb_id: number
+  media_type: string
+  poster_url: string
+  overview: string
+}
+const candidates = ref<TmdbCandidate[]>([])
+const searching = ref(false)
+
+const selectCandidate = (cand: TmdbCandidate) => {
+  resolveForm.value.tmdb_id = cand.tmdb_id
+  resolveForm.value.media_type = cand.media_type
+  resolveForm.value.title = cand.title
+  resolveForm.value.year = cand.year || 0
+}
+
+// 用当前标题搜 TMDB 候选（复用识别接口返回的候选结构；标题手动改动后可重新搜索）
+const searchTmdb = async () => {
+  const title = (resolveForm.value.title || '').trim()
+  if (!title) {
+    ElMessage.warning('请先填写标题再搜索')
+    return
+  }
+  searching.value = true
+  try {
+    const resp = await http.post(`${SERVER_URL}/organize-history/recognize-test`, {
+      file_name: buildRecognizeName(),
+      media_type: '',
+    })
+    if (resp?.data?.code === 200) {
+      const list = (resp.data.data?.candidates || []).map((c: any) => ({
+        title: c.title,
+        original_title: c.original_title,
+        year: c.year,
+        tmdb_id: c.tmdb_id,
+        media_type: c.media_type,
+        poster_url: c.poster_path ? tmdbPosterUrl(c.poster_path) : '',
+        overview: '',
+      }))
+      candidates.value = list
+      if (!list.length) ElMessage.info('未搜到 TMDB 候选')
+    } else {
+      ElMessage.error(resp?.data?.message || 'TMDB 搜索失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('TMDB 搜索失败：' + (e?.message || ''))
+  } finally {
+    searching.value = false
+  }
+}
+
+// recognize-test 按文件名解析标题，这里希望直接用用户填的标题：构造一个「标题即文件名」的输入
+const buildRecognizeName = () => {
+  const f = resolveForm.value
+  const yearPart = f.year > 0 ? ` ${f.year}` : ''
+  return `${(f.title || '').trim()}${yearPart}`
+}
+
+const tmdbPosterUrl = (path: string) => `https://image.tmdb.org/t/p/w185${path}`
 
 const getStatusText = (status: string) => {
   const map: Record<string, string> = { pending: '待处理', resolved: '已整理', skipped: '已跳过' }
@@ -172,11 +277,26 @@ const identifyFile = async (row: any) => {
         title: data.title,
         year: data.year || 0,
         season: data.season || 1,
+        tmdb_id: data.tmdb_id || 0,
       }
+      candidates.value = (data.candidates || []).map((c: any) => ({
+        title: c.title,
+        original_title: c.original_title,
+        year: c.year,
+        tmdb_id: c.tmdb_id,
+        media_type: c.media_type,
+        poster_url: c.poster_url || '',
+        overview: c.overview || '',
+      }))
       currentFile.value = row
       resolveDialogVisible.value = true
     } else {
-      ElMessage.warning(response?.data.message || 'AI 识别失败，请手动填写媒体信息')
+      // AI 与正则均未命中：仍打开弹窗走手动搜索流程
+      candidates.value = []
+      currentFile.value = row
+      resolveForm.value = { media_type: 'movie', title: '', year: 0, season: 1, tmdb_id: 0 }
+      resolveDialogVisible.value = true
+      ElMessage.warning(response?.data.message || '识别未命中，请手动填写并搜索 TMDB')
     }
   } catch (error) {
     console.error('AI 识别错误：', error)
@@ -193,7 +313,9 @@ const openResolveDialog = (row: any) => {
     title: row.title || '',
     year: row.year || 0,
     season: row.season || 1,
+    tmdb_id: row.tmdb_id || 0,
   }
+  candidates.value = []
   resolveDialogVisible.value = true
 }
 
@@ -209,6 +331,7 @@ const resolveFile = async () => {
       title: resolveForm.value.title.trim(),
       year: resolveForm.value.year || 0,
       season: resolveForm.value.media_type === 'tv' ? resolveForm.value.season || 1 : 0,
+      tmdb_id: resolveForm.value.tmdb_id || 0,
     })
     if (response?.data.code === 200) {
       ElMessage.success('整理完成')
@@ -246,5 +369,77 @@ onMounted(loadFailedFiles)
 <style scoped>
 .moviepilot-failed-container {
   padding: 4px;
+}
+.candidate-list {
+  width: 100%;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.candidate-card {
+  display: flex;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.candidate-card:hover {
+  border-color: var(--el-color-primary);
+}
+.candidate-card.active {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+.candidate-poster {
+  width: 46px;
+  height: 66px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.candidate-poster-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-light);
+}
+.candidate-body {
+  flex: 1;
+  min-width: 0;
+}
+.candidate-title {
+  display: flex;
+  align-items: center;
+  font-weight: 500;
+}
+.candidate-year {
+  margin-left: 6px;
+  color: var(--el-text-color-secondary);
+  font-weight: 400;
+}
+.candidate-overview {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.candidate-tmdb {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--el-text-color-placeholder);
+}
+.candidate-empty {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  padding: 8px;
 }
 </style>
