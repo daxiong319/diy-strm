@@ -95,7 +95,8 @@ func Webhook(ctx *gin.Context) {
 		body, _ = io.ReadAll(ctx.Request.Body)
 		helpers.AppLogger.Infof("Emby Webhook body：%s", string(body))
 	}
-	if body == nil || (models.GlobalEmbyConfig != nil && (models.GlobalEmbyConfig.EmbyUrl == "" || models.GlobalEmbyConfig.EmbyApiKey == "")) {
+	// GlobalEmbyConfig 为 nil（Emby 从未配置）必须单独短路：原条件 nil 时整式为假会穿透到下方解引用 panic
+	if body == nil || models.GlobalEmbyConfig == nil || models.GlobalEmbyConfig.EmbyUrl == "" || models.GlobalEmbyConfig.EmbyApiKey == "" {
 		ctx.JSON(http.StatusOK, gin.H{
 			"message": "webhook",
 		})
@@ -380,17 +381,24 @@ func startNewSeriesBufferTicker() {
 	defer ticker.Stop()
 	for {
 		<-ticker.C
+		newSeriesBufferMu.Lock()
+		deletedSeriesBufferMu.Lock()
 		helpers.AppLogger.Infof("检查剧集缓冲区，新增缓冲区大小=%d，删除缓冲区大小=%d", len(newSeriesBuffer), len(deletedSeriesBuffer))
 		now := time.Now()
+		// 到期条目先在锁内拷出并删除，通知在锁外异步发送，避免与 webhook 写侧并发读写 map（fatal 不可恢复）
+		type expiredSeries struct {
+			id      string
+			name    string
+			seasons map[int][]int
+		}
+		var newExpired, deletedExpired []expiredSeries
 
 		// 处理新增缓冲区
 		for _, series := range newSeriesBuffer {
 			helpers.AppLogger.Infof("检查新增剧集，seriesID=%s，最后更新时间=%s", series.ID, series.LastUpdated.Format("2006-01-02 15:04:05"))
 			if now.Sub(series.LastUpdated) >= 10*time.Second {
 				helpers.AppLogger.Infof("新剧集缓冲区达到触发时间，发送入库通知，seriesID=%s，季数=%d", series.ID, len(series.Seasons))
-				// 触发通知
-				go sendNewSeriesNotification(series.ID, series.Seasons)
-				// 从缓冲区删除，锁定
+				newExpired = append(newExpired, expiredSeries{id: series.ID, seasons: series.Seasons})
 				delete(newSeriesBuffer, series.ID)
 			} else {
 				// 还没到时间，继续等待
@@ -403,18 +411,26 @@ func startNewSeriesBufferTicker() {
 			helpers.AppLogger.Infof("检查删除剧集，seriesID=%s，最后更新时间=%s", series.ID, series.LastUpdated.Format("2006-01-02 15:04:05"))
 			if now.Sub(series.LastUpdated) >= 10*time.Second {
 				helpers.AppLogger.Infof("删除剧集缓冲区达到触发时间，发送删除通知，seriesID=%s，季数=%d", series.ID, len(series.Seasons))
-				// 触发通知
-				go sendDeletedSeriesNotification(series.ID, series.Name, series.Seasons)
-				// 从缓冲区删除，锁定
+				deletedExpired = append(deletedExpired, expiredSeries{id: series.ID, name: series.Name, seasons: series.Seasons})
 				delete(deletedSeriesBuffer, series.ID)
 			} else {
 				// 还没到时间，继续等待
 				helpers.AppLogger.Infof("等待更多剧集删除通知，seriesID=%s，已缓存季数=%d", series.ID, len(series.Seasons))
 			}
 		}
+		empty := len(newSeriesBuffer) == 0 && len(deletedSeriesBuffer) == 0
+		deletedSeriesBufferMu.Unlock()
+		newSeriesBufferMu.Unlock()
+
+		for _, e := range newExpired {
+			go sendNewSeriesNotification(e.id, e.seasons)
+		}
+		for _, e := range deletedExpired {
+			go sendDeletedSeriesNotification(e.id, e.name, e.seasons)
+		}
 
 		// 检查是否还有数据需要处理，如果没有则退出协程
-		if len(newSeriesBuffer) == 0 && len(deletedSeriesBuffer) == 0 {
+		if empty {
 			helpers.AppLogger.Infof("剧集缓冲区已清空，停止轮询协程")
 			newSeriesBufferTickerStartedMu.Lock()
 			newSeriesBufferTickerStarted = false

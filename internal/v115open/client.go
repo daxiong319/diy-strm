@@ -26,6 +26,9 @@ var cachedClients map[string]*OpenClient = make(map[string]*OpenClient, 0)
 var cachedClientsMutex sync.RWMutex
 
 func UpdateToken(accountId uint, token string, refreshToken string) {
+	// 遍历与 GetClient 的写入并发，必须持锁（且 SetAuthToken 改客户端字段，用写锁）
+	cachedClientsMutex.Lock()
+	defer cachedClientsMutex.Unlock()
 	for key, client := range cachedClients {
 		if client.AccountId == accountId {
 			client.SetAuthToken(token, refreshToken)
@@ -36,9 +39,10 @@ func UpdateToken(accountId uint, token string, refreshToken string) {
 
 // NewHttpClient 创建新的 HTTP 客户端
 func GetClient(accountId uint, appId string, token string, refreshToken string) *OpenClient {
-	cachedClientsMutex.RLock()
-	defer cachedClientsMutex.RUnlock()
 	clientKey := fmt.Sprintf("%d", accountId)
+	// 缓存写入必须持写锁：RLock 允许多 goroutine 同时进入，并发写 map 会触发致命错误
+	cachedClientsMutex.Lock()
+	defer cachedClientsMutex.Unlock()
 	if client, exists := cachedClients[clientKey]; exists {
 		client.SetAuthToken(token, refreshToken)
 		return client

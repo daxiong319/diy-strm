@@ -38,6 +38,7 @@ var errEmbyRefreshTasksChanged = errors.New("Emby 刷新任务已发生变化")
 var IsStrmSyncTaskActiveFunc func(syncPathId uint) bool
 var embyRefreshCheckChan = make(chan struct{}, 1)
 var embyRefreshCoordinatorOnce sync.Once
+var embyRefreshStopChan = make(chan struct{})
 var embyRefreshDownloadEventBatch = &downloadEventBatch{
 	syncPathIds: make(map[uint]struct{}),
 	syncFileIds: make(map[uint]struct{}),
@@ -1520,10 +1521,24 @@ func flushPendingEmbyRefreshDownloadTaskChanges() error {
 func runEmbyLibraryRefreshDownloadEventBatcher() {
 	ticker := time.NewTicker(time.Duration(DefaultEmbyRefreshDownloadEventBatchSeconds) * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
-		if err := flushPendingEmbyRefreshDownloadTaskChanges(); err != nil {
-			helpers.AppLogger.Errorf("批量处理下载任务状态变化事件失败：%v", err)
+	for {
+		select {
+		case <-embyRefreshStopChan:
+			return
+		case <-ticker.C:
+			if err := flushPendingEmbyRefreshDownloadTaskChanges(); err != nil {
+				helpers.AppLogger.Errorf("批量处理下载任务状态变化事件失败：%v", err)
+			}
 		}
+	}
+}
+
+// StopEmbyLibraryRefreshCoordinator 停止刷新协调协程（测试与进程收尾用）
+func StopEmbyLibraryRefreshCoordinator() {
+	select {
+	case <-embyRefreshStopChan:
+	default:
+		close(embyRefreshStopChan)
 	}
 }
 
@@ -1581,6 +1596,8 @@ func runEmbyLibraryRefreshScanner() {
 	defer ticker.Stop()
 	for {
 		select {
+		case <-embyRefreshStopChan:
+			return
 		case <-embyRefreshCheckChan:
 			CheckPendingEmbyLibraryRefreshTasks()
 		case <-ticker.C:

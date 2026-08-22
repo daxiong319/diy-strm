@@ -28,9 +28,10 @@ var cachedClientsMutex sync.RWMutex
 
 // NewClient 创建新的客户端
 func NewClient(accountId uint, url, username, password, accessToken string) *Client {
-	cachedClientsMutex.RLock()
-	defer cachedClientsMutex.RUnlock()
 	clientKey := fmt.Sprintf("%d", accountId)
+	// 缓存写入必须持写锁：RLock 允许多 goroutine 同时进入，并发写 map 会触发致命错误
+	cachedClientsMutex.Lock()
+	defer cachedClientsMutex.Unlock()
 	if client, exists := cachedClients[clientKey]; exists {
 		client.BaseUrl = url
 		client.Username = username
@@ -129,7 +130,9 @@ func (c *Client) request(url string, req *resty.Request) (*resty.Response, error
 	// helpers.OpenListLog.Infof("认证访问 %s %s\nstate=%v, code=%d, msg=%s, data=%s\n", req.Method, req.URL, resp.State, resp.Code, resp.Message, string(resp.Data))
 	helpers.OpenListLog.Infof("%s %s 请求数据：%+v 返回值：%s\n", req.Method, req.URL, req.Body, string(data))
 	if data != nil && jsonResult != nil {
-		switch jsonResult["code"].(float64) {
+		// 远端返回的 JSON 结构不可信（网关错误页等），code/message 均需带 ok 断言，否则一条异常响应就能 panic 掉同步任务
+		code, _ := jsonResult["code"].(float64)
+		switch code {
 		case http.StatusUnauthorized:
 			// Token 过期，发布刷新事件，只有用户名和密码登录才需要刷新 Token
 			if c.Username != "" && c.Password != "" {
@@ -137,9 +140,13 @@ func (c *Client) request(url string, req *resty.Request) (*resty.Response, error
 			}
 			return response, fmt.Errorf("token expired")
 		}
-		if jsonResult["code"].(float64) != http.StatusOK {
-			helpers.OpenListLog.Errorf("OpenList 请求 %s %s 失败：%s", req.Method, req.URL, jsonResult["message"].(string))
-			return response, fmt.Errorf("%s", jsonResult["message"].(string))
+		if code != http.StatusOK {
+			message, _ := jsonResult["message"].(string)
+			if message == "" {
+				message = fmt.Sprintf("未知响应结构（code=%v）", jsonResult["code"])
+			}
+			helpers.OpenListLog.Errorf("OpenList 请求 %s %s 失败：%s", req.Method, req.URL, message)
+			return response, fmt.Errorf("%s", message)
 		}
 	}
 	return response, nil

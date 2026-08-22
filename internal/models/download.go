@@ -68,25 +68,24 @@ func NewDq(maxConcurrency int) *DQ {
 
 // 启动下载队列的工作协程
 func (dq *DQ) Start() {
-	// 重新创建 tasks 通道
-	dq.mutex.Lock()
-	dq.tasks = make(chan *DbDownloadTask, dq.numWorkers*10)
-	dq.mutex.Unlock()
-	// 将所有的下载中改为待下载
-	db.Db.Model(&DbDownloadTask{}).Where("status = ?", DownloadStatusDownloading).Update("status", DownloadStatusPending)
+	// 检查、置位、重建 channel 必须在同一临界区完成：
+	// 否则并发 Start 会丢弃旧 channel（旧 worker 永久阻塞泄漏），并在 running 检查前把下载中任务重置导致重复派发
 	dq.mutex.Lock()
 	if dq.running {
 		dq.mutex.Unlock()
 		helpers.AppLogger.Warnf("下载队列已在运行中")
 		return
 	}
+	dq.tasks = make(chan *DbDownloadTask, dq.numWorkers*10)
 	dq.running = true
+	// 将所有的下载中改为待下载
+	db.Db.Model(&DbDownloadTask{}).Where("status = ?", DownloadStatusDownloading).Update("status", DownloadStatusPending)
 	dq.mutex.Unlock()
 	realtime.BroadcastQueueStatusChanged(realtime.EventDownloadQueueStatusChanged, true)
 
-	// 启动工作协程
+	// 启动工作协程（绑定当前 channel，Stop close 后自动退出，不会误入下一代的 channel）
 	for i := 0; i < dq.numWorkers; i++ {
-		go dq.worker()
+		go dq.worker(dq.tasks)
 	}
 
 	// 启动任务调度协程
@@ -102,12 +101,11 @@ func (dq *DQ) Stop() {
 		return
 	}
 	dq.running = false
+	// close 必须在临界区内：moveTasksToChannel 持同一把锁发送，
+	// 在锁外 close 会与发送竞态导致 send on closed channel panic
+	close(dq.tasks)
 	dq.mutex.Unlock()
 	realtime.BroadcastQueueStatusChanged(realtime.EventDownloadQueueStatusChanged, false)
-
-	// 关闭 tasks 通道
-	close(dq.tasks)
-
 	helpers.AppLogger.Info("下载队列已停止")
 }
 
@@ -140,7 +138,7 @@ func (dq *DQ) UpdateConcurrency(newConcurrency int) {
 	// 如果并发数增加了，需要启动新的 worker
 	if newConcurrency > oldConcurrency {
 		for i := oldConcurrency; i < newConcurrency; i++ {
-			go dq.worker()
+			go dq.worker(dq.tasks)
 		}
 		helpers.AppLogger.Infof("下载队列并发数从 %d 增加到 %d", oldConcurrency, newConcurrency)
 	} else if newConcurrency < oldConcurrency {
@@ -200,6 +198,12 @@ func (dq *DQ) moveTasksToChannel() {
 	dq.mutex.Lock()
 	defer dq.mutex.Unlock()
 
+	// 拿到写锁后必须重新确认运行状态：Stop 在同一把锁内 close 了 channel，
+	// 若此处不复查，检查（RLock）与发送之间可能已发生 close → send on closed channel panic
+	if !dq.running {
+		return
+	}
+
 	// 查询待下载的总量
 	var total int64
 	db.Db.Model(&DbDownloadTask{}).Where("status = ?", DownloadStatusPending).Count(&total)
@@ -232,14 +236,25 @@ func (dq *DQ) moveTasksToChannel() {
 	movedCount := 0
 outer:
 	for _, task := range tasks {
+		// 先把任务标记为下载中再入队：标记失败（仍为待下载）的任务不能入队，
+		// 否则下个调度周期会再次查到并入队，造成同一任务并发下载
+		if err := db.Db.Model(&DbDownloadTask{}).
+			Where("id = ? AND status = ?", task.ID, DownloadStatusPending).
+			Update("status", DownloadStatusDownloading).Error; err != nil {
+			helpers.AppLogger.Warnf("[下载] 标记为下载中失败（跳过入队）：%s", err.Error())
+			continue
+		}
+		task.Status = DownloadStatusDownloading
+		task.StartTime = time.Now().Unix()
+		publishDownloadQueueChanged(task, "status_changed")
 		// 尝试将任务发送到通道
 		select {
 		case dq.tasks <- task:
 			movedCount++
-			// 将任务标记为下载中， 防止重复添加
-			task.Downloading()
 		default:
-			// 通道已满，停止移动任务
+			// 通道已满（理论上不会发生：availableSpace 在同一临界区计算）：
+			// 回退为待下载，避免任务卡在「下载中」无人消费
+			db.Db.Model(&DbDownloadTask{}).Where("id = ?", task.ID).Update("status", DownloadStatusPending)
 			break outer
 		}
 	}
@@ -249,8 +264,8 @@ outer:
 }
 
 // 执行下载任务
-// 工作协程
-func (dq *DQ) worker() {
+// 工作协程（绑定启动时的 channel：close 后退出，不会漂移到重启后的新 channel）
+func (dq *DQ) worker(tasks chan *DbDownloadTask) {
 	for {
 		// 检查队列是否仍在运行
 		dq.mutex.RLock()
@@ -268,7 +283,7 @@ func (dq *DQ) worker() {
 		}
 
 		// 尝试从任务通道获取任务
-		task, ok := <-dq.tasks
+		task, ok := <-tasks
 		if !ok {
 			// 通道已关闭，退出工作协程
 			return

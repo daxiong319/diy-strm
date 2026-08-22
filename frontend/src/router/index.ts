@@ -160,6 +160,10 @@ const AppOrganizeHistory = createAsyncRouteComponent(
   'AppOrganizeHistory',
   () => import('@/components/AppOrganizeHistory.vue'),
 )
+const AppMonitorHistory = createAsyncRouteComponent(
+  'AppMonitorHistory',
+  () => import('@/components/AppMonitorHistory.vue'),
+)
 const AppDiscover = createAsyncRouteComponent('AppDiscover', () => import('@/components/AppDiscover.vue'))
 
 // 定义路由元信息类型
@@ -413,6 +417,17 @@ const routes = [
     },
   },
   {
+    path: '/monitor-history',
+    name: 'monitor-history',
+    component: AppMonitorHistory,
+    meta: {
+      title: '监控历史',
+      requiresAuth: true,
+      icon: 'Monitor',
+      showInMenu: true,
+    },
+  },
+  {
     path: '/transfer',
     name: 'transfer',
     redirect: '/upload-queue',
@@ -572,7 +587,7 @@ const routes = [
     name: 'moviepilot',
     redirect: '/moviepilot/subscribes',
     meta: {
-      title: '影视订阅',
+      title: 'MoviePilot订阅',
       requiresAuth: true,
       icon: 'Collection',
       showInMenu: true,

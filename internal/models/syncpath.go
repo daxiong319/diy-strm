@@ -1,11 +1,10 @@
-package models
+﻿package models
 
 import (
 	"errors"
 	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -107,6 +106,17 @@ func GetStrmSettingDefault() SettingStrm {
 	}
 }
 
+// normalizeLocalSyncPath 本地路径统一去尾部分隔符（保留开头的根斜杠）
+func normalizeLocalSyncPath(p string) string {
+	return strings.TrimRight(strings.TrimSpace(p), "/\\")
+}
+
+// normalizeRemoteSyncPath 远端路径统一去首尾分隔符（跨平台入库形态一致；
+// 此前 Linux 用 Trim、Windows 用 TrimRight 且不处理 "/"，同一配置两平台存库不同）
+func normalizeRemoteSyncPath(p string) string {
+	return strings.Trim(strings.TrimSpace(p), "/\\")
+}
+
 func (sp *SyncPath) GetScrapePathIds() []uint {
 	var scrapePathIds []uint
 	db.Db.Model(&SyncPathScrapePath{}).Where("sync_path_id = ?", sp.ID).Pluck("scrape_path_id", &scrapePathIds)
@@ -121,8 +131,7 @@ func (sp *SyncPath) SaveScrapePaths(scrapePathIds []uint) error {
 		return err
 	}
 	if len(scrapePathIds) == 0 {
-		tx.Commit()
-		return nil
+		return tx.Commit().Error
 	}
 	// 保存关联的刮削路径
 	var syncPathScrapePaths []*SyncPathScrapePath
@@ -218,13 +227,8 @@ func (sp *SyncPath) GetStrmBaseUrl() string {
 
 // 修改同步路径
 func (sp *SyncPath) Update(sourceType SourceType, accountId uint, baseCid, localPath, remotePath string, enableCron bool, customConfig bool, directoryUploadEnabled bool, syncPathSetting SettingStrm) error {
-	if runtime.GOOS != "windows" {
-		localPath = strings.TrimRight(localPath, "/")
-		remotePath = strings.Trim(remotePath, "/")
-	} else {
-		localPath = strings.TrimRight(localPath, "\\")
-		remotePath = strings.TrimRight(remotePath, "\\")
-	}
+	localPath = normalizeLocalSyncPath(localPath)
+	remotePath = normalizeRemoteSyncPath(remotePath)
 	if customConfig {
 		strmSetting := syncPathSetting.EncodeArr()
 		if strmSetting == nil {
@@ -297,15 +301,8 @@ func applySyncPathWriteInput(syncPath *SyncPath, input SyncPathWriteInput) error
 	if syncPath == nil {
 		return errors.New("同步目录为空")
 	}
-	localPath := input.LocalPath
-	remotePath := input.RemotePath
-	if runtime.GOOS != "windows" {
-		localPath = strings.TrimRight(localPath, "/")
-		remotePath = strings.Trim(remotePath, "/")
-	} else {
-		localPath = strings.TrimRight(localPath, "\\")
-		remotePath = strings.TrimRight(remotePath, "\\")
-	}
+	localPath := normalizeLocalSyncPath(input.LocalPath)
+	remotePath := normalizeRemoteSyncPath(input.RemotePath)
 	setting := input.Setting
 	if input.CustomConfig {
 		encoded := setting.EncodeArr()
@@ -424,49 +421,21 @@ func (sp *SyncPath) MakeFullLocalPath(pid, name string) string {
 
 // 创建同步路径
 func CreateSyncPath(sourceType SourceType, accountId uint, baseCid, localPath, remotePath string, enableCron bool, customConfig bool, directoryUploadEnabled bool, syncPathSetting SettingStrm) *SyncPath {
-	if runtime.GOOS != "windows" {
-		localPath = strings.TrimRight(localPath, "/")
-		remotePath = strings.TrimRight(remotePath, "/")
-	} else {
-		localPath = strings.TrimRight(localPath, "\\")
-		remotePath = strings.TrimRight(remotePath, "\\")
-	}
-
-	if customConfig {
-		syncPathSetting = *syncPathSetting.EncodeArr()
-	} else {
-		syncPathSetting = GetStrmSettingDefault()
-	}
-	// 使用 map[string]interface{} 格式入库，避免 0 值不入库
-	syncPathData := map[string]interface{}{
-		"source_type":              sourceType,
-		"base_cid":                 baseCid,
-		"local_path":               localPath,
-		"remote_path":              remotePath,
-		"account_id":               accountId,
-		"enable_cron":              enableCron,
-		"directory_upload_enabled": directoryUploadEnabled,
-		"custom_config":            customConfig,
-		"created_at":               time.Now().Unix(),
-		"updated_at":               time.Now().Unix(),
-	}
-	strmSettingMap := syncPathSetting.ToMap(true, false)
-	maps.Copy(syncPathData, strmSettingMap)
-
-	// helpers.AppLogger.Infof("创建同步路径数据：%+v", syncPathData)
-
-	// 使用 Create 方法插入数据
-	result := db.Db.Model(&SyncPath{}).Create(syncPathData)
-	if result.Error != nil {
-		helpers.AppLogger.Errorf("创建同步路径失败：%v", result.Error)
-		return nil
-	}
-
-	// 获取创建的同步路径对象
-	syncPath := &SyncPath{}
-	if err := db.Db.Where("source_type = ? AND base_cid = ? AND local_path = ? AND remote_path = ?",
-		sourceType, baseCid, localPath, remotePath).Order("id DESC").First(syncPath).Error; err != nil {
-		helpers.AppLogger.Errorf("获取创建的同步路径失败：%v", err)
+	// 复用 CreateSyncPathWithDB：结构体插入直接回填 ID，
+	// 旧的 map 插入 + 按属性回查在并发创建相同路径时会错拿对方的记录（Order("id DESC") 取最新）
+	syncPath, err := CreateSyncPathWithDB(db.Db, SyncPathWriteInput{
+		SourceType:              sourceType,
+		AccountID:               accountId,
+		BaseCid:                 baseCid,
+		LocalPath:               localPath,
+		RemotePath:              remotePath,
+		EnableCron:              enableCron,
+		CustomConfig:            customConfig,
+		DirectoryUploadEnabled:  directoryUploadEnabled,
+		Setting:                 syncPathSetting,
+	})
+	if err != nil {
+		helpers.AppLogger.Errorf("创建同步路径失败：%v", err)
 		return nil
 	}
 	return syncPath
@@ -515,6 +484,8 @@ func DeleteSyncPathById(id uint) bool {
 	}
 	if err := tx.Commit().Error; err != nil {
 		helpers.AppLogger.Errorf("提交删除同步路径事务失败：%v", err)
+		// Commit 失败必须 Rollback 终结事务，否则连接带未提交状态归还连接池，后续查询报 current transaction is aborted
+		tx.Rollback()
 		return false
 	}
 	// 其他类型删除 localPath/remotePath

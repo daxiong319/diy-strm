@@ -665,10 +665,21 @@ func handlePan123ShareSave(text string, chatID int64) helpers.CommandResponse {
 	title, total, err := savePan123Share(ctx, shareKey, sharePwd, targetDir)
 	if err != nil {
 		helpers.AppLogger.Errorf("Telegram 123 转存失败（chatID=%d shareKey=%s 目标目录=%s）：%v", chatID, shareKey, targetDir, err)
+		recordMonitorFailed("bot", string(models.SourceType123), "TG机器人", "", "", trimmedShareText(text), targetDir, 0, err)
 		return helpers.CommandResponse{Text: "❌ 转存失败：" + htmlEscape(err.Error())}
 	}
 	helpers.AppLogger.Infof("Telegram 123 转存成功：chatID=%d shareKey=%s 分享「%s」共 %d 项已转存到 %s", chatID, shareKey, title, total, targetDir)
+	recordMonitorSuccess("bot", string(models.SourceType123), "TG机器人", "", "", trimmedShareText(text), title, targetDir, total, 0)
 	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享「%s」共 %d 项到 %s", htmlEscape(title), total, htmlEscape(targetDir))}
+}
+
+// trimmedShareText 截断分享文本（避免长文本撑爆监控历史的链接列）
+func trimmedShareText(text string) string {
+	t := strings.TrimSpace(text)
+	if len(t) > 256 {
+		return t[:256]
+	}
+	return t
 }
 
 // handleGuangYaShareSave 处理光鸭云盘分享链接转存（www.guangyapan.com/s/{shareId}）
@@ -689,9 +700,11 @@ func handleGuangYaShareSave(text string, chatID int64) helpers.CommandResponse {
 	title, total, err := saveGuangYaShare(ctx, shareID, shareCode, targetDir)
 	if err != nil {
 		helpers.AppLogger.Errorf("Telegram 光鸭转存失败（chatID=%d shareID=%s 目标目录=%s）：%v", chatID, shareID, targetDir, err)
+		recordMonitorFailed("bot", string(models.SourceTypeGuangYaPan), "TG机器人", "", "", trimmedShareText(text), targetDir, 0, err)
 		return helpers.CommandResponse{Text: "❌ 转存失败：" + htmlEscape(err.Error())}
 	}
 	helpers.AppLogger.Infof("Telegram 光鸭转存成功：chatID=%d shareID=%s 分享「%s」共 %d 项已转存到 %s", chatID, shareID, title, total, targetDir)
+	recordMonitorSuccess("bot", string(models.SourceTypeGuangYaPan), "TG机器人", "", "", trimmedShareText(text), title, targetDir, total, 0)
 	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享「%s」共 %d 项到 %s", htmlEscape(title), total, htmlEscape(targetDir))}
 }
 
@@ -749,9 +762,11 @@ func handleTelegramShareSave(text string, chatID int64, defaultDir string) helpe
 	title, total, err := savePan139Share(ctx, linkID, saveDir)
 	if err != nil {
 		helpers.AppLogger.Errorf("Telegram 转存失败（chatID=%d linkID=%s 目标目录=%q）：%v", chatID, linkID, saveDir, err)
+		recordMonitorFailed("bot", string(models.SourceTypePan139), "TG机器人", "", "", trimmedShareText(text), saveDir, 0, err)
 		return helpers.CommandResponse{Text: "❌ " + htmlEscape(err.Error())}
 	}
 	helpers.AppLogger.Infof("Telegram 转存成功：chatID=%d linkID=%s 分享「%s」共 %d 项已转存到 %s", chatID, linkID, title, total, saveDir)
+	recordMonitorSuccess("bot", string(models.SourceTypePan139), "TG机器人", "", "", trimmedShareText(text), title, saveDir, total, 0)
 	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享「%s」共 %d 项到 %s", htmlEscape(title), total, htmlEscape(saveDir))}
 }
 

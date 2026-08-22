@@ -930,6 +930,11 @@ func CleanupAllEmbyLibraryData() error {
 
 // CleanupUnselectedEmbyLibraryData 清理未选中的媒体库数据
 func CleanupUnselectedEmbyLibraryData(selectedLibIds []string) error {
+	// 空列表时 NOT IN (NULL) 对所有行求值为假，清理会被静默跳过：
+	// 「取消勾选全部媒体库」应走全量清理路径
+	if len(selectedLibIds) == 0 {
+		return CleanupAllEmbyLibraryData()
+	}
 	tx := db.Db.Begin()
 	defer func() {
 		if r := recover(); r != nil {

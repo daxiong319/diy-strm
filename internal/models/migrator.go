@@ -34,6 +34,7 @@ var AllTables = []any{
 	ServerChanChannelConfig{}, CustomWebhookChannelConfig{}, NotificationRule{},
 	MoviePilotConfig{}, MoviePilotUploadTask{}, MoviePilotFailedFile{},
 	CloudSetting{}, CloudSubscription{}, CloudTransferRecord{}, CloudChannel{},
+	MonitorTransferRecord{},
 }
 
 func (*Migrator) TableName() string {
@@ -288,9 +289,19 @@ func Migrate() {
 	}
 	if migrator.VersionCode == 16 {
 		// 清空 SyncFile、EmbyMediaSyncFile、DbDownloadTask 表数据
-		db.Db.Exec("DELETE FROM sync_files")
-		db.Db.Exec("DELETE FROM emby_media_sync_files")
-		db.Db.Exec("DELETE FORM db_download_tasks")
+		// Exec 失败必须中止迁移推进，否则脏数据被版本号掩盖（此前 FORM 拼写错误导致该清理静默失败）
+		if err := db.Db.Exec("DELETE FROM sync_files").Error; err != nil {
+			helpers.AppLogger.Errorf("迁移 v16 清空 sync_files 失败：%v", err)
+			return
+		}
+		if err := db.Db.Exec("DELETE FROM emby_media_sync_files").Error; err != nil {
+			helpers.AppLogger.Errorf("迁移 v16 清空 emby_media_sync_files 失败：%v", err)
+			return
+		}
+		if err := db.Db.Exec("DELETE FROM db_download_tasks").Error; err != nil {
+			helpers.AppLogger.Errorf("迁移 v16 清空 db_download_tasks 失败：%v", err)
+			return
+		}
 		db.Db.AutoMigrate(SyncFile{})
 		// 删除已存在的同步缓存表
 		db.Db.Exec("DROP TABLE IF EXISTS sync_files_cache")
@@ -800,15 +811,24 @@ if migrator.VersionCode == 70 {
 			helpers.AppLogger.Info("已创建影巢 OAuth 账号表（主账号 + 子账号）")
 			migrator.UpdateVersionCode(db.Db)
 		}
-		if migrator.VersionCode == 71 {
-			// 整理历史（来源/状态/时间/媒体信息，对齐 tgto123 的 organize_history_records）
-			if err := db.Db.AutoMigrate(OrganizeHistoryRecord{}); err != nil {
-				helpers.AppLogger.Errorf("迁移整理历史表失败：%v", err)
-				return
-			}
-			helpers.AppLogger.Info("已创建整理历史表（organize_history_records）")
-			migrator.UpdateVersionCode(db.Db)
+	if migrator.VersionCode == 71 {
+		// 整理历史（来源/状态/时间/媒体信息，对齐 tgto123 的 organize_history_records）
+		if err := db.Db.AutoMigrate(OrganizeHistoryRecord{}); err != nil {
+			helpers.AppLogger.Errorf("迁移整理历史表失败：%v", err)
+			return
 		}
+		helpers.AppLogger.Info("已创建整理历史表（organize_history_records）")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 72 {
+		// 监控历史（TG 频道/影巢/机器人转存记录，对齐 tgto123 的 messages 表）
+		if err := db.Db.AutoMigrate(MonitorTransferRecord{}); err != nil {
+			helpers.AppLogger.Errorf("迁移监控历史表失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("已创建监控历史表（monitor_transfer_records）")
+		migrator.UpdateVersionCode(db.Db)
+	}
 		helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)
 }
 

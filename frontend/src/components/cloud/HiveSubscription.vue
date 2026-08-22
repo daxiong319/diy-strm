@@ -54,7 +54,7 @@
             <span class="muted">{{ fmtTime(row.last_run_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="300" fixed="right">
+        <el-table-column label="操作" width="330" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="toggleEnabled(row)">
               {{ row.enabled ? '停用' : '启用' }}
@@ -63,6 +63,7 @@
               清理旧版({{ row.old_count }})
             </el-button>
             <el-button link type="primary" size="small" @click="runOnce(row)">执行</el-button>
+            <el-button link type="primary" size="small" @click="openRecords(row)">记录</el-button>
             <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
             <el-button link type="danger" size="small" @click="remove(row)">删除</el-button>
           </template>
@@ -225,6 +226,46 @@
       @update:visible="pickerVisible = $event"
       @select="onDirSelected"
     />
+
+    <el-dialog v-model="recordsVisible" :title="`转存纪录 · 订阅 #${recordsSubId}${recordsSubTitle ? `（${recordsSubTitle}）` : ''}`" width="860px">
+      <el-table :data="records" v-loading="recordsLoading" empty-text="暂无转存纪录">
+        <el-table-column prop="created_at" label="转存时间" width="150">
+          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column prop="title" label="资源" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="episode" label="剧集" width="160">
+          <template #default="{ row }">
+            <span v-if="row.episode">{{ row.episode }}</span>
+            <span v-else class="muted">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="规格" width="150">
+          <template #default="{ row }">
+            <span v-if="specLabel(row)">{{ specLabel(row) }}</span>
+            <span v-else class="muted">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="target_dir" label="目标目录" min-width="140" show-overflow-tooltip />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag v-if="row.status === 'superseded'" size="small" type="warning">已替换</el-tag>
+            <el-tag v-else size="small" type="success">已转存</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="recordsTotal > 0" style="margin-top: 8px; text-align: right">
+        <el-pagination
+          layout="total, prev, pager, next"
+          :total="recordsTotal"
+          :page-size="recordsPageSize"
+          :current-page="recordsPage"
+          @current-change="loadRecords"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="recordsVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -236,6 +277,75 @@ import { isMobile } from '@/utils/deviceUtils'
 import CloudDirPicker from './CloudDirPicker.vue'
 
 const http = useHttpClient()
+
+// ---- 转存纪录（对齐 TG 频道订阅页；影巢订阅的转存记录由影巢订阅引擎写入同一张 cloud_transfer_records） ----
+interface RecordRow {
+  id: number
+  created_at: string
+  title: string
+  episode: string
+  resolution: number
+  source: number
+  codec: number
+  effect: number
+  size_gb: number
+  target_dir: string
+  status: string
+  post_id: string
+}
+const recordsVisible = ref(false)
+const recordsLoading = ref(false)
+const records = ref<RecordRow[]>([])
+const recordsTotal = ref(0)
+const recordsPage = ref(1)
+const recordsPageSize = 15
+const recordsSubId = ref(0)
+const recordsSubTitle = ref('')
+
+const specLabel = (r: RecordRow): string => {
+  const res = ['', '720p', '1080p', '4K'][r.resolution] || ''
+  const src = ['', 'HDTV', 'WEBRip', 'WEB-DL', 'BluRay', 'REMUX'][r.source] || ''
+  const codec = ['', 'H.264', 'H.265'][r.codec] || ''
+  const effect = ['', 'SDR', 'HDR', 'DV'][r.effect] || ''
+  const parts = [res, src, codec, effect].filter(Boolean)
+  if (r.size_gb > 0) parts.push(`${r.size_gb.toFixed(1)}GB`)
+  return parts.join(' ')
+}
+
+const openRecords = (row: any) => {
+  recordsSubId.value = row.id
+  recordsSubTitle.value = row.tmdb_title || ''
+  recordsPage.value = 1
+  recordsVisible.value = true
+  loadRecords(1)
+}
+
+const loadRecords = async (page: number) => {
+  recordsLoading.value = true
+  try {
+    const resp = await http.get(`/api/cloud/subscriptions/${recordsSubId.value}/records`, {
+      params: { page, page_size: recordsPageSize },
+    })
+    if (resp.data?.code === 200) {
+      records.value = resp.data.data?.records || []
+      recordsTotal.value = resp.data.data?.total || 0
+      recordsPage.value = page
+    } else {
+      ElMessage.error(resp.data?.message || '纪录加载失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('纪录加载失败：' + (e?.message || ''))
+  } finally {
+    recordsLoading.value = false
+  }
+}
+
+const formatTime = (t: string) => {
+  const d = new Date(t)
+  if (isNaN(d.getTime())) return t
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
 const subs = ref<any[]>([])
 const loading = ref(false)

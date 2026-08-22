@@ -54,17 +54,17 @@ func (uq *UQ) Start() {
 	uq.tasks = make(chan *DbUploadTask, uq.numWorkers)
 	uq.mutex.Unlock()
 	realtime.BroadcastQueueStatusChanged(realtime.EventUploadQueueStatusChanged, true)
-	// 启动工作协程
+	// 启动工作协程（绑定当前 channel，Stop close 后自动退出，不会漂移到重启后的新 channel）
 	for i := 0; i < uq.numWorkers; i++ {
-		go uq.worker()
+		go uq.worker(uq.tasks)
 	}
 
 	// 启动任务调度协程
 	go uq.taskScheduler()
 }
 
-// worker 执行上传任务
-func (uq *UQ) worker() {
+// worker 执行上传任务（绑定启动时的 channel：close 后退出，不会漂移到重启后的新 channel）
+func (uq *UQ) worker(tasks chan *DbUploadTask) {
 	for {
 		// 检查队列是否仍在运行
 		uq.mutex.RLock()
@@ -78,7 +78,7 @@ func (uq *UQ) worker() {
 
 		// 尝试从任务通道获取任务
 		select {
-		case task, ok := <-uq.tasks:
+		case task, ok := <-tasks:
 			if !ok {
 				// 通道已关闭，退出工作协程
 				// helpers.AppLogger.Debug("任务通道已关闭，工作协程退出")
@@ -115,6 +115,12 @@ func (uq *UQ) moveTasksToChannel() {
 	// 获取一些任务加入到通道
 	uq.mutex.Lock()
 	defer uq.mutex.Unlock()
+
+	// 拿到写锁后必须重新确认运行状态：Stop 在同一把锁内 close 了 channel，
+	// 若此处不复查，检查（RLock）与发送之间可能已发生 close → send on closed channel panic
+	if !uq.running {
+		return
+	}
 
 	var total int64
 	db.Db.Model(&DbUploadTask{}).
@@ -194,12 +200,11 @@ func (uq *UQ) Stop() {
 		return
 	}
 	uq.running = false
+	// close 必须在临界区内：moveTasksToChannel 持同一把锁发送，
+	// 在锁外 close 会与发送竞态导致 send on closed channel panic
+	close(uq.tasks)
 	uq.mutex.Unlock()
 	realtime.BroadcastQueueStatusChanged(realtime.EventUploadQueueStatusChanged, false)
-
-	// 关闭 tasks 通道
-	close(uq.tasks)
-
 	helpers.AppLogger.Info("上传队列已停止")
 }
 

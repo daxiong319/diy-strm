@@ -166,6 +166,7 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 	skipped := 0
 	var errs []string
 	var failedIDs []string
+	msgURLFor := func(postID string) string { return buildTGMessageURL(channel, postID) }
 
 	// posts 新到旧；游标推进到最新帖
 	for _, p := range posts {
@@ -213,6 +214,8 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 					}
 					if !worth {
 						skipped++ // 已达标或新资源不优于旧版本
+						recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, targetDir, sub.ID,
+							"洗版跳过：全部集已达标或新资源规格不优于现有版本")
 						continue
 					}
 					if len(upgrade) > 0 {
@@ -223,26 +226,30 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 					if old != nil {
 						oldSpec := recordToSpec(old)
 						if oldSpec.Score() >= WashTargetScore(sub.WashTarget) {
-							skipped++ // 已达标，不再洗版升级
+							skipped++
+							recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, targetDir, sub.ID, "洗版跳过：现有版本已达标")
 							continue
 						}
 						if !newSpec.BetterThan(oldSpec) {
-							skipped++ // 新资源不优于旧版本
+							skipped++
+							recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, targetDir, sub.ID, "洗版跳过：新资源规格不优于现有版本")
 							continue
 						}
 					}
 				}
 				title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
 				if err != nil {
-errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
-				failedIDs = append(failedIDs, p.PostID)
-				continue
+					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
+					failedIDs = append(failedIDs, p.PostID)
+					recordMonitorFailed("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, targetDir, sub.ID, err)
+					continue
 				}
 				transferred++
 				recTitle := sub.TMDBTitle
 				if recTitle == "" {
 					recTitle = title
 				}
+				recordMonitorWash("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, title, targetDir, total, sub.ID, sub.WashTarget)
 				_ = models.CreateTransferRecord(&models.CloudTransferRecord{
 					SourceType:     sub.SourceType,
 					SubscriptionID: sub.ID,
@@ -279,19 +286,22 @@ errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL
 				epKeys := ParseEpisodeKeys(p.Text, sub.Season)
 				if models.HasEpisodeRecord(sub.ID, sub.TMDBID, sub.Season, epKeys) {
 					skipped++
+					recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, targetDir, sub.ID, "去重跳过：该影片/剧集已收录")
 					continue
 				}
 				title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
 				if err != nil {
-errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
-				failedIDs = append(failedIDs, p.PostID)
-				continue
+					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
+					failedIDs = append(failedIDs, p.PostID)
+					recordMonitorFailed("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, targetDir, sub.ID, err)
+					continue
 				}
 				transferred++
 				recTitle := sub.TMDBTitle
 				if recTitle == "" {
 					recTitle = title
 				}
+				recordMonitorSuccess("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, title, targetDir, total, sub.ID)
 				_ = models.CreateTransferRecord(&models.CloudTransferRecord{
 					SourceType:     sub.SourceType,
 					SubscriptionID: sub.ID,
@@ -307,19 +317,29 @@ errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL
 				helpers.AppLogger.Infof("TG 频道订阅 #%d：命中帖 %s，已转存「%s」共 %d 项到 %s（目标 %s）", sub.ID, p.PostID, title, total, sub.SourceType, targetDir)
 			} else if models.HasLinkRecord(link.URL) {
 				skipped++
+				recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, targetDir, sub.ID, "去重跳过：该分享链接已转存过")
 				continue
 			} else {
+				// 关键词标题校验（通用订阅）：帖子文本命中关键词不代表链接内容命中——
+				// 聚合帖（一帖打包多部剧）会把无关资源整帖转走；转存前用分享顶级目录名复核关键词
+				if len(kws) > 0 && !shareTitleMatchesKeywords(ctx, link.URL, link.Pwd, kws) {
+					skipped++
+					recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, targetDir, sub.ID, "跳过：分享标题与关键词不匹配（聚合帖防误转）")
+					continue
+				}
 				title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
 				if err != nil {
-errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
-				failedIDs = append(failedIDs, p.PostID)
-				continue
+					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
+					failedIDs = append(failedIDs, p.PostID)
+					recordMonitorFailed("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, targetDir, sub.ID, err)
+					continue
 				}
 				transferred++
 				recTitle := sub.TMDBTitle
 				if recTitle == "" {
 					recTitle = title
 				}
+				recordMonitorSuccess("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, title, targetDir, total, sub.ID)
 				_ = models.CreateTransferRecord(&models.CloudTransferRecord{
 					SourceType:     sub.SourceType,
 					SubscriptionID: sub.ID,
@@ -407,6 +427,33 @@ func saveShareByLink(ctx context.Context, text, pwd, sourceType, targetDir strin
 	default:
 		return "", 0, fmt.Errorf("不支持的网盘类型：%s", sourceType)
 	}
+}
+
+// shareTitleMatchesKeywords 通用订阅转存前的关键词复核：用分享顶级条目名匹配关键词。
+// 仅 123 分享支持（ListShareDir 轻量查询，不产生转存动作）；其余网盘与查询失败时放行（保持旧行为）。
+func shareTitleMatchesKeywords(ctx context.Context, linkURL, pwd string, kws []string) bool {
+	if len(kws) == 0 {
+		return true
+	}
+	m := pan123ShareLinkPattern.FindStringSubmatch(linkURL)
+	if m == nil {
+		return true // 非 123 分享：不拦截
+	}
+	var account models.Account
+	if err := db.Db.Where("source_type = ?", models.SourceType123).Order("id asc").First(&account).Error; err != nil {
+		return true // 查不到账号（拦截逻辑降级，交给转存环节报错）
+	}
+	client := account.Get123Client()
+	defer client.Close()
+	items, err := client.ListShareDir(ctx, m[1], pwd, "0")
+	if err != nil || len(items) == 0 {
+		return true // 查询失败：不拦截（失效分享由转存环节自然报错）
+	}
+	name := items[0].FileName
+	if strings.TrimSpace(name) == "" {
+		return true
+	}
+	return tgchannel.MatchKeywords(name, kws)
 }
 
 // savePan123Share 转存 123 分享到指定目录

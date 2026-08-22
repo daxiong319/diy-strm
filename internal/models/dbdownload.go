@@ -1,9 +1,10 @@
-package models
+﻿package models
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"time"
@@ -504,10 +505,18 @@ func (task *DbDownloadTask) DownloadEmbyMedia() {
 	}
 	req.Header.Set("User-Agent", v115open.DEFAULTUA)
 	// 发送请求
-	_, doErr := client.Do(req)
+	resp, doErr := client.Do(req)
 	if doErr != nil {
 		helpers.AppLogger.Errorf("[Emby 媒体信息提取] 失败，名称：%s，Emby Item ID：%s，错误：%v", task.FileName, task.RemoteFileId, doErr)
 		task.Fail(doErr)
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body) // 读完并丢弃，保证连接可复用
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		err := fmt.Errorf("HTTP %d", resp.StatusCode)
+		helpers.AppLogger.Errorf("[Emby 媒体信息提取] 失败，名称：%s，Emby Item ID：%s，%s", task.FileName, task.RemoteFileId, err)
+		task.Fail(err)
 		return
 	}
 	if helpers.IsRelease {

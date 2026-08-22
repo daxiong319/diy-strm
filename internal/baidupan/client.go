@@ -39,9 +39,10 @@ var cachedClients map[string]*Client = make(map[string]*Client, 0)
 var cachedClientsMutex sync.RWMutex
 
 func NewBaiDuPanClient(accountId uint, accessToken string) *Client {
-	cachedClientsMutex.RLock()
-	defer cachedClientsMutex.RUnlock()
 	clientKey := fmt.Sprintf("%d", accountId)
+	// 缓存写入必须持写锁：RLock 允许多 goroutine 同时进入，并发写 map 会触发致命错误
+	cachedClientsMutex.Lock()
+	defer cachedClientsMutex.Unlock()
 	if client, exists := cachedClients[clientKey]; exists {
 		client.accessToken = accessToken
 		return client
@@ -78,8 +79,9 @@ func RefreshToken(accountId uint, refreshToken string) (*RefreshResponse, error)
 	authServerUrl := fmt.Sprintf("%s/baidupan/oauth-url", helpers.GlobalConfig.AuthServer)
 	// 注意：redirect_uri 需要与百度开放平台配置一致
 	oauthUrl := fmt.Sprintf("%s?action=refresh&state=%s", authServerUrl, stateEncoded)
-	// 发送 GET 请求
-	resp, err := http.Get(oauthUrl)
+	// 发送 GET 请求（必须带超时：这是定时 token 刷新路径，AuthServer 无响应时不能永久挂起）
+	refreshHTTPClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := refreshHTTPClient.Get(oauthUrl)
 	if err != nil {
 		return nil, err
 	}

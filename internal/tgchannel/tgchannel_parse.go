@@ -35,6 +35,11 @@ var userAgents = []string{
 }
 
 // 分享链接正则（与 telegram_bot 一致）
+// channelHTTPClient 抓取频道的专用客户端：带整体超时。
+// 不能用 http.DefaultClient：调用方传的是订阅引擎的长生命周期 ctx（无单次超时），
+// t.me 挂起会阻塞整个订阅轮询循环（5 分钟一轮的串行遍历）。
+var channelHTTPClient = &http.Client{Timeout: 45 * time.Second}
+
 var (
 	rePan123 = regexp.MustCompile(`(?:https?://)?(?:[a-z0-9\-]+\.)*(?:123pan\.com|123pan\.cn|123684\.com|123865\.com)/(?:s|123pan|share)/([A-Za-z0-9\-_]{6,})(?:\.html)?`)
 	reGuangY = regexp.MustCompile(`(?:https?://)?(?:www\.)?guangyapan\.com/s/([A-Za-z0-9_\-]{6,})`)
@@ -117,7 +122,7 @@ func ParseChannelPage(ctx context.Context, channel string) ([]ChannelPost, error
 		req.Header.Set("User-Agent", ua)
 		req.Header.Set("Accept", "text/html,application/xhtml+xml")
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := channelHTTPClient.Do(req)
 		if err != nil {
 			lastErr = err
 			continue

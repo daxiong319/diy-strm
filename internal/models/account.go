@@ -513,9 +513,16 @@ func GetPathByPathFileId(account *Account, fileId string) string {
 
 // 处理 115 访问凭证失效事件（异步版本）
 func HandleV115TokenInvalid(event helpers.Event) helpers.EventResult {
-	eventData := event.Data.(map[string]interface{})
-	helpers.AppLogger.Infof("收到 V115 访问凭证失效事件，开始处理，账号 ID：%d", eventData["account_id"].(uint))
-	account, err := GetAccountById(eventData["account_id"].(uint))
+	// 事件字段由各发布方拼装，任一字段缺失/类型不符都不能 panic（裸断言改为带 ok 校验）
+	eventData, ok := event.Data.(map[string]interface{})
+	if !ok {
+		helpers.AppLogger.Errorf("V115 访问凭证失效事件数据格式错误：%T", event.Data)
+		return helpers.EventResult{Success: false, Error: fmt.Errorf("事件数据格式错误"), Data: nil}
+	}
+	accountID, _ := eventData["account_id"].(uint)
+	reason, _ := eventData["reason"].(string)
+	helpers.AppLogger.Infof("收到 V115 访问凭证失效事件，开始处理，账号 ID：%d", accountID)
+	account, err := GetAccountById(accountID)
 	if err != nil {
 		helpers.AppLogger.Errorf("查询开放平台账号失败：%v", err)
 		return helpers.EventResult{
@@ -524,7 +531,7 @@ func HandleV115TokenInvalid(event helpers.Event) helpers.EventResult {
 			Data:    nil,
 		}
 	}
-	account.ClearToken(eventData["reason"].(string))
+	account.ClearToken(reason)
 	ctx := context.Background()
 	notif := &Notification{
 		Type:      SystemAlert,
@@ -549,8 +556,14 @@ func HandleV115TokenInvalid(event helpers.Event) helpers.EventResult {
 func HandleOpenListTokenSaveSync(event helpers.Event) helpers.EventResult {
 	helpers.AppLogger.Warnf("收到 OpenList 访问凭证保存同步事件，开始处理")
 
-	eventData := event.Data.(map[string]any)
-	account, err := GetAccountById(eventData["account_id"].(uint))
+	eventData, ok := event.Data.(map[string]any)
+	if !ok {
+		helpers.AppLogger.Errorf("OpenList 访问凭证保存事件数据格式错误：%T", event.Data)
+		return helpers.EventResult{Success: false, Error: fmt.Errorf("事件数据格式错误"), Data: nil}
+	}
+	accountID, _ := eventData["account_id"].(uint)
+	token, _ := eventData["token"].(string)
+	account, err := GetAccountById(accountID)
 	if err != nil {
 		helpers.AppLogger.Errorf("查询 OpenList 账号失败：%v", err)
 		return helpers.EventResult{
@@ -561,7 +574,7 @@ func HandleOpenListTokenSaveSync(event helpers.Event) helpers.EventResult {
 	}
 	// expiresTime = now+ 48 小时
 	expiresTime := int64(48 * 60 * 60)
-	suc := account.UpdateToken(eventData["token"].(string), "", expiresTime)
+	suc := account.UpdateToken(token, "", expiresTime)
 
 	if suc {
 		helpers.AppLogger.Infof("OpenList 访问凭证保存成功")

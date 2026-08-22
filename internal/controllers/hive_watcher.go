@@ -134,65 +134,78 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 	for i := range candidates {
 		res := &candidates[i]
 		spec := hiveResourceSpec(res)
+		hiveMsgID := res.Slug
 		// 去重/洗版判定（与 TG 订阅一致）
 		old := models.LatestSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season)
 		if old != nil {
 			oldSpec := recordToSpec(old)
 			if oldSpec.Score() >= WashTargetScore(sub.WashTarget) {
 				skipped++ // 已达标
+				recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "洗版跳过：现有版本已达标")
 				continue
 			}
 			if !spec.BetterThan(oldSpec) {
 				skipped++ // 不比当前版本更优
+				recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "洗版跳过：新资源规格不优于现有版本")
 				continue
 			}
 		} else if !sub.Wash && models.HasSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season) {
 			skipped++ // 已收录
+			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "去重跳过：该影片/剧集已收录")
 			continue
 		}
 		// 通过分享详情获取网盘类型，必须与订阅目标网盘一致
 		shareResp, serr := client.GetShareDetail(ctx, res.Slug)
 		if serr != nil {
 			errs = append(errs, fmt.Sprintf("%s 详情获取失败：%v", res.Slug, serr))
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, serr)
 			continue
 		}
 		if !shareResp.Success {
 			errs = append(errs, fmt.Sprintf("%s 详情获取失败：%s", res.Slug, shareResp.Message))
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Errorf("%s", shareResp.Message))
 			continue
 		}
 		var detail hdhive.ShareDetail
 		if err := json.Unmarshal(shareResp.Data, &detail); err != nil {
 			errs = append(errs, fmt.Sprintf("%s 详情解析失败", res.Slug))
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, err)
 			continue
 		}
 		panType := hivePanTypeToSourceType(detail.PanType)
 		if panType == "" {
 			unsupported++
+			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Sprintf("网盘类型 %q 暂不支持，跳过", detail.PanType))
 			helpers.AppLogger.Debugf("影巢订阅 #%d：资源 %s 网盘类型 %q 暂不支持，跳过", sub.ID, res.Slug, detail.PanType)
 			continue
 		}
 		if panType != sub.SourceType {
 			skipped++ // 网盘类型与订阅目标不一致
+			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "网盘类型与订阅目标不一致，跳过")
 			continue
 		}
 		// 解锁积分上限（0=不限，对应 tgto123 的 HDHIVE_MAX_POINTS）
 		if maxPts := models.GetHiveMaxPoints(); maxPts > 0 && res.UnlockPoints > maxPts {
 			skipped++ // 解锁积分超过上限
+			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Sprintf("解锁积分 %d 超过上限 %d，跳过", res.UnlockPoints, maxPts))
 			continue
 		}
 		// 解锁
 		unlockResp, uerr := client.UnlockResource(ctx, res.Slug)
 		if uerr != nil {
 			errs = append(errs, fmt.Sprintf("%s 解锁失败：%v", res.Slug, uerr))
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, uerr)
 			continue
 		}
 		if !unlockResp.Success {
 			errs = append(errs, fmt.Sprintf("%s 解锁失败：%s", res.Slug, unlockResp.Message))
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Errorf("%s", unlockResp.Message))
 			continue
 		}
 		var unlock hdhive.UnlockResult
 		if err := json.Unmarshal(unlockResp.Data, &unlock); err != nil {
 			errs = append(errs, fmt.Sprintf("%s 解锁结果解析失败", res.Slug))
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, err)
 			continue
 		}
 		linkURL := strings.TrimSpace(unlock.FullURL)
@@ -201,16 +214,23 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		}
 		if models.HasLinkRecord(linkURL) {
 			skipped++ // 该链接已转存过
+			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", linkURL, targetDir, sub.ID, "去重跳过：该分享链接已转存过")
 			continue
 		}
 		title, total, terr := saveShareByLink(ctx, linkURL, unlock.AccessCode, panType, targetDir)
 		if terr != nil {
 			errs = append(errs, fmt.Sprintf("%s 转存失败：%v", linkURL, terr))
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", linkURL, targetDir, sub.ID, terr)
 			continue
 		}
 		recTitle := sub.TMDBTitle
 		if recTitle == "" {
 			recTitle = title
+		}
+		if old != nil {
+			recordMonitorWash("hive", panType, "", hiveMsgID, "", linkURL, title, targetDir, total, sub.ID, sub.WashTarget)
+		} else {
+			recordMonitorSuccess("hive", panType, "", hiveMsgID, "", linkURL, title, targetDir, total, sub.ID)
 		}
 		_ = models.CreateTransferRecord(&models.CloudTransferRecord{
 			SourceType:     panType,

@@ -39,12 +39,33 @@ func (b *atomicBool) Get() bool {
 	return b.v
 }
 
+// CompareAndSwap 原子地「检查并占位」：Get+Set 分开调用存在间隙，并发 Start 会启动两套 worker
+func (b *atomicBool) CompareAndSwap(oldV, newV bool) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.v != oldV {
+		return false
+	}
+	b.v = newV
+	return true
+}
+
+// enqueueUploadTask 入队上传任务：队列满时返回 false 而不是无限阻塞
+// （HTTP 重试路径在请求协程里直接 send，队列满且 worker 忙时会一直阻塞到 HTTP 超时）
+func enqueueUploadTask(task *models.MoviePilotUploadTask) bool {
+	select {
+	case uploadQueue <- task:
+		return true
+	default:
+		return false
+	}
+}
+
 // StartMoviePilotWatcher 启动后台轮询：常量运行，按配置周期检测 MP 下载完成并处理
 func StartMoviePilotWatcher() {
-	if watcherRunning.Get() {
+	if !watcherRunning.CompareAndSwap(false, true) {
 		return
 	}
-	watcherRunning.Set(true)
 
 	// 上传 worker：串行处理上传任务
 	go func() {
@@ -59,15 +80,22 @@ func StartMoviePilotWatcher() {
 		if err := db.Db.Where("status IN ?", []models.MoviePilotUploadStatus{
 			models.MoviePilotUploadPending, models.MoviePilotUploadUploading,
 		}).Find(&unfinished).Error; err == nil {
+			restored, dropped := 0, 0
 			for i := range unfinished {
 				task := unfinished[i]
-				select {
-				case uploadQueue <- &task:
-				default:
+				if enqueueUploadTask(&task) {
+					restored++
+				} else {
+					dropped++
 				}
 			}
-			if len(unfinished) > 0 {
-				helpers.AppLogger.Infof("MoviePilot 启动恢复上传任务：%d 个", len(unfinished))
+			if restored > 0 {
+				helpers.AppLogger.Infof("MoviePilot 启动恢复上传任务：%d 个", restored)
+			}
+			if dropped > 0 {
+				// 被丢弃的任务仍是 Pending/Uploading 状态且已有 DB 记录（hash 幂等会跳过重建），
+				// 需要人工在界面重试，必须留下日志线索而不是静默吞掉
+				helpers.AppLogger.Warnf("MoviePilot 启动恢复：内存队列已满，%d 个任务未入队（请在上传任务页手动重试）", dropped)
 			}
 		}
 	}()
@@ -164,7 +192,9 @@ func createUploadTaskFromDownload(client *Client, cfg *models.MoviePilotConfig, 
 		return fmt.Errorf("创建上传任务失败：%v", err)
 	}
 	helpers.AppLogger.Infof("MoviePilot 检测到下载完成：%s → %s（139 目标 %s）", title, localPath, remotePath)
-	uploadQueue <- task
+	if !enqueueUploadTask(task) {
+		helpers.AppLogger.Warnf("MoviePilot 上传队列已满，任务 %s（%s）已落库待人工重试", hash, title)
+	}
 	return nil
 }
 
@@ -631,7 +661,10 @@ func RetryUploadTask(taskID uint) bool {
 		return false
 	}
 	purgeMoviePilotDbTasks(task.ID)
-	uploadQueue <- task
+	if !enqueueUploadTask(task) {
+		helpers.AppLogger.Warnf("MoviePilot 上传队列已满，任务 #%d 重试入队失败（请稍后再试）", task.ID)
+		return false
+	}
 	return true
 }
 

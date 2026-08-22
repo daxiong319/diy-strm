@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"context"
@@ -607,12 +607,11 @@ func setRouter(r *gin.Engine) {
 	r.GET("/openlist/url", controllers.GetOpenListFileUrl) // 查询 OpenList 直链
 
 	r.GET("/proxy-115", controllers.Proxy115)                      // 115 CDN 反代路由
-	r.POST("/api/update-fn-access-path", controllers.UpdateFNPath) // 更新飞牛访问路径
-
 	// 需要 JWT 验证的 API 路由
 	api := r.Group("/api")
 	api.Use(controllers.JWTAuthMiddleware())
 	{
+		api.POST("/update-fn-access-path", controllers.UpdateFNPath) // 更新飞牛访问路径（需登录，防止未授权改写目录白名单）
 		api.GET("/scrape/tmp-image", controllers.ScrapeTmpImage)           // 获取临时图片
 		api.GET("/scrape/records/export", controllers.ExportScrapeRecords) // 导出刮削记录
 		api.GET("/logs/stream", controllers.LogStream)                     // SSE 日志查看
@@ -945,6 +944,11 @@ func setRouter(r *gin.Engine) {
 		api.POST("/organize-history/reorganize", controllers.ReorganizeOrganizeHistory)    // 手动指定 TMDB 重新整理（异步）
 		api.GET("/organize-history/task-status", controllers.OrganizeHistoryTaskStatus)    // 重整理任务状态（轮询）
 		api.POST("/organize-history/recognize-test", controllers.RecognizeTestOrganize)    // 识别测试
+
+		// 监控历史（对齐 tgto123 的转存历史：TG 频道/影巢/机器人转存记录）
+		api.GET("/monitor-history", controllers.ListMonitorHistory)          // 监控历史列表（来源/状态/关键词/分页）
+		api.POST("/monitor-history/delete", controllers.DeleteMonitorHistory) // 删除监控历史记录（单条/批量）
+		api.POST("/monitor-history/clear", controllers.ClearMonitorHistory)   // 按来源/日期清理监控历史
 
 	}
 

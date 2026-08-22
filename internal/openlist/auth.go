@@ -31,7 +31,12 @@ func (c *Client) GetToken() (*TokenData, error) {
 		return nil, err
 	}
 	tokenData := result.Data
-	helpers.OpenListLog.Infof("OpenList 获取访问凭证成功：%s", tokenData.Token)
+	// 令牌不得明文落日志（日志文件可下载）：只记录前 6 位与长度
+	tokenForLog := tokenData.Token
+	if len(tokenForLog) > 6 {
+		tokenForLog = tokenForLog[:6] + "..."
+	}
+	helpers.OpenListLog.Infof("OpenList 获取访问凭证成功：%s（长度 %d）", tokenForLog, len(tokenData.Token))
 	// 给客户端设置新的 Token
 	c.SetAuthToken(tokenData.Token)
 	// 通知 models 保存 Token 到数据库
