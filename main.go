@@ -893,6 +893,11 @@ func setRouter(r *gin.Engine) {
 
 		// 影巢（HDHive）OAuth 授权与签到
 		api.GET("/cloud/hive/oauth/status", controllers.HiveOAuthStatusAPI)          // OAuth 授权状态
+		api.GET("/cloud/hive/official/config", controllers.HiveOfficialConfigAPI)   // 官方通道配置（脱敏）
+		api.POST("/cloud/hive/official/config", controllers.HiveOfficialConfigSaveAPI) // 保存官方通道配置
+		api.POST("/cloud/hive/official/test", controllers.HiveOfficialTestAPI)      // 官方通道连通性测试
+		api.POST("/cloud/hive/official/start", controllers.HiveOfficialStartAPI)    // 官方通道发起授权
+		api.POST("/cloud/hive/official/callback", controllers.HiveOfficialCallbackAPI) // 官方通道授权回调
 		api.POST("/cloud/hive/oauth/refresh", controllers.HiveOAuthRefreshAPI)       // 刷新授权状态
 		api.POST("/cloud/hive/oauth/auth-url", controllers.HiveOAuthAuthURLAPI)      // 生成授权 URL
 		api.POST("/cloud/hive/oauth/checkin", controllers.HiveCheckinAPI)            // 手动签到

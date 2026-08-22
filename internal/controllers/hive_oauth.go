@@ -20,6 +20,24 @@ import (
 // OAuth 授权状态
 // ---------------------------------------------------------------------------
 
+// hiveAuthURLFor tgtodrive 通道账号生成授权 URL；官方通道返回空（走官方授权入口）
+func hiveAuthURLFor(acc *models.HiveOAuthAccount) string {
+	if oc, ok := models.HiveClientForAccount(acc).(*hdhive.OAuthClient); ok {
+		return oc.BuildAuthURL()
+	}
+	return ""
+}
+
+// hiveTokenStatusFor 按通道取 token 状态：官方通道以 Me 可达性代替
+func hiveTokenStatusFor(ctx context.Context, acc *models.HiveOAuthAccount, client hdhive.ChannelClient) (*hdhive.OAuthAPIResponse, error) {
+	if oc, ok := client.(*hdhive.OAuthClient); ok {
+		return oc.TokenStatus(ctx)
+	}
+	hasTok := true
+	expIn := int64(0)
+	return &hdhive.OAuthAPIResponse{Success: true, HasAccessToken: &hasTok, ExpiresInSeconds: &expIn}, nil
+}
+
 // HiveOAuthStatusAPI 获取影巢 OAuth 授权状态（GET /cloud/hive/oauth/status）
 // 返回主账号状态 + 授权 URL（未授权时）
 func HiveOAuthStatusAPI(c *gin.Context) {
@@ -33,8 +51,7 @@ func HiveOAuthStatusAPI(c *gin.Context) {
 		"account": pub,
 	}
 	if !pub.Authorized {
-		client := hdhive.NewOAuthClient(acc.InstallID)
-		data["auth_url"] = client.BuildAuthURL()
+		data["auth_url"] = hiveAuthURLFor(acc)
 	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "查询成功", Data: data})
 }
@@ -42,12 +59,12 @@ func HiveOAuthStatusAPI(c *gin.Context) {
 // HiveOAuthStatusByAccount 刷新单个账号的授权状态（token_status + me），并落库
 // 返回是否成功授权、更新后的公共账号信息与错误信息
 func HiveOAuthStatusByAccount(ctx context.Context, acc *models.HiveOAuthAccount) (*models.PublicHiveAccount, bool, string) {
-	client := hdhive.NewOAuthClient(acc.InstallID)
+	client := models.HiveClientForAccount(acc)
 	meResp, err := client.Me(ctx)
 	if err != nil {
 		return acc.Public(), false, err.Error()
 	}
-	statusResp, err := client.TokenStatus(ctx)
+	statusResp, err := hiveTokenStatusFor(ctx, acc, client)
 	if err != nil {
 		return acc.Public(), false, err.Error()
 	}
@@ -130,11 +147,10 @@ func HiveOAuthRefreshAPI(c *gin.Context) {
 	defer cancel()
 	pub, ok, msg := HiveOAuthStatusByAccount(ctx, acc)
 	if !ok {
-		client := hdhive.NewOAuthClient(acc.InstallID)
 		c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: msg, Data: gin.H{
 			"authorized": false,
 			"account":    pub,
-			"auth_url":   client.BuildAuthURL(),
+			"auth_url":   hiveAuthURLFor(acc),
 		}})
 		return
 	}
@@ -148,8 +164,7 @@ func HiveOAuthAuthURLAPI(c *gin.Context) {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取主账号失败：" + err.Error(), Data: nil})
 		return
 	}
-	client := hdhive.NewOAuthClient(acc.InstallID)
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "生成成功", Data: gin.H{"auth_url": client.BuildAuthURL()}})
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "生成成功", Data: gin.H{"auth_url": hiveAuthURLFor(acc)}})
 }
 
 // ---------------------------------------------------------------------------
@@ -191,9 +206,9 @@ func HiveCheckinAPI(c *gin.Context) {
 
 // RunHiveCheckin 执行单个账号签到并落库（供 API 与定时任务共用）
 func RunHiveCheckin(ctx context.Context, acc *models.HiveOAuthAccount, mode hdhive.CheckinMode) (bool, string) {
-	client := hdhive.NewOAuthClient(acc.InstallID)
+	client := models.HiveClientForAccount(acc)
 	// 先检查授权状态
-	statusResp, err := client.TokenStatus(ctx)
+	statusResp, err := hiveTokenStatusFor(ctx, acc, client)
 	if err != nil {
 		return false, "签到失败：" + err.Error()
 	}
@@ -386,8 +401,7 @@ func HiveSubAccountAuthURLAPI(c *gin.Context) {
 		c.JSON(http.StatusNotFound, APIResponse[any]{Code: BadRequest, Message: "账号不存在", Data: nil})
 		return
 	}
-	client := hdhive.NewOAuthClient(acc.InstallID)
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "生成成功", Data: gin.H{"auth_url": client.BuildAuthURL()}})
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "生成成功", Data: gin.H{"auth_url": hiveAuthURLFor(acc)}})
 }
 
 // HiveSubAccountRefreshAPI 刷新子账号状态（POST /cloud/hive/sub-accounts/:id/refresh）
@@ -406,11 +420,10 @@ func HiveSubAccountRefreshAPI(c *gin.Context) {
 	defer cancel()
 	pub, ok, msg := HiveOAuthStatusByAccount(ctx, acc)
 	if !ok {
-		client := hdhive.NewOAuthClient(acc.InstallID)
 		c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: msg, Data: gin.H{
 			"authorized": false,
 			"account":    pub,
-			"auth_url":   client.BuildAuthURL(),
+			"auth_url":   hiveAuthURLFor(acc),
 		}})
 		return
 	}

@@ -164,6 +164,10 @@ const AppMonitorHistory = createAsyncRouteComponent(
   'AppMonitorHistory',
   () => import('@/components/AppMonitorHistory.vue'),
 )
+const HiveOfficialCallback = createAsyncRouteComponent(
+  'HiveOfficialCallback',
+  () => import('@/components/HiveOfficialCallback.vue'),
+)
 const AppDiscover = createAsyncRouteComponent('AppDiscover', () => import('@/components/AppDiscover.vue'))
 
 // 定义路由元信息类型
@@ -414,6 +418,16 @@ const routes = [
       requiresAuth: true,
       icon: 'Clock',
       showInMenu: true,
+    },
+  },
+  {
+    path: '/hive-official/callback',
+    name: 'hive-official-callback',
+    component: HiveOfficialCallback,
+    meta: {
+      title: '影巢官方授权回调',
+      requiresAuth: false,
+      showInMenu: false,
     },
   },
   {

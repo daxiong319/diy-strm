@@ -829,6 +829,15 @@ if migrator.VersionCode == 70 {
 		helpers.AppLogger.Info("已创建监控历史表（monitor_transfer_records）")
 		migrator.UpdateVersionCode(db.Db)
 	}
+	if migrator.VersionCode == 73 {
+		// 影巢双通道：hive_oauth_accounts 增加 channel/access/refresh token 字段
+		if err := db.Db.AutoMigrate(HiveOAuthAccount{}); err != nil {
+			helpers.AppLogger.Errorf("迁移影巢账号通道字段失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("影巢账号表已支持双通道（tgtodrive/official）")
+		migrator.UpdateVersionCode(db.Db)
+	}
 		helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)
 }
 

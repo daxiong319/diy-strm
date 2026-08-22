@@ -80,21 +80,26 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		_ = models.SaveCloudSubscription(sub)
 		return fmt.Sprintf("订阅 #%d（影巢）获取主账号失败：%v", sub.ID, err), false
 	}
-	if !mainAcc.Authorized {
-		return fmt.Sprintf("订阅 #%d（影巢）主账号未授权，请先在影巢设置中完成 OAuth 授权", sub.ID), false
+	if !mainAcc.Authorized && !models.HasAuthorizedHiveChannelAccount() {
+		return fmt.Sprintf("订阅 #%d（影巢）主账号未授权，请先在影巢设置中完成 OAuth 授权（任一通道）", sub.ID), false
 	}
 	if sub.TMDBID <= 0 || (sub.MediaType != "movie" && sub.MediaType != "tv") {
 		return fmt.Sprintf("订阅 #%d（影巢）缺少影片信息（TMDB ID/类型），跳过", sub.ID), false
 	}
-	client := hdhive.NewOAuthClient(mainAcc.InstallID)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	// 查询资源列表（OAuth 代理通道）
-	resourcesResp, err := client.GetResources(ctx, sub.MediaType, strconv.FormatInt(sub.TMDBID, 10))
-	if err != nil {
-		return fmt.Sprintf("订阅 #%d（影巢 %s %d）查询资源失败：%v", sub.ID, sub.MediaType, sub.TMDBID, err), false
+	// 查询资源列表：双通道（tgtodrive 中转 / 官方 OpenAPI）按健康度尝试，通道级故障自动切换
+	// 主账号未授权时只要有任一通道可用账号即继续（官方通道账号不占主账号位）
+	query, qerr := models.HiveQueryResourcesWithFailover(ctx, sub.MediaType, strconv.FormatInt(sub.TMDBID, 10))
+	if qerr != nil {
+		if !mainAcc.Authorized {
+			return fmt.Sprintf("订阅 #%d（影巢）主账号未授权且无可用通道，请先在影巢设置中完成 OAuth 授权（%v）", sub.ID, qerr), false
+		}
+		return fmt.Sprintf("订阅 #%d（影巢 %s %d）查询资源失败：%v", sub.ID, sub.MediaType, sub.TMDBID, qerr), false
 	}
+	client := query.Client
+	resourcesResp := query.Resp
 	if !resourcesResp.Success {
 		msg := resourcesResp.Message
 		if msg == "" {

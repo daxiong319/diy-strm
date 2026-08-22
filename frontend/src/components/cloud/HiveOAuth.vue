@@ -73,6 +73,65 @@
       </template>
     </el-card>
 
+    <!-- 官方 OpenAPI 通道（与 tgtodrive 中转互为备份） -->
+    <el-card shadow="never" class="cloud-card sub-card">
+      <template #header>
+        <div class="card-header">
+          <span>官方 OpenAPI 通道（备用通道）</span>
+          <div class="header-actions">
+            <el-tag size="small" :type="officialHealth.tgtodrive === 0 ? 'success' : 'danger'">
+              中转通道{{ officialHealth.tgtodrive === 0 ? '正常' : `连续失败 ${officialHealth.tgtodrive} 次` }}
+            </el-tag>
+            <el-tag size="small" :type="officialHealth.official === 0 ? 'success' : 'danger'">
+              官方通道{{ officialHealth.official === 0 ? '正常' : `连续失败 ${officialHealth.official} 次` }}
+            </el-tag>
+          </div>
+        </div>
+      </template>
+
+      <el-alert
+        type="info"
+        :closable="false"
+        class="cloud-alert"
+        title="影巢订阅资源查询会在两个通道间自动切换：主通道失败（网络/服务异常）时自动改走另一通道。官方通道需在 hdhive.com「我的应用」注册 OpenAPI 应用并审核通过后填入 Client ID 与 Secret。"
+        show-icon
+      />
+
+      <el-form label-width="110px" class="official-form">
+        <el-row :gutter="12">
+          <el-col :span="12">
+            <el-form-item label="Client ID">
+              <el-input v-model="officialForm.client_id" placeholder="app_xxxxxxxxxxxxxxxx" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="应用 Secret">
+              <el-input v-model="officialForm.app_secret" :placeholder="officialForm._secret_masked || 'X-API-Key 密钥'" show-password />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="12">
+          <el-col :span="12">
+            <el-form-item label="Base URL">
+              <el-input v-model="officialForm.base_url" placeholder="默认 https://hdhive.com" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="回调地址">
+              <el-input v-model="officialForm.redirect_uri" placeholder="留空自动使用当前站点 /hive-official/callback" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <div class="action-row">
+          <el-button type="primary" :loading="officialSaving" @click="saveOfficial">保存配置</el-button>
+          <el-button :loading="officialTesting" @click="testOfficial">测试连通性</el-button>
+          <el-button type="success" :loading="officialStarting" :disabled="!officialConfigured" @click="startOfficialAuth">
+            发起官方授权
+          </el-button>
+        </div>
+      </el-form>
+    </el-card>
+
     <!-- 子账号管理 -->
     <el-card shadow="never" class="cloud-card sub-card">
       <template #header>
@@ -149,6 +208,90 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useHttpClient } from '@/http/client'
 
 const http = useHttpClient()
+
+// ---- 官方 OpenAPI 通道 ----
+const officialForm = ref<any>({ client_id: '', app_secret: '', base_url: '', redirect_uri: '', _secret_masked: '' })
+const officialHealth = ref<any>({ tgtodrive: 0, official: 0 })
+const officialConfigured = ref(false)
+const officialSaving = ref(false)
+const officialTesting = ref(false)
+const officialStarting = ref(false)
+
+const loadOfficial = async () => {
+  try {
+    const resp = await http.get('/api/cloud/hive/official/config')
+    if (resp?.data?.code === 200) {
+      const d = resp.data.data || {}
+      officialForm.value = {
+        client_id: d.client_id || '',
+        app_secret: '',
+        base_url: d.base_url || '',
+        redirect_uri: d.redirect_uri || '',
+        _secret_masked: d.app_secret || '',
+      }
+      officialConfigured.value = !!d.configured
+      officialHealth.value = d.channel_health || { tgtodrive: 0, official: 0 }
+    }
+  } catch {
+    /* 静默 */
+  }
+}
+
+const saveOfficial = async () => {
+  officialSaving.value = true
+  try {
+    const body: any = {
+      client_id: officialForm.value.client_id,
+      base_url: officialForm.value.base_url || 'https://hdhive.com',
+      redirect_uri: officialForm.value.redirect_uri,
+    }
+    if (officialForm.value.app_secret) body.app_secret = officialForm.value.app_secret
+    const resp = await http.post('/api/cloud/hive/official/config', body)
+    if (resp?.data?.code === 200) {
+      ElMessage.success(resp.data.message || '已保存')
+      officialConfigured.value = true
+      await loadOfficial()
+    } else {
+      ElMessage.error(resp?.data?.message || '保存失败')
+    }
+  } finally {
+    officialSaving.value = false
+  }
+}
+
+const testOfficial = async () => {
+  officialTesting.value = true
+  try {
+    const resp = await http.post('/api/cloud/hive/official/test')
+    if (resp?.data?.code === 200) {
+      ElMessage.success(resp.data.message || '连接正常')
+    } else {
+      ElMessage.warning(resp?.data?.message || '测试失败')
+    }
+  } finally {
+    officialTesting.value = false
+  }
+}
+
+const startOfficialAuth = async () => {
+  officialStarting.value = true
+  try {
+    const resp = await http.post('/api/cloud/hive/official/start')
+    if (resp?.data?.code === 200) {
+      const url = resp.data.data?.authorize_url
+      if (!url) {
+        ElMessage.error('未取得授权地址')
+        return
+      }
+      window.open(url, '_blank', 'noopener')
+      ElMessage.success('已打开授权页，完成后将自动回传结果')
+    } else {
+      ElMessage.error(resp?.data?.message || '发起授权失败')
+    }
+  } finally {
+    officialStarting.value = false
+  }
+}
 
 const main = reactive<any>({})
 const mainLoading = ref(false)
@@ -348,6 +491,7 @@ const formatTime = (t?: string) => {
 }
 
 onMounted(() => {
+  loadOfficial()
   loadMain()
   loadSubs()
 })

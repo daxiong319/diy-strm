@@ -24,7 +24,11 @@ type HiveOAuthAccount struct {
 	Label             string     `gorm:"size:80" json:"label"` // 账号标签（主账号/小号1）
 	IsMain            bool       `gorm:"index" json:"is_main"` // 是否主账号（每库仅一条）
 	Enabled           bool       `gorm:"default:true" json:"enabled"`
-	InstallID         string     `gorm:"size:128" json:"-"` // 独立 install_id（不对外暴露）
+	Channel           string     `gorm:"size:16;index;default:tgtodrive" json:"channel"` // 通道：tgtodrive（默认，install_id 签名中转）/ official（官方 OpenAPI）
+	InstallID         string     `gorm:"size:128" json:"-"` // 独立 install_id（tgtodrive 通道，不对外暴露）
+	AccessToken       string     `gorm:"type:text" json:"-"`  // 官方通道用户 Access Token
+	RefreshToken      string     `gorm:"type:text" json:"-"`  // 官方通道 Refresh Token
+	TokenExpiresAt    *time.Time `json:"token_expires_at"`    // 官方通道 Access Token 过期时间
 	Authorized        bool       `json:"authorized"`
 	AuthorizedAt      *time.Time `json:"authorized_at"`
 	UserInfo          string     `gorm:"type:text" json:"-"` // 用户快照 JSON（/api/me）
@@ -100,6 +104,21 @@ func GetHiveAccountByID(id uint) (*HiveOAuthAccount, error) {
 }
 
 // SaveHiveAccount 保存账号
+// FindOrCreateHiveOfficialAccount 获取或创建官方通道账号（channel=official 固定一条）
+func FindOrCreateHiveOfficialAccount(label string) *HiveOAuthAccount {
+	var acc HiveOAuthAccount
+	if err := db.Db.Where("channel = ?", HiveChannelOfficial).First(&acc).Error; err == nil {
+		return &acc
+	}
+	acc = HiveOAuthAccount{
+		Label:    label,
+		Channel:  HiveChannelOfficial,
+		Enabled:  true,
+	}
+	_ = db.Db.Create(&acc).Error
+	return &acc
+}
+
 func SaveHiveAccount(acc *HiveOAuthAccount) error {
 	acc.UpdatedAt = time.Now()
 	return db.Db.Save(acc).Error
