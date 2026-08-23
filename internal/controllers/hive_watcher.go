@@ -140,8 +140,30 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		res := &candidates[i]
 		spec := hiveResourceSpec(res)
 		hiveMsgID := res.Slug
-		// 去重/洗版判定（与 TG 订阅一致）
-		old := models.LatestSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season)
+
+		// 从资源标题解析剧集（如 "S01E26"、"S01E22-23"），用于按集去重和 Episode 记录
+		epKeys := ParseEpisodeKeys(res.Title, sub.Season)
+		hasEpKeys := len(epKeys) > 0
+
+		// 去重/洗版判定：有剧集信息时按集去重，否则整片去重
+		var old *models.CloudTransferRecord
+		if hasEpKeys {
+			// 按集去重（与 TG 订阅一致）：逐集查最新记录，取规格分最高的作为洗版比较基准
+			var oldScore int
+			for _, ek := range epKeys {
+				o := models.LatestEpisodeRecord(sub.ID, sub.TMDBID, sub.Season, ek)
+				if o == nil {
+					continue
+				}
+				if s := recordToSpec(o).Score(); old == nil || s > oldScore {
+					old = o
+					oldScore = s
+				}
+			}
+		} else {
+			// 无剧集信息：整片去重（原逻辑）
+			old = models.LatestSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season)
+		}
 		if old != nil {
 			oldSpec := recordToSpec(old)
 			if oldSpec.Score() >= WashTargetScore(sub.WashTarget) {
@@ -154,7 +176,11 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 				recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "洗版跳过：新资源规格不优于现有版本")
 				continue
 			}
-		} else if !sub.Wash && models.HasSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season) {
+		} else if !sub.Wash && hasEpKeys && models.HasEpisodeRecord(sub.ID, sub.TMDBID, sub.Season, epKeys) {
+			skipped++ // 已收录
+			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "去重跳过：该剧集已收录")
+			continue
+		} else if !sub.Wash && !hasEpKeys && models.HasSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season) {
 			skipped++ // 已收录
 			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "去重跳过：该影片/剧集已收录")
 			continue
@@ -226,6 +252,11 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		if terr != nil {
 			errs = append(errs, fmt.Sprintf("%s 转存失败：%v", linkURL, terr))
 			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", linkURL, targetDir, sub.ID, terr)
+			failTitle := sub.TMDBTitle
+			if failTitle == "" {
+				failTitle = shortHiveTitle(res.Title)
+			}
+			sendTransferFailedNotification(sub.SourceType, failTitle, targetDir, terr.Error())
 			continue
 		}
 		recTitle := sub.TMDBTitle
@@ -237,23 +268,29 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		} else {
 			recordMonitorSuccess("hive", panType, "", hiveMsgID, "", linkURL, title, targetDir, total, sub.ID)
 		}
-		_ = models.CreateTransferRecord(&models.CloudTransferRecord{
-			SourceType:     panType,
-			SubscriptionID: sub.ID,
-			MediaType:      sub.MediaType,
-			TMDBID:         sub.TMDBID,
-			Season:         sub.Season,
-			Title:          recTitle,
-			PostID:         res.Slug,
-			LinkURL:        linkURL,
-			TargetDir:      targetDir,
-			Resolution:     spec.Resolution,
-			Source:         spec.Source,
-			Codec:          spec.Codec,
-			Effect:         spec.Effect,
-			SizeGB:         spec.SizeGB,
-		})
-		if old != nil {
+_ = models.CreateTransferRecord(&models.CloudTransferRecord{
+				SourceType:     panType,
+				SubscriptionID: sub.ID,
+				MediaType:      sub.MediaType,
+				TMDBID:         sub.TMDBID,
+				Season:         sub.Season,
+				Episode:        JoinEpisodeKeys(epKeys),
+				Title:          recTitle,
+				PostID:         res.Slug,
+				LinkURL:        linkURL,
+				TargetDir:      targetDir,
+				Resolution:     spec.Resolution,
+				Source:         spec.Source,
+				Codec:          spec.Codec,
+				Effect:         spec.Effect,
+				SizeGB:         spec.SizeGB,
+})
+			extra := ""
+			if hasEpKeys {
+				extra = "剧集：" + JoinEpisodeKeys(epKeys)
+			}
+			sendTransferSuccessNotification(sub.SourceType, recTitle, targetDir, total, extra)
+			if old != nil {
 			old.Status = "superseded"
 			_ = models.SaveTransferRecord(old)
 			if sub.ReplaceOld {

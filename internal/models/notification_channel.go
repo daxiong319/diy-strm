@@ -36,6 +36,8 @@ const (
 	PlaybackStart  NotificationType = notification.PlaybackStart
 	PlaybackPause  NotificationType = notification.PlaybackPause
 	PlaybackStop   NotificationType = notification.PlaybackStop
+	TransferSuccess NotificationType = notification.TransferSuccess
+	TransferFailed  NotificationType = notification.TransferFailed
 )
 
 // NotificationPriority 通知优先级 - 从 internal/notification 导入

@@ -78,9 +78,11 @@ const (
 	SystemAlert    NotificationType = "system_alert"
 	MediaAdded     NotificationType = "media_added"
 	MediaRemoved   NotificationType = "media_removed"
-	PlaybackStart  NotificationType = "playback_start" // 播放开始
-	PlaybackPause  NotificationType = "playback_pause" // 播放暂停
-	PlaybackStop   NotificationType = "playback_stop"  // 播放停止
+	PlaybackStart  NotificationType = "playback_start"   // 播放开始
+	PlaybackPause  NotificationType = "playback_pause"   // 播放暂停
+	PlaybackStop   NotificationType = "playback_stop"    // 播放停止
+	TransferSuccess NotificationType = "transfer_success" // 转存成功
+	TransferFailed  NotificationType = "transfer_failed"  // 转存失败
 )
 
 // AllNotificationTypes 所有通知类型，用于创建渠道时的默认规则
@@ -95,6 +97,8 @@ var AllNotificationTypes = []NotificationType{
 	PlaybackStart,
 	PlaybackPause,
 	PlaybackStop,
+	TransferSuccess,
+	TransferFailed,
 }
 
 // NotificationPriority 通知优先级

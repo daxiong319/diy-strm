@@ -13,6 +13,8 @@ export type EventType =
   | 'playback_start'
   | 'playback_pause'
   | 'playback_stop'
+  | 'transfer_success'
+  | 'transfer_failed'
 
 // 通知渠道接口
 export interface NotificationChannel {
@@ -136,6 +138,8 @@ export function getEventTypeName(type: EventType): string {
     playback_start: 'Emby 播放开始',
     playback_pause: 'Emby 播放暂停',
     playback_stop: 'Emby 播放停止',
+    transfer_success: '转存成功',
+    transfer_failed: '转存失败',
   }
   return nameMap[type] || type
 }
@@ -153,6 +157,8 @@ export function getEventTypeDescription(type: EventType): string {
     playback_start: '用户开始播放内容时发送通知',
     playback_pause: '用户暂停播放时发送通知',
     playback_stop: '用户停止播放时发送通知',
+    transfer_success: 'TG 频道/影巢资源转存成功时发送通知',
+    transfer_failed: 'TG 频道/影巢资源转存失败时发送通知',
   }
   return descMap[type] || ''
 }

@@ -242,6 +242,7 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
 					failedIDs = append(failedIDs, p.PostID)
 					recordMonitorFailed("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, targetDir, sub.ID, err)
+					sendTransferFailedNotification(sub.SourceType, transferNotifTitle(sub, p.Text), targetDir, err.Error())
 					continue
 				}
 				transferred++
@@ -267,6 +268,11 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 					Effect:         newSpec.Effect,
 					SizeGB:         newSpec.SizeGB,
 				})
+				extra := "洗版更新"
+				if len(epKeys) > 0 {
+					extra += "；剧集：" + JoinEpisodeKeys(epKeys)
+				}
+				sendTransferSuccessNotification(sub.SourceType, recTitle, targetDir, total, extra)
 				if old != nil {
 					old.Status = "superseded"
 					_ = models.SaveTransferRecord(old)
@@ -294,6 +300,7 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
 					failedIDs = append(failedIDs, p.PostID)
 					recordMonitorFailed("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, targetDir, sub.ID, err)
+					sendTransferFailedNotification(sub.SourceType, transferNotifTitle(sub, p.Text), targetDir, err.Error())
 					continue
 				}
 				transferred++
@@ -314,6 +321,11 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 					TargetDir:      targetDir,
 					Episode:        JoinEpisodeKeys(epKeys),
 				})
+				extra := ""
+				if len(epKeys) > 0 {
+					extra = "剧集：" + JoinEpisodeKeys(epKeys)
+				}
+				sendTransferSuccessNotification(sub.SourceType, recTitle, targetDir, total, extra)
 				helpers.AppLogger.Infof("TG 频道订阅 #%d：命中帖 %s，已转存「%s」共 %d 项到 %s（目标 %s）", sub.ID, p.PostID, title, total, sub.SourceType, targetDir)
 			} else if models.HasLinkRecord(link.URL) {
 				skipped++
@@ -332,6 +344,7 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
 					failedIDs = append(failedIDs, p.PostID)
 					recordMonitorFailed("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.URL, targetDir, sub.ID, err)
+					sendTransferFailedNotification(sub.SourceType, transferNotifTitle(sub, p.Text), targetDir, err.Error())
 					continue
 				}
 				transferred++
@@ -351,6 +364,7 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 					LinkURL:        link.URL,
 					TargetDir:      targetDir,
 				})
+				sendTransferSuccessNotification(sub.SourceType, recTitle, targetDir, total, "")
 				helpers.AppLogger.Infof("TG 频道订阅 #%d：命中帖 %s，已转存「%s」共 %d 项到 %s（目标 %s）", sub.ID, p.PostID, title, total, sub.SourceType, targetDir)
 			}
 		}
