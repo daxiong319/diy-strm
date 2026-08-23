@@ -78,27 +78,70 @@ func HiveSymediaCallbackAPI(c *gin.Context) {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "缺少 userid/proxy_user_key"})
 		return
 	}
+	msg := saveSymediaCallback(c, req.UserID, req.ProxyUserKey, req.RefreshExpiresAt)
+	if msg != "" {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "授权信息已保存，" + msg, Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "主渠道授权成功", Data: nil})
+}
+
+// HiveSymediaDirectCallback GET /hive-symedia/callback?userid=...&proxy_user_key=...&refresh_expires_at=...
+// hdhive.com 授权后直接重定向到该地址（按 app 注册的回调地址），将参数保存并返回成功页
+func HiveSymediaDirectCallback(c *gin.Context) {
+	userID := c.Query("userid")
+	proxyUserKey := c.Query("proxy_user_key")
+	refreshExpiresAt := c.Query("refresh_expires_at")
+	var refreshSec int64
+	if refreshExpiresAt != "" {
+		refreshSec, _ = strconv.ParseInt(refreshExpiresAt, 10, 64)
+	}
+	if userID == "" || proxyUserKey == "" {
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(http.StatusBadRequest, `<html><body><h3>授权失败</h3><p>缺少 userid 或 proxy_user_key 参数</p></body></html>`)
+		return
+	}
+	msg := saveSymediaCallback(c, userID, proxyUserKey, refreshSec)
+	status := "授权成功"
+	extra := "您现在可以关闭此窗口，返回影巢设置页刷新授权状态。"
+	if msg != "" {
+		status = "授权已保存，部分信息等待刷新"
+		extra = msg
+	}
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.String(http.StatusOK, `<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>Symedia 授权 - QMediaSync</title>
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:60vh;margin:0;background:#f5f7fa}
+.card{background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.1);padding:40px;text-align:center;max-width:420px}
+h3{color:#67c23a;margin:0 0 12px}.hint{color:#909399;font-size:13px;margin-top:8px}
+</style></head>
+<body><div class="card"><h3>%s</h3><p>影巢主渠道（Symedia）已收到授权密钥。</p><p class="hint">%s</p></div></body></html>`, status, extra)
+}
+
+// saveSymediaCallback 保存 symedia 回调参数到账号，返回非空字符串表示需要额外提示
+func saveSymediaCallback(c *gin.Context, userID, proxyUserKey string, refreshExpiresAt int64) string {
 	acc := models.FindOrCreateHiveSymediaAccount("主渠道")
-	acc.SymediaUserID = req.UserID
-	acc.ProxyUserKey = req.ProxyUserKey
+	acc.SymediaUserID = userID
+	acc.ProxyUserKey = proxyUserKey
 	now := time.Now()
 	acc.Authorized = true
 	acc.AuthorizedAt = &now
 	acc.UserFetchedAt = &now
 	acc.Enabled = true
 	if err := models.SaveHiveAccount(acc); err != nil {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "保存账号失败：" + err.Error(), Data: nil})
-		return
+		return "保存账号失败：" + err.Error()
 	}
 
 	// 拉取用户信息落库
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
 	if pub, ok, msg := HiveOAuthStatusByAccount(ctx, acc); !ok {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "授权信息已保存，" + msg, Data: gin.H{"authorized": false, "account": pub}})
-		return
+		return "授权信息已保存，" + msg
+	} else {
+		_ = pub
 	}
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "主渠道授权成功", Data: nil})
+	return ""
 }
 
 // HiveSymediaRefreshAPI POST /cloud/hive/symedia/refresh 刷新主渠道授权状态

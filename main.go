@@ -960,6 +960,10 @@ func setRouter(r *gin.Engine) {
 
 	}
 
+	// hdhive.com 授权后直接重定向的回调地址（app 注册的回调指向本站 IP:端口 /hive-symedia/callback），
+	// 必须在 Emby 302 兜底路由之前注册，避免被其 404 拦截
+	r.GET("/hive-symedia/callback", controllers.HiveSymediaDirectCallback)
+
 	// 挂载 Emby 302 反代兜底路由, 与管理页共用端口
 	// 管理页的具体路由优先匹配, 其余请求 (Emby 反代 / 播放 302) 进入 emby302 分发器
 	if emby302Enabled {
