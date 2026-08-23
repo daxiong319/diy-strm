@@ -20,7 +20,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 70
+var MaxVersionCode = 74
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
