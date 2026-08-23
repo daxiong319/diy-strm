@@ -20,7 +20,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 74
+var MaxVersionCode = 75
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -836,6 +836,12 @@ if migrator.VersionCode == 70 {
 			return
 		}
 		helpers.AppLogger.Info("影巢账号表已支持双通道（tgtodrive/official）")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 74 {
+		// 为已有渠道补齐转存通知类型规则（TransferSuccess、TransferFailed）
+		addNewNotificationRulesForExistingChannels(db.Db)
+		helpers.AppLogger.Info("已为已有通知渠道补齐转存通知类型")
 		migrator.UpdateVersionCode(db.Db)
 	}
 		helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)
