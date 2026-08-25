@@ -3,6 +3,8 @@ package models
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 
 	"diy-strm/internal/db"
@@ -32,7 +34,11 @@ func HiveClientForAccount(acc *HiveOAuthAccount) hdhive.ChannelClient {
 	if acc != nil && acc.Channel == HiveChannelSymedia {
 		return hdhive.NewSymediaClient(acc.SymediaUserID, acc.ProxyUserKey)
 	}
-	return hdhive.NewOAuthClient(acc.InstallID)
+	// tgtodrive 备用通道：注入 AccessToken（优先）或 InstallID 作为 Feed 授权标识，
+	// 否则 HDHive 对资源查询返回误导性的 "Premium membership required"。
+	oc := hdhive.NewOAuthClient(acc.InstallID)
+	oc.AccessToken = acc.AccessToken
+	return oc
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +169,14 @@ func HiveQueryResourcesWithFailover(ctx context.Context, mediaType, tmdbID strin
 			lastErr = errors.New("通道响应异常 HTTP " + itoa(resp.StatusCode))
 			continue
 		}
+		// 业务失败且提示缺少 Feed 授权（HDHive 对未带 X-HDHive-Feed-Authorization 的
+		// 请求返回误导性的 "Premium membership required"）：本通道可能未正确注入授权头，
+		// 切换备用通道重试，而非直接判失败。
+		if !resp.Success && hiveIsFeedAuthError(resp) {
+			hiveChannelFailed(channel)
+			lastErr = fmt.Errorf("通道 %s 资源查询被拒（疑似缺少 Feed 授权）：%s", channel, hiveFeedErrMsg(resp))
+			continue
+		}
 		hiveChannelSucceeded(channel)
 		return &HiveQueryResult{Account: acc, Client: client, Resp: resp}, nil
 	}
@@ -192,4 +206,35 @@ func itoa(n int) string {
 		b[i] = '-'
 	}
 	return string(b[i:])
+}
+
+// hiveIsFeedAuthError 判断资源查询的业务失败是否由缺少 Feed 授权导致。
+// HDHive 对未带 X-HDHive-Feed-Authorization 的请求返回误导性的
+// "Premium membership required" / auth_required，需要切换通道重试。
+func hiveIsFeedAuthError(resp *hdhive.OAuthAPIResponse) bool {
+	if resp.AuthRequired != nil && *resp.AuthRequired {
+		return true
+	}
+	msg := strings.ToLower(resp.Message)
+	if msg == "" {
+		msg = strings.ToLower(resp.Description)
+	}
+	for _, kw := range []string{"premium", "membership", "auth_required", "authoriz", "授权", "feed"} {
+		if strings.Contains(msg, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// hiveFeedErrMsg 提取资源查询失败的可读信息
+func hiveFeedErrMsg(resp *hdhive.OAuthAPIResponse) string {
+	msg := resp.Message
+	if msg == "" {
+		msg = resp.Description
+	}
+	if msg == "" {
+		msg = "请求失败"
+	}
+	return msg
 }

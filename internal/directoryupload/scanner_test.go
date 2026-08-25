@@ -377,6 +377,9 @@ func TestPollingSnapshotSkipsSymlinkEscapingMonitor(t *testing.T) {
 }
 
 func TestScanRootWithSnapshotKeepsPartialResultWhenWalkDirFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows 下目录遍历中途替换为文件不会触发 WalkDir 错误，语义与 POSIX 不同")
+	}
 	setupDirectoryUploadServiceTestDB(t)
 	monitorPath := t.TempDir()
 	filePath := filepath.Join(monitorPath, "a.mkv")

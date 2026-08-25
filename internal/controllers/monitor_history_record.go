@@ -12,6 +12,31 @@ import (
 // 与 tgto123 对齐：每条监控转存尝试（成功/失败/跳过）各写一条审计记录
 // ---------------------------------------------------------------------------
 
+// MonitorMediaMeta 监控历史记录的影片关联信息（可选，通过 variadic 传入，
+// 不传则留空）。仅影巢订阅 / TG 影视订阅能关联影片，其他入口可不传。
+type MonitorMediaMeta struct {
+	TMDBID    int64
+	MediaType string
+	Season    string
+	Episode   string
+	Title     string // 影片展示名（订阅影片名 / 资源标题），用于补全空 Title
+}
+
+// applyMonitorMeta 将可选影片元信息写入记录
+func applyMonitorMeta(rec *models.MonitorTransferRecord, meta []MonitorMediaMeta) {
+	if len(meta) == 0 {
+		return
+	}
+	m := meta[0]
+	rec.TMDBID = m.TMDBID
+	rec.MediaType = m.MediaType
+	rec.Season = m.Season
+	rec.Episode = m.Episode
+	if rec.Title == "" && m.Title != "" {
+		rec.Title = m.Title
+	}
+}
+
 // buildTGMessageURL 由频道名 + 帖子 ID 构造消息链接
 func buildTGMessageURL(channel, postID string) string {
 	channel = strings.TrimPrefix(strings.TrimPrefix(channel, "@"), "https://t.me/")
@@ -23,8 +48,8 @@ func buildTGMessageURL(channel, postID string) string {
 }
 
 // recordMonitorSuccess 记录一次成功转存
-func recordMonitorSuccess(entry, sourceType, channel, messageID, messageURL, targetURL, title, targetDir string, total int, subID uint) {
-	models.CreateMonitorTransferRecord(&models.MonitorTransferRecord{
+func recordMonitorSuccess(entry, sourceType, channel, messageID, messageURL, targetURL, title, targetDir string, total int, subID uint, meta ...MonitorMediaMeta) {
+	rec := &models.MonitorTransferRecord{
 		SourceType:     sourceType,
 		Entry:          entry,
 		Channel:        channel,
@@ -37,12 +62,14 @@ func recordMonitorSuccess(entry, sourceType, channel, messageID, messageURL, tar
 		Total:          total,
 		TargetDir:      targetDir,
 		SubscriptionID: subID,
-	})
+	}
+	applyMonitorMeta(rec, meta)
+	models.CreateMonitorTransferRecord(rec)
 }
 
 // recordMonitorWash 记录一次洗版替换转存
-func recordMonitorWash(entry, sourceType, channel, messageID, messageURL, targetURL, title, targetDir string, total int, subID uint, washTarget string) {
-	models.CreateMonitorTransferRecord(&models.MonitorTransferRecord{
+func recordMonitorWash(entry, sourceType, channel, messageID, messageURL, targetURL, title, targetDir string, total int, subID uint, washTarget string, meta ...MonitorMediaMeta) {
+	rec := &models.MonitorTransferRecord{
 		SourceType:     sourceType,
 		Entry:          entry,
 		Channel:        channel,
@@ -55,16 +82,18 @@ func recordMonitorWash(entry, sourceType, channel, messageID, messageURL, target
 		Total:          total,
 		TargetDir:      targetDir,
 		SubscriptionID: subID,
-	})
+	}
+	applyMonitorMeta(rec, meta)
+	models.CreateMonitorTransferRecord(rec)
 }
 
 // recordMonitorFailed 记录一次转存失败
-func recordMonitorFailed(entry, sourceType, channel, messageID, messageURL, targetURL, targetDir string, subID uint, reason error) {
+func recordMonitorFailed(entry, sourceType, channel, messageID, messageURL, targetURL, targetDir string, subID uint, reason error, meta ...MonitorMediaMeta) {
 	msg := ""
 	if reason != nil {
 		msg = reason.Error()
 	}
-	models.CreateMonitorTransferRecord(&models.MonitorTransferRecord{
+	rec := &models.MonitorTransferRecord{
 		SourceType:     sourceType,
 		Entry:          entry,
 		Channel:        channel,
@@ -75,12 +104,14 @@ func recordMonitorFailed(entry, sourceType, channel, messageID, messageURL, targ
 		TransferResult: msg,
 		TargetDir:      targetDir,
 		SubscriptionID: subID,
-	})
+	}
+	applyMonitorMeta(rec, meta)
+	models.CreateMonitorTransferRecord(rec)
 }
 
 // recordMonitorSkipped 记录一次跳过（去重/规格不达标/网盘类型不支持等）
-func recordMonitorSkipped(entry, sourceType, channel, messageID, messageURL, targetURL, targetDir string, subID uint, reason string) {
-	models.CreateMonitorTransferRecord(&models.MonitorTransferRecord{
+func recordMonitorSkipped(entry, sourceType, channel, messageID, messageURL, targetURL, targetDir string, subID uint, reason string, meta ...MonitorMediaMeta) {
+	rec := &models.MonitorTransferRecord{
 		SourceType:     sourceType,
 		Entry:          entry,
 		Channel:        channel,
@@ -91,5 +122,7 @@ func recordMonitorSkipped(entry, sourceType, channel, messageID, messageURL, tar
 		TransferResult: reason,
 		TargetDir:      targetDir,
 		SubscriptionID: subID,
-	})
+	}
+	applyMonitorMeta(rec, meta)
+	models.CreateMonitorTransferRecord(rec)
 }

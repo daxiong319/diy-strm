@@ -61,6 +61,23 @@
       <el-table-column label="入口" width="95">
         <template #default="scope">{{ scope.row.entry_label }}</template>
       </el-table-column>
+      <el-table-column label="影片" min-width="190" show-overflow-tooltip>
+        <template #default="scope">
+          <div v-if="scope.row.tmdb_id || scope.row.title">
+            <a v-if="scope.row.tmdb_id" :href="tmdbUrl(scope.row)" target="_blank" rel="noopener noreferrer" class="table-link">
+              {{ scope.row.title || ('TMDB ' + scope.row.tmdb_id) }}
+            </a>
+            <span v-else>{{ scope.row.title }}</span>
+            <div class="media-meta">
+              <el-tag v-if="scope.row.media_type" size="small" effect="plain">{{ mediaTypeLabel(scope.row.media_type) }}</el-tag>
+              <span v-if="scope.row.season || scope.row.episode" class="media-se">
+                {{ scope.row.season ? 'S' + scope.row.season : '' }}{{ scope.row.episode ? ' ' + scope.row.episode : '' }}
+              </span>
+            </div>
+          </div>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
       <el-table-column label="频道" min-width="120" show-overflow-tooltip>
         <template #default="scope">{{ scope.row.channel || '-' }}</template>
       </el-table-column>
@@ -184,6 +201,19 @@ const statusTagType = (status: string): string => {
     default:
       return 'info'
   }
+}
+
+// 影片类型中文
+const mediaTypeLabel = (t: string): string => {
+  if (t === 'tv') return '剧集'
+  if (t === 'movie') return '电影'
+  return t || ''
+}
+
+// 构造 TMDB 影片详情链接（按类型区分 movie/tv）
+const tmdbUrl = (row: any): string => {
+  const type = row.media_type === 'tv' ? 'tv' : 'movie'
+  return `https://www.themoviedb.org/${type}/${row.tmdb_id}`
 }
 
 const load = async (silent = false) => {
@@ -327,5 +357,16 @@ onUnmounted(() => {
 }
 .table-link:hover {
   text-decoration: underline;
+}
+.media-meta {
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.media-se {
+  white-space: nowrap;
 }
 </style>

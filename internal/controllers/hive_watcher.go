@@ -144,6 +144,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		// 从资源标题解析剧集（如 "S01E26"、"S01E22-23"），用于按集去重和 Episode 记录
 		epKeys := ParseEpisodeKeys(res.Title, sub.Season)
 		hasEpKeys := len(epKeys) > 0
+	meta := hiveMonitorMeta(sub, epKeys)
 
 		// 去重/洗版判定：有剧集信息时按集去重，否则整片去重
 		var old *models.CloudTransferRecord
@@ -168,75 +169,97 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			oldSpec := recordToSpec(old)
 			if oldSpec.Score() >= WashTargetScore(sub.WashTarget) {
 				skipped++ // 已达标
-				recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "洗版跳过：现有版本已达标")
+				recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "洗版跳过：现有版本已达标", meta)
 				continue
 			}
 			if !spec.BetterThan(oldSpec) {
 				skipped++ // 不比当前版本更优
-				recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "洗版跳过：新资源规格不优于现有版本")
+				recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "洗版跳过：新资源规格不优于现有版本", meta)
 				continue
 			}
 		} else if !sub.Wash && hasEpKeys && models.HasEpisodeRecord(sub.ID, sub.TMDBID, sub.Season, epKeys) {
 			skipped++ // 已收录
-			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "去重跳过：该剧集已收录")
+			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "去重跳过：该剧集已收录", meta)
 			continue
 		} else if !sub.Wash && !hasEpKeys && models.HasSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season) {
 			skipped++ // 已收录
-			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "去重跳过：该影片/剧集已收录")
+			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "去重跳过：该影片/剧集已收录", meta)
 			continue
 		}
 		// 通过分享详情获取网盘类型，必须与订阅目标网盘一致
 		shareResp, serr := client.GetShareDetail(ctx, res.Slug)
 		if serr != nil {
 			errs = append(errs, fmt.Sprintf("%s 详情获取失败：%v", res.Slug, serr))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, serr)
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, serr, meta)
 			continue
 		}
 		if !shareResp.Success {
 			errs = append(errs, fmt.Sprintf("%s 详情获取失败：%s", res.Slug, shareResp.Message))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Errorf("%s", shareResp.Message))
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Errorf("%s", shareResp.Message), meta)
 			continue
 		}
 		var detail hdhive.ShareDetail
 		if err := json.Unmarshal(shareResp.Data, &detail); err != nil {
 			errs = append(errs, fmt.Sprintf("%s 详情解析失败", res.Slug))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, err)
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, err, meta)
 			continue
 		}
 		panType := hivePanTypeToSourceType(detail.PanType)
 		if panType == "" {
 			unsupported++
-			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Sprintf("网盘类型 %q 暂不支持，跳过", detail.PanType))
+			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Sprintf("网盘类型 %q 暂不支持，跳过", detail.PanType), meta)
 			helpers.AppLogger.Debugf("影巢订阅 #%d：资源 %s 网盘类型 %q 暂不支持，跳过", sub.ID, res.Slug, detail.PanType)
 			continue
 		}
 		if panType != sub.SourceType {
 			skipped++ // 网盘类型与订阅目标不一致
-			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "网盘类型与订阅目标不一致，跳过")
+			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "网盘类型与订阅目标不一致，跳过", meta)
 			continue
 		}
 		// 解锁积分上限（0=不限，对应 tgto123 的 HDHIVE_MAX_POINTS）
 		if maxPts := models.GetHiveMaxPoints(); maxPts > 0 && res.UnlockPoints > maxPts {
 			skipped++ // 解锁积分超过上限
-			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Sprintf("解锁积分 %d 超过上限 %d，跳过", res.UnlockPoints, maxPts))
+			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Sprintf("解锁积分 %d 超过上限 %d，跳过", res.UnlockPoints, maxPts), meta)
 			continue
 		}
 		// 解锁
 		unlockResp, uerr := client.UnlockResource(ctx, res.Slug)
 		if uerr != nil {
 			errs = append(errs, fmt.Sprintf("%s 解锁失败：%v", res.Slug, uerr))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, uerr)
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, uerr, meta)
 			continue
 		}
 		if !unlockResp.Success {
-			errs = append(errs, fmt.Sprintf("%s 解锁失败：%s", res.Slug, unlockResp.Message))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Errorf("%s", unlockResp.Message))
+			failMsg := unlockResp.Message
+			// 积分不足（借鉴 NanShare 的 INSUFFICIENT_POINTS 处理）：计为跳过而非失败，
+			// 并带上所需积分，方便调整积分上限或签到补分后重试
+			if code := strings.ToUpper(strings.TrimSpace(unlockResp.Code)); code == "INSUFFICIENT_POINTS" {
+				required := 0
+				var d struct {
+					RequiredPoints *int `json:"required_points"`
+				}
+				if len(unlockResp.Data) > 0 && json.Unmarshal(unlockResp.Data, &d) == nil && d.RequiredPoints != nil {
+					required = *d.RequiredPoints
+				}
+				if required <= 0 {
+					required = res.UnlockPoints
+				}
+				skipReason := fmt.Sprintf("积分不足：需要 %d 积分，已跳过", required)
+				skipped++
+				recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, skipReason, meta)
+				continue
+			}
+			if failMsg == "" {
+				failMsg = unlockResp.Description
+			}
+			errs = append(errs, fmt.Sprintf("%s 解锁失败：%s", res.Slug, failMsg))
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Errorf("%s", failMsg), meta)
 			continue
 		}
 		var unlock hdhive.UnlockResult
 		if err := json.Unmarshal(unlockResp.Data, &unlock); err != nil {
 			errs = append(errs, fmt.Sprintf("%s 解锁结果解析失败", res.Slug))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, err)
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, err, meta)
 			continue
 		}
 		linkURL := strings.TrimSpace(unlock.FullURL)
@@ -245,13 +268,13 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		}
 		if models.HasLinkRecord(linkURL) {
 			skipped++ // 该链接已转存过
-			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", linkURL, targetDir, sub.ID, "去重跳过：该分享链接已转存过")
+			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", linkURL, targetDir, sub.ID, "去重跳过：该分享链接已转存过", meta)
 			continue
 		}
 		title, total, terr := saveShareByLink(ctx, linkURL, unlock.AccessCode, panType, targetDir)
 		if terr != nil {
 			errs = append(errs, fmt.Sprintf("%s 转存失败：%v", linkURL, terr))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", linkURL, targetDir, sub.ID, terr)
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", linkURL, targetDir, sub.ID, terr, meta)
 			failTitle := sub.TMDBTitle
 			if failTitle == "" {
 				failTitle = shortHiveTitle(res.Title)
@@ -264,9 +287,9 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			recTitle = title
 		}
 		if old != nil {
-			recordMonitorWash("hive", panType, "", hiveMsgID, "", linkURL, title, targetDir, total, sub.ID, sub.WashTarget)
+			recordMonitorWash("hive", panType, "", hiveMsgID, "", linkURL, title, targetDir, total, sub.ID, sub.WashTarget, meta)
 		} else {
-			recordMonitorSuccess("hive", panType, "", hiveMsgID, "", linkURL, title, targetDir, total, sub.ID)
+			recordMonitorSuccess("hive", panType, "", hiveMsgID, "", linkURL, title, targetDir, total, sub.ID, meta)
 		}
 _ = models.CreateTransferRecord(&models.CloudTransferRecord{
 				SourceType:     panType,
@@ -368,4 +391,15 @@ func shortHiveTitle(title string) string {
 		return string(r[:60]) + "..."
 	}
 	return title
+}
+
+// hiveMonitorMeta 构造影巢订阅监控历史的影片关联元信息（tmdb_id/类型/季集/影片名）
+func hiveMonitorMeta(sub *models.CloudSubscription, epKeys []string) MonitorMediaMeta {
+	return MonitorMediaMeta{
+		TMDBID:    sub.TMDBID,
+		MediaType: sub.MediaType,
+		Season:    strconv.Itoa(sub.Season),
+		Episode:   JoinEpisodeKeys(epKeys),
+		Title:     sub.TMDBTitle,
+	}
 }

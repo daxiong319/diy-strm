@@ -39,10 +39,24 @@ var defaultOAuthSharedSecret = []byte("d45WcKoZp6dk9bXKpHG-mndXIEGhug36f20jYo5jW
 
 // OAuthClient HDHive OAuth 签名客户端
 type OAuthClient struct {
-	BaseURL    string
-	InstallID string
-	HTTP      *http.Client
-	secret    []byte
+	BaseURL     string
+	InstallID   string
+	AccessToken string // 官方通道用户 Access Token；为空时回退使用 InstallID 作为 Feed 授权标识
+	HTTP        *http.Client
+	secret      []byte
+}
+
+// feedAuthValue 计算 X-HDHive-Feed-Authorization 头值。
+//
+// 该头由官方 hdhive_user_client（tgto123 同款）在 with_hdhive_authorization=True 时注入，
+// 缺失时 HDHive 对资源/feeds 类请求返回误导性的 "Premium membership required"。
+// 经逆向确认：install_id 模式下（tgto123 默认，用户未各自 OAuth）该头值即 install_id；
+// 若已拿到用户 OAuth AccessToken（token_status 回传）则优先使用。
+func (c *OAuthClient) feedAuthValue() string {
+	if c.AccessToken != "" {
+		return c.AccessToken
+	}
+	return c.InstallID
 }
 
 // oauthUserAgent 与 tgto123 客户端一致的 User-Agent（Cloudflare 校验）
@@ -72,10 +86,11 @@ func NewOAuthClient(installID string) *OAuthClient {
 // Clone 创建配置相同的客户端副本（可安全修改 InstallID）
 func (c *OAuthClient) Clone(installID string) *OAuthClient {
 	return &OAuthClient{
-		BaseURL:    c.BaseURL,
-		InstallID: installID,
-		HTTP:      c.HTTP,
-		secret:    c.secret,
+		BaseURL:     c.BaseURL,
+		InstallID:   installID,
+		AccessToken: c.AccessToken,
+		HTTP:        c.HTTP,
+		secret:      c.secret,
 	}
 }
 
@@ -157,12 +172,18 @@ func (c *OAuthClient) makeAuthHeaders(method, path string, body []byte) map[stri
 	nonce := hex.EncodeToString(nonceBytes)
 	canonical := canonicalRequest(method, path, c.InstallID, ts, nonce, body)
 	sig := c.signRequest(canonical)
-	return map[string]string{
+	headers := map[string]string{
 		"X-Install-Id": c.InstallID,
 		"X-Timestamp":  ts,
 		"X-Nonce":      nonce,
 		"X-Signature":  sig,
 	}
+	// X-HDHive-Feed-Authorization：资源/feeds 类请求必需，缺失时服务端返回
+	// 误导性的 "Premium membership required"。值优先用 AccessToken，回退 InstallID。
+	if v := c.feedAuthValue(); v != "" {
+		headers["X-HDHive-Feed-Authorization"] = v
+	}
+	return headers
 }
 
 // BuildAuthURL 构造 OAuth 授权 URL（带签名的 /auth/start）

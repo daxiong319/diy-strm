@@ -67,6 +67,10 @@ func Migrate() {
 	if err := db.Db.AutoMigrate(&AutoOrganizeConfig{}); err != nil {
 		helpers.AppLogger.Errorf("自动迁移云盘自动整理配置表失败：%v", err)
 	}
+	// 影巢账号表新增签到统计列（幂等，兼容既有库升级）
+	if err := db.Db.AutoMigrate(&HiveOAuthAccount{}); err != nil {
+		helpers.AppLogger.Errorf("自动迁移影巢账号签到统计列失败：%v", err)
+	}
 	db.Db.Statement.PrepareStmt = true
 	if migrator.VersionCode == 1 {
 		// 数据库版本低于最大版本，需要升级

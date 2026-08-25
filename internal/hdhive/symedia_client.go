@@ -452,3 +452,17 @@ func (c *SymediaClient) Checkin(ctx context.Context, isGambler bool) (*OAuthAPIR
 	}
 	return c.request(ctx, http.MethodPost, path, nil)
 }
+
+// GetStreamingTop 流媒体榜单（GET /api/v1/open/{userid}/feeds/streaming-top）
+// 与 tgtodrive 通道 /api/feeds/streaming-top 同构，上游未部署时返回其错误响应
+func (c *SymediaClient) GetStreamingTop(ctx context.Context, provider, region, mediaType string) (*OAuthAPIResponse, error) {
+	path := fmt.Sprintf("/api/v1/open/%s/feeds/streaming-top?provider=%s&region=%s&media_type=%s",
+		c.UserID, url.QueryEscape(strings.ToLower(provider)), url.QueryEscape(strings.ToUpper(region)), url.QueryEscape(strings.ToLower(mediaType)))
+	return c.request(ctx, http.MethodGet, path, nil)
+}
+
+// GetCalendar 追剧日历（GET /api/v1/open/{userid}/feeds/calendar?days=N）
+func (c *SymediaClient) GetCalendar(ctx context.Context, days int) (*OAuthAPIResponse, error) {
+	path := fmt.Sprintf("/api/v1/open/%s/feeds/calendar?days=%d", c.UserID, days)
+	return c.request(ctx, http.MethodGet, path, nil)
+}

@@ -50,6 +50,7 @@ type QLogger struct {
 	console   bool
 	lumLogger *lumberjack.Logger
 	rotation  *rotationWriter
+	file      *os.File // 非轮转模式的日志文件句柄（Close 时关闭）
 }
 
 type rotationWriter struct {
@@ -123,10 +124,13 @@ func (q *QLogger) Close() {
 	}
 	if q.rotation != nil {
 		_ = q.rotation.close()
-		return
 	}
 	if q.lumLogger != nil {
 		_ = q.lumLogger.Close()
+	}
+	if q.file != nil {
+		_ = q.file.Close()
+		q.file = nil
 	}
 }
 
@@ -366,6 +370,7 @@ func NewLogger(logFileName string, isConsole bool, rotate bool) *QLogger {
 	logFile := filepath.Join(ConfigDir, logFileName)
 	var lumLogger *lumberjack.Logger
 	var rotation *rotationWriter
+	var qLogFile *os.File
 	// 创建多写入器
 	var writers []io.Writer
 
@@ -393,6 +398,7 @@ func NewLogger(logFileName string, isConsole bool, rotate bool) *QLogger {
 			log.Printf("Failed to open log file: %v", err)
 			writers = append(writers, os.Stdout)
 		} else {
+			qLogFile = fd
 			if isConsole {
 				// 同时写入文件和控制台
 				writers = append(writers, fd, os.Stdout)
@@ -414,6 +420,7 @@ func NewLogger(logFileName string, isConsole bool, rotate bool) *QLogger {
 		console:   isConsole,
 		lumLogger: lumLogger,
 		rotation:  rotation,
+		file:      qLogFile,
 	}
 	return qLogger
 }

@@ -40,8 +40,12 @@ type HiveOAuthAccount struct {
 	LastCheckinOK     bool       `json:"last_checkin_ok"`
 	LastCheckinMsg    string     `gorm:"size:500" json:"last_checkin_message"`
 	LastCheckinMode   string     `gorm:"size:16" json:"last_checkin_mode"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	// 签到富信息（借鉴 NanShare/mediavault 的结果解析）
+	LastCheckinPoints   *int `json:"last_checkin_points"`    // 最近一次签到获得积分（赌狗可能为负）
+	LastCheckinBalance  *int `json:"last_checkin_balance"`   // 签到后账户余额
+	LastCheckinStreak   int  `json:"last_checkin_streak"`    // 连续签到天数
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // TableName 表名
@@ -65,8 +69,12 @@ type PublicHiveAccount struct {
 	LastCheckinOK   bool            `json:"last_checkin_ok"`
 	LastCheckinMsg  string          `json:"last_checkin_message"`
 	LastCheckinMode string          `json:"last_checkin_mode"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	// 签到富信息
+	LastCheckinPoints  *int      `json:"last_checkin_points"`
+	LastCheckinBalance *int      `json:"last_checkin_balance"`
+	LastCheckinStreak  int       `json:"last_checkin_streak"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // ---------------------------------------------------------------------------
@@ -223,8 +231,12 @@ func (a *HiveOAuthAccount) Public() *PublicHiveAccount {
 		LastCheckinOK:   a.LastCheckinOK,
 		LastCheckinMsg:  a.LastCheckinMsg,
 		LastCheckinMode: a.LastCheckinMode,
-		CreatedAt:       a.CreatedAt,
-		UpdatedAt:       a.UpdatedAt,
+
+		LastCheckinPoints:  a.LastCheckinPoints,
+		LastCheckinBalance: a.LastCheckinBalance,
+		LastCheckinStreak:  a.LastCheckinStreak,
+		CreatedAt:          a.CreatedAt,
+		UpdatedAt:          a.UpdatedAt,
 	}
 	if a.UserInfo != "" {
 		var u hdhive.MeUserInfo

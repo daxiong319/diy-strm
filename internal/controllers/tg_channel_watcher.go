@@ -418,6 +418,48 @@ func postIDGreater(a, b string) bool {
 }
 
 // saveShareByLink 将分享链接文本转存到指定网盘目录（订阅引擎与 TG 消息共用）
+// isRateLimitErr 判断转存错误是否为网盘侧频率限制（rate limit）。
+// 网盘（123/光鸭/139）在短时高频转存时返回此类错误，需要退避重试而非直接判失败。
+func isRateLimitErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, kw := range []string{"rate limit", "rate_limit", "ratelimit", "429", "too many", "quota", "频率", "频繁", "太快", "限流", "exceeded", "too frequent", "slow down"} {
+		if strings.Contains(msg, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// retryTransferOnRateLimit 转存遇网盘侧频率限制时指数退避重试（最多 4 次）。
+// 仅对 rate-limit 类错误重试；其他错误（如分享失效、目录不存在）直接返回。
+func retryTransferOnRateLimit(ctx context.Context, fn func() (string, int, error)) (string, int, error) {
+	const maxRetries = 4
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(attempt*attempt) * time.Second
+			helpers.AppLogger.Warnf("影巢转存触发网盘频率限制，%s 后第 %d 次重试：%v", backoff, attempt, lastErr)
+			select {
+			case <-ctx.Done():
+				return "", 0, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+		title, total, err := fn()
+		if err == nil {
+			return title, total, nil
+		}
+		if !isRateLimitErr(err) {
+			return "", 0, err
+		}
+		lastErr = err
+	}
+	return "", 0, lastErr
+}
+
 func saveShareByLink(ctx context.Context, text, pwd, sourceType, targetDir string) (title string, total int, err error) {
 	switch sourceType {
 	case string(models.SourceType123):
@@ -482,7 +524,9 @@ func savePan123Share(ctx context.Context, shareKey, sharePwd, targetDir string) 
 	if err != nil {
 		return "", 0, fmt.Errorf("目标目录不存在 %q（%v）", targetDir, err)
 	}
-	return client.SaveShare(ctx, shareKey, sharePwd, targetParentID)
+	return retryTransferOnRateLimit(ctx, func() (string, int, error) {
+		return client.SaveShare(ctx, shareKey, sharePwd, targetParentID)
+	})
 }
 
 // saveGuangYaShare 转存光鸭分享到指定目录
@@ -499,7 +543,9 @@ func saveGuangYaShare(ctx context.Context, shareID, code, targetDir string) (tit
 			return "", 0, fmt.Errorf("目标目录不存在 %q（%v）", targetDir, err)
 		}
 	}
-	return client.SaveShare(ctx, shareID, code, parentID)
+	return retryTransferOnRateLimit(ctx, func() (string, int, error) {
+		return client.SaveShare(ctx, shareID, code, parentID)
+	})
 }
 
 // savePan139Share 转存 139 分享到指定目录
@@ -532,11 +578,13 @@ func savePan139Share(ctx context.Context, linkID, saveDir string) (title string,
 	if len(coPaths) == 0 && len(caPaths) == 0 {
 		return "", 0, fmt.Errorf("分享链接内容为空")
 	}
-	taskID, err := client.SaveShareFiles(ctx, linkID, "", targetCatalogID, coPaths, caPaths)
+	_, _, err = retryTransferOnRateLimit(ctx, func() (string, int, error) {
+		_, e := client.SaveShareFiles(ctx, linkID, "", targetCatalogID, coPaths, caPaths)
+		return "", 0, e
+	})
 	if err != nil {
 		return "", 0, fmt.Errorf("转存失败：%v", err)
 	}
-	_ = taskID
 	return info.LinkName, len(coPaths) + len(caPaths), nil
 }
 

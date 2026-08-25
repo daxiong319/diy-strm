@@ -66,6 +66,10 @@ func setupDirectoryUploadServiceTestDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("打开测试数据库失败: %v", err)
 	}
+	// 关闭数据库连接，避免 Windows 下 TempDir 清理因文件占用而失败
+	if sqlDB, err := testDB.DB(); err == nil {
+		t.Cleanup(func() { sqlDB.Close() })
+	}
 	db.Db = testDB
 	if err := db.Db.AutoMigrate(
 		&models.Account{},

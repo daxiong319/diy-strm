@@ -26,7 +26,12 @@ type MonitorTransferRecord struct {
 	Total          int       `json:"total"`                                                // 转存文件数
 	TargetDir      string    `gorm:"size:512" json:"target_dir"`                           // 转存目标目录
 	SubscriptionID uint      `gorm:"index" json:"subscription_id"`                         // 关联订阅 ID（机器人入口为 0）
-	CreatedAt      time.Time `json:"created_at"`
+	// 影片关联信息：用于监控历史直接展示「监控的是哪部影片/剧集」
+	TMDBID    int64  `gorm:"index" json:"tmdb_id"`      // 关联 TMDB ID（影巢订阅 / TG 影视订阅可关联，无则 0）
+	MediaType string `gorm:"size:16" json:"media_type"` // movie / tv
+	Season    string `gorm:"size:16" json:"season"`     // 季（tv），如 1
+	Episode   string `gorm:"size:32" json:"episode"`    // 集（tv），如 S01E02
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // 监控历史状态常量（对齐 tgto123：转存成功/转存失败；跳过与洗版为本项目扩展）

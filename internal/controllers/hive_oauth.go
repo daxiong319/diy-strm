@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"diy-strm/internal/hdhive"
@@ -125,6 +126,27 @@ func HiveOAuthStatusByAccount(ctx context.Context, acc *models.HiveOAuthAccount)
 		// 顶层字段回填
 		if s, err := json.Marshal(statusPayload(statusResp)); err == nil {
 			acc.Status = string(s)
+		}
+	}
+	// 解析并保存 AccessToken（用户级 Feed 授权头值；缺失时回退 InstallID）。
+	// token/status 的 data 可能携带 access_token / refresh_token / expires_at。
+	if len(statusResp.Data) > 0 {
+		var tok struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			ExpiresAt    *int64 `json:"expires_at"`
+		}
+		if json.Unmarshal(statusResp.Data, &tok) == nil {
+			if tok.AccessToken != "" {
+				acc.AccessToken = tok.AccessToken
+			}
+			if tok.RefreshToken != "" {
+				acc.RefreshToken = tok.RefreshToken
+			}
+			if tok.ExpiresAt != nil {
+				t := time.Unix(*tok.ExpiresAt, 0)
+				acc.TokenExpiresAt = &t
+			}
 		}
 	}
 	if err := models.SaveHiveAccount(acc); err != nil {
@@ -300,18 +322,49 @@ func RunHiveCheckin(ctx context.Context, acc *models.HiveOAuthAccount, mode hdhi
 		}
 	}
 	success := hdhive.IsCheckinSuccess(resp.Code, &checkedInToday, msg)
+
+	// 富解析：提取本次奖励积分、余额、连签天数（借鉴 NanShare 递归字段匹配）
+	var stats *hdhive.CheckinStats
+	if len(resp.Data) > 0 {
+		var payload any
+		if json.Unmarshal(resp.Data, &payload) == nil {
+			stats = hdhive.ExtractCheckinStats(payload)
+		}
+	}
 	finalMsg := "签到成功"
 	if !success {
 		finalMsg = msg
 		if finalMsg == "" {
 			finalMsg = fmt.Sprintf("签到失败（code=%s）", resp.Code)
 		}
+	} else if stats != nil {
+		// 成功时追加「获得 N 积分（余额 M）已连签 D 天」；重复签到（已签到类消息）不追加奖励
+		if suffix := stats.FormatStatsSuffix(); suffix != "" && !hdhive.IsAlreadyChecked(msg) {
+			finalMsg += suffix
+		}
 	}
+	modeLabel := "普通签到"
+	if mode == hdhive.CheckinModeGamble {
+		modeLabel = "赌狗签到"
+	}
+	if !strings.HasPrefix(finalMsg, "[") {
+		finalMsg = fmt.Sprintf("[%s] %s", modeLabel, finalMsg)
+	}
+
 	now := time.Now()
 	acc.LastCheckinAt = &now
 	acc.LastCheckinOK = success
 	acc.LastCheckinMsg = finalMsg
 	acc.LastCheckinMode = string(mode)
+	if stats != nil {
+		acc.LastCheckinPoints = stats.AwardPoints
+		acc.LastCheckinBalance = stats.BalancePoints
+		if stats.StreakDays != nil {
+			acc.LastCheckinStreak = *stats.StreakDays
+		} else if !success {
+			acc.LastCheckinStreak = 0
+		}
+	}
 	// 顺带刷新用户信息（签到后积分会变化）
 	if len(resp.Data) > 0 {
 		client.Me(ctx) // 预热，忽略错误
@@ -516,35 +569,78 @@ func HiveSubAccountCheckinAPI(c *gin.Context) {
 // RunHiveDailyCheckins 定时任务：主账号 + 启用子账号每日签到
 // 开关 / 签到时间 / 签到模式均读取影巢设置（与 tgto123 的 HDHIVE_CHECKIN_ENABLE/TIME/TYPE、
 // HDHIVE_SUB_CHECKIN_ENABLE/TIME/TYPE 一致），不在设置时间内时直接跳过。
+// hiveCheckinTimers 进程内随机分钟签到定时器（账号ID → 定时器），防止重复排程
+var hiveCheckinTimers = sync.Map{}
+
+// RunHiveDailyCheckins 影巢每日签到调度入口（每小时事件触发 + 启动补排）。
+// 借鉴 NanShare 的确定性哈希随机分钟策略：每天在配置小时的 0-29 分内
+// 由 sha256(账号:日期) 选出一个稳定分钟，到点精确执行；同一天已成功签到的账号自动跳过。
 func RunHiveDailyCheckins() {
 	now := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
+	today := now.Format("2006-01-02")
 
-	if models.GetHiveCheckinEnabled() && now.Hour() == models.GetHiveCheckinHour() {
-		mode := hdhive.ResolveCheckinMode(models.GetHiveCheckinMode())
-		mainAcc, err := models.GetHiveMainAccount()
-		if err == nil && mainAcc.Authorized {
-			if ok, msg := RunHiveCheckin(ctx, mainAcc, mode); ok {
-				helpers.AppLogger.Infof("影巢定时签到：主账号签到成功（%s）", msg)
-			} else {
-				helpers.AppLogger.Errorf("影巢定时签到：主账号签到失败：%s", msg)
-			}
+	schedule := func(acc *models.HiveOAuthAccount, enabled bool, hour int, mode hdhive.CheckinMode) {
+		if !enabled || !acc.Enabled {
+			return
 		}
+		// 当天已成功签到则跳过（LastCheckinAt 为今天且成功）
+		if acc.LastCheckinAt != nil && acc.LastCheckinOK &&
+			acc.LastCheckinAt.Format("2006-01-02") == today {
+			return
+		}
+		minute := hdhive.RandomCheckinMinute(acc.ID, today)
+		target := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
+		if !now.Before(target) {
+			// 已到点（含启动补排/整点兜底触发）：立即执行
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			if ok, msg := RunHiveCheckin(ctx, acc, mode); ok {
+				helpers.AppLogger.Infof("影巢定时签到：%s 签到成功（%s）", acc.Label, msg)
+			} else {
+				helpers.AppLogger.Errorf("影巢定时签到：%s 签到失败：%s", acc.Label, msg)
+			}
+			cancel()
+			return
+		}
+		// 未到点：精确排程一次（重启后由下次事件/启动补排恢复）
+		timerKey := fmt.Sprintf("%d:%s", acc.ID, today)
+		if _, loaded := hiveCheckinTimers.LoadOrStore(timerKey, true); loaded {
+			return // 已排过
+		}
+		delay := target.Sub(now)
+		time.AfterFunc(delay, func() {
+			hiveCheckinTimers.Delete(timerKey)
+			latest, err := models.GetHiveAccountByID(acc.ID)
+			if err != nil {
+				return
+			}
+			if latest.LastCheckinAt != nil && latest.LastCheckinOK &&
+				latest.LastCheckinAt.Format("2006-01-02") == today {
+				return // 已签
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			if ok, msg := RunHiveCheckin(ctx, latest, mode); ok {
+				helpers.AppLogger.Infof("影巢定时签到（随机分钟 %02d:%02d）：%s 签到成功（%s）", hour, minute, latest.Label, msg)
+			} else {
+				helpers.AppLogger.Errorf("影巢定时签到（随机分钟 %02d:%02d）：%s 签到失败：%s", hour, minute, latest.Label, msg)
+			}
+		})
 	}
 
-	if models.GetHiveSubCheckinEnabled() && now.Hour() == models.GetHiveSubCheckinHour() {
+	if models.GetHiveCheckinEnabled() {
+		hour := models.GetHiveCheckinHour()
+		mode := hdhive.ResolveCheckinMode(models.GetHiveCheckinMode())
+		mainAcc, err := models.GetHiveMainAccount()
+		if err == nil {
+			schedule(mainAcc, mainAcc.Enabled, hour, mode)
+		}
+	}
+	if models.GetHiveSubCheckinEnabled() {
+		hour := models.GetHiveSubCheckinHour()
 		mode := hdhive.ResolveCheckinMode(models.GetHiveSubCheckinMode())
 		subs, _ := models.ListHiveSubAccounts()
 		for i := range subs {
-			if !subs[i].Enabled {
-				continue
-			}
-			if ok, msg := RunHiveCheckin(ctx, &subs[i], mode); ok {
-				helpers.AppLogger.Infof("影巢定时签到：%s 签到成功（%s）", subs[i].Label, msg)
-			} else {
-				helpers.AppLogger.Errorf("影巢定时签到：%s 签到失败：%s", subs[i].Label, msg)
-			}
+			schedule(&subs[i], subs[i].Enabled, hour, mode)
 		}
 	}
 }

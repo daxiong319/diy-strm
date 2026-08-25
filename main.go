@@ -25,6 +25,7 @@ import (
 	"diy-strm/internal/db"
 	"diy-strm/internal/db/database"
 	"diy-strm/internal/directoryupload"
+	"diy-strm/internal/discovery"
 	"diy-strm/internal/github"
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/migrate"
@@ -192,6 +193,7 @@ func (app *App) StartDatabase(migrateMode bool) error {
 		helpers.AppLogger.Infof("SQLite 数据库文件路径：%s", sqliteFile)
 		db.Db = db.InitSqlite3(sqliteFile)
 		models.Migrate()
+		ensureDiscoveryTables()
 		if err := models.ResetStaleEmbySyncRunOnStartup(); err != nil {
 			return err
 		}
@@ -244,10 +246,20 @@ func (app *App) StartDatabase(migrateMode bool) error {
 		}
 	}
 	models.Migrate()
+	ensureDiscoveryTables()
 	if err := models.ResetStaleEmbySyncRunOnStartup(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// ensureDiscoveryTables 创建影视发现相关表（discovery 包依赖 models，无法在 migrator 中迁移）
+func ensureDiscoveryTables() {
+	if err := discovery.EnsureDiscoverySchema(); err != nil {
+		helpers.AppLogger.Errorf("创建影视发现表失败：%v", err)
+		return
+	}
+	helpers.AppLogger.Info("影视发现表已就绪（设置/收藏/目录缓存）")
 }
 
 func configureInitialAdminSetup() error {
@@ -843,6 +855,22 @@ func setRouter(r *gin.Engine) {
 		api.GET("/discover/tmdb", controllers.GetDiscoverTmdb)                // 获取 TMDB 热门影片列表
 		api.GET("/discover/douban", controllers.GetDiscoverDouban)            // 获取豆瓣榜单/片单
 		api.POST("/discover/emby-check", controllers.GetDiscoverEmbyCheck)    // 检测影片是否已入库 Emby
+
+		// 影视发现（复刻 tgto123 media_discovery）
+		api.GET("/media-discovery/meta", controllers.GetMediaDiscoveryMeta)              // 发现页元数据（筛选器选项）
+		api.GET("/media-discovery/explore", controllers.GetMediaExplore)                 // 影视探索（TMDB 多条件筛选）
+		api.GET("/media-discovery/explore/douban", controllers.GetMediaExploreDouban)    // 影视探索（豆瓣 tag）
+		api.GET("/media-discovery/rankings", controllers.GetMediaRankings)               // 榜单推荐三源聚合
+		api.GET("/media-discovery/calendar", controllers.GetMediaCalendar)               // 追剧日历
+		api.GET("/media-discovery/anime/calendar", controllers.GetAnimeCalendar)         // 番剧放送日历
+		api.GET("/media-discovery/anime/search", controllers.GetAnimeSearch)             // 番剧搜索
+		api.POST("/media-discovery/anime/match", controllers.MatchAnimeTMDBAPI)          // 番剧条目匹配 TMDB
+		api.GET("/media-discovery/favorites", controllers.GetMediaFavorites)             // 收藏列表
+		api.POST("/media-discovery/favorites", controllers.AddMediaFavorite)             // 添加收藏
+		api.POST("/media-discovery/favorites/check", controllers.CheckMediaFavorites)    // 批量判断收藏状态
+		api.DELETE("/media-discovery/favorites/:id", controllers.DeleteMediaFavorite)    // 删除收藏
+		api.GET("/media-discovery/settings", controllers.GetMediaDiscoverySettings)      // 发现页设置
+		api.POST("/media-discovery/settings", controllers.UpdateMediaDiscoverySettings)  // 更新发现页设置
 
 		// 目录整理
 		api.POST("/organize/preview", controllers.OrganizePreview)            // 目录整理预览

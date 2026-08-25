@@ -86,6 +86,12 @@ func TestLogEffectiveStrmConfigUsesGlobalSources(t *testing.T) {
 	if syncStrm == nil {
 		t.Fatal("NewSyncStrmFromSyncPath() 返回 nil")
 	}
+	// 关闭同步日志文件句柄，避免 Windows 下 TempDir 清理因文件占用而失败
+	t.Cleanup(func() {
+		if syncStrm.Sync != nil && syncStrm.Sync.Logger != nil {
+			syncStrm.Sync.Logger.Close()
+		}
+	})
 
 	logEffectiveStrmConfig(syncPath, syncStrm.Config.VideoExt, syncStrm.Config.MetaExt, syncStrm.Config.ExcludeNames)
 
@@ -179,6 +185,12 @@ func TestLogEffectiveStrmConfigUsesMixedSources(t *testing.T) {
 	if syncStrm == nil {
 		t.Fatal("NewSyncStrmFromSyncPath() 返回 nil")
 	}
+	// 关闭同步日志文件句柄，避免 Windows 下 TempDir 清理因文件占用而失败
+	t.Cleanup(func() {
+		if syncStrm.Sync != nil && syncStrm.Sync.Logger != nil {
+			syncStrm.Sync.Logger.Close()
+		}
+	})
 
 	logEffectiveStrmConfig(syncPath, syncStrm.Config.VideoExt, syncStrm.Config.MetaExt, syncStrm.Config.ExcludeNames)
 
