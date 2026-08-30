@@ -83,6 +83,8 @@ const (
 	PlaybackStop   NotificationType = "playback_stop"    // 播放停止
 	TransferSuccess NotificationType = "transfer_success" // 转存成功
 	TransferFailed  NotificationType = "transfer_failed"  // 转存失败
+
+	AccountAuthInvalid NotificationType = "account_auth_invalid" // 网盘账号授权失效/恢复
 )
 
 // AllNotificationTypes 所有通知类型，用于创建渠道时的默认规则
@@ -99,6 +101,7 @@ var AllNotificationTypes = []NotificationType{
 	PlaybackStop,
 	TransferSuccess,
 	TransferFailed,
+	AccountAuthInvalid,
 }
 
 // NotificationPriority 通知优先级

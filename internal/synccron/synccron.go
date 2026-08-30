@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"diy-strm/internal/authcheck"
 	"diy-strm/internal/baidupan"
 	"diy-strm/internal/db"
 	"diy-strm/internal/emby"
@@ -275,6 +276,10 @@ func InitTokenCron() {
 	TokenCron.AddFunc("*/2 * * * *", func() {
 		// helpers.AppLogger.Info("定时刷新 115 的访问凭证")
 		RefreshOAuthAccessToken()
+	})
+	// 每 30 分钟检测一次全部网盘账号授权有效性，失效时经通知渠道告警
+	TokenCron.AddFunc("@every 30m", func() {
+		authcheck.CheckAll(false)
 	})
 	TokenCron.Start()
 }

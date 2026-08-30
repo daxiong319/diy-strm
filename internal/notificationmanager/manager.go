@@ -71,10 +71,47 @@ func (m *EnhancedNotificationManager) LoadChannels() error {
 		}
 	}
 
+	m.ensureEventRules(string(notification.AccountAuthInvalid))
+
 	m.loadEnabledRulesLocked()
 
 	helpers.AppLogger.Infof("已加载 %d 个通知渠道", len(m.handlers))
 	return nil
+}
+
+// ensureEventRules 为全部已有渠道补齐指定事件类型的通知规则（幂等，仅创建缺失的）。
+// 新增事件类型时让存量渠道自动具备该通知能力，用户可在规则对话框中关闭。
+func (m *EnhancedNotificationManager) ensureEventRules(eventType string) {
+	var channels []notification.NotificationChannel
+	if err := m.db.Find(&channels).Error; err != nil {
+		helpers.AppLogger.Warnf("补齐通知规则查询渠道失败：%v", err)
+		return
+	}
+	created := 0
+	for _, channel := range channels {
+		var count int64
+		if err := m.db.Model(&notification.NotificationRule{}).
+			Where("channel_id = ? AND event_type = ?", channel.ID, eventType).
+			Count(&count).Error; err != nil {
+			continue
+		}
+		if count > 0 {
+			continue
+		}
+		rule := notification.NotificationRule{
+			ChannelID: channel.ID,
+			EventType: eventType,
+			IsEnabled: true,
+		}
+		if err := m.db.Create(&rule).Error; err != nil {
+			helpers.AppLogger.Warnf("为渠道 %d 补齐事件 %s 通知规则失败：%v", channel.ID, eventType, err)
+			continue
+		}
+		created++
+	}
+	if created > 0 {
+		helpers.AppLogger.Infof("已为 %d 个已有通知渠道补充「%s」通知规则", created, eventType)
+	}
 }
 
 func (m *EnhancedNotificationManager) loadEnabledRulesLocked() {

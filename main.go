@@ -810,6 +810,8 @@ func setRouter(r *gin.Engine) {
 		api.POST("/account/update", controllers.UpdateAccountInfo)       // 更新开放平台账号资料
 		api.POST("/account/delete", controllers.DeleteAccount)           // 删除开放平台账号
 		api.POST("/account/openlist", controllers.CreateOpenListAccount) // 创建 OpenList 账号
+		api.GET("/account/auth-status", controllers.GetAccountAuthStatusAPI) // 获取账号授权检测结果
+		api.POST("/account/check-auth", controllers.CheckAccountAuthAPI)     // 触发账号授权检测
 
 		// API Key 管理接口
 		api.POST("/api-keys", controllers.CreateAPIKey)                 // 创建 API Key

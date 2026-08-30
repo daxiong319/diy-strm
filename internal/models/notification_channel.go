@@ -38,6 +38,8 @@ const (
 	PlaybackStop   NotificationType = notification.PlaybackStop
 	TransferSuccess NotificationType = notification.TransferSuccess
 	TransferFailed  NotificationType = notification.TransferFailed
+
+	AccountAuthInvalid NotificationType = notification.AccountAuthInvalid
 )
 
 // NotificationPriority 通知优先级 - 从 internal/notification 导入

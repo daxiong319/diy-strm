@@ -13,6 +13,14 @@
         </div>
         <div class="header-actions">
           <el-button
+            class="check-auth-btn"
+            :icon="RefreshRight"
+            :loading="authCheckRunning"
+            @click="checkAuth(true)"
+          >
+            <span class="btn-text">检测授权</span>
+          </el-button>
+          <el-button
             type="primary"
             class="add-btn"
             :icon="Plus"
@@ -269,10 +277,13 @@
 
               <div class="status-row">
                 <div class="status-indicator" :class="getStatusClass(account)">
-                  <el-icon v-if="account.token_failed_reason && !account.token">
+                  <el-icon v-if="getAuthView(account).icon === 'loading'">
+                    <Loading />
+                  </el-icon>
+                  <el-icon v-else-if="getAuthView(account).icon === 'close'">
                     <CircleClose />
                   </el-icon>
-                  <el-icon v-else-if="account.token">
+                  <el-icon v-else-if="getAuthView(account).icon === 'ok'">
                     <CircleCheck />
                   </el-icon>
                   <el-icon v-else>
@@ -281,7 +292,16 @@
                   <span>{{ getStatusText(account) }}</span>
                 </div>
                 <el-tooltip
-                  v-if="account.token_failed_reason && !account.token"
+                  v-if="account.auth_valid === false && account.auth_detail"
+                  :content="authFailTooltip(account)"
+                  placement="top"
+                >
+                  <el-icon class="error-help-icon">
+                    <QuestionFilled />
+                  </el-icon>
+                </el-tooltip>
+                <el-tooltip
+                  v-else-if="account.token_failed_reason && !account.token"
                   :content="account.token_failed_reason"
                   placement="top"
                 >
@@ -289,6 +309,12 @@
                     <QuestionFilled />
                   </el-icon>
                 </el-tooltip>
+                <span
+                  v-if="account.auth_valid !== null && account.auth_valid !== undefined && account.auth_checked_at"
+                  class="auth-checked-time"
+                >
+                  {{ formatTimestamp(account.auth_checked_at) }} 检测
+                </span>
               </div>
             </div>
 
@@ -653,6 +679,10 @@ interface CloudAccount {
   auth_provider?: V115AuthProvider
   requires_encryption_key?: boolean
   token_failed_reason?: string
+  auth_valid?: boolean | null
+  auth_checked_at?: number
+  auth_detail?: string
+  auth_checking?: boolean
   status?: CloudDiskStatus
   statusLoading?: boolean
 }
@@ -728,22 +758,106 @@ const canEditCustomAppName = computed(() =>
   }),
 )
 
-const getStatusClass = (account: CloudAccount) => {
-  if (account.token_failed_reason && !account.token) return 'status-failed'
-  if (account.token) return 'status-authorized'
-  return 'status-unauthorized'
+// 授权有效性视图：优先展示实时检测结果，其次回退本地 Token 状态
+type AuthIcon = 'ok' | 'close' | 'warn' | 'loading'
+interface AuthView {
+  text: string
+  cls: string
+  icon: AuthIcon
+}
+const getAuthView = (account: CloudAccount): AuthView => {
+  if (!account.token) {
+    if (account.token_failed_reason)
+      return { text: '授权失败', cls: 'status-failed', icon: 'close' }
+    return { text: '未授权', cls: 'status-unauthorized', icon: 'warn' }
+  }
+  if (account.auth_checking) return { text: '检测中', cls: 'status-checking', icon: 'loading' }
+  if (account.auth_valid === true) return { text: '授权有效', cls: 'status-authorized', icon: 'ok' }
+  if (account.auth_valid === false)
+    return { text: '授权已失效', cls: 'status-failed', icon: 'close' }
+  return { text: '待检测', cls: 'status-checking', icon: 'warn' }
 }
 
-const getStatusText = (account: CloudAccount) => {
-  if (account.token_failed_reason && !account.token) return '授权失败'
-  if (account.token) return '已授权'
-  return '未授权'
-}
+const getStatusClass = (account: CloudAccount) => getAuthView(account).cls
+
+const getStatusText = (account: CloudAccount) => getAuthView(account).text
 
 const getCardStatusClass = (account: CloudAccount) => {
-  if (account.token_failed_reason && !account.token) return 'is-failed'
-  if (account.token) return 'is-authorized'
+  const cls = getAuthView(account).cls
+  if (cls === 'status-failed') return 'is-failed'
+  if (cls === 'status-authorized') return 'is-authorized'
   return 'is-unauthorized'
+}
+
+// ------------------------- 授权检测 -------------------------
+interface AuthCheckStatus {
+  valid: boolean
+  checked_at: number
+  detail?: string
+  notified?: boolean
+  checking?: boolean
+}
+
+const authCheckRunning = ref(false)
+
+const applyAuthStatus = (data: Record<string, AuthCheckStatus>) => {
+  accounts.value.forEach((account) => {
+    const s = data[String(account.id)]
+    if (s) {
+      account.auth_valid = s.valid
+      account.auth_checked_at = s.checked_at || 0
+      account.auth_detail = s.detail || ''
+      account.auth_checking = !!s.checking
+    } else {
+      account.auth_valid = null
+      account.auth_checked_at = 0
+      account.auth_detail = ''
+      account.auth_checking = false
+    }
+  })
+}
+
+const loadAuthStatuses = async () => {
+  try {
+    const response = await http.get(`${SERVER_URL}/account/auth-status`)
+    if (response?.data.code === 200) {
+      applyAuthStatus(response.data.data || {})
+    }
+  } catch (error) {
+    console.error('加载授权状态失败：', error)
+  }
+}
+
+// force=true 强制全量重检；force=false 时后端跳过 5 分钟内已检测的账号
+const checkAuth = async (force: boolean) => {
+  if (authCheckRunning.value) return
+  authCheckRunning.value = true
+  try {
+    const response = await http.post(
+      `${SERVER_URL}/account/check-auth?force=${force}`,
+      {},
+      { timeout: 60000 },
+    )
+    if (response?.data.code === 200) {
+      applyAuthStatus(response.data.data || {})
+      if (force) ElMessage.success('授权检测完成')
+    } else if (force) {
+      ElMessage.error(response?.data.message || '授权检测失败')
+    }
+  } catch (error) {
+    console.error('授权检测失败：', error)
+    if (force) ElMessage.error('授权检测失败，请稍后重试')
+  } finally {
+    authCheckRunning.value = false
+  }
+}
+
+const authFailTooltip = (account: CloudAccount) => {
+  const parts: string[] = []
+  if (account.auth_detail) parts.push('原因：' + account.auth_detail)
+  if (account.auth_checked_at)
+    parts.push('检测时间：' + formatTimestamp(account.auth_checked_at))
+  return parts.join('\n') || '授权已失效'
 }
 
 const loadAccounts = async () => {
@@ -772,9 +886,14 @@ const loadAccounts = async () => {
         auth_provider: item.auth_provider,
         requires_encryption_key: item.requires_encryption_key,
         token_failed_reason: item.token_failed_reason || '',
+        auth_valid: null,
+        auth_checked_at: 0,
+        auth_detail: '',
+        auth_checking: false,
         status: undefined,
         statusLoading: false,
       }))
+      loadAuthStatuses()
       accounts.value.forEach((account) => {
         if (
           (account.source_type === '115' || account.source_type === 'baidupan') &&
@@ -1321,6 +1440,8 @@ const checkOAuthCallback = async () => {
 onMounted(() => {
   checkOAuthCallback()
   loadAccounts()
+  // 页面打开时后台静默检测一次（后端 5 分钟内检测过会自动跳过）
+  checkAuth(false)
 })
 </script>
 
@@ -1520,6 +1641,10 @@ onMounted(() => {
   background: linear-gradient(90deg, #f56c6c, #fab6b6);
 }
 
+.card-status-bar.status-checking {
+  background: linear-gradient(90deg, #909399, #c8c9cc);
+}
+
 .card-main {
   padding: 16px;
 }
@@ -1693,6 +1818,22 @@ onMounted(() => {
 .status-indicator.status-failed {
   background: #fef0f0;
   color: #f56c6c;
+}
+
+.status-indicator.status-checking {
+  background: #f4f4f5;
+  color: #909399;
+}
+
+.auth-checked-time {
+  font-size: 12px;
+  color: #909399;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.check-auth-btn {
+  margin-right: 12px;
 }
 
 .error-help-icon {

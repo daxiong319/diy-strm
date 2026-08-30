@@ -15,6 +15,7 @@ export type EventType =
   | 'playback_stop'
   | 'transfer_success'
   | 'transfer_failed'
+  | 'account_auth_invalid'
 
 // 通知渠道接口
 export interface NotificationChannel {
@@ -140,6 +141,7 @@ export function getEventTypeName(type: EventType): string {
     playback_stop: 'Emby 播放停止',
     transfer_success: '转存成功',
     transfer_failed: '转存失败',
+    account_auth_invalid: '网盘账号授权',
   }
   return nameMap[type] || type
 }
@@ -159,6 +161,7 @@ export function getEventTypeDescription(type: EventType): string {
     playback_stop: '用户停止播放时发送通知',
     transfer_success: 'TG 频道/影巢资源转存成功时发送通知',
     transfer_failed: 'TG 频道/影巢资源转存失败时发送通知',
+    account_auth_invalid: '网盘账号授权失效或恢复时发送通知',
   }
   return descMap[type] || ''
 }
