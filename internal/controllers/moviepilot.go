@@ -145,6 +145,13 @@ func CreateMoviePilotSubscribe(c *gin.Context) {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: err.Error(), Data: nil})
 		return
 	}
+	// 创建成功后立即触发一次订阅搜索，联动 MoviePilot 尽快找源下载；
+	// 搜索失败不阻断（MoviePilot 调度器仍会周期搜索，也可在订阅页手动触发）。
+	if id > 0 {
+		if serr := client.SearchSubscribe(c, id); serr != nil {
+			helpers.AppLogger.Warnf("MoviePilot 订阅 %d 自动搜索失败（可稍后手动触发）：%v", id, serr)
+		}
+	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "添加订阅成功", Data: map[string]any{"id": id}})
 }
 

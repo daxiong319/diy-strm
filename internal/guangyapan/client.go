@@ -35,8 +35,9 @@ type Client struct {
 	tokenMu sync.RWMutex
 	client  *resty.Client
 
-	limiterLock sync.RWMutex
-	limiters    map[string]*rate.Limiter
+	limiterLock    sync.RWMutex
+	limiters       map[string]*rate.Limiter
+	defaultLimiter *rate.Limiter // 未显式配置的路径统一走该限流
 }
 
 // NewClient 创建光鸭云盘客户端
@@ -48,15 +49,16 @@ func NewClient(accountID uint, accessToken, refreshToken string) *Client {
 
 	deviceID := randomDeviceID()
 	return &Client{
-		accountID:    accountID,
-		accessToken:  strings.TrimSpace(accessToken),
-		refreshToken: strings.TrimSpace(refreshToken),
-		clientID:     DefaultClient,
-		deviceID:     deviceID,
-		accountBase:  AccountBaseURL,
-		apiBase:      APIBASEURL,
-		client:       client,
-		limiters:     make(map[string]*rate.Limiter),
+		accountID:      accountID,
+		accessToken:    strings.TrimSpace(accessToken),
+		refreshToken:   strings.TrimSpace(refreshToken),
+		clientID:       DefaultClient,
+		deviceID:       deviceID,
+		accountBase:    AccountBaseURL,
+		apiBase:        APIBASEURL,
+		client:         client,
+		limiters:       make(map[string]*rate.Limiter),
+		defaultLimiter: rate.NewLimiter(2, 1), // 默认 2 QPS，防 burst 触发服务端限流
 	}
 }
 
@@ -112,13 +114,16 @@ func (c *Client) SetRateLimit(path string, qps int) {
 	c.limiters[path] = rate.NewLimiter(rate.Limit(qps), 1)
 }
 
-// waitForPermission 等待限流许可
+// waitForPermission 等待限流许可（未配置的路径走默认限流）
 func (c *Client) waitForPermission(ctx context.Context, path string) error {
 	c.limiterLock.RLock()
 	limiter, exists := c.limiters[path]
 	c.limiterLock.RUnlock()
 	if exists {
 		return limiter.Wait(ctx)
+	}
+	if c.defaultLimiter != nil {
+		return c.defaultLimiter.Wait(ctx)
 	}
 	return nil
 }

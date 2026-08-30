@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"diy-strm/internal/db"
@@ -433,14 +434,21 @@ func isRateLimitErr(err error) bool {
 	return false
 }
 
-// retryTransferOnRateLimit 转存遇网盘侧频率限制时指数退避重试（最多 4 次）。
+// transferRetryBackoffs 限流重试退避序列（网盘限流冷却以分钟计，需拉长至 60s）
+var transferRetryBackoffs = []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
+
+// retryTransferOnRateLimit 转存遇网盘侧频率限制时退避重试（最多 4 次）。
 // 仅对 rate-limit 类错误重试；其他错误（如分享失效、目录不存在）直接返回。
 func retryTransferOnRateLimit(ctx context.Context, fn func() (string, int, error)) (string, int, error) {
 	const maxRetries = 4
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			backoff := time.Duration(attempt*attempt) * time.Second
+			idx := attempt - 1
+			if idx >= len(transferRetryBackoffs) {
+				idx = len(transferRetryBackoffs) - 1
+			}
+			backoff := transferRetryBackoffs[idx]
 			helpers.AppLogger.Warnf("影巢转存触发网盘频率限制，%s 后第 %d 次重试：%v", backoff, attempt, lastErr)
 			select {
 			case <-ctx.Done():
@@ -458,6 +466,40 @@ func retryTransferOnRateLimit(ctx context.Context, fn func() (string, int, error
 		lastErr = err
 	}
 	return "", 0, lastErr
+}
+
+// transferSlot 每账号转存节流槽位：同一账号两次转存命令之间至少间隔 interval
+type transferSlot struct {
+	mu       sync.Mutex
+	last     time.Time
+	interval time.Duration
+}
+
+var transferSlots = struct {
+	sync.Mutex
+	m map[string]*transferSlot
+}{m: map[string]*transferSlot{}}
+
+// awaitTransferSlot 等待该账号转存节流窗口。interval 按网盘限流强度配置
+// （123 转存限流最严，20s；139/光鸭 15s）。
+func awaitTransferSlot(key string, interval time.Duration, ctx context.Context) {
+	transferSlots.Lock()
+	slot, ok := transferSlots.m[key]
+	if !ok {
+		slot = &transferSlot{interval: interval}
+		transferSlots.m[key] = slot
+	}
+	transferSlots.Unlock()
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	wait := interval - time.Since(slot.last)
+	if wait > 0 {
+		select {
+		case <-ctx.Done():
+		case <-time.After(wait):
+		}
+	}
+	slot.last = time.Now()
 }
 
 func saveShareByLink(ctx context.Context, text, pwd, sourceType, targetDir string) (title string, total int, err error) {
@@ -524,6 +566,7 @@ func savePan123Share(ctx context.Context, shareKey, sharePwd, targetDir string) 
 	if err != nil {
 		return "", 0, fmt.Errorf("目标目录不存在 %q（%v）", targetDir, err)
 	}
+	awaitTransferSlot("pan123:"+strconv.FormatUint(uint64(account.ID), 10), 20*time.Second, ctx)
 	return retryTransferOnRateLimit(ctx, func() (string, int, error) {
 		return client.SaveShare(ctx, shareKey, sharePwd, targetParentID)
 	})
@@ -543,6 +586,7 @@ func saveGuangYaShare(ctx context.Context, shareID, code, targetDir string) (tit
 			return "", 0, fmt.Errorf("目标目录不存在 %q（%v）", targetDir, err)
 		}
 	}
+	awaitTransferSlot("guangya:"+strconv.FormatUint(uint64(account.ID), 10), 15*time.Second, ctx)
 	return retryTransferOnRateLimit(ctx, func() (string, int, error) {
 		return client.SaveShare(ctx, shareID, code, parentID)
 	})
@@ -578,6 +622,7 @@ func savePan139Share(ctx context.Context, linkID, saveDir string) (title string,
 	if len(coPaths) == 0 && len(caPaths) == 0 {
 		return "", 0, fmt.Errorf("分享链接内容为空")
 	}
+	awaitTransferSlot("pan139:"+strconv.FormatUint(uint64(account.ID), 10), 15*time.Second, ctx)
 	_, _, err = retryTransferOnRateLimit(ctx, func() (string, int, error) {
 		_, e := client.SaveShareFiles(ctx, linkID, "", targetCatalogID, coPaths, caPaths)
 		return "", 0, e

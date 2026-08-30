@@ -27,8 +27,9 @@ type Client struct {
 	client   *resty.Client
 	authFunc func(newToken string) // 令牌变化回调（重登录后持久化）
 
-	limiterLock sync.RWMutex
-	limiters    map[string]*rate.Limiter
+	limiterLock    sync.RWMutex
+	limiters       map[string]*rate.Limiter
+	defaultLimiter *rate.Limiter // 未显式配置的路径统一走该限流（123 API 高频会被拒）
 }
 
 // NewClient 创建 123 云盘客户端
@@ -39,13 +40,14 @@ func NewClient(accountID uint, username, password string) *Client {
 	client.SetRetryCount(0)
 
 	return &Client{
-		accountID:  accountID,
-		username:   username,
-		password:   password,
-		loginBase:  LoginApi,
-		mainBase:   MainApi,
-		client:     client,
-		limiters:   make(map[string]*rate.Limiter),
+		accountID:      accountID,
+		username:       username,
+		password:       password,
+		loginBase:      LoginApi,
+		mainBase:       MainApi,
+		client:         client,
+		limiters:       make(map[string]*rate.Limiter),
+		defaultLimiter: rate.NewLimiter(3, 1), // 默认 3 QPS，防 burst 触发服务端限流
 	}
 }
 
@@ -104,13 +106,16 @@ func (c *Client) SetRateLimit(path string, qps int) {
 	c.limiters[path] = rate.NewLimiter(rate.Limit(qps), 1)
 }
 
-// waitForPermission 等待限流许可
+// waitForPermission 等待限流许可（未配置的路径走默认限流）
 func (c *Client) waitForPermission(ctx context.Context, path string) error {
 	c.limiterLock.RLock()
 	limiter, exists := c.limiters[path]
 	c.limiterLock.RUnlock()
 	if exists {
 		return limiter.Wait(ctx)
+	}
+	if c.defaultLimiter != nil {
+		return c.defaultLimiter.Wait(ctx)
 	}
 	return nil
 }

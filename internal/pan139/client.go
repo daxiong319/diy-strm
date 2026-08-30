@@ -47,8 +47,9 @@ type Client struct {
 	hostMu  sync.RWMutex
 	client  *resty.Client
 
-	limiterLock sync.RWMutex
-	limiters    map[string]*rate.Limiter
+	limiterLock    sync.RWMutex
+	limiters       map[string]*rate.Limiter
+	defaultLimiter *rate.Limiter // 未显式配置的路径统一走该限流
 }
 
 // NewClient 创建中国移动云盘客户端
@@ -58,10 +59,11 @@ func NewClient(accountID uint, authorization string) *Client {
 	client.SetTimeout(60 * time.Second)
 	client.SetRetryCount(0)
 	return &Client{
-		accountID:     accountID,
-		authorization: strings.TrimSpace(authorization),
-		client:        client,
-		limiters:      make(map[string]*rate.Limiter),
+		accountID:      accountID,
+		authorization:  strings.TrimSpace(authorization),
+		client:         client,
+		limiters:       make(map[string]*rate.Limiter),
+		defaultLimiter: rate.NewLimiter(2, 1), // 默认 2 QPS，防 burst 触发服务端限流
 	}
 }
 
@@ -107,13 +109,16 @@ func (c *Client) SetRateLimit(path string, qps int) {
 	c.limiters[path] = rate.NewLimiter(rate.Limit(qps), 1)
 }
 
-// waitForPermission 等待限流许可
+// waitForPermission 等待限流许可（未配置的路径走默认限流）
 func (c *Client) waitForPermission(ctx context.Context, path string) error {
 	c.limiterLock.RLock()
 	limiter, exists := c.limiters[path]
 	c.limiterLock.RUnlock()
 	if exists {
 		return limiter.Wait(ctx)
+	}
+	if c.defaultLimiter != nil {
+		return c.defaultLimiter.Wait(ctx)
 	}
 	return nil
 }
