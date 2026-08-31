@@ -316,6 +316,7 @@ func RunSubscriptionAPI(c *gin.Context) {
 // GetHiveSettingsAPI 获取影巢设置（GET /cloud/hive/settings）
 // 与 tgto123 一致：自动签到（主/子账号的开关/时间/模式）、订阅引擎轮询间隔、解锁积分上限。
 func GetHiveSettingsAPI(c *gin.Context) {
+	throttle := models.GetHiveTransferThrottle()
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "查询成功", Data: gin.H{
 		"poll_interval":        models.GetHivePollInterval(),
 		"daily_checkin_enabled": models.GetHiveCheckinEnabled(),
@@ -325,6 +326,14 @@ func GetHiveSettingsAPI(c *gin.Context) {
 		"sub_checkin_mode":      models.GetHiveSubCheckinMode(),
 		"sub_checkin_hour":      models.GetHiveSubCheckinHour(),
 		"max_points":            models.GetHiveMaxPoints(),
+		// 执行强度与过滤（借鉴 mediavault）
+		"only_official":         models.GetHiveOnlyOfficial(),
+		"publisher_whitelist":   strings.Join(models.GetHivePublisherWhitelist(), ","),
+		"exec_preset":           throttle.Preset,
+		"max_transfers_per_run": models.GetHiveTransferThrottle().MaxTransfersPerRun,
+		"transfer_min_interval": int(models.GetHiveTransferThrottle().MinInterval.Seconds()),
+		"transfer_jitter":       int(models.GetHiveTransferThrottle().Jitter.Seconds()),
+		"slug_max_attempts":     models.GetHiveSlugMaxAttempts(),
 	}})
 }
 
@@ -340,6 +349,14 @@ func SetHiveSettingsAPI(c *gin.Context) {
 		SubCheckinMode      string `json:"sub_checkin_mode"`
 		SubCheckinHour      *int   `json:"sub_checkin_hour"`
 		MaxPoints           *int   `json:"max_points"`
+		// 执行强度与过滤（借鉴 mediavault）
+		OnlyOfficial        *bool  `json:"only_official"`
+		PublisherWhitelist  string `json:"publisher_whitelist"`
+		ExecPreset          string `json:"exec_preset"`
+		MaxTransfersPerRun  *int   `json:"max_transfers_per_run"`
+		TransferMinInterval *int   `json:"transfer_min_interval"`
+		TransferJitter      *int   `json:"transfer_jitter"`
+		SlugMaxAttempts     *int   `json:"slug_max_attempts"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error(), Data: nil})
@@ -393,7 +410,83 @@ func SetHiveSettingsAPI(c *gin.Context) {
 			return
 		}
 	}
+	// 执行强度与过滤（借鉴 mediavault）
+	if req.OnlyOfficial != nil {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveOnlyOfficial, strconv.FormatBool(*req.OnlyOfficial)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存官组过滤设置失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.PublisherWhitelist != "" || req.OnlyOfficial != nil {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHivePublisherWhitelist, strings.TrimSpace(req.PublisherWhitelist)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存发布者白名单失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	switch req.ExecPreset {
+	case "conservative", "balanced", "aggressive", "custom":
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveExecPreset, req.ExecPreset); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存执行强度预设失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.MaxTransfersPerRun != nil && *req.MaxTransfersPerRun >= 1 && *req.MaxTransfersPerRun <= 50 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveMaxTransfersPerRun, strconv.Itoa(*req.MaxTransfersPerRun)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存单轮转存上限失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.TransferMinInterval != nil && *req.TransferMinInterval >= 5 && *req.TransferMinInterval <= 300 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveTransferMinInterval, strconv.Itoa(*req.TransferMinInterval)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存转存最小间隔失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.TransferJitter != nil && *req.TransferJitter >= 0 && *req.TransferJitter <= 120 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveTransferJitter, strconv.Itoa(*req.TransferJitter)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存转存抖动失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.SlugMaxAttempts != nil && *req.SlugMaxAttempts >= 1 && *req.SlugMaxAttempts <= 10 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveSlugMaxAttempts, strconv.Itoa(*req.SlugMaxAttempts)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存资源尝试上限失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "影巢设置已保存", Data: nil})
+}
+
+// SetCloudSubscriptionPausedAPI 订阅暂停/恢复（POST /cloud/subscriptions/pause {id, paused}）
+// paused=true 置为 paused（跳过定时检索，配置保留）；false 恢复 subscribing（借鉴 mediavault 状态机）
+func SetCloudSubscriptionPausedAPI(c *gin.Context) {
+	var req struct {
+		ID     int64 `json:"id"`
+		Paused bool  `json:"paused"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.ID <= 0 {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误", Data: nil})
+		return
+	}
+	sub, err := models.GetCloudSubscription(uint(req.ID))
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "订阅不存在", Data: nil})
+		return
+	}
+	if req.Paused {
+		sub.Status = "paused"
+	} else {
+		sub.Status = "subscribing"
+	}
+	if err := models.SaveCloudSubscription(sub); err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "保存失败：" + err.Error(), Data: nil})
+		return
+	}
+	msg := "订阅已恢复"
+	if req.Paused {
+		msg = "订阅已暂停（跳过定时检索）"
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: msg, Data: nil})
 }
 
 // ListChannelJobsPlaceholder 占位：订阅任务状态列表

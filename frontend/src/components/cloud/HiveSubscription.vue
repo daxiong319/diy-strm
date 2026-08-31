@@ -42,11 +42,12 @@
           </template>
         </el-table-column>
         <el-table-column prop="target_dir" label="目标目录" min-width="140" show-overflow-tooltip />
-        <el-table-column label="状态" width="80">
+        <el-table-column label="状态" width="90">
           <template #default="{ row }">
-            <el-tag v-if="row.finished_at" type="info" size="small">已完结</el-tag>
+            <el-tag v-if="row.status === 'paused'" type="danger" size="small">已暂停</el-tag>
+            <el-tag v-else-if="row.status === 'completed' || row.finished_at" type="info" size="small">已完结</el-tag>
             <el-tag v-else-if="!row.enabled" type="warning" size="small">已停用</el-tag>
-            <el-tag v-else type="success" size="small">运行中</el-tag>
+            <el-tag v-else type="success" size="small">订阅中</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="上次运行" width="150">
@@ -54,8 +55,22 @@
             <span class="muted">{{ fmtTime(row.last_run_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="330" fixed="right">
+        <el-table-column label="操作" width="400" fixed="right">
           <template #default="{ row }">
+            <el-button
+              v-if="row.status === 'paused'"
+              link
+              type="success"
+              size="small"
+              @click="togglePaused(row, false)"
+            >恢复</el-button>
+            <el-button
+              v-else-if="!row.finished_at"
+              link
+              type="warning"
+              size="small"
+              @click="togglePaused(row, true)"
+            >暂停</el-button>
             <el-button link type="primary" size="small" @click="toggleEnabled(row)">
               {{ row.enabled ? '停用' : '启用' }}
             </el-button>
@@ -607,6 +622,20 @@ const toggleEnabled = async (row: any) => {
     if (resp.data?.code === 200) {
       row.enabled = !row.enabled
       ElMessage.success(row.enabled ? '已启用' : '已停用')
+    } else {
+      ElMessage.error(resp.data?.message || '操作失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('操作失败：' + (e?.message || ''))
+  }
+}
+
+const togglePaused = async (row: any, paused: boolean) => {
+  try {
+    const resp = await http.post('/api/cloud/subscriptions/pause', { id: row.id, paused })
+    if (resp.data?.code === 200) {
+      row.status = paused ? 'paused' : 'subscribing'
+      ElMessage.success(resp.data.message || (paused ? '已暂停' : '已恢复'))
     } else {
       ElMessage.error(resp.data?.message || '操作失败')
     }

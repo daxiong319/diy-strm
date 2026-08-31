@@ -46,6 +46,17 @@ func hiveTokenStatusFor(ctx context.Context, acc *models.HiveOAuthAccount, clien
 		expIn := int64(0)
 		return &hdhive.OAuthAPIResponse{Success: true, HasAccessToken: &hasTok, ExpiresInSeconds: &expIn}, nil
 	}
+	if nc, ok := client.(*hdhive.NanShareClient); ok {
+		resp, err := nc.OAuthStatus(ctx)
+		if err != nil {
+			return nil, err
+		}
+		hasTok := false
+		if payload, perr := hdhive.ParseNanShareStatus(resp); perr == nil && payload.Authorized != nil {
+			hasTok = *payload.Authorized
+		}
+		return &hdhive.OAuthAPIResponse{Success: true, HasAccessToken: &hasTok, Data: resp.Data}, nil
+	}
 	if oc, ok := client.(*hdhive.OAuthClient); ok {
 		return oc.TokenStatus(ctx)
 	}

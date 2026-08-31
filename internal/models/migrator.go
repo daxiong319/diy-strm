@@ -34,6 +34,7 @@ var AllTables = []any{
 	ServerChanChannelConfig{}, CustomWebhookChannelConfig{}, NotificationRule{},
 	MoviePilotConfig{}, MoviePilotUploadTask{}, MoviePilotFailedFile{},
 	CloudSetting{}, CloudSubscription{}, CloudTransferRecord{}, CloudChannel{},
+	HiveSlugAttempt{},
 	MonitorTransferRecord{},
 }
 

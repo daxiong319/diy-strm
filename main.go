@@ -936,6 +936,18 @@ func setRouter(r *gin.Engine) {
 		api.POST("/cloud/hive/symedia/checkin", controllers.HiveSymediaCheckinAPI)   // 签到
 		api.POST("/cloud/hive/symedia/test", controllers.HiveSymediaTestAPI)         // 连通性测试
 
+		api.GET("/cloud/hive/channels", controllers.HiveChannelsAPI)               // 四通道负载均衡视图
+		api.GET("/cloud/hive/nanshare/status", controllers.HiveNanShareStatusAPI)  // NanShare 渠道状态
+		api.POST("/cloud/hive/nanshare/start", controllers.HiveNanShareStartAPI)   // NanShare 发起授权
+		api.POST("/cloud/hive/nanshare/refresh", controllers.HiveNanShareRefreshAPI) // NanShare 刷新授权状态
+		api.POST("/cloud/hive/nanshare/test", controllers.HiveNanShareTestAPI)     // NanShare 连通性测试
+		api.GET("/cloud/hive/official/status", controllers.HiveOfficialStatusAPI)  // 官方直连渠道状态
+		api.POST("/cloud/hive/official/start", controllers.HiveOfficialStartAPI)   // 官方直连发起授权
+		api.POST("/cloud/hive/official/refresh", controllers.HiveOfficialRefreshAPI) // 官方直连刷新授权状态
+		api.POST("/cloud/hive/official/test", controllers.HiveOfficialTestAPI)     // 官方直连连通性测试
+
+		api.POST("/cloud/subscriptions/pause", controllers.SetCloudSubscriptionPausedAPI) // 订阅暂停/恢复
+
 		// 影巢子账号管理
 		api.GET("/cloud/hive/sub-accounts", controllers.HiveSubAccountsAPI)                     // 子账号列表
 		api.POST("/cloud/hive/sub-accounts", controllers.HiveSubAccountAddAPI)                  // 新增子账号
@@ -993,6 +1005,7 @@ func setRouter(r *gin.Engine) {
 	// hdhive.com 授权后直接重定向的回调地址（app 注册的回调指向本站 IP:端口 /hive-symedia/callback），
 	// 必须在 Emby 302 兜底路由之前注册，避免被其 404 拦截
 	r.GET("/hive-symedia/callback", controllers.HiveSymediaDirectCallback)
+	r.GET("/hive-official/callback", controllers.HiveOfficialCallback) // 官方直连通道 OAuth 回调
 
 	// 挂载 Emby 302 反代兜底路由, 与管理页共用端口
 	// 管理页的具体路由优先匹配, 其余请求 (Emby 反代 / 播放 302) 进入 emby302 分发器

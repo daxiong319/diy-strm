@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"diy-strm/internal/helpers"
@@ -16,6 +18,12 @@ import (
 
 // hiveWatchMinInterval 影巢订阅引擎最小轮询间隔（分钟）
 const hiveWatchMinInterval = 5 * time.Minute
+
+// 已完结 TV 订阅的 TMDB 复查参数（借鉴 mediavault _maybe_reactivate_completed_tv）
+const (
+	hiveTVRecheckGrace        = 7 * 24 * time.Hour // 完结宽限期：完结 7 天后才开始复查
+	hiveTVRecheckMinInterval  = 24 * time.Hour     // 复查最小间隔
+)
 
 // StartHiveWatcher 启动影巢（HDHive）订阅引擎（后台 goroutine 常驻轮询）
 func StartHiveWatcher(ctx context.Context) {
@@ -53,11 +61,15 @@ func runAllHiveSubscriptions() {
 	}
 	active := 0
 	for i := range subs {
-		if !subs[i].Enabled {
+		sub := &subs[i]
+		if !sub.Enabled {
 			continue
 		}
+		if sub.Status == "paused" {
+			continue // 已暂停：跳过定时检索（借鉴 mediavault paused 态）
+		}
 		active++
-		msg, ok := RunHiveSubscriptionOnce(&subs[i])
+		msg, ok := RunHiveSubscriptionOnce(sub)
 		if ok {
 			helpers.AppLogger.Infof("影巢订阅：%s", msg)
 		} else {
@@ -67,12 +79,47 @@ func runAllHiveSubscriptions() {
 	if active == 0 {
 		helpers.AppLogger.Infof("影巢订阅：本轮无启用中的订阅")
 	}
+	reactivateFinishedTVSubscriptions()
+}
+
+// reactivateFinishedTVSubscriptions 已完结 TV 订阅的 TMDB 复查与自动复活：
+// 完结超过宽限期（7 天）且距上次复查超过 24h 时刷新 TMDB 总集数快照，
+// 总集数增长（有新季/新集）则自动复活订阅（借鉴 mediavault「TMDB total grew → 重新激活」）
+func reactivateFinishedTVSubscriptions() {
+	subs, err := models.ListSubscriptionsByResourceSource("hdhive")
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	for i := range subs {
+		sub := &subs[i]
+		if sub.MediaType != "tv" || sub.FinishedAt == nil || sub.TMDBID <= 0 {
+			continue
+		}
+		if now.Sub(*sub.FinishedAt) < hiveTVRecheckGrace {
+			continue
+		}
+		if sub.LastRecheckAt != nil && now.Sub(*sub.LastRecheckAt) < hiveTVRecheckMinInterval {
+			continue
+		}
+		oldTotal := sub.TotalEpisodes
+		refreshSubscriptionTotalEpisodes(sub)
+		sub.LastRecheckAt = &now
+		_ = models.SaveCloudSubscription(sub)
+		if oldTotal > 0 && sub.TotalEpisodes > oldTotal {
+			sub.FinishedAt = nil
+			sub.Enabled = true
+			sub.Status = "subscribing"
+			_ = models.SaveCloudSubscription(sub)
+			helpers.AppLogger.Infof("影巢订阅 #%d（%s）：TMDB 总集数 %d → %d，已自动复活订阅", sub.ID, sub.TMDBTitle, oldTotal, sub.TotalEpisodes)
+		}
+	}
 }
 
 // RunHiveSubscriptionOnce 对单条影巢订阅执行一轮：查资源 → 规格筛选 → 解锁 → 转存
 // 返回结果摘要与是否成功。
-// 资源查询走 OAuth 代理通道（hdhive-open.tgtodrive.top，与 tgto123 一致），
-// 不再依赖 hdhive.com Open API 的 X-API-Key（该密钥可能被上游禁用）。
+// 资源查询与详情/解锁调用均走四通道负载均衡（symedia/tgtodrive/nanshare/官方直连），
+// 通道级故障（限流/授权失效/5xx）自动逐个降级尝试。
 func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 	mainAcc, err := models.GetHiveMainAccount()
 	if err != nil {
@@ -89,8 +136,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	// 查询资源列表：双通道（tgtodrive 中转 / 官方 OpenAPI）按健康度尝试，通道级故障自动切换
-	// 主账号未授权时只要有任一通道可用账号即继续（官方通道账号不占主账号位）
+	// 查询资源列表：四通道按负载均衡调度逐个尝试，通道级故障自动降级
 	query, qerr := models.HiveQueryResourcesWithFailover(ctx, sub.MediaType, strconv.FormatInt(sub.TMDBID, 10))
 	if qerr != nil {
 		if !mainAcc.Authorized {
@@ -98,7 +144,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		}
 		return fmt.Sprintf("订阅 #%d（影巢 %s %d）查询资源失败：%v", sub.ID, sub.MediaType, sub.TMDBID, qerr), false
 	}
-	client := query.Client
+	preferredChannel := query.Channel
 	resourcesResp := query.Resp
 	if !resourcesResp.Success {
 		msg := resourcesResp.Message
@@ -116,14 +162,45 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			return fmt.Sprintf("订阅 #%d（影巢 %s %d）解析资源列表失败：%v", sub.ID, sub.MediaType, sub.TMDBID, err), false
 		}
 	}
-	// 过滤无效资源（失效链接），并按规格分降序取最优候选
+	// 过滤无效资源（失效链接）
+	filteredInvalid := 0
+	filteredOfficial := 0
+	filteredPublisher := 0
+	filteredAttempt := 0
+	// 借鉴 mediavault：官组过滤 + 发布者白名单 + 失败历史降权（attempt 轮转）
+	officialOnly := models.GetHiveOnlyOfficial()
+	whitePublishers := models.GetHivePublisherWhitelist()
+	maxAttempts := models.GetHiveSlugMaxAttempts()
 	candidates := make([]hdhive.Resource, 0, len(resources))
 	for _, r := range resources {
 		if strings.EqualFold(strings.TrimSpace(r.ValidateStatus), "invalid") {
+			filteredInvalid++
 			continue
+		}
+		if officialOnly && !r.IsOfficial {
+			filteredOfficial++
+			continue
+		}
+		if len(whitePublishers) > 0 {
+			pub := ""
+			if r.User != nil {
+				pub = r.User.Nickname
+			}
+			if !hivePublisherAllowed(whitePublishers, pub) {
+				filteredPublisher++
+				continue
+			}
+		}
+		if a := models.GetHiveSlugAttempt(r.Slug); a != nil {
+			if ok, reason := models.HiveSlugUsable(a, maxAttempts); !ok {
+				filteredAttempt++
+				helpers.AppLogger.Debugf("影巢订阅 #%d：资源 %s 跳过（%s）", sub.ID, r.Slug, reason)
+				continue
+			}
 		}
 		candidates = append(candidates, r)
 	}
+	// 按规格分降序取最优候选
 	sort.Slice(candidates, func(i, j int) bool {
 		return hiveResourceSpec(&candidates[i]).Score() > hiveResourceSpec(&candidates[j]).Score()
 	})
@@ -134,17 +211,25 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 	}
 	skipped := 0
 	unsupported := 0
+	transferred := 0
 	var errs []string
+	// 执行强度（借鉴 mediavault 三档预设 + 转存间隔抖动）
+	throttle := models.GetHiveTransferThrottle()
 
 	for i := range candidates {
 		res := &candidates[i]
 		spec := hiveResourceSpec(res)
 		hiveMsgID := res.Slug
+		// 单轮转存上限（借鉴 mediavault subscription_transfer_max_per_run）
+		if transferred >= throttle.MaxTransfersPerRun {
+			helpers.AppLogger.Infof("影巢订阅 #%d：本轮转存已达上限 %d，剩余候选下轮处理", sub.ID, throttle.MaxTransfersPerRun)
+			break
+		}
 
 		// 从资源标题解析剧集（如 "S01E26"、"S01E22-23"），用于按集去重和 Episode 记录
 		epKeys := ParseEpisodeKeys(res.Title, sub.Season)
 		hasEpKeys := len(epKeys) > 0
-	meta := hiveMonitorMeta(sub, epKeys)
+		meta := hiveMonitorMeta(sub, epKeys)
 
 		// 去重/洗版判定：有剧集信息时按集去重，否则整片去重
 		var old *models.CloudTransferRecord
@@ -186,16 +271,24 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "去重跳过：该影片/剧集已收录", meta)
 			continue
 		}
-		// 通过分享详情获取网盘类型，必须与订阅目标网盘一致
-		shareResp, serr := client.GetShareDetail(ctx, res.Slug)
+		// 通过分享详情获取网盘类型，必须与订阅目标网盘一致（通道级故障自动降级重试）
+		shareResp, _, serr := models.HiveCallWithFailover(ctx, preferredChannel, func(cl hdhive.ChannelClient) (*hdhive.OAuthAPIResponse, error) {
+			return cl.GetShareDetail(ctx, res.Slug)
+		})
 		if serr != nil {
+			models.RecordHiveSlugFailure(res.Slug, sub.TMDBID, serr.Error())
 			errs = append(errs, fmt.Sprintf("%s 详情获取失败：%v", res.Slug, serr))
 			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, serr, meta)
 			continue
 		}
 		if !shareResp.Success {
-			errs = append(errs, fmt.Sprintf("%s 详情获取失败：%s", res.Slug, shareResp.Message))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Errorf("%s", shareResp.Message), meta)
+			failMsg := shareResp.Message
+			if failMsg == "" {
+				failMsg = shareResp.Description
+			}
+			models.RecordHiveSlugFailure(res.Slug, sub.TMDBID, "详情获取失败："+failMsg)
+			errs = append(errs, fmt.Sprintf("%s 详情获取失败：%s", res.Slug, failMsg))
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Errorf("%s", failMsg), meta)
 			continue
 		}
 		var detail hdhive.ShareDetail
@@ -222,9 +315,16 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Sprintf("解锁积分 %d 超过上限 %d，跳过", res.UnlockPoints, maxPts), meta)
 			continue
 		}
-		// 解锁
-		unlockResp, uerr := client.UnlockResource(ctx, res.Slug)
+		// 解锁（先取解锁节流许可，再走通道降级调用）
+		if uerr := hdhive.AcquireUnlock(ctx); uerr != nil {
+			errs = append(errs, fmt.Sprintf("解锁节流等待失败：%v", uerr))
+			continue
+		}
+		unlockResp, _, uerr := models.HiveCallWithFailover(ctx, preferredChannel, func(cl hdhive.ChannelClient) (*hdhive.OAuthAPIResponse, error) {
+			return cl.UnlockResource(ctx, res.Slug)
+		})
 		if uerr != nil {
+			models.RecordHiveSlugFailure(res.Slug, sub.TMDBID, "解锁失败："+uerr.Error())
 			errs = append(errs, fmt.Sprintf("%s 解锁失败：%v", res.Slug, uerr))
 			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, uerr, meta)
 			continue
@@ -252,6 +352,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			if failMsg == "" {
 				failMsg = unlockResp.Description
 			}
+			models.RecordHiveSlugFailure(res.Slug, sub.TMDBID, "解锁失败："+failMsg)
 			errs = append(errs, fmt.Sprintf("%s 解锁失败：%s", res.Slug, failMsg))
 			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Errorf("%s", failMsg), meta)
 			continue
@@ -271,8 +372,14 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", linkURL, targetDir, sub.ID, "去重跳过：该分享链接已转存过", meta)
 			continue
 		}
+		// 转存节流（借鉴 mediavault：转存最小间隔 + 随机抖动，避免固定频率触发风控）
+		if terr := awaitHiveTransferSlot(ctx, throttle); terr != nil {
+			helpers.AppLogger.Warnf("影巢订阅 #%d：转存节流中断：%v", sub.ID, terr)
+			break
+		}
 		title, total, terr := saveShareByLink(ctx, linkURL, unlock.AccessCode, panType, targetDir)
 		if terr != nil {
+			models.RecordHiveSlugFailure(res.Slug, sub.TMDBID, "转存失败："+terr.Error())
 			errs = append(errs, fmt.Sprintf("%s 转存失败：%v", linkURL, terr))
 			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", linkURL, targetDir, sub.ID, terr, meta)
 			failTitle := sub.TMDBTitle
@@ -282,6 +389,8 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			sendTransferFailedNotification(sub.SourceType, failTitle, targetDir, terr.Error())
 			continue
 		}
+		transferred++
+		models.ClearHiveSlugAttempt(res.Slug) // 成功后清除失败历史
 		recTitle := sub.TMDBTitle
 		if recTitle == "" {
 			recTitle = title
@@ -291,29 +400,29 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		} else {
 			recordMonitorSuccess("hive", panType, "", hiveMsgID, "", linkURL, title, targetDir, total, sub.ID, meta)
 		}
-_ = models.CreateTransferRecord(&models.CloudTransferRecord{
-				SourceType:     panType,
-				SubscriptionID: sub.ID,
-				MediaType:      sub.MediaType,
-				TMDBID:         sub.TMDBID,
-				Season:         sub.Season,
-				Episode:        JoinEpisodeKeys(epKeys),
-				Title:          recTitle,
-				PostID:         res.Slug,
-				LinkURL:        linkURL,
-				TargetDir:      targetDir,
-				Resolution:     spec.Resolution,
-				Source:         spec.Source,
-				Codec:          spec.Codec,
-				Effect:         spec.Effect,
-				SizeGB:         spec.SizeGB,
-})
-			extra := ""
-			if hasEpKeys {
-				extra = "剧集：" + JoinEpisodeKeys(epKeys)
-			}
-			sendTransferSuccessNotification(sub.SourceType, recTitle, targetDir, total, extra)
-			if old != nil {
+		_ = models.CreateTransferRecord(&models.CloudTransferRecord{
+			SourceType:     panType,
+			SubscriptionID: sub.ID,
+			MediaType:      sub.MediaType,
+			TMDBID:         sub.TMDBID,
+			Season:         sub.Season,
+			Episode:        JoinEpisodeKeys(epKeys),
+			Title:          recTitle,
+			PostID:         res.Slug,
+			LinkURL:        linkURL,
+			TargetDir:      targetDir,
+			Resolution:     spec.Resolution,
+			Source:         spec.Source,
+			Codec:          spec.Codec,
+			Effect:         spec.Effect,
+			SizeGB:         spec.SizeGB,
+		})
+		extra := ""
+		if hasEpKeys {
+			extra = "剧集：" + JoinEpisodeKeys(epKeys)
+		}
+		sendTransferSuccessNotification(sub.SourceType, recTitle, targetDir, total, extra)
+		if old != nil {
 			old.Status = "superseded"
 			_ = models.SaveTransferRecord(old)
 			if sub.ReplaceOld {
@@ -343,11 +452,62 @@ _ = models.CreateTransferRecord(&models.CloudTransferRecord{
 	_ = models.SaveCloudSubscription(sub)
 	summary := fmt.Sprintf("订阅 #%d（影巢 %s %s → %s）：候选资源 %d 个，无新收录（去重/不达标跳过 %d 个，网盘不支持 %d 个）",
 		sub.ID, sub.MediaType, sub.TMDBTitle, sub.SourceType, len(candidates), skipped, unsupported)
+	if filteredInvalid > 0 || filteredOfficial > 0 || filteredPublisher > 0 || filteredAttempt > 0 {
+		summary += fmt.Sprintf("；候选过滤：失效 %d / 非官组 %d / 非白名单发布者 %d / 失败历史 %d",
+			filteredInvalid, filteredOfficial, filteredPublisher, filteredAttempt)
+	}
+	if transferred > 0 {
+		summary += fmt.Sprintf("；本轮已转存 %d 项", transferred)
+	}
 	if len(errs) > 0 {
 		summary += "；失败：" + strings.Join(errs, "；")
 		return summary, false
 	}
 	return summary, true
+}
+
+// ---------------------------------------------------------------------------
+// 转存节流（借鉴 mediavault subscription_transfer_min_interval + jitter）：
+// 跨订阅/跨轮共享的转存时间闸，两次转存之间至少间隔 MinInterval + rand(0, Jitter)
+// ---------------------------------------------------------------------------
+
+var hiveTransferGateMu sync.Mutex
+var hiveLastTransferAt time.Time
+
+func awaitHiveTransferSlot(ctx context.Context, th models.HiveTransferThrottle) error {
+	hiveTransferGateMu.Lock()
+	defer hiveTransferGateMu.Unlock()
+	if !hiveLastTransferAt.IsZero() {
+		jitter := time.Duration(0)
+		if th.Jitter > 0 {
+			jitter = time.Duration(rand.Int63n(int64(th.Jitter)))
+		}
+		wait := th.MinInterval + jitter - time.Since(hiveLastTransferAt)
+		if wait > 0 {
+			helpers.AppLogger.Infof("影巢订阅：转存节流，等待 %s 后继续（预设 %s）", wait.Truncate(time.Second), th.Preset)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(wait):
+			}
+		}
+	}
+	hiveLastTransferAt = time.Now()
+	return nil
+}
+
+// hivePublisherAllowed 发布者昵称是否在白名单（忽略大小写）
+func hivePublisherAllowed(whitelist []string, publisher string) bool {
+	publisher = strings.ToLower(strings.TrimSpace(publisher))
+	if publisher == "" {
+		return false
+	}
+	for _, w := range whitelist {
+		if strings.ToLower(strings.TrimSpace(w)) == publisher {
+			return true
+		}
+	}
+	return false
 }
 
 // hiveResourceSpec 将影巢资源映射为媒体规格（复用文本规格解析）

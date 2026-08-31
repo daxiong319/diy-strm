@@ -36,7 +36,64 @@ const (
 	CloudSettingKeyHiveSubCheckinMode    = "sub_checkin_mode"      // 值：daily/gamble 子账号签到模式
 	CloudSettingKeyHiveSubCheckinHour    = "sub_checkin_hour"      // 值：0-23 子账号签到小时
 	CloudSettingKeyHiveMaxPoints         = "max_points"            // 值：解锁积分上限（0=不限）
+	CloudSettingKeyHiveOnlyOfficial      = "only_official"         // 值："true"/"false" 仅收官组资源（借鉴 mediavault hdhive_only_official）
+	CloudSettingKeyHivePublisherWhitelist = "publisher_whitelist"  // 值：发布者昵称白名单（逗号分隔，空=不过滤）
+	CloudSettingKeyHiveExecPreset        = "exec_preset"           // 值：conservative/balanced/aggressive/custom（执行强度预设）
+	CloudSettingKeyHiveMaxTransfersPerRun = "max_transfers_per_run" // 值：单轮转存上限（custom 模式用，默认 5）
+	CloudSettingKeyHiveTransferMinInterval = "transfer_min_interval" // 值：两次转存最小间隔秒数（custom 模式用，默认 25）
+	CloudSettingKeyHiveTransferJitter    = "transfer_jitter"       // 值：转存间隔随机抖动秒数（custom 模式用，默认 15）
+	CloudSettingKeyHiveSlugMaxAttempts   = "slug_max_attempts"     // 值：单个资源 slug 最大尝试次数（默认 3）
 )
+
+// HiveTransferThrottle 执行强度参数（借鉴 mediavault 三档预设）
+type HiveTransferThrottle struct {
+	Preset           string // conservative / balanced / aggressive / custom
+	MaxTransfersPerRun int  // 单轮转存上限
+	MinInterval      time.Duration // 两次转存最小间隔
+	Jitter           time.Duration // 随机抖动上限
+}
+
+// GetHiveTransferThrottle 读取执行强度参数
+func GetHiveTransferThrottle() HiveTransferThrottle {
+	preset := hiveSettingStr(CloudSettingKeyHiveExecPreset, "balanced")
+	switch preset {
+	case "conservative":
+		return HiveTransferThrottle{Preset: preset, MaxTransfersPerRun: 3, MinInterval: 45 * time.Second, Jitter: 20 * time.Second}
+	case "aggressive":
+		return HiveTransferThrottle{Preset: preset, MaxTransfersPerRun: 10, MinInterval: 10 * time.Second, Jitter: 8 * time.Second}
+	case "custom":
+		return HiveTransferThrottle{
+			Preset:             preset,
+			MaxTransfersPerRun: hiveSettingInt(CloudSettingKeyHiveMaxTransfersPerRun, 5, 1, 50),
+			MinInterval:        time.Duration(hiveSettingInt(CloudSettingKeyHiveTransferMinInterval, 25, 5, 300)) * time.Second,
+			Jitter:             time.Duration(hiveSettingInt(CloudSettingKeyHiveTransferJitter, 15, 0, 120)) * time.Second,
+		}
+	}
+	// balanced（默认）
+	return HiveTransferThrottle{Preset: "balanced", MaxTransfersPerRun: 5, MinInterval: 25 * time.Second, Jitter: 15 * time.Second}
+}
+
+// GetHiveOnlyOfficial 是否仅收官组资源
+func GetHiveOnlyOfficial() bool {
+	return hiveSettingBool(CloudSettingKeyHiveOnlyOfficial, false)
+}
+
+// GetHivePublisherWhitelist 发布者昵称白名单（逗号分隔）
+func GetHivePublisherWhitelist() []string {
+	raw := hiveSettingStr(CloudSettingKeyHivePublisherWhitelist, "")
+	out := make([]string, 0)
+	for _, p := range strings.Split(raw, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// GetHiveSlugMaxAttempts 单个资源 slug 最大尝试次数
+func GetHiveSlugMaxAttempts() int {
+	return hiveSettingInt(CloudSettingKeyHiveSlugMaxAttempts, 3, 1, 10)
+}
 
 // SaveDirSetting 转存目录设置值
 type SaveDirSetting struct {
@@ -191,8 +248,10 @@ type CloudSubscription struct {
 	ReplaceOld   bool       `json:"replace_old"`                  // 洗版后旧版本处理：true=删除旧文件 / false=保留共存
 	OldCount     int64      `gorm:"-" json:"old_count"`           // 待清理旧版本数（只读，由接口填充）
 	Enabled      bool       `gorm:"default:true" json:"enabled"`
+	Status       string     `gorm:"size:16;default:subscribing" json:"status"` // 订阅状态：subscribing（进行中）/ completed（已完结）/ paused（已暂停，跳过定时检索；借鉴 mediavault 三态状态机）
 	LastPostID   string     `gorm:"size:64" json:"last_post_id"`  // 增量游标（频道帖 ID；影巢订阅为已处理资源 slug）
 	FinishedAt   *time.Time `json:"finished_at"`                  // 自动完结时间
+	LastRecheckAt *time.Time `json:"last_recheck_at"`             // 已完结 TV 订阅的上次 TMDB 复查时间（宽限复活用）
 	LastRunAt    time.Time  `json:"last_run_at"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
