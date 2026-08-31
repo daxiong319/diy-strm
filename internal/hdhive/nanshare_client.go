@@ -312,12 +312,20 @@ func (c *NanShareClient) OAuthStatus(ctx context.Context) (*OAuthAPIResponse, er
 
 // NanShareStatusPayload 解析 oauth/status 的数据部分
 type NanShareStatusPayload struct {
-	Authorized     *bool           `json:"authorized"`
-	Account        json.RawMessage `json:"account"`
+	Authorized     *bool           `json:"authorized"` // 兼容旧格式（中转当前版本不在顶层返回）
+	Account        json.RawMessage `json:"account"`    // 中转账号对象（含 oauth_status）
 	ReauthRequired bool            `json:"reauth_required"`
 }
 
-// ParseNanShareStatus 从 OAuthStatus 响应解析状态载荷
+// nanShareAccountState 中转 account 对象内的授权状态字段
+type nanShareAccountState struct {
+	OAuthStatus    string `json:"oauth_status"`
+	ReauthRequired bool   `json:"reauth_required"`
+}
+
+// ParseNanShareStatus 从 OAuthStatus 响应解析状态载荷。
+// 中转把授权状态放在 account.oauth_status（authorized/pending/revoked），
+// 顶层无 authorized 字段；仅在 oauth_status == "authorized" 时视为已授权。
 func ParseNanShareStatus(resp *OAuthAPIResponse) (*NanShareStatusPayload, error) {
 	if resp == nil || len(resp.Data) == 0 {
 		return nil, errors.New("无状态数据")
@@ -325,6 +333,15 @@ func ParseNanShareStatus(resp *OAuthAPIResponse) (*NanShareStatusPayload, error)
 	var p NanShareStatusPayload
 	if err := json.Unmarshal(resp.Data, &p); err != nil {
 		return nil, err
+	}
+	// 顶层未显式给出 authorized 时，按 account.oauth_status 判定
+	if p.Authorized == nil && len(p.Account) > 0 && string(p.Account) != "null" {
+		var st nanShareAccountState
+		if err := json.Unmarshal(p.Account, &st); err == nil {
+			authorized := st.OAuthStatus == "authorized"
+			p.Authorized = &authorized
+			p.ReauthRequired = p.ReauthRequired || st.ReauthRequired
+		}
 	}
 	return &p, nil
 }
