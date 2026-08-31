@@ -1,4 +1,4 @@
-﻿package models
+package models
 
 import (
 	"encoding/json"
@@ -20,7 +20,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 75
+var MaxVersionCode = 76
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -807,15 +807,15 @@ func Migrate() {
 		helpers.AppLogger.Info("已创建批量重命名历史记录与常用组合表")
 		migrator.UpdateVersionCode(db.Db)
 	}
-if migrator.VersionCode == 70 {
-			// 影巢 OAuth 授权账号（主账号 + 子账号）
-			if err := db.Db.AutoMigrate(HiveOAuthAccount{}); err != nil {
-				helpers.AppLogger.Errorf("迁移影巢 OAuth 账号表失败：%v", err)
-				return
-			}
-			helpers.AppLogger.Info("已创建影巢 OAuth 账号表（主账号 + 子账号）")
-			migrator.UpdateVersionCode(db.Db)
+	if migrator.VersionCode == 70 {
+		// 影巢 OAuth 授权账号（主账号 + 子账号）
+		if err := db.Db.AutoMigrate(HiveOAuthAccount{}); err != nil {
+			helpers.AppLogger.Errorf("迁移影巢 OAuth 账号表失败：%v", err)
+			return
 		}
+		helpers.AppLogger.Info("已创建影巢 OAuth 账号表（主账号 + 子账号）")
+		migrator.UpdateVersionCode(db.Db)
+	}
 	if migrator.VersionCode == 71 {
 		// 整理历史（来源/状态/时间/媒体信息，对齐 tgto123 的 organize_history_records）
 		if err := db.Db.AutoMigrate(OrganizeHistoryRecord{}); err != nil {
@@ -849,7 +849,29 @@ if migrator.VersionCode == 70 {
 		helpers.AppLogger.Info("已为已有通知渠道补齐转存通知类型")
 		migrator.UpdateVersionCode(db.Db)
 	}
-		helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)
+	if migrator.VersionCode == 75 {
+		// 影巢四通道 + mediavault 引擎复刻：订阅状态/复查时间列、账号 NanShare SDK 账号列、订阅失败惩罚表
+		if err := db.Db.AutoMigrate(CloudSubscription{}, HiveOAuthAccount{}, HiveSlugAttempt{}); err != nil {
+			helpers.AppLogger.Errorf("迁移影巢四通道字段失败：%v", err)
+			return
+		}
+		// 存量订阅回填状态：已完结优先 completed，其余 subscribing
+		if db.Db.Migrator().HasColumn(&CloudSubscription{}, "finished_at") {
+			if err := db.Db.Model(&CloudSubscription{}).
+				Where("finished_at IS NOT NULL AND (status = '' OR status IS NULL)").
+				Update("status", "completed").Error; err != nil {
+				helpers.AppLogger.Errorf("回填订阅完结状态失败：%v", err)
+			}
+			if err := db.Db.Model(&CloudSubscription{}).
+				Where("finished_at IS NULL AND (status = '' OR status IS NULL)").
+				Update("status", "subscribing").Error; err != nil {
+				helpers.AppLogger.Errorf("回填订阅进行中状态失败：%v", err)
+			}
+		}
+		helpers.AppLogger.Info("影巢四通道：订阅状态/复查时间/失败惩罚表已就绪")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)
 }
 
 // migrateLegacySubscriptionChannels 把历史订阅表中的频道迁移为独立频道记录
