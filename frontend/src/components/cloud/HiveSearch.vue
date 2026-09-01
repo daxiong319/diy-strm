@@ -325,6 +325,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { getCSRFTokenFromCookie } from '@/utils/csrf'
 import {
   CircleCheckFilled, Clock, Download, Film, Loading, Search, Star, TopRight, WarningFilled,
 } from '@element-plus/icons-vue'
@@ -500,9 +501,13 @@ const runSearch = async (keyword: string, extra: Record<string, any>) => {
   pansouResults.value = []
   transferMsg.value = null
   try {
+    const csrf = getCSRFTokenFromCookie()
     const resp = await fetch('/api/cloud/hive/search/stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+      },
       body: JSON.stringify({ keyword, ...extra }),
     })
     const ct = resp.headers.get('content-type') || ''
