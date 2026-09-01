@@ -148,6 +148,10 @@ const AppHiveSettings = createAsyncRouteComponent(
   'AppHiveSettings',
   () => import('@/components/cloud/HiveSettings.vue'),
 )
+const AppHiveSearch = createAsyncRouteComponent(
+  'AppHiveSearch',
+  () => import('@/components/cloud/HiveSearch.vue'),
+)
 const AppHiveOAuth = createAsyncRouteComponent(
   'AppHiveOAuth',
   () => import('@/components/cloud/HiveOAuth.vue'),
@@ -1014,6 +1018,18 @@ const routes = [
       requiresAuth: true,
       parent: 'cloud-hdhive',
       icon: 'Link',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/cloud-hdhive/search',
+    name: 'cloud-hdhive-search',
+    component: AppHiveSearch,
+    meta: {
+      title: '资源搜索',
+      requiresAuth: true,
+      parent: 'cloud-hdhive',
+      icon: 'Search',
       showInMenu: true,
     },
   },

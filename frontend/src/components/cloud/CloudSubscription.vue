@@ -561,7 +561,7 @@ const load = async () => {
   try {
     const resp = await http.get('/api/cloud/subscriptions', { params: { source_type: props.sourceType } })
     if (resp.data?.code === 200) {
-      subs.value = (resp.data.data || []).map((s: any) => ({
+      subs.value = (resp.data.data?.items || []).map((s: any) => ({
         ...s,
         keywords: parseKeywords(s.keywords),
       }))

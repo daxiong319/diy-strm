@@ -8,6 +8,7 @@ package hdhive
 type Resource struct {
 	Slug               string   `json:"slug"`
 	Title              string   `json:"title"`
+	PanType            string   `json:"pan_type"` // 资源网盘类型：115 / ed2k / magnet / 123 / guangyapan / 139 ...
 	ShareSize          string   `json:"share_size"`
 	VideoResolution    []string `json:"video_resolution"`
 	Source             []string `json:"source"`
@@ -56,4 +57,6 @@ type UnlockResult struct {
 	AccessCode   string `json:"access_code"`
 	FullURL      string `json:"full_url"`
 	AlreadyOwned bool   `json:"already_owned"`
+	PanType      string `json:"pan_type"`
+	Title        string `json:"title"`
 }

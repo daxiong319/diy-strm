@@ -50,9 +50,16 @@ func SetCloudSettingAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "保存成功", Data: nil})
 }
 
-// ListCloudSubscriptionsAPI 订阅列表（?source_type=xxx 可选）
+// ListCloudSubscriptionsAPI 订阅列表（?resource_source= / ?source_type= 可选）
+// 响应对齐 mediavault 订阅页：{items, total, completed, refreshing_counts}
+//   - items：按 media_type（movie/tv）与 status（active/completed）过滤后的订阅列表
+//   - total / completed：供页头「当前共有 n 个订阅 / 已完成 n 个」统计（不随 status 过滤）
+//   - refreshing_counts：正在后台执行的订阅搜索数（前端轮询直至归零）
 func ListCloudSubscriptionsAPI(c *gin.Context) {
 	resourceSource := strings.TrimSpace(c.Query("resource_source"))
+	sourceType := strings.TrimSpace(c.Query("source_type"))
+	mediaType := strings.TrimSpace(c.Query("media_type"))
+	status := strings.TrimSpace(c.Query("status"))
 	var (
 		subs []models.CloudSubscription
 		err  error
@@ -60,16 +67,46 @@ func ListCloudSubscriptionsAPI(c *gin.Context) {
 	if resourceSource != "" {
 		subs, err = models.ListSubscriptionsByResourceSource(resourceSource)
 	} else {
-		subs, err = models.ListCloudSubscriptions(strings.TrimSpace(c.Query("source_type")))
+		subs, err = models.ListCloudSubscriptions(sourceType)
 	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "查询失败：" + err.Error(), Data: nil})
 		return
 	}
+	items := make([]models.CloudSubscription, 0, len(subs))
+	total := 0
+	completed := 0
 	for i := range subs {
-		subs[i].OldCount = models.CountSuperseded(subs[i].ID)
+		sub := subs[i]
+		if mediaType != "" && sub.MediaType != mediaType {
+			continue
+		}
+		total++
+		finished := sub.FinishedAt != nil || sub.Status == "completed"
+		if finished {
+			completed++
+		}
+		if status == "completed" && !finished {
+			continue
+		}
+		if status == "active" && finished {
+			continue
+		}
+		sub.OldCount = models.CountSuperseded(sub.ID)
+		// 媒体库已有集数/入库标记（支撑卡片「全」「已入库」角标）
+		if sub.MediaType == "tv" {
+			sub.ExistingEpisodes = models.CountDistinctEpisodes(sub.ID, sub.TMDBID, sub.Season)
+		} else if models.HasSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season) {
+			sub.ExistingEpisodes = 1
+		}
+		items = append(items, sub)
 	}
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "查询成功", Data: subs})
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "查询成功", Data: gin.H{
+		"items":             items,
+		"total":             total,
+		"completed":         completed,
+		"refreshing_counts": hiveRefreshingCount.Load(),
+	}})
 }
 
 // CreateCloudSubscriptionAPI 新增订阅（POST {source_type, channel, keywords, target_dir, enabled}）
@@ -290,8 +327,10 @@ func RunSubscriptionAPI(c *gin.Context) {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "该订阅正在执行中，请稍后再试", Data: nil})
 		return
 	}
+	hiveRefreshingCount.Add(1)
 	runAuthBackgroundTask(func() {
 		defer subscriptionRunLocks.Delete(req.ID)
+		defer hiveRefreshingCount.Add(-1)
 		defer func() {
 			if r := recover(); r != nil {
 				helpers.AppLogger.Errorf("订阅 #%d 手动执行 panic：%v", req.ID, r)
@@ -334,6 +373,21 @@ func GetHiveSettingsAPI(c *gin.Context) {
 		"transfer_min_interval": int(models.GetHiveTransferThrottle().MinInterval.Seconds()),
 		"transfer_jitter":       int(models.GetHiveTransferThrottle().Jitter.Seconds()),
 		"slug_max_attempts":     models.GetHiveSlugMaxAttempts(),
+		// 影巢搜索与订阅引擎（对齐 mediavault resource_search）
+		"hive_enabled":             models.GetHiveEnabled(),
+		"timed_search_enabled":     models.GetHiveTimedSearchEnabled(),
+		"search_transfer":          models.GetHiveSearchTransfer(),
+		"auto_unlock":              models.GetHiveAutoUnlock(),
+		"transfer_use_subdir":      models.GetHiveUseSubdir(),
+		"transfer_media":           models.GetHiveTransferMedia(),
+		"transfer_subtitle":        models.GetHiveTransferSubtitle(),
+		"transfer_non_media":       models.GetHiveTransferNonMedia(),
+		"run_batch_size":           models.GetHiveRunBatchSize(),
+		"tv_completion_grace_days": models.GetHiveTVCompletionGraceDays(),
+		"sync_library":             models.GetHiveSyncLibrary(),
+		"sync_wait":                models.GetHiveSyncWait(),
+		"subscription_defaults_movie": models.GetHiveSubscriptionDefaults("movie"),
+		"subscription_defaults_tv":    models.GetHiveSubscriptionDefaults("tv"),
 	}})
 }
 
@@ -357,6 +411,21 @@ func SetHiveSettingsAPI(c *gin.Context) {
 		TransferMinInterval *int   `json:"transfer_min_interval"`
 		TransferJitter      *int   `json:"transfer_jitter"`
 		SlugMaxAttempts     *int   `json:"slug_max_attempts"`
+		// 影巢搜索与订阅引擎（对齐 mediavault resource_search）
+		HiveEnabled         *bool  `json:"hive_enabled"`
+		TimedSearchEnabled  *bool  `json:"timed_search_enabled"`
+		SearchTransfer      *bool  `json:"search_transfer"`
+		AutoUnlock          *bool  `json:"auto_unlock"`
+		UseSubdir           *bool  `json:"transfer_use_subdir"`
+		TransferMedia       *bool  `json:"transfer_media"`
+		TransferSubtitle    *bool  `json:"transfer_subtitle"`
+		TransferNonMedia    *bool  `json:"transfer_non_media"`
+		RunBatchSize        *int   `json:"run_batch_size"`
+		GraceDays           *int   `json:"tv_completion_grace_days"`
+		SyncLibrary         *bool  `json:"sync_library"`
+		SyncWait            *int   `json:"sync_wait"`
+		DefaultsMovie       string `json:"subscription_defaults_movie"`
+		DefaultsTV          string `json:"subscription_defaults_tv"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error(), Data: nil})
@@ -451,6 +520,91 @@ func SetHiveSettingsAPI(c *gin.Context) {
 	if req.SlugMaxAttempts != nil && *req.SlugMaxAttempts >= 1 && *req.SlugMaxAttempts <= 10 {
 		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveSlugMaxAttempts, strconv.Itoa(*req.SlugMaxAttempts)); err != nil {
 			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存资源尝试上限失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	// 影巢搜索与订阅引擎（对齐 mediavault resource_search）
+	if req.HiveEnabled != nil {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveEnabled, strconv.FormatBool(*req.HiveEnabled)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存影巢搜索开关失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.TimedSearchEnabled != nil {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveTimedSearch, strconv.FormatBool(*req.TimedSearchEnabled)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存定时搜索开关失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.SearchTransfer != nil {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveSearchTransfer, strconv.FormatBool(*req.SearchTransfer)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存自动转存开关失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.AutoUnlock != nil {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveAutoUnlock, strconv.FormatBool(*req.AutoUnlock)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存自动解锁开关失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.UseSubdir != nil {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveUseSubdir, strconv.FormatBool(*req.UseSubdir)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存子目录开关失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.TransferMedia != nil {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveTransferMedia, strconv.FormatBool(*req.TransferMedia)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存媒体文件转存设置失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.TransferSubtitle != nil {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveTransferSubtitle, strconv.FormatBool(*req.TransferSubtitle)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存字幕文件转存设置失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.TransferNonMedia != nil {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveTransferNonMedia, strconv.FormatBool(*req.TransferNonMedia)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存非媒体文件转存设置失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.RunBatchSize != nil && *req.RunBatchSize >= 0 && *req.RunBatchSize <= 200 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveRunBatchSize, strconv.Itoa(*req.RunBatchSize)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存每轮订阅数上限失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.GraceDays != nil && *req.GraceDays >= 1 && *req.GraceDays <= 365 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveGraceDays, strconv.Itoa(*req.GraceDays)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存完结宽限期失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.SyncLibrary != nil {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveSyncLibrary, strconv.FormatBool(*req.SyncLibrary)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存媒体库同步设置失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.SyncWait != nil && *req.SyncWait >= 0 && *req.SyncWait <= 120 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveSyncWait, strconv.Itoa(*req.SyncWait)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存同步等待时长失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.DefaultsMovie != "" {
+		if err := models.SaveHiveSubscriptionDefaults("movie", req.DefaultsMovie); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存电影默认订阅配置失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	if req.DefaultsTV != "" {
+		if err := models.SaveHiveSubscriptionDefaults("tv", req.DefaultsTV); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存剧集默认订阅配置失败：" + err.Error(), Data: nil})
 			return
 		}
 	}

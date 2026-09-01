@@ -1,292 +1,635 @@
 <template>
-  <div class="main-content-container cloud-page">
-    <el-alert
-      type="info"
-      :closable="false"
-      class="cloud-alert"
-      title="影巢每日自动签到、四通道负载均衡通道管理，以及订阅引擎轮询配置。OAuth 授权与手动签到也可在「授权签到」页进行。"
-      show-icon
-    />
-
-    <!-- 影巢通道（四通道负载均衡） -->
-    <el-card shadow="never" class="cloud-card">
-      <template #header>
-        <div class="card-header">
-          <span>影巢通道</span>
-          <span class="card-sub">订阅引擎按「可用优先」轮转四个通道，通道异常时自动逐个降级尝试</span>
+  <div class="main-content-container hs-page">
+    <!-- 区块：Telegram 频道搜索 -->
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">Telegram 频道搜索</h3>
+        <p class="mv-sec-desc">订阅频道资源并自动转存到云盘</p>
+      </div>
+      <div class="mv-sec-body">
+        <div class="mv-tg-summary">
+          <el-tag size="small" type="info" effect="dark" disable-transitions class="mv-tg-count">
+            已启用频道 {{ enabledChannelCount }} 个
+          </el-tag>
+          <span class="mv-tg-hint">频道管理在「资源订阅」页</span>
+          <el-button size="small" type="primary" plain class="mv-tg-go" @click="gotoSubscriptions">前往订阅页</el-button>
         </div>
-      </template>
-      <el-table :data="channels" v-loading="channelsLoading" size="small">
-        <el-table-column label="通道" min-width="140">
-          <template #default="{ row }">
-            <div class="chan-name">{{ row.label }}</div>
-            <div class="chan-key">{{ row.channel }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column label="授权账号" min-width="180">
-          <template #default="{ row }">
-            <template v-if="row.account">
-              <div v-if="row.account.user" class="chan-user">
-                {{ row.account.user.nickname || row.account.user.username || row.account.user.uid || '已授权用户' }}
-                <el-tag v-if="row.account.user.id" size="small" type="info" class="chan-uid">UID {{ row.account.user.id }}</el-tag>
+      </div>
+    </section>
+
+    <!-- 区块：影巢搜索 -->
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">影巢搜索</h3>
+        <p class="mv-sec-desc">搜索影巢站内资源并转存；需先完成 OAuth 授权</p>
+      </div>
+      <div class="mv-sec-body">
+        <!-- OAuth 授权卡 -->
+        <div class="mv-oauth">
+          <div class="mv-oauth-user">
+            <el-avatar :size="44" :src="authUser?.avatar_url || undefined" class="mv-oauth-avatar">
+              {{ (authUser?.nickname || authUser?.username || '影')[0] }}
+            </el-avatar>
+            <div class="mv-oauth-info">
+              <p class="mv-oauth-name">{{ authUser?.nickname || authUser?.username || (auth?.authorized ? '已授权用户' : '未授权') }}</p>
+              <p v-if="authUser" class="mv-oauth-sub">
+                <template v-if="authUser.points !== undefined">积分 {{ fmtPoints(authUser.points) }}</template>
+                <template v-else-if="auth?.authorized">已授权</template>
+                <template v-else>完成授权后即可使用影巢搜索</template>
+              </p>
+              <p v-else class="mv-oauth-sub">
+                <template v-if="waiting">正在检测授权状态…</template>
+                <template v-else>完成授权后即可使用影巢搜索</template>
+              </p>
+            </div>
+          </div>
+          <div class="mv-oauth-actions">
+            <el-button v-if="!auth?.authorized && !waiting" size="small" type="primary" :loading="authing" @click="authorizeHive">
+              授权影巢
+            </el-button>
+            <el-button v-if="auth?.authorized && !waiting" size="small" :loading="checking" @click="checkStatus">
+              检测状态
+            </el-button>
+            <el-button v-if="waiting" size="small" plain @click="cancelWait">取消检测</el-button>
+          </div>
+        </div>
+
+        <!-- 影巢搜索字段 -->
+        <div class="mv-fields">
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>启用影巢搜索</span>
+              <el-switch v-model="form.hive_enabled" />
+            </div>
+            <p class="mv-field-desc">开启后订阅搜索与手动搜索可使用影巢渠道。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>自动解锁</span>
+              <el-switch v-model="form.auto_unlock" />
+            </div>
+            <p class="mv-field-desc">搜索到资源后自动消耗积分解锁并转存；关闭时仅搜索记录候选。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>解锁积分上限</span>
+              <el-input-number v-model="form.max_points" :min="0" :max="999999" controls-position="right" class="mv-num" />
+            </div>
+            <p class="mv-field-desc">超过此积分的资源将被跳过，不自动解锁。0 表示不限。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>仅官方通道</span>
+              <el-switch v-model="form.only_official" />
+            </div>
+            <p class="mv-field-desc">开启后订阅引擎只走官方直连通道。</p>
+          </div>
+          <div class="mv-field mv-field-wide">
+            <div class="mv-field-label">
+              <span>发布者白名单</span>
+              <el-input v-model="form.publisher_whitelist" placeholder="多个发布者用英文逗号分隔，留空则不过滤" clearable class="mv-text" />
+            </div>
+            <p class="mv-field-desc">仅接受列出的发布者分享，非白名单资源直接跳过。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 区块：盘搜 -->
+    <section class="mv-sec mv-sec-disabled">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">盘搜</h3>
+        <p class="mv-sec-desc">全网网盘资源聚合搜索；需自部署盘搜服务</p>
+      </div>
+      <div class="mv-sec-body mv-pansou-body">
+        <el-icon :size="16"><InfoFilled /></el-icon>
+        <span>当前版本未部署盘搜服务，暂不可用。</span>
+      </div>
+    </section>
+
+    <!-- 区块：订阅设置 -->
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">订阅设置</h3>
+        <p class="mv-sec-desc">定时搜索订阅资源并自动转存</p>
+      </div>
+      <div class="mv-sec-body">
+        <div class="mv-fields">
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>定时搜索</span>
+              <el-switch v-model="form.timed_search_enabled" />
+            </div>
+            <p class="mv-field-desc">开启后按间隔定时为所有启用订阅搜索新资源。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>搜索间隔</span>
+              <el-input-number v-model="form.poll_interval" :min="5" :max="1440" controls-position="right" class="mv-num" />
+              <span class="mv-unit">分钟</span>
+            </div>
+            <p class="mv-field-desc">引擎按此间隔查询所有影巢订阅的新资源。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>搜索后自动转存</span>
+              <el-switch v-model="form.search_transfer" />
+            </div>
+            <p class="mv-field-desc">关闭时只搜索并记录结果，不自动转存（可在订阅列表手动补全）。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>按订阅建子目录</span>
+              <el-switch v-model="form.transfer_use_subdir" />
+            </div>
+            <p class="mv-field-desc">转存到「云盘路径 / 订阅名 (年份)」子目录。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>转存媒体文件</span>
+              <el-switch v-model="form.transfer_media" />
+            </div>
+            <p class="mv-field-desc">转存视频等媒体文件。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>转存字幕文件</span>
+              <el-switch v-model="form.transfer_subtitle" />
+            </div>
+            <p class="mv-field-desc">转存字幕类文件。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>转存非媒体文件</span>
+              <el-switch v-model="form.transfer_non_media" />
+            </div>
+            <p class="mv-field-desc">默认关闭；开启后一并转存其他杂项文件。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>剧集完结宽限天数</span>
+              <el-input-number v-model="form.tv_completion_grace_days" :min="0" :max="90" controls-position="right" class="mv-num" />
+              <span class="mv-unit">天</span>
+            </div>
+            <p class="mv-field-desc">最后一集更新后 N 天内视为进行中，不提前判定已完成。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>搜索前同步媒体库</span>
+              <el-switch v-model="form.sync_library" />
+            </div>
+            <p class="mv-field-desc">搜索前先同步媒体库已入库内容，避免重复转存。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>同步等待</span>
+              <el-input-number v-model="form.sync_wait" :min="0" :max="3600" controls-position="right" class="mv-num" />
+              <span class="mv-unit">秒</span>
+            </div>
+            <p class="mv-field-desc">同步媒体库完成后的等待时间。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>执行强度</span>
+              <el-select v-model="form.exec_preset" class="mv-select">
+                <el-option label="保守（低频率短平快）" value="conservative" />
+                <el-option label="均衡（推荐）" value="balanced" />
+                <el-option label="激进（高频大批量）" value="aggressive" />
+                <el-option label="自定义" value="custom" />
+              </el-select>
+            </div>
+            <p class="mv-field-desc">转存上限 / 转存间隔：保守 3 个 / 45-65 秒；均衡 5 个 / 25-40 秒；激进 10 个 / 10-18 秒。搜索批次大小在「自定义」中设置（0 表示不限）。</p>
+          </div>
+          <template v-if="form.exec_preset === 'custom'">
+            <div class="mv-field">
+              <div class="mv-field-label">
+                <span>搜索批次大小</span>
+                <el-input-number v-model="form.run_batch_size" :min="0" :max="200" controls-position="right" class="mv-num" />
               </div>
-              <div v-else class="chan-key">{{ row.account.install_hash || ('#' + row.account.id) }}</div>
+              <p class="mv-field-desc">单轮轮询最多搜索的订阅数，0 表示不限。</p>
+            </div>
+            <div class="mv-field">
+              <div class="mv-field-label">
+                <span>单轮转存上限</span>
+                <el-input-number v-model="form.max_transfers_per_run" :min="1" :max="200" controls-position="right" class="mv-num" />
+              </div>
+              <p class="mv-field-desc">一轮订阅轮询内最多转存的候选资源数量。</p>
+            </div>
+            <div class="mv-field">
+              <div class="mv-field-label">
+                <span>转存最小间隔</span>
+                <el-input-number v-model="form.transfer_min_interval" :min="1" :max="3600" controls-position="right" class="mv-num" />
+                <span class="mv-unit">秒</span>
+              </div>
+              <p class="mv-field-desc">相邻两次转存之间的最小间隔（全局生效）。</p>
+            </div>
+            <div class="mv-field">
+              <div class="mv-field-label">
+                <span>转存间隔抖动</span>
+                <el-input-number v-model="form.transfer_jitter" :min="0" :max="600" controls-position="right" class="mv-num" />
+                <span class="mv-unit">秒</span>
+              </div>
+              <p class="mv-field-desc">在最小间隔基础上附加的随机抖动，避免整点突发。</p>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- 附加：四通道负载均衡 -->
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">四通道负载均衡</h3>
+        <p class="mv-sec-desc">订阅引擎按「可用优先」轮转四个通道，通道异常时自动逐个降级尝试</p>
+      </div>
+      <div class="mv-sec-body">
+        <el-table :data="channels" v-loading="channelsLoading" size="small" class="mv-table">
+          <el-table-column label="通道" min-width="140">
+            <template #default="{ row }">
+              <div class="chan-name">{{ row.label }}</div>
+              <div class="chan-key">{{ row.channel }}</div>
             </template>
-            <span v-else class="chan-key">未配置</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="110">
-          <template #default="{ row }">
-            <el-tag v-if="row.account?.authorized" type="success" size="small">已授权</el-tag>
-            <el-tag v-else type="warning" size="small">未授权</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="健康度" width="150">
-          <template #default="{ row }">
-            <template v-if="health(row.channel)">
-              <el-tag v-if="health(row.channel).cooldown_seconds > 0" type="danger" size="small">
-                冷却中 {{ health(row.channel).cooldown_seconds }}s
-              </el-tag>
-              <el-tag v-else-if="health(row.channel).fails > 0" type="warning" size="small">
-                失败 {{ health(row.channel).fails }} 次
-              </el-tag>
-              <el-tag v-else type="success" size="small">正常</el-tag>
+          </el-table-column>
+          <el-table-column label="授权账号" min-width="180">
+            <template #default="{ row }">
+              <template v-if="row.account">
+                <div v-if="row.account.user" class="chan-user">
+                  {{ row.account.user.nickname || row.account.user.username || row.account.user.uid || '已授权用户' }}
+                  <el-tag v-if="row.account.user.id" size="small" type="info" class="chan-uid">UID {{ row.account.user.id }}</el-tag>
+                </div>
+                <div v-else class="chan-key">{{ row.account.install_hash || ('#' + row.account.id) }}</div>
+              </template>
+              <span v-else class="chan-key">未配置</span>
             </template>
-            <span v-else class="chan-key">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" min-width="230">
-          <template #default="{ row }">
-            <el-button
-              v-if="!row.account?.authorized"
-              type="primary"
-              size="small"
-              :loading="actingOps[row.channel] === 'start'"
-              @click="authorize(row)"
-            >授权</el-button>
-            <template v-else>
+          </el-table-column>
+          <el-table-column label="状态" width="110">
+            <template #default="{ row }">
+              <el-tag v-if="row.account?.authorized" type="success" size="small">已授权</el-tag>
+              <el-tag v-else type="warning" size="small">未授权</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="健康度" width="150">
+            <template #default="{ row }">
+              <template v-if="health(row.channel)">
+                <el-tag v-if="health(row.channel).cooldown_seconds > 0" type="danger" size="small">
+                  冷却中 {{ health(row.channel).cooldown_seconds }}s
+                </el-tag>
+                <el-tag v-else-if="health(row.channel).fails > 0" type="warning" size="small">
+                  失败 {{ health(row.channel).fails }} 次
+                </el-tag>
+                <el-tag v-else type="success" size="small">正常</el-tag>
+              </template>
+              <span v-else class="chan-key">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" min-width="230">
+            <template #default="{ row }">
               <el-button
+                v-if="!row.account?.authorized"
+                type="primary"
                 size="small"
-                :loading="actingOps[row.channel] === 'refresh'"
-                @click="refresh(row)"
-              >刷新状态</el-button>
-              <el-button
-                v-if="hasTest(row.channel)"
-                size="small"
-                :loading="actingOps[row.channel] === 'test'"
-                @click="testChannel(row)"
-              >测试</el-button>
+                :loading="actingOps[row.channel] === 'start'"
+                @click="authorize(row)"
+              >授权</el-button>
+              <template v-else>
+                <el-button
+                  size="small"
+                  :loading="actingOps[row.channel] === 'refresh'"
+                  @click="refresh(row)"
+                >刷新状态</el-button>
+                <el-button
+                  v-if="hasTest(row.channel)"
+                  size="small"
+                  :loading="actingOps[row.channel] === 'test'"
+                  @click="testChannel(row)"
+                >测试</el-button>
+              </template>
             </template>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+          </el-table-column>
+        </el-table>
+      </div>
+    </section>
 
-    <!-- 每日自动签到 · 主账号 -->
-    <el-card shadow="never" class="cloud-card">
-      <template #header>
-        <div class="card-header">
-          <span>每日自动签到 · 主账号</span>
+    <!-- 附加：每日自动签到 -->
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">每日自动签到 · 主账号</h3>
+        <p class="mv-sec-desc">开启后每天在指定时间自动为影巢主账号签到，获取积分</p>
+      </div>
+      <div class="mv-sec-body">
+        <div class="mv-fields">
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>自动签到</span>
+              <el-switch v-model="form.daily_checkin_enabled" />
+            </div>
+            <p class="mv-field-desc">开启后每天在指定时间自动为影巢主账号签到。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>签到时间</span>
+              <el-select v-model="form.daily_checkin_hour" :disabled="!form.daily_checkin_enabled" class="mv-select">
+                <el-option v-for="h in hours" :key="h" :label="`${String(h).padStart(2,'0')}:00`" :value="h" />
+              </el-select>
+            </div>
+            <p class="mv-field-desc">服务器时区，每天该时刻触发签到。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>签到模式</span>
+              <el-radio-group v-model="form.daily_checkin_mode" :disabled="!form.daily_checkin_enabled" size="small">
+                <el-radio-button value="daily">普通签到</el-radio-button>
+                <el-radio-button value="gamble">赌狗签到</el-radio-button>
+              </el-radio-group>
+            </div>
+            <p class="mv-field-desc">普通签到积分固定；赌狗签到有概率获得更高积分。</p>
+          </div>
         </div>
-      </template>
-      <el-form label-width="120px" class="hive-form">
-        <el-form-item label="自动签到">
-          <el-switch v-model="form.daily_checkin_enabled" />
-          <div class="form-help">开启后每天在指定时间自动为影巢主账号签到，获取积分。</div>
-        </el-form-item>
-        <el-form-item label="签到时间">
-          <el-select v-model="form.daily_checkin_hour" :disabled="!form.daily_checkin_enabled" style="width: 140px">
-            <el-option v-for="h in hours" :key="h" :label="`${String(h).padStart(2,'0')}:00`" :value="h" />
-          </el-select>
-          <div class="form-help">服务器时区，每天该时刻触发签到。</div>
-        </el-form-item>
-        <el-form-item label="签到模式">
-          <el-radio-group v-model="form.daily_checkin_mode" :disabled="!form.daily_checkin_enabled">
-            <el-radio-button value="daily">普通签到</el-radio-button>
-            <el-radio-button value="gamble">赌狗签到</el-radio-button>
-          </el-radio-group>
-          <div class="form-help">普通签到积分固定；赌狗签到有概率获得更高积分。</div>
-        </el-form-item>
-      </el-form>
-    </el-card>
+      </div>
+    </section>
 
-    <!-- 每日自动签到 · 子账号 -->
-    <el-card shadow="never" class="cloud-card">
-      <template #header>
-        <div class="card-header">
-          <span>每日自动签到 · 子账号</span>
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">每日自动签到 · 子账号</h3>
+        <p class="mv-sec-desc">开启后每天在指定时间自动为已启用的子账号签到</p>
+      </div>
+      <div class="mv-sec-body">
+        <div class="mv-fields">
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>自动签到</span>
+              <el-switch v-model="form.sub_checkin_enabled" />
+            </div>
+            <p class="mv-field-desc">开启后每天在指定时间自动为已启用的子账号签到。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>签到时间</span>
+              <el-select v-model="form.sub_checkin_hour" :disabled="!form.sub_checkin_enabled" class="mv-select">
+                <el-option v-for="h in hours" :key="h" :label="`${String(h).padStart(2,'0')}:00`" :value="h" />
+              </el-select>
+            </div>
+            <p class="mv-field-desc">服务器时区，每天该时刻触发签到。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>签到模式</span>
+              <el-radio-group v-model="form.sub_checkin_mode" :disabled="!form.sub_checkin_enabled" size="small">
+                <el-radio-button value="daily">普通签到</el-radio-button>
+                <el-radio-button value="gamble">赌狗签到</el-radio-button>
+              </el-radio-group>
+            </div>
+            <p class="mv-field-desc">普通签到积分固定；赌狗签到有概率获得更高积分。</p>
+          </div>
         </div>
-      </template>
-      <el-form label-width="120px" class="hive-form">
-        <el-form-item label="自动签到">
-          <el-switch v-model="form.sub_checkin_enabled" />
-          <div class="form-help">开启后每天在指定时间自动为已启用的子账号签到。</div>
-        </el-form-item>
-        <el-form-item label="签到时间">
-          <el-select v-model="form.sub_checkin_hour" :disabled="!form.sub_checkin_enabled" style="width: 140px">
-            <el-option v-for="h in hours" :key="h" :label="`${String(h).padStart(2,'0')}:00`" :value="h" />
-          </el-select>
-          <div class="form-help">服务器时区，每天该时刻触发签到。</div>
-        </el-form-item>
-        <el-form-item label="签到模式">
-          <el-radio-group v-model="form.sub_checkin_mode" :disabled="!form.sub_checkin_enabled">
-            <el-radio-button value="daily">普通签到</el-radio-button>
-            <el-radio-button value="gamble">赌狗签到</el-radio-button>
-          </el-radio-group>
-          <div class="form-help">普通签到积分固定；赌狗签到有概率获得更高积分。</div>
-        </el-form-item>
-      </el-form>
-    </el-card>
+      </div>
+    </section>
 
-    <!-- 订阅引擎 -->
-    <el-card shadow="never" class="cloud-card">
-      <template #header>
-        <div class="card-header">
-          <span>订阅引擎</span>
-        </div>
-      </template>
-      <el-form label-width="140px" class="hive-form">
-        <el-form-item label="轮询间隔">
-          <el-input-number v-model="form.poll_interval" :min="5" :max="1440" />
-          <span class="interval-unit">分钟</span>
-          <div class="form-help">引擎按此间隔查询所有影巢订阅的新资源，默认 15 分钟。</div>
-        </el-form-item>
-        <el-form-item label="解锁积分上限">
-          <el-input-number v-model="form.max_points" :min="0" :max="999999" />
-          <div class="form-help">超过此积分的资源将被跳过，不自动解锁。0 表示不限。</div>
-        </el-form-item>
-        <el-form-item label="执行预设">
-          <el-select v-model="form.exec_preset" style="width: 220px">
-            <el-option label="保守（低频率短平快）" value="conservative" />
-            <el-option label="均衡（推荐）" value="balanced" />
-            <el-option label="激进（高频大批量）" value="aggressive" />
-            <el-option label="自定义" value="custom" />
-          </el-select>
-          <div class="form-help">控制单轮转存上限与转存间隔：保守 10 个 / 60s+30s 抖动；均衡 20 个 / 30s+15s；激进 50 个 / 15s+8s。</div>
-        </el-form-item>
-        <template v-if="form.exec_preset === 'custom'">
-          <el-form-item label="单轮转存上限">
-            <el-input-number v-model="form.max_transfers_per_run" :min="1" :max="200" />
-            <div class="form-help">一轮订阅轮询内最多转存的候选资源数量。</div>
-          </el-form-item>
-          <el-form-item label="转存最小间隔">
-            <el-input-number v-model="form.transfer_min_interval" :min="1" :max="3600" />
-            <span class="interval-unit">秒</span>
-            <div class="form-help">相邻两次转存之间的最小间隔（全局生效）。</div>
-          </el-form-item>
-          <el-form-item label="转存间隔抖动">
-            <el-input-number v-model="form.transfer_jitter" :min="0" :max="600" />
-            <span class="interval-unit">秒</span>
-            <div class="form-help">在最小间隔基础上附加的随机抖动，避免整点突发。</div>
-          </el-form-item>
-        </template>
-        <el-form-item label="单条失败重试">
-          <el-input-number v-model="form.slug_max_attempts" :min="0" :max="10" />
-          <div class="form-help">单个资源连续失败此次数后进入惩罚期（确定性失败 7 天，其他 1 天），期间跳过。</div>
-        </el-form-item>
-        <el-form-item label="仅官方通道">
-          <el-switch v-model="form.only_official" />
-          <div class="form-help">开启后订阅引擎只走官方直连通道，不再向中转通道发请求（官方通道不可用时订阅会失败）。</div>
-        </el-form-item>
-        <el-form-item label="发布者白名单">
-          <el-input v-model="form.publisher_whitelist" placeholder="多个发布者用英文逗号分隔，留空则不过滤" clearable />
-          <div class="form-help">仅接受列出的发布者分享，非白名单资源直接跳过。</div>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="saving" @click="save">保存设置</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
+    <!-- 底部保存条 -->
+    <div v-if="dirty || saveState !== 'idle'" class="mv-savebar">
+      <div class="mv-savebar-left">
+        <el-icon v-if="saveState === 'saving'" class="mv-save-spin"><Loading /></el-icon>
+        <el-icon v-else-if="saveState === 'saved'" class="mv-save-ok"><CircleCheckFilled /></el-icon>
+        <el-icon v-else-if="saveState === 'error'" class="mv-save-err"><WarningFilled /></el-icon>
+        <span>
+          {{ saveState === 'saving' ? '保存中…' : saveState === 'saved' ? '已保存' : saveState === 'error' ? '保存失败，请重试' : '有未保存的更改' }}
+        </span>
+      </div>
+      <div class="mv-savebar-right">
+        <el-button size="small" @click="load(true)">放弃更改</el-button>
+        <el-button size="small" type="primary" :loading="saveState === 'saving'" @click="save">保存设置</el-button>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { CircleCheckFilled, InfoFilled, Loading, WarningFilled } from '@element-plus/icons-vue'
 import { useHttpClient } from '@/http/client'
 
 const http = useHttpClient()
+const router = useRouter()
 
 const hours = Array.from({ length: 24 }, (_, i) => i)
 
 const form = reactive({
-  poll_interval: 15,
+  hive_enabled: true,
+  auto_unlock: true,
   max_points: 0,
+  only_official: false,
+  publisher_whitelist: '',
+  timed_search_enabled: true,
+  poll_interval: 15,
+  search_transfer: true,
+  transfer_use_subdir: true,
+  transfer_media: true,
+  transfer_subtitle: true,
+  transfer_non_media: false,
+  tv_completion_grace_days: 7,
+  sync_library: false,
+  sync_wait: 60,
+  exec_preset: 'balanced' as string,
+  run_batch_size: 12,
+  max_transfers_per_run: 5,
+  transfer_min_interval: 30,
+  transfer_jitter: 15,
+  slug_max_attempts: 3,
   daily_checkin_enabled: true,
   daily_checkin_mode: 'daily' as string,
   daily_checkin_hour: 8,
   sub_checkin_enabled: true,
   sub_checkin_mode: 'daily' as string,
   sub_checkin_hour: 8,
-  only_official: false,
-  publisher_whitelist: '',
-  exec_preset: 'balanced' as string,
-  max_transfers_per_run: 20,
-  transfer_min_interval: 30,
-  transfer_jitter: 15,
-  slug_max_attempts: 3,
 })
 
-const saving = ref(false)
+// 变更追踪
+const base = ref('')
+const dirty = ref(false)
+const saveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
+watch(
+  form,
+  () => {
+    if (saveState.value !== 'saving') dirty.value = JSON.stringify(form) !== base.value
+  },
+  { deep: true },
+)
 
-const load = async () => {
+const load = async (silent = false) => {
   try {
     const resp = await http.get('/api/cloud/hive/settings')
     if (resp.data?.code === 200) {
       const d = resp.data.data || {}
-      form.poll_interval = d.poll_interval > 0 ? d.poll_interval : 15
+      form.hive_enabled = d.hive_enabled !== false
+      form.auto_unlock = d.auto_unlock === true
       form.max_points = d.max_points ?? 0
+      form.only_official = d.only_official === true
+      form.publisher_whitelist = d.publisher_whitelist || ''
+      form.timed_search_enabled = d.timed_search_enabled !== false
+      form.poll_interval = d.poll_interval > 0 ? d.poll_interval : 15
+      form.search_transfer = d.search_transfer !== false
+      form.transfer_use_subdir = d.transfer_use_subdir !== false
+      form.transfer_media = d.transfer_media !== false
+      form.transfer_subtitle = d.transfer_subtitle !== false
+      form.transfer_non_media = d.transfer_non_media === true
+      form.tv_completion_grace_days = d.tv_completion_grace_days >= 0 ? d.tv_completion_grace_days : 7
+      form.sync_library = d.sync_library === true
+      form.sync_wait = d.sync_wait >= 0 ? d.sync_wait : 60
+      form.exec_preset = d.exec_preset || 'balanced'
+      form.run_batch_size = d.run_batch_size >= 0 ? d.run_batch_size : 12
+      form.max_transfers_per_run = d.max_transfers_per_run > 0 ? d.max_transfers_per_run : 5
+      form.transfer_min_interval = d.transfer_min_interval > 0 ? d.transfer_min_interval : 30
+      form.transfer_jitter = d.transfer_jitter >= 0 ? d.transfer_jitter : 15
+      form.slug_max_attempts = d.slug_max_attempts >= 0 ? d.slug_max_attempts : 3
       form.daily_checkin_enabled = d.daily_checkin_enabled !== false
       form.daily_checkin_mode = d.daily_checkin_mode === 'gamble' ? 'gamble' : 'daily'
       form.daily_checkin_hour = (d.daily_checkin_hour >= 0 && d.daily_checkin_hour <= 23) ? d.daily_checkin_hour : 8
       form.sub_checkin_enabled = d.sub_checkin_enabled !== false
       form.sub_checkin_mode = d.sub_checkin_mode === 'gamble' ? 'gamble' : 'daily'
       form.sub_checkin_hour = (d.sub_checkin_hour >= 0 && d.sub_checkin_hour <= 23) ? d.sub_checkin_hour : 8
-      form.only_official = d.only_official === true
-      form.publisher_whitelist = d.publisher_whitelist || ''
-      form.exec_preset = d.exec_preset || 'balanced'
-      form.max_transfers_per_run = d.max_transfers_per_run > 0 ? d.max_transfers_per_run : 20
-      form.transfer_min_interval = d.transfer_min_interval > 0 ? d.transfer_min_interval : 30
-      form.transfer_jitter = d.transfer_jitter >= 0 ? d.transfer_jitter : 15
-      form.slug_max_attempts = d.slug_max_attempts >= 0 ? d.slug_max_attempts : 3
+      base.value = JSON.stringify(form)
+      dirty.value = false
     } else {
       ElMessage.error(resp.data?.message || '加载失败')
     }
   } catch (e: any) {
     ElMessage.error('加载失败：' + (e?.message || ''))
+  } finally {
+    saveState.value = 'idle'
   }
 }
 
 const save = async () => {
-  saving.value = true
+  saveState.value = 'saving'
   try {
-    const resp = await http.post('/api/cloud/hive/settings', {
-      poll_interval: form.poll_interval,
-      max_points: form.max_points,
-      daily_checkin_enabled: form.daily_checkin_enabled,
-      daily_checkin_mode: form.daily_checkin_mode,
-      daily_checkin_hour: form.daily_checkin_hour,
-      sub_checkin_enabled: form.sub_checkin_enabled,
-      sub_checkin_mode: form.sub_checkin_mode,
-      sub_checkin_hour: form.sub_checkin_hour,
-      only_official: form.only_official,
-      publisher_whitelist: form.publisher_whitelist,
-      exec_preset: form.exec_preset,
-      max_transfers_per_run: form.max_transfers_per_run,
-      transfer_min_interval: form.transfer_min_interval,
-      transfer_jitter: form.transfer_jitter,
-      slug_max_attempts: form.slug_max_attempts,
-    })
+    const resp = await http.post('/api/cloud/hive/settings', { ...form })
     if (resp.data?.code === 200) {
-      ElMessage.success('影巢设置已保存')
+      base.value = JSON.stringify(form)
+      dirty.value = false
+      saveState.value = 'saved'
+      setTimeout(() => {
+        if (saveState.value === 'saved') saveState.value = 'idle'
+      }, 2000)
     } else {
+      saveState.value = 'error'
       ElMessage.error(resp.data?.message || '保存失败')
     }
   } catch (e: any) {
+    saveState.value = 'error'
     ElMessage.error('保存失败：' + (e?.message || ''))
-  } finally {
-    saving.value = false
   }
+}
+
+// ---------------------------------------------------------------------------
+// OAuth 授权卡（mediavault vN：3s 轮询 × 6 次 = 18s 超时）
+// ---------------------------------------------------------------------------
+const auth = ref<any>(null)
+const waiting = ref(false)
+const authing = ref(false)
+const checking = ref(false)
+const waitTimer = ref<ReturnType<typeof setInterval> | null>(null)
+const waitTimeout = ref<ReturnType<typeof setTimeout> | null>(null)
+
+const authUser = computed(() => auth.value?.account?.user)
+
+const fmtPoints = (p: number) => (Number.isInteger(p) ? String(p) : Number(p).toFixed(1))
+
+const loadAuth = async () => {
+  try {
+    const resp = await http.get('/api/cloud/hive/oauth/status')
+    if (resp.data?.code === 200) {
+      auth.value = resp.data.data
+    }
+  } catch {
+    /* 状态查询失败静默 */
+  }
+}
+
+const startWait = () => {
+  waiting.value = true
+  let tries = 0
+  waitTimer.value = setInterval(async () => {
+    tries++
+    try {
+      const resp = await http.get('/api/cloud/hive/oauth/status')
+      if (resp.data?.code === 200) {
+        auth.value = resp.data.data
+        if (resp.data.data?.account?.authorized) {
+          stopWait()
+          ElMessage.success('影巢授权成功')
+        }
+      }
+    } catch {
+      /* 继续 */
+    }
+    if (tries >= 6) stopWait()
+  }, 3000)
+  waitTimeout.value = setTimeout(stopWait, 18000)
+}
+
+const stopWait = () => {
+  if (waitTimer.value) {
+    clearInterval(waitTimer.value)
+    waitTimer.value = null
+  }
+  if (waitTimeout.value) {
+    clearTimeout(waitTimeout.value)
+    waitTimeout.value = null
+  }
+  waiting.value = false
+}
+
+const authorizeHive = async () => {
+  authing.value = true
+  try {
+    const resp = await http.post('/api/cloud/hive/oauth/auth-url')
+    if (resp.data?.code !== 200 || !resp.data.data?.auth_url) {
+      ElMessage.error(resp.data?.message || '获取授权地址失败')
+      return
+    }
+    const win = window.open(resp.data.data.auth_url, '_blank')
+    if (!win) {
+      ElMessage.warning('浏览器拦截了弹出窗口，请允许弹窗后重试')
+      return
+    }
+    ElMessage.info('已打开影巢授权页，完成授权后将自动检测状态')
+    startWait()
+  } catch (e: any) {
+    ElMessage.error('获取授权地址失败：' + (e?.message || ''))
+  } finally {
+    authing.value = false
+  }
+}
+
+const checkStatus = async () => {
+  checking.value = true
+  try {
+    const resp = await http.post('/api/cloud/hive/oauth/refresh')
+    if (resp.data?.code === 200) {
+      await loadAuth()
+      ElMessage.success(resp.data.message || '检测完成')
+    } else {
+      ElMessage.error(resp.data?.message || '检测失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('检测失败：' + (e?.message || ''))
+  } finally {
+    checking.value = false
+  }
+}
+
+const cancelWait = () => {
+  stopWait()
+}
+
+// ---------------------------------------------------------------------------
+// Telegram 频道摘要
+// ---------------------------------------------------------------------------
+const enabledChannelCount = ref(0)
+const gotoSubscriptions = () => {
+  router.push('/cloud-hdhive/subscriptions')
 }
 
 // ---------------------------------------------------------------------------
@@ -351,7 +694,11 @@ const authorize = async (row: ChannelRow) => {
       ElMessage.error('未取得授权地址')
       return
     }
-    window.open(url, '_blank')
+    const win = window.open(url, '_blank')
+    if (!win) {
+      ElMessage.warning('浏览器拦截了弹出窗口，请允许弹窗后重试')
+      return
+    }
     setTimeout(loadChannels, 8000)
   } catch (e: any) {
     ElMessage.error('发起授权失败：' + (e?.message || ''))
@@ -411,53 +758,172 @@ const testChannel = async (row: ChannelRow) => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   load()
   loadChannels()
+  loadAuth()
+  // 频道摘要
+  try {
+    const resp = await http.get('/api/cloud/channels')
+    if (resp.data?.code === 200 && Array.isArray(resp.data.data)) {
+      enabledChannelCount.value = resp.data.data.filter((c: any) => c.enabled).length
+    }
+  } catch {
+    /* 忽略 */
+  }
 })
 </script>
 
 <style scoped>
-.cloud-page {
+.hs-page {
   padding: 12px;
-}
-.cloud-card {
-  border-radius: 8px;
-  margin-bottom: 16px;
-}
-.card-header {
-  font-weight: 600;
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 72px;
+}
+.mv-sec {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.mv-sec-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.mv-sec-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.mv-sec-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.mv-sec-body {
+  padding: 14px 16px;
+}
+.mv-sec-disabled {
+  opacity: 0.75;
+}
+.mv-pansou-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.mv-tg-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.mv-tg-count {
+}
+.mv-tg-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.mv-tg-go {
+  margin-left: auto;
+}
+.mv-oauth {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--brand) 25%, transparent);
+  background: color-mix(in srgb, var(--brand) 5%, transparent);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
 }
-.card-sub {
+.mv-oauth-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.mv-oauth-avatar {
+  flex-shrink: 0;
+}
+.mv-oauth-info {
+  min-width: 0;
+}
+.mv-oauth-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+.mv-oauth-sub {
   font-size: 12px;
-  font-weight: 400;
-  color: var(--el-text-color-secondary);
+  color: var(--text-muted);
+  margin-top: 2px;
 }
-.cloud-alert {
-  margin-bottom: 16px;
+.mv-oauth-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
-.hive-form {
-  max-width: 640px;
+.mv-fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px 24px;
 }
-.form-help {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
+@media (min-width: 1280px) {
+  .mv-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.mv-field {
+  min-width: 0;
+}
+.mv-field-wide {
+  grid-column: span 1;
+}
+@media (min-width: 1280px) {
+  .mv-field-wide {
+    grid-column: span 2;
+  }
+}
+.mv-field-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  flex-wrap: wrap;
+}
+.mv-field-desc {
+  font-size: 11px;
+  color: var(--text-muted);
   line-height: 1.5;
   margin-top: 4px;
-  width: 100%;
 }
-.interval-unit {
-  margin-left: 8px;
-  color: var(--el-text-color-secondary);
+.mv-num {
+  width: 140px;
+}
+.mv-unit {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.mv-text {
+  flex: 1;
+  min-width: 200px;
+}
+.mv-select {
+  width: 220px;
+}
+.mv-table {
+  width: 100%;
 }
 .chan-name {
   font-weight: 500;
 }
 .chan-key {
-  color: var(--el-text-color-secondary);
+  color: var(--text-muted);
   font-size: 12px;
   margin-top: 2px;
 }
@@ -468,5 +934,46 @@ onMounted(() => {
 }
 .chan-uid {
   transform: scale(0.9);
+}
+.mv-savebar {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  padding: 10px 16px;
+  font-size: 13px;
+  max-width: calc(100vw - 32px);
+}
+.mv-savebar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.mv-save-spin {
+  animation: mv-rot 1s linear infinite;
+}
+@keyframes mv-rot {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.mv-save-ok {
+  color: var(--success);
+}
+.mv-save-err {
+  color: var(--danger);
+}
+.mv-savebar-right {
+  display: flex;
+  gap: 6px;
 }
 </style>

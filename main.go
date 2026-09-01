@@ -916,6 +916,14 @@ func setRouter(r *gin.Engine) {
 		api.POST("/cloud/subscriptions/clean-old", controllers.CleanOldVersionsAPI) // 清理订阅旧版本
 		api.GET("/cloud/subscriptions/jobs", controllers.ListChannelJobsPlaceholder) // 订阅任务状态
 		api.GET("/cloud/subscriptions/:id/records", controllers.ListSubscriptionRecordsAPI) // 订阅转存纪录
+		api.POST("/cloud/subscriptions/run-search", controllers.RunAllSubscriptionsSearchAPI)      // 一键补全搜索（全部启用订阅）
+		api.POST("/cloud/subscriptions/run-search/:id", controllers.RunSingleSubscriptionSearchAPI) // 单条补全搜索
+		api.POST("/cloud/subscriptions/:id/reset-transferred", controllers.ResetTransferredAPI)    // 重置已转存记录
+		api.GET("/cloud/subscriptions/:id/logs", controllers.SubscriptionLogsAPI)                   // 订阅日志
+		api.GET("/cloud/subscriptions/detail/:id", controllers.SubscriptionDetailAPI)              // 订阅影片详情（TMDB+主创）
+		api.POST("/cloud/subscriptions/batch/pause", controllers.BatchSubscriptionPauseAPI)        // 批量暂停
+		api.POST("/cloud/subscriptions/batch/resume", controllers.BatchSubscriptionResumeAPI)       // 批量恢复
+		api.POST("/cloud/subscriptions/batch/delete", controllers.BatchSubscriptionDeleteAPI)       // 批量删除
 
 		// 影巢（HDHive）订阅
 		api.GET("/cloud/hive/settings", controllers.GetHiveSettingsAPI)  // 影巢设置
@@ -927,6 +935,11 @@ func setRouter(r *gin.Engine) {
 		api.POST("/cloud/hive/oauth/auth-url", controllers.HiveOAuthAuthURLAPI)      // 生成授权 URL
 		api.POST("/cloud/hive/oauth/checkin", controllers.HiveCheckinAPI)            // 手动签到
 		api.POST("/cloud/hive/oauth/checkin-all", controllers.HiveCheckinAllAPI)     // 全部账号签到
+
+		// 影巢手动搜索（SSE 流式）/ 解锁 / 手动转存
+		api.POST("/cloud/hive/search/stream", controllers.HiveManualSearchAPI) // 手动资源搜索（SSE：init/progress/result/done）
+		api.POST("/cloud/hive/unlock", controllers.HiveUnlockAPI)              // 解锁资源
+		api.POST("/cloud/hive/transfer", controllers.HiveManualTransferAPI)    // 手动转存分享链接
 
 		// 影巢 symedia 主渠道（hdhive.symedia.top，与 tgtodrive 备用渠道互为备份）
 		api.GET("/cloud/hive/symedia/status", controllers.HiveSymediaStatusAPI)      // 主渠道状态 + 授权 URL

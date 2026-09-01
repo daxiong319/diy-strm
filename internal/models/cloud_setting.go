@@ -43,6 +43,21 @@ const (
 	CloudSettingKeyHiveTransferMinInterval = "transfer_min_interval" // 值：两次转存最小间隔秒数（custom 模式用，默认 25）
 	CloudSettingKeyHiveTransferJitter    = "transfer_jitter"       // 值：转存间隔随机抖动秒数（custom 模式用，默认 15）
 	CloudSettingKeyHiveSlugMaxAttempts   = "slug_max_attempts"     // 值：单个资源 slug 最大尝试次数（默认 3）
+	// ---- mediavault search&subscription 设置对齐（v77）----
+	CloudSettingKeyHiveEnabled          = "hive_enabled"             // 值："true"/"false" 影巢搜索启用（手动搜索 hdhive 引擎，默认 true）
+	CloudSettingKeyHiveTimedSearch      = "timed_search_enabled"     // 值："true"/"false" 定时订阅搜索（默认 true）
+	CloudSettingKeyHiveSearchTransfer   = "search_transfer"          // 值："true"/"false" 搜到资源即自动转存（默认 true）
+	CloudSettingKeyHiveAutoUnlock       = "auto_unlock"              // 值："true"/"false" 自动积分解锁（默认 true）
+	CloudSettingKeyHiveUseSubdir        = "transfer_use_subdir"      // 值："true"/"false" 按「片名 (年份)」建子目录（默认 false 保持现状平铺目标目录）
+	CloudSettingKeyHiveTransferMedia    = "transfer_media"           // 值："true"/"false" 转存媒体文件（默认 true）
+	CloudSettingKeyHiveTransferSubtitle = "transfer_subtitle"        // 值："true"/"false" 转存字幕文件（默认 true）
+	CloudSettingKeyHiveTransferNonMedia = "transfer_non_media"       // 值："true"/"false" 转存非媒体文件（默认 true=整包转存）
+	CloudSettingKeyHiveRunBatchSize     = "run_batch_size"           // 值：每轮最多处理的订阅数（0=不限，默认 0）
+	CloudSettingKeyHiveGraceDays        = "tv_completion_grace_days" // 值：剧集完结宽限期天数（默认 7）
+	CloudSettingKeyHiveSyncLibrary      = "transfer_sync_library"    // 值："true"/"false" 转存后同步到媒体库（预留，默认 false）
+	CloudSettingKeyHiveSyncWait         = "transfer_sync_wait"       // 值：同步等待分钟数（预留，默认 0）
+	CloudSettingKeyHiveDefaultsMovie    = "subscription_defaults_movie" // 值：电影订阅默认参数 JSON（{resolution,effect,search_sources,include_regex,exclude_regex,target_path,media_server}）
+	CloudSettingKeyHiveDefaultsTV       = "subscription_defaults_tv"    // 值：剧集订阅默认参数 JSON
 )
 
 // HiveTransferThrottle 执行强度参数（借鉴 mediavault 三档预设）
@@ -252,9 +267,62 @@ type CloudSubscription struct {
 	LastPostID   string     `gorm:"size:64" json:"last_post_id"`  // 增量游标（频道帖 ID；影巢订阅为已处理资源 slug）
 	FinishedAt   *time.Time `json:"finished_at"`                  // 自动完结时间
 	LastRecheckAt *time.Time `json:"last_recheck_at"`             // 已完结 TV 订阅的上次 TMDB 复查时间（宽限复活用）
+	// ---- mediavault 对齐字段（v77）----
+	ExistingEpisodes int        `gorm:"default:0" json:"existing_episodes"` // 媒体库已有集数（去重判定/卡片角标）
+	VoteAverage      float64    `json:"vote_average"`                       // TMDB 评分
+	PosterURL        string     `gorm:"size:512" json:"poster_url"`         // 海报
+	BackdropURL      string     `gorm:"size:512" json:"backdrop_url"`       // 背景图
+	Overview         string     `gorm:"type:text" json:"overview"`          // 剧情简介
+	Genres           string     `gorm:"size:255" json:"genres"`             // 类型（逗号串）
+	OriginalTitle    string     `gorm:"size:256" json:"original_title"`     // 原文名
+	Year             int        `json:"year"`                               // 发行年份
+	SearchKeyword    string     `gorm:"size:256" json:"search_keyword"`     // 搜索关键词（留空=用标题）
+	Resolution       string     `gorm:"size:64" json:"resolution"`          // 分辨率（逗号串，空=不限）
+	Effect           string     `gorm:"size:64" json:"effect"`              // 特效（逗号串，空=不限特效）
+	SearchSources    string     `gorm:"size:64" json:"search_sources"`      // 搜索渠道（逗号串：telegram/hdhive/pansou）
+	IncludeRegex     string     `gorm:"type:text" json:"include_regex"`     // 标题包含正则（命中才转存）
+	ExcludeRegex     string     `gorm:"type:text" json:"exclude_regex"`     // 标题排除正则（命中则跳过）
+	Storage          string     `gorm:"size:64" json:"storage"`             // 存储实例（空=默认网盘；diy-strm 与 SourceType 保持一致）
+	MediaServer      string     `gorm:"size:128" json:"media_server"`       // 媒体库实例（空=全部媒体库）
+	LastSearchAt     *time.Time `json:"last_search_at"`                     // 上次搜索时间
 	LastRunAt    time.Time  `json:"last_run_at"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+// SubscriptionLog 订阅日志（搜索/转存时间线，对齐 mediavault subscription_logs）
+type SubscriptionLog struct {
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	SubscriptionID uint      `gorm:"index:idx_sub_log_sub_id" json:"subscription_id"`
+	Title          string    `gorm:"size:256" json:"title"` // 订阅影片标题快照
+	Action         string    `gorm:"size:16" json:"action"` // search / transfer
+	Status         string    `gorm:"size:64" json:"status"` // success / 失败原因
+	Message        string    `gorm:"type:text" json:"message"`
+	ShareLink      string    `gorm:"size:512" json:"share_link"`
+	FileCount      int       `json:"file_count"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// CreateSubscriptionLog 写入一条订阅日志
+func CreateSubscriptionLog(l *SubscriptionLog) error {
+	if l.CreatedAt.IsZero() {
+		l.CreatedAt = time.Now()
+	}
+	return db.Db.Create(l).Error
+}
+
+// ListSubscriptionLogs 查询订阅日志（新到旧）
+func ListSubscriptionLogs(subID uint) ([]SubscriptionLog, error) {
+	var logs []SubscriptionLog
+	if err := db.Db.Where("subscription_id = ?", subID).Order("created_at desc").Limit(200).Find(&logs).Error; err != nil {
+		return nil, err
+	}
+	return logs, nil
+}
+
+// DeleteSubscriptionLogs 删除订阅时清理其日志
+func DeleteSubscriptionLogs(subID uint) error {
+	return db.Db.Where("subscription_id = ?", subID).Delete(&SubscriptionLog{}).Error
 }
 
 // KeywordList 解析关键词 JSON
@@ -390,6 +458,135 @@ func GetHiveSubCheckinHour() int {
 // GetHiveMaxPoints 解锁积分上限（0=不限，默认 0）
 func GetHiveMaxPoints() int {
 	return hiveSettingInt(CloudSettingKeyHiveMaxPoints, 0, 0, 999999)
+}
+
+// ---- mediavault 设置读取（v77）----
+
+// GetHiveEnabled 影巢搜索启用（手动搜索 hdhive 引擎，默认 true）
+func GetHiveEnabled() bool {
+	return hiveSettingBool(CloudSettingKeyHiveEnabled, true)
+}
+
+// GetHiveTimedSearchEnabled 定时订阅搜索开关（默认 true）
+func GetHiveTimedSearchEnabled() bool {
+	return hiveSettingBool(CloudSettingKeyHiveTimedSearch, true)
+}
+
+// GetHiveSearchTransfer 搜到资源即自动转存（默认 true）
+func GetHiveSearchTransfer() bool {
+	return hiveSettingBool(CloudSettingKeyHiveSearchTransfer, true)
+}
+
+// GetHiveAutoUnlock 自动积分解锁（默认 true）
+func GetHiveAutoUnlock() bool {
+	return hiveSettingBool(CloudSettingKeyHiveAutoUnlock, true)
+}
+
+// GetHiveUseSubdir 按「片名 (年份)」建子目录（默认 false 保持现状平铺目标目录）
+func GetHiveUseSubdir() bool {
+	return hiveSettingBool(CloudSettingKeyHiveUseSubdir, false)
+}
+
+// GetHiveTransferMedia 转存媒体文件（默认 true）
+func GetHiveTransferMedia() bool {
+	return hiveSettingBool(CloudSettingKeyHiveTransferMedia, true)
+}
+
+// GetHiveTransferSubtitle 转存字幕文件（默认 true）
+func GetHiveTransferSubtitle() bool {
+	return hiveSettingBool(CloudSettingKeyHiveTransferSubtitle, true)
+}
+
+// GetHiveTransferNonMedia 转存非媒体文件（默认 true=整包转存）
+func GetHiveTransferNonMedia() bool {
+	return hiveSettingBool(CloudSettingKeyHiveTransferNonMedia, true)
+}
+
+// GetHiveRunBatchSize 每轮最多处理的订阅数（0=不限，默认 0）
+func GetHiveRunBatchSize() int {
+	return hiveSettingInt(CloudSettingKeyHiveRunBatchSize, 0, 0, 200)
+}
+
+// GetHiveTVCompletionGraceDays 剧集完结宽限期天数（默认 7）
+func GetHiveTVCompletionGraceDays() int {
+	return hiveSettingInt(CloudSettingKeyHiveGraceDays, 7, 1, 365)
+}
+
+// GetHiveSyncLibrary 转存后同步到媒体库（预留配置，仅存储；默认 false）
+func GetHiveSyncLibrary() bool {
+	return hiveSettingBool(CloudSettingKeyHiveSyncLibrary, false)
+}
+
+// GetHiveSyncWait 转存后同步媒体库等待分钟数（预留配置，仅存储；默认 0）
+func GetHiveSyncWait() int {
+	return hiveSettingInt(CloudSettingKeyHiveSyncWait, 0, 0, 120)
+}
+
+// GetHiveSubscriptionDefaults 读取某媒体类型的默认订阅参数 JSON（""=未配置）
+func GetHiveSubscriptionDefaults(mediaType string) string {
+	if mediaType == "tv" {
+		return hiveSettingStr(CloudSettingKeyHiveDefaultsTV, "")
+	}
+	return hiveSettingStr(CloudSettingKeyHiveDefaultsMovie, "")
+}
+
+// SaveHiveSubscriptionDefaults 保存某媒体类型的默认订阅参数 JSON
+func SaveHiveSubscriptionDefaults(mediaType, jsonStr string) error {
+	key := CloudSettingKeyHiveDefaultsMovie
+	if mediaType == "tv" {
+		key = CloudSettingKeyHiveDefaultsTV
+	}
+	return SetCloudSetting("hdhive", key, strings.TrimSpace(jsonStr))
+}
+
+// ListHiveSubscriptionsFiltered 影巢订阅列表（mediavault 对齐：media_type 筛选 + status=completed 历史过滤）
+// statusFilter 传 "completed" 只返回已完成；otherwise 传空返回非 completed（进行中+已暂停）
+func ListHiveSubscriptionsFiltered(mediaType, statusFilter string) ([]CloudSubscription, int64, error) {
+	var list []CloudSubscription
+	q := db.Db.Where("resource_source = ?", "hdhive")
+	if mediaType == "movie" || mediaType == "tv" {
+		q = q.Where("media_type = ?", mediaType)
+	}
+	if statusFilter == "completed" {
+		q = q.Where("status = ?", "completed")
+	} else {
+		q = q.Where("status != ?", "completed")
+	}
+	var total int64
+	if err := q.Model(&CloudSubscription{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := q.Order("created_at desc").Find(&list).Error; err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
+}
+
+// UpdateCloudSubscriptionsStatus 批量更新订阅状态（paused 置为 paused / 恢复 subscribing）
+func UpdateCloudSubscriptionsStatus(ids []uint, paused bool) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	status := "subscribing"
+	if paused {
+		status = "paused"
+	}
+	return db.Db.Model(&CloudSubscription{}).Where("id IN ?", ids).Update("status", status).Error
+}
+
+// DeleteCloudSubscriptionsBatch 批量删除订阅（含转存记录与日志）
+func DeleteCloudSubscriptionsBatch(ids []uint) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	for _, id := range ids {
+		if err := DeleteCloudSubscription(id); err != nil {
+			return err
+		}
+		_ = DeleteSubscriptionRecords(id)
+		_ = DeleteSubscriptionLogs(id)
+	}
+	return nil
 }
 
 // SaveCloudSubscription 创建或更新订阅

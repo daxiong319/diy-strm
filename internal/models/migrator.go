@@ -20,7 +20,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 76
+var MaxVersionCode = 77
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -869,6 +869,23 @@ func Migrate() {
 			}
 		}
 		helpers.AppLogger.Info("影巢四通道：订阅状态/复查时间/失败惩罚表已就绪")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 76 {
+		// mediavault 订阅对齐：CloudSubscription 补媒体库字段（海报/评分/简介/正则/规格/渠道/存储等）+ 订阅日志表
+		if err := db.Db.AutoMigrate(CloudSubscription{}, SubscriptionLog{}); err != nil {
+			helpers.AppLogger.Errorf("迁移订阅媒体库字段失败：%v", err)
+			return
+		}
+		// 存量影巢订阅回填：tmdb_title 快照 → search_keyword（留空的订阅搜索用标题）
+		if db.Db.Migrator().HasColumn(&CloudSubscription{}, "tmdb_title") {
+			if err := db.Db.Model(&CloudSubscription{}).
+				Where("search_keyword = '' AND tmdb_title != ''").
+				Update("search_keyword", gorm.Expr("tmdb_title")).Error; err != nil {
+				helpers.AppLogger.Errorf("回填订阅搜索关键词失败：%v", err)
+			}
+		}
+		helpers.AppLogger.Info("mediavault 对齐：订阅媒体库字段与日志表已就绪")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)
