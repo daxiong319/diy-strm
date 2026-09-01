@@ -44,7 +44,18 @@
 
       <div class="pf-item">
         <label class="pf-label">搜索渠道</label>
-        <el-input v-model="form.search_sources" placeholder="例如：HDTV|WEB-DL（留空不限）" clearable />
+        <div class="pf-chips">
+          <el-tag
+            v-for="opt in sourceOptions"
+            :key="opt.value"
+            :type="selectedSources.includes(opt.value) ? 'primary' : 'info'"
+            :effect="selectedSources.includes(opt.value) ? 'dark' : 'plain'"
+            disable-transitions
+            class="pf-chip"
+            @click="toggleSource(opt.value)"
+          >{{ opt.label }}</el-tag>
+        </div>
+        <p class="pf-tip">不选则使用全局启用渠道（Telegram / 影巢 / 盘搜）。</p>
       </div>
 
       <div class="pf-item">
@@ -134,7 +145,7 @@ export const emptyParams = (): HiveSubParams => ({
 </script>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import CloudDirPicker from './CloudDirPicker.vue'
 
 // 由父组件持有的响应式表单对象（props.modelValue 需为 reactive 对象）
@@ -143,6 +154,19 @@ const form = props.modelValue
 
 const resolutionOptions = ['720P', '1080P', '2160P']
 const effectOptions = ['特效', '双语', '国语']
+
+// 搜索渠道 chips（对齐 mediavault SIM 选择器：不选则使用全局启用渠道）
+const sourceOptions = [
+  { label: 'Telegram', value: 'telegram' },
+  { label: '影巢', value: 'hdhive' },
+  { label: '盘搜', value: 'pansou' },
+]
+const selectedSources = computed(() => (form.search_sources || '').split(',').filter(Boolean))
+const toggleSource = (v: string) => {
+  const cur = selectedSources.value
+  const next = cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v]
+  form.search_sources = next.join(',')
+}
 
 const pickerVisible = ref(false)
 const onDirSelected = (path: string) => {
@@ -183,6 +207,15 @@ const onDirSelected = (path: string) => {
   display: flex;
   gap: 6px;
   width: 100%;
+}
+.pf-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pf-chip {
+  cursor: pointer;
+  user-select: none;
 }
 .pf-mono :deep(.el-input__inner) {
   font-family: var(--font-mono);

@@ -265,6 +265,57 @@
             {{ transferMsg.msg }}
           </div>
         </div>
+
+        <!-- 盘搜结果 -->
+        <div v-for="(e, idx) in shownPansouResults" :key="pansouKey(e, idx)" class="hs-card hs-card-pansou">
+          <div class="hs-tg-body">
+            <div class="hs-tg-title-row">
+              <p class="hs-tg-title">{{ e.title || e.share_link || '网盘资源' }}</p>
+            </div>
+            <div v-if="pansouSpecList(e).length" class="hs-specs">
+              <span v-for="(s, i) in pansouSpecList(e)" :key="i" class="hs-spec" :class="{ 'hs-spec-lead': i === 0 }">{{ s }}</span>
+            </div>
+            <div class="hs-tg-meta">
+              <el-tag size="small" type="info" effect="dark" disable-transitions class="hs-tag-hive">盘搜</el-tag>
+              <span v-if="e.search_source" class="hs-pansou-source">{{ e.search_source }}</span>
+              <span v-if="e.date" class="hs-tg-date">{{ fmtDate(e.date) }}</span>
+            </div>
+            <div class="hs-transfer-row">
+              <template v-if="e.share_link">
+                <el-tooltip :content="!e.source_type ? '当前版本仅支持 123 / 光鸭 / 139 分享链接转存' : '转存到云盘'" placement="top">
+                  <el-button
+                    size="small"
+                    plain
+                    class="hs-transfer-btn"
+                    :disabled="transferringId === pansouKey(e, idx) || !e.source_type"
+                    :loading="transferringId === pansouKey(e, idx)"
+                    @click="transfer(e.share_link, e.source_type, e.share_code, pansouKey(e, idx))"
+                  >{{ transferringId === pansouKey(e, idx) ? '转存中…' : '转存' }}</el-button>
+                </el-tooltip>
+                <el-button size="small" text class="hs-copy-btn" @click="copy(e.share_link, pansouKey(e, idx))">
+                  {{ copiedId === pansouKey(e, idx) ? '已复制' : '复制链接' }}
+                </el-button>
+                <el-button v-if="e.share_code" size="small" text class="hs-copy-btn" @click="copy(e.share_code, pansouKey(e, idx) + '-code')">
+                  {{ copiedId === pansouKey(e, idx) + '-code' ? '已复制' : '复制分享码' }}
+                </el-button>
+              </template>
+              <template v-else>
+                <el-tooltip content="当前版本暂不支持离线下载" placement="top">
+                  <el-button size="small" plain disabled class="hs-dl-btn">
+                    <el-icon><Download /></el-icon>云下载
+                  </el-button>
+                </el-tooltip>
+                <el-button size="small" text class="hs-copy-btn" @click="copy((e.magnets || []).concat(e.ed2k || []).join('\n'), pansouKey(e, idx))">
+                  {{ copiedId === pansouKey(e, idx) ? '已复制' : '复制链接' }}
+                </el-button>
+              </template>
+            </div>
+            <div v-if="transferMsg && transferMsg.id === pansouKey(e, idx)" class="hs-ef" :class="transferMsg.ok ? 'hs-ef-ok' : 'hs-ef-err'">
+              <el-icon :size="11"><CircleCheckFilled v-if="transferMsg.ok" /><WarningFilled v-else /></el-icon>
+              {{ transferMsg.msg }}
+            </div>
+          </div>
+        </div>
       </div>
     </template>
   </div>
@@ -310,6 +361,7 @@ const engineState = ref<Record<string, string>>({})
 const engineLabels = ref<Record<string, string>>({})
 const tgResults = ref<any[]>([])
 const hiveResults = ref<any[]>([])
+const pansouResults = ref<any[]>([])
 const enabled = ref<Record<string, boolean>>({})
 
 const targetDir = ref('/媒体库/待整理')
@@ -445,6 +497,7 @@ const runSearch = async (keyword: string, extra: Record<string, any>) => {
   engineState.value = {}
   tgResults.value = []
   hiveResults.value = []
+  pansouResults.value = []
   transferMsg.value = null
   try {
     const resp = await fetch('/api/cloud/hive/search/stream', {
@@ -543,6 +596,12 @@ const handleFrame = (ev: any) => {
           }
         }
       }
+    } else if (ev.engine === 'pansou') {
+      pansouResults.value = pansouResults.value.concat(
+        list
+          .filter((x: any) => !x.error)
+          .map((x: any) => ({ ...x, source_type: detectSourceByUrl(x.share_link || '') })),
+      )
     }
   } else if (ev.type === 'done') {
     enabled.value = ev.data?.enabled || {}
@@ -572,12 +631,18 @@ const tabs = computed(() => {
   const t = [{ key: 'all', label: '全部', count: totalResults.value }]
   if (enabled.value.telegram) t.push({ key: 'telegram', label: 'Telegram', count: tgResults.value.length })
   if (enabled.value.hdhive) t.push({ key: 'hdhive', label: '影巢', count: hiveResults.value.length })
+  if (enabled.value.pansou) t.push({ key: 'pansou', label: '盘搜', count: pansouResults.value.length })
   return t
 })
-const totalResults = computed(() => tgResults.value.length + hiveResults.value.length)
-const engineCount = (eng: string) => (eng === 'telegram' ? tgResults.value.length : hiveResults.value.length)
+const totalResults = computed(() => tgResults.value.length + hiveResults.value.length + pansouResults.value.length)
+const engineCount = (eng: string) => {
+  if (eng === 'telegram') return tgResults.value.length
+  if (eng === 'pansou') return pansouResults.value.length
+  return hiveResults.value.length
+}
 const shownTelegramResults = computed(() => (tab.value === 'all' || tab.value === 'telegram' ? tgResults.value : []))
 const shownHiveResults = computed(() => (tab.value === 'all' || tab.value === 'hdhive' ? hiveResults.value : []))
+const shownPansouResults = computed(() => (tab.value === 'all' || tab.value === 'pansou' ? pansouResults.value : []))
 
 // ---------------------------------------------------------------------------
 // 卡片渲染辅助
@@ -635,6 +700,17 @@ const hiveSpecs = (e: any) => {
   if (e.remark) parts.push(e.remark)
   return parts.filter(Boolean)
 }
+const pansouInfo = (e: any) => {
+  if (!e._info) e._info = parseInfo(e.title || '')
+  return e._info
+}
+const pansouSpecList = (e: any) => {
+  const i = pansouInfo(e)
+  const order = ['resolution', 'season_episode', 'subtitle', 'codec', 'hdr']
+  return order.map((k) => i[k]).filter(Boolean)
+}
+const pansouKey = (e: any, idx: number) =>
+  `pansou-${idx}-${e.share_link || e.magnets?.[0] || e.ed2k?.[0] || e.date || ''}`
 const fmtDate = (t: string) => {
   const d = new Date(t)
   if (isNaN(d.getTime())) return t || ''
@@ -1067,6 +1143,13 @@ onMounted(async () => {
 }
 .hs-tg-date {
   color: var(--text-muted);
+}
+.hs-pansou-source {
+  color: var(--text-muted);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .hs-tag-success {
   color: var(--success);

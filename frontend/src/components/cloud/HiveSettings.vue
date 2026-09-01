@@ -96,14 +96,52 @@
     </section>
 
     <!-- 区块：盘搜 -->
-    <section class="mv-sec mv-sec-disabled">
+    <section class="mv-sec">
       <div class="mv-sec-head">
         <h3 class="mv-sec-title">盘搜</h3>
-        <p class="mv-sec-desc">全网网盘资源聚合搜索；需自部署盘搜服务</p>
+        <p class="mv-sec-desc">
+          全网网盘资源聚合搜索；需自部署盘搜服务
+          <a href="https://github.com/fish2018/pansou" target="_blank" rel="noopener" class="mv-pansou-link">（部署说明）</a>
+        </p>
       </div>
-      <div class="mv-sec-body mv-pansou-body">
-        <el-icon :size="16"><InfoFilled /></el-icon>
-        <span>当前版本未部署盘搜服务，暂不可用。</span>
+      <div class="mv-sec-body">
+        <div class="mv-fields">
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>启用盘搜</span>
+              <el-switch v-model="form.pansou_enabled" />
+            </div>
+            <p class="mv-field-desc">开启后将「盘搜」加入手动搜索渠道；默认关闭。</p>
+          </div>
+          <div class="mv-field mv-field-wide">
+            <div class="mv-field-label">
+              <span>服务地址</span>
+              <el-input v-model="form.pansou_base_url" placeholder="例如 http://192.168.1.100:80（部署盘搜服务后填写）" clearable class="mv-text" />
+            </div>
+            <p class="mv-field-desc">盘搜服务地址；未填写时搜索页会提示「未配置盘搜服务」。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>服务账号</span>
+              <el-input v-model="form.pansou_username" placeholder="留空则匿名请求" clearable class="mv-text" />
+            </div>
+            <p class="mv-field-desc">对应盘搜服务 AUTH_USERS 配置；服务未开启认证时留空即可。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>服务密码</span>
+              <el-input v-model="form.pansou_password" type="password" show-password placeholder="留空则保持原密码不变" clearable class="mv-text" />
+            </div>
+            <p class="mv-field-desc">
+              {{ pansouPasswordSet ? '已设置服务密码（出于安全考虑不回显）' : '未设置服务密码（服务未开启认证时无需填写）' }}
+              ，留空保存不会修改现有密码。
+            </p>
+          </div>
+          <div v-if="form.pansou_enabled && !form.pansou_base_url" class="mv-pansou-warn">
+            <el-icon :size="16"><WarningFilled /></el-icon>
+            <span>未配置盘搜服务：请填写服务地址后再启用，否则搜索页将提示「未配置盘搜服务」。</span>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -407,7 +445,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { CircleCheckFilled, InfoFilled, Loading, WarningFilled } from '@element-plus/icons-vue'
+import { CircleCheckFilled, Loading, WarningFilled } from '@element-plus/icons-vue'
 import { useHttpClient } from '@/http/client'
 
 const http = useHttpClient()
@@ -443,7 +481,12 @@ const form = reactive({
   sub_checkin_enabled: true,
   sub_checkin_mode: 'daily' as string,
   sub_checkin_hour: 8,
+  pansou_enabled: false,
+  pansou_base_url: '',
+  pansou_username: '',
+  pansou_password: '',
 })
+const pansouPasswordSet = ref(false)
 
 // 变更追踪
 const base = ref('')
@@ -489,6 +532,10 @@ const load = async (silent = false) => {
       form.sub_checkin_enabled = d.sub_checkin_enabled !== false
       form.sub_checkin_mode = d.sub_checkin_mode === 'gamble' ? 'gamble' : 'daily'
       form.sub_checkin_hour = (d.sub_checkin_hour >= 0 && d.sub_checkin_hour <= 23) ? d.sub_checkin_hour : 8
+      form.pansou_enabled = d.pansou_enabled === true
+      form.pansou_base_url = d.pansou_base_url || ''
+      form.pansou_username = d.pansou_username || ''
+      pansouPasswordSet.value = d.pansou_password_set === true
       base.value = JSON.stringify(form)
       dirty.value = false
     } else {
@@ -807,12 +854,21 @@ onMounted(async () => {
 .mv-sec-disabled {
   opacity: 0.75;
 }
-.mv-pansou-body {
+.mv-pansou-warn {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  color: var(--text-muted);
+  color: var(--warning);
+  background: rgba(230, 162, 60, 0.08);
+  border: 1px solid rgba(230, 162, 60, 0.25);
+  border-radius: 6px;
+  padding: 8px 12px;
+  width: 100%;
+}
+.mv-pansou-link {
+  color: var(--brand);
+  text-decoration: none;
 }
 .mv-tg-summary {
   display: flex;

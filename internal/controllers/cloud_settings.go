@@ -388,6 +388,11 @@ func GetHiveSettingsAPI(c *gin.Context) {
 		"sync_wait":                models.GetHiveSyncWait(),
 		"subscription_defaults_movie": models.GetHiveSubscriptionDefaults("movie"),
 		"subscription_defaults_tv":    models.GetHiveSubscriptionDefaults("tv"),
+		// pansou 盘搜（对齐 mediavault pansou 设置；password 只回传是否已设置）
+		"pansou_enabled":      models.GetHivePansouEnabled(),
+		"pansou_base_url":     models.GetHivePansouBaseURL(),
+		"pansou_username":     models.GetHivePansouUsername(),
+		"pansou_password_set": models.GetHivePansouPassword() != "",
 	}})
 }
 
@@ -426,6 +431,11 @@ func SetHiveSettingsAPI(c *gin.Context) {
 		SyncWait            *int   `json:"sync_wait"`
 		DefaultsMovie       string `json:"subscription_defaults_movie"`
 		DefaultsTV          string `json:"subscription_defaults_tv"`
+		// pansou 盘搜（password 留空=保持原密码，不改动）
+		PansouEnabled  *bool  `json:"pansou_enabled"`
+		PansouBaseURL  string `json:"pansou_base_url"`
+		PansouUsername string `json:"pansou_username"`
+		PansouPassword string `json:"pansou_password"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error(), Data: nil})
@@ -607,6 +617,11 @@ func SetHiveSettingsAPI(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存剧集默认订阅配置失败：" + err.Error(), Data: nil})
 			return
 		}
+	}
+	// pansou 盘搜（password 留空=保留原密码）
+	if err := models.SaveHivePansouSettings(req.PansouEnabled, req.PansouBaseURL, req.PansouUsername, req.PansouPassword); err != nil {
+		c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存盘搜设置失败：" + err.Error(), Data: nil})
+		return
 	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "影巢设置已保存", Data: nil})
 }

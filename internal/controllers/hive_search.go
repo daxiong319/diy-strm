@@ -371,9 +371,10 @@ func HiveManualSearchAPI(c *gin.Context) {
 
 	hdhiveOn := models.GetHiveEnabled() && req.TMDBID > 0
 	telegramOn := manualTelegramSearchable()
+	pansouOn := models.GetHivePansouEnabled() && models.GetHivePansouBaseURL() != ""
 
 	engines := []string{}
-	labels := map[string]string{"hdhive": "影巢", "telegram": "Telegram"}
+	labels := map[string]string{"hdhive": "影巢", "telegram": "Telegram", "pansou": "盘搜"}
 	requested := map[string]bool{}
 	for _, e := range req.Engines {
 		requested[e] = true
@@ -381,12 +382,16 @@ func HiveManualSearchAPI(c *gin.Context) {
 	if len(requested) > 0 {
 		hdhiveOn = hdhiveOn && requested["hdhive"]
 		telegramOn = telegramOn && requested["telegram"]
+		pansouOn = pansouOn && requested["pansou"]
 	}
 	if hdhiveOn {
 		engines = append(engines, "hdhive")
 	}
 	if telegramOn {
 		engines = append(engines, "telegram")
+	}
+	if pansouOn {
+		engines = append(engines, "pansou")
 	}
 	writeHiveSSE(c, hiveSearchSSE{Type: "init", Data: gin.H{"labels": labels, "engines": engines}})
 
@@ -414,6 +419,13 @@ func HiveManualSearchAPI(c *gin.Context) {
 			hiveManualSearchTelegram(ctx, c, keywords)
 		}()
 	}
+	if pansouOn {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			hiveManualSearchPansou(ctx, c, keywords)
+		}()
+	}
 	go func() {
 		wg.Wait()
 		close(done)
@@ -423,7 +435,7 @@ func HiveManualSearchAPI(c *gin.Context) {
 	case <-ctx.Done():
 	}
 	writeHiveSSE(c, hiveSearchSSE{Type: "done", Data: gin.H{"enabled": gin.H{
-		"hdhive": hdhiveOn, "telegram": telegramOn, "pansou": false,
+		"hdhive": hdhiveOn, "telegram": telegramOn, "pansou": pansouOn,
 	}}})
 }
 
@@ -474,6 +486,140 @@ func hiveManualSearchHDHive(ctx context.Context, c *gin.Context, mediaType strin
 	}
 	writeHiveSSE(c, hiveSearchSSE{Type: "result", Engine: "hdhive", Data: items})
 	writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "hdhive", Status: "done"})
+}
+
+// pansouMergedLink 盘搜聚合链接（fish2018/pansou merged_by_type 元素）
+type pansouMergedLink struct {
+	URL      string   `json:"url"`
+	Password string   `json:"password"`
+	Note     string   `json:"note"`
+	Datetime string   `json:"datetime"`
+	Source   string   `json:"source"`
+	Images   []string `json:"images"`
+}
+
+// parsePansouMergedLinks 兼容聚合值两种形态：链接数组 或 {docs|links|items:[...]}
+func parsePansouMergedLinks(raw json.RawMessage) []pansouMergedLink {
+	var arr []pansouMergedLink
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		return arr
+	}
+	var grp struct {
+		Docs  []pansouMergedLink `json:"docs"`
+		Links []pansouMergedLink `json:"links"`
+		Items []pansouMergedLink `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &grp); err == nil {
+		out := grp.Docs
+		out = append(out, grp.Links...)
+		out = append(out, grp.Items...)
+		return out
+	}
+	return nil
+}
+
+// hiveManualSearchPansou 盘搜引擎：自部署 pansou 服务（https://github.com/fish2018/pansou）
+// 已配置账号时先 POST /api/auth/login 取 JWT（Authorization: Bearer），再 POST /api/search 聚合搜索（res=merge）。
+// 条目对齐 mediavault 盘搜结果：{title, search_source, date, share_link, share_code, magnets[], ed2k[]}
+func hiveManualSearchPansou(ctx context.Context, c *gin.Context, keywords []string) {
+	writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "pansou", Status: "searching"})
+	base := strings.TrimRight(models.GetHivePansouBaseURL(), "/")
+	if base == "" {
+		writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "pansou", Status: "error", Message: "未配置盘搜服务地址，请先在设置中填写"})
+		return
+	}
+	client := &http.Client{Timeout: 25 * time.Second}
+	token := ""
+	username, password := models.GetHivePansouUsername(), models.GetHivePansouPassword()
+	if username != "" && password != "" {
+		body, _ := json.Marshal(gin.H{"username": username, "password": password})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/auth/login", strings.NewReader(string(body)))
+		if err != nil {
+			writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "pansou", Status: "error", Message: "盘搜登录请求失败"})
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "pansou", Status: "error", Message: "盘搜服务连接失败：" + err.Error()})
+			return
+		}
+		var auth struct {
+			Token string `json:"token"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&auth)
+		resp.Body.Close()
+		if auth.Token == "" {
+			writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "pansou", Status: "error", Message: "盘搜服务认证失败，请检查账号密码"})
+			return
+		}
+		token = auth.Token
+	}
+	items := make([]gin.H, 0, 100)
+	for _, kw := range keywords {
+		if ctx.Err() != nil || len(items) >= 100 {
+			break
+		}
+		body, _ := json.Marshal(gin.H{"kw": kw, "res": "merge"})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/search", strings.NewReader(string(body)))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		var result struct {
+			Total        int                        `json:"total"`
+			MergedByType map[string]json.RawMessage `json:"merged_by_type"`
+		}
+		decErr := json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if decErr != nil || len(result.MergedByType) == 0 {
+			continue
+		}
+		for _, raw := range result.MergedByType {
+			if len(items) >= 100 {
+				break
+			}
+			for _, l := range parsePansouMergedLinks(raw) {
+				if len(items) >= 100 {
+					break
+				}
+				if l.URL == "" {
+					continue
+				}
+				item := gin.H{
+					"title":         l.Note,
+					"search_source": l.Source,
+					"date":          l.Datetime,
+					"share_link":    l.URL,
+					"share_code":    l.Password,
+					"magnets":       []string{},
+					"ed2k":          []string{},
+				}
+				lower := strings.ToLower(l.URL)
+				if strings.HasPrefix(lower, "magnet:") {
+					item["magnets"] = []string{l.URL}
+					item["share_link"] = ""
+				} else if strings.HasPrefix(lower, "ed2k:") {
+					item["ed2k"] = []string{l.URL}
+					item["share_link"] = ""
+				}
+				items = append(items, item)
+			}
+		}
+	}
+	if len(items) == 0 {
+		writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "pansou", Status: "error", Message: "盘搜未返回结果"})
+		return
+	}
+	writeHiveSSE(c, hiveSearchSSE{Type: "result", Engine: "pansou", Data: items})
+	writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "pansou", Status: "done"})
 }
 
 // manualTelegramSearchable 是否有可搜索的启用频道

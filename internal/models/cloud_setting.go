@@ -58,6 +58,11 @@ const (
 	CloudSettingKeyHiveSyncWait         = "transfer_sync_wait"       // 值：同步等待分钟数（预留，默认 0）
 	CloudSettingKeyHiveDefaultsMovie    = "subscription_defaults_movie" // 值：电影订阅默认参数 JSON（{resolution,effect,search_sources,include_regex,exclude_regex,target_path,media_server}）
 	CloudSettingKeyHiveDefaultsTV       = "subscription_defaults_tv"    // 值：剧集订阅默认参数 JSON
+	// ---- pansou 盘搜（对齐 mediavault pansou 设置；pansou_enabled 默认 false，配置服务地址后才启用）----
+	CloudSettingKeyHivePansouEnabled  = "pansou_enabled"  // 值："true"/"false" 盘搜启用（默认 false）
+	CloudSettingKeyHivePansouBaseURL  = "pansou_base_url" // 值：盘搜服务地址（如 http://192.168.1.100:80，空=未部署）
+	CloudSettingKeyHivePansouUsername = "pansou_username" // 值：盘搜服务账号（对应 fish2018/pansou AUTH_USERS，空=匿名）
+	CloudSettingKeyHivePansouPassword = "pansou_password" // 值：盘搜服务密码（仅入库，不回传前端）
 )
 
 // HiveTransferThrottle 执行强度参数（借鉴 mediavault 三档预设）
@@ -520,6 +525,47 @@ func GetHiveSyncLibrary() bool {
 // GetHiveSyncWait 转存后同步媒体库等待分钟数（预留配置，仅存储；默认 0）
 func GetHiveSyncWait() int {
 	return hiveSettingInt(CloudSettingKeyHiveSyncWait, 0, 0, 120)
+}
+
+// GetHivePansouEnabled 盘搜启用（默认 false；需同时配置服务地址）
+func GetHivePansouEnabled() bool {
+	return hiveSettingBool(CloudSettingKeyHivePansouEnabled, false)
+}
+
+// GetHivePansouBaseURL 盘搜服务地址（空=未配置服务）
+func GetHivePansouBaseURL() string {
+	return strings.TrimSpace(hiveSettingStr(CloudSettingKeyHivePansouBaseURL, ""))
+}
+
+// GetHivePansouUsername 盘搜服务账号（空=匿名请求）
+func GetHivePansouUsername() string {
+	return hiveSettingStr(CloudSettingKeyHivePansouUsername, "")
+}
+
+// GetHivePansouPassword 盘搜服务密码（空=匿名请求；不回传前端）
+func GetHivePansouPassword() string {
+	return hiveSettingStr(CloudSettingKeyHivePansouPassword, "")
+}
+
+// SaveHivePansouSettings 保存盘搜设置（password 为空时保留原密码，避免前端留空误清）
+func SaveHivePansouSettings(enabled *bool, baseURL, username, password string) error {
+	if enabled != nil {
+		if err := SetCloudSetting("hdhive", CloudSettingKeyHivePansouEnabled, strconv.FormatBool(*enabled)); err != nil {
+			return err
+		}
+	}
+	if err := SetCloudSetting("hdhive", CloudSettingKeyHivePansouBaseURL, strings.TrimSpace(baseURL)); err != nil {
+		return err
+	}
+	if err := SetCloudSetting("hdhive", CloudSettingKeyHivePansouUsername, strings.TrimSpace(username)); err != nil {
+		return err
+	}
+	if strings.TrimSpace(password) != "" {
+		if err := SetCloudSetting("hdhive", CloudSettingKeyHivePansouPassword, strings.TrimSpace(password)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetHiveSubscriptionDefaults 读取某媒体类型的默认订阅参数 JSON（""=未配置）
