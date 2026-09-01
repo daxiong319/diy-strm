@@ -556,6 +556,8 @@ func hiveManualSearchPansou(ctx context.Context, c *gin.Context, keywords []stri
 		token = auth.Token
 	}
 	items := make([]gin.H, 0, 100)
+	searchFailed := 0
+	searched := 0
 	for _, kw := range keywords {
 		if ctx.Err() != nil || len(items) >= 100 {
 			break
@@ -571,15 +573,21 @@ func hiveManualSearchPansou(ctx context.Context, c *gin.Context, keywords []stri
 		}
 		resp, err := client.Do(req)
 		if err != nil {
+			searchFailed++
 			continue
 		}
+		searched++
 		var result struct {
 			Total        int                        `json:"total"`
 			MergedByType map[string]json.RawMessage `json:"merged_by_type"`
 		}
 		decErr := json.NewDecoder(resp.Body).Decode(&result)
 		resp.Body.Close()
-		if decErr != nil || len(result.MergedByType) == 0 {
+		if decErr != nil {
+			searchFailed++
+			continue
+		}
+		if len(result.MergedByType) == 0 {
 			continue
 		}
 		for _, raw := range result.MergedByType {
@@ -615,6 +623,10 @@ func hiveManualSearchPansou(ctx context.Context, c *gin.Context, keywords []stri
 		}
 	}
 	if len(items) == 0 {
+		if searched == 0 || searchFailed >= searched {
+			writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "pansou", Status: "error", Message: "盘搜服务连接失败，请检查服务地址"})
+			return
+		}
 		writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "pansou", Status: "error", Message: "盘搜未返回结果"})
 		return
 	}
