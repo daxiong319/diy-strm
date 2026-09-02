@@ -136,10 +136,6 @@ const AppCloudSubscription = createAsyncRouteComponent(
   'AppCloudSubscription',
   () => import('@/components/cloud/CloudSubscription.vue'),
 )
-const AppCloudPlaceholder = createAsyncRouteComponent(
-  'AppCloudPlaceholder',
-  () => import('@/components/cloud/CloudPlaceholder.vue'),
-)
 const AppHiveSubscription = createAsyncRouteComponent(
   'AppHiveSubscription',
   () => import('@/components/cloud/HiveSubscription.vue'),
@@ -778,24 +774,6 @@ const routes = [
     },
   },
   {
-    path: '/cloud-123/tasks',
-    name: 'cloud-123-tasks',
-    component: AppCloudPlaceholder,
-    props: {
-      sourceName: '123 云盘',
-      title: '转存任务',
-      description: '该功能开发中。当前转存任务可前往「传输」页面查看下载队列，或通过 Telegram 发送分享链接直接转存。',
-      related: [{ name: '下载队列', path: '/download-queue' }],
-    },
-    meta: {
-      title: '转存任务',
-      requiresAuth: true,
-      parent: 'cloud-123',
-      icon: 'List',
-      showInMenu: true,
-    },
-  },
-  {
     path: '/cloud-123/organize',
     name: 'cloud-123-organize',
     component: AppCloudAutoOrganize,
@@ -805,24 +783,6 @@ const routes = [
       requiresAuth: true,
       parent: 'cloud-123',
       icon: 'Operation',
-      showInMenu: true,
-    },
-  },
-  {
-    path: '/cloud-123/scrape',
-    name: 'cloud-123-scrape',
-    component: AppCloudPlaceholder,
-    props: {
-      sourceName: '123 云盘',
-      title: 'MP 刮削推送',
-      description: '该功能开发中。后续将支持转存后自动刮削并推送到 MoviePilot / Emby。',
-      related: [{ name: '刮削记录', path: '/scrape-records' }],
-    },
-    meta: {
-      title: 'MP 刮削推送',
-      requiresAuth: true,
-      parent: 'cloud-123',
-      icon: 'Film',
       showInMenu: true,
     },
   },
@@ -864,24 +824,6 @@ const routes = [
     },
   },
   {
-    path: '/cloud-guangyapan/tasks',
-    name: 'cloud-guangyapan-tasks',
-    component: AppCloudPlaceholder,
-    props: {
-      sourceName: '光鸭云盘',
-      title: '转存任务',
-      description: '该功能开发中。当前转存任务可前往「传输」页面查看下载队列，或通过 Telegram 发送分享链接直接转存。',
-      related: [{ name: '下载队列', path: '/download-queue' }],
-    },
-    meta: {
-      title: '转存任务',
-      requiresAuth: true,
-      parent: 'cloud-guangyapan',
-      icon: 'List',
-      showInMenu: true,
-    },
-  },
-  {
     path: '/cloud-guangyapan/organize',
     name: 'cloud-guangyapan-organize',
     component: AppCloudAutoOrganize,
@@ -891,24 +833,6 @@ const routes = [
       requiresAuth: true,
       parent: 'cloud-guangyapan',
       icon: 'Operation',
-      showInMenu: true,
-    },
-  },
-  {
-    path: '/cloud-guangyapan/scrape',
-    name: 'cloud-guangyapan-scrape',
-    component: AppCloudPlaceholder,
-    props: {
-      sourceName: '光鸭云盘',
-      title: 'MP 刮削推送',
-      description: '该功能开发中。后续将支持转存后自动刮削并推送到 MoviePilot / Emby。',
-      related: [{ name: '刮削记录', path: '/scrape-records' }],
-    },
-    meta: {
-      title: 'MP 刮削推送',
-      requiresAuth: true,
-      parent: 'cloud-guangyapan',
-      icon: 'Film',
       showInMenu: true,
     },
   },
@@ -950,24 +874,6 @@ const routes = [
     },
   },
   {
-    path: '/cloud-pan139/tasks',
-    name: 'cloud-pan139-tasks',
-    component: AppCloudPlaceholder,
-    props: {
-      sourceName: '移动云盘',
-      title: '转存任务',
-      description: '该功能开发中。当前转存任务可前往「传输」页面查看下载队列，或通过 Telegram 发送分享链接直接转存。',
-      related: [{ name: '下载队列', path: '/download-queue' }],
-    },
-    meta: {
-      title: '转存任务',
-      requiresAuth: true,
-      parent: 'cloud-pan139',
-      icon: 'List',
-      showInMenu: true,
-    },
-  },
-  {
     path: '/cloud-pan139/organize',
     name: 'cloud-pan139-organize',
     component: AppCloudAutoOrganize,
@@ -977,24 +883,6 @@ const routes = [
       requiresAuth: true,
       parent: 'cloud-pan139',
       icon: 'Operation',
-      showInMenu: true,
-    },
-  },
-  {
-    path: '/cloud-pan139/scrape',
-    name: 'cloud-pan139-scrape',
-    component: AppCloudPlaceholder,
-    props: {
-      sourceName: '移动云盘',
-      title: 'MP 刮削推送',
-      description: '该功能开发中。后续将支持转存后自动刮削并推送到 MoviePilot / Emby。',
-      related: [{ name: '刮削记录', path: '/scrape-records' }],
-    },
-    meta: {
-      title: 'MP 刮削推送',
-      requiresAuth: true,
-      parent: 'cloud-pan139',
-      icon: 'Film',
       showInMenu: true,
     },
   },
