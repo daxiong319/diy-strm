@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"diy-strm/internal/db"
-	"diy-strm/internal/helpers"
 	"diy-strm/internal/hdhive"
+	"diy-strm/internal/helpers"
 	"diy-strm/internal/models"
 )
 
@@ -34,27 +34,27 @@ func StartHiveWatcher(ctx context.Context) {
 			}
 		}()
 		time.Sleep(15 * time.Second) // 避开服务启动高峰
-	if models.GetHiveEnabled() && models.GetHiveTimedSearchEnabled() {
-		runAllHiveSubscriptions()
-	} else {
-		helpers.AppLogger.Infof("影巢订阅引擎：定时搜索未启用（影巢搜索=%v，定时搜索=%v），仅保留手动触发", models.GetHiveEnabled(), models.GetHiveTimedSearchEnabled())
-	}
-	for {
-		interval := time.Duration(models.GetHivePollInterval()) * time.Minute
-		if interval < hiveWatchMinInterval {
-			interval = hiveWatchMinInterval
+		if models.GetHiveEnabled() && models.GetHiveTimedSearchEnabled() {
+			runAllHiveSubscriptions()
+		} else {
+			helpers.AppLogger.Infof("影巢订阅引擎：定时搜索未启用（影巢搜索=%v，定时搜索=%v），仅保留手动触发", models.GetHiveEnabled(), models.GetHiveTimedSearchEnabled())
 		}
-		select {
-		case <-ctx.Done():
-			helpers.AppLogger.Infof("影巢订阅引擎已停止")
-			return
-		case <-time.After(interval):
-			if models.GetHiveEnabled() && models.GetHiveTimedSearchEnabled() {
-				runAllHiveSubscriptions()
+		for {
+			interval := time.Duration(models.GetHivePollInterval()) * time.Minute
+			if interval < hiveWatchMinInterval {
+				interval = hiveWatchMinInterval
+			}
+			select {
+			case <-ctx.Done():
+				helpers.AppLogger.Infof("影巢订阅引擎已停止")
+				return
+			case <-time.After(interval):
+				if models.GetHiveEnabled() && models.GetHiveTimedSearchEnabled() {
+					runAllHiveSubscriptions()
+				}
 			}
 		}
-	}
-}()
+	}()
 	helpers.AppLogger.Infof("影巢订阅引擎已启动，轮询间隔 %d 分钟（可在影巢设置中修改）", models.GetHivePollInterval())
 }
 
@@ -361,6 +361,11 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Sprintf("解锁积分 %d 超过上限 %d，跳过", res.UnlockPoints, maxPts), meta)
 			continue
 		}
+		// 全局每日自动解锁次数上限（U2，0=不限；达标后本轮不再解锁转存）
+		if limit := models.GetHiveUnlockDailyLimit(); limit > 0 && hiveUnlockDailyCountNow() >= limit {
+			helpers.AppLogger.Infof("影巢订阅 #%d：今日自动解锁已达上限 %d，剩余候选下轮处理", sub.ID, limit)
+			break
+		}
 		// 解锁（先取解锁节流许可，再走通道降级调用）
 		if uerr := hdhive.AcquireUnlock(ctx); uerr != nil {
 			errs = append(errs, fmt.Sprintf("解锁节流等待失败：%v", uerr))
@@ -403,6 +408,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Errorf("%s", failMsg), meta)
 			continue
 		}
+		hiveUnlockDailyInc() // U2：成功解锁计数（积分不足/失败不计数）
 		var unlock hdhive.UnlockResult
 		if err := json.Unmarshal(unlockResp.Data, &unlock); err != nil {
 			errs = append(errs, fmt.Sprintf("%s 解锁结果解析失败", res.Slug))
@@ -741,4 +747,38 @@ func hiveEnsureSubdir(ctx context.Context, panType, parentDir, subName string) (
 		return "", fmt.Errorf("不支持的网盘类型：%s", panType)
 	}
 	return full, nil
+}
+
+// ---------------------------------------------------------------------------
+// 全局每日自动解锁计数（U2：解锁限额，进程内计数按日期重置）
+// ---------------------------------------------------------------------------
+
+var hiveUnlockDaily struct {
+	sync.Mutex
+	date string
+	n    int
+}
+
+// hiveUnlockDailyCountNow 返回今日已成功解锁次数（跨日期自动复位）
+func hiveUnlockDailyCountNow() int {
+	now := time.Now().Format("2006-01-02")
+	hiveUnlockDaily.Lock()
+	defer hiveUnlockDaily.Unlock()
+	if hiveUnlockDaily.date != now {
+		hiveUnlockDaily.date = now
+		hiveUnlockDaily.n = 0
+	}
+	return hiveUnlockDaily.n
+}
+
+// hiveUnlockDailyInc 今日成功解锁计数 +1（跨日期自动复位）
+func hiveUnlockDailyInc() {
+	now := time.Now().Format("2006-01-02")
+	hiveUnlockDaily.Lock()
+	defer hiveUnlockDaily.Unlock()
+	if hiveUnlockDaily.date != now {
+		hiveUnlockDaily.date = now
+		hiveUnlockDaily.n = 0
+	}
+	hiveUnlockDaily.n++
 }

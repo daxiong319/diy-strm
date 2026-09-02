@@ -58,6 +58,8 @@ func runAllAutoOrganizeOnce(ctx context.Context) {
 			return
 		default:
 		}
+		// 定时违规扫描（P1-2）：按账号配置的 cron 触发，到点扫描已整理库并可选连带洗版整理
+		maybeRunWashScanScheduled(ctx, &cfg)
 		runAutoOrganizeForConfig(ctx, &cfg)
 	}
 }

@@ -266,7 +266,7 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 		return errMediaUnrecognized
 	}
 
-	officialTitle, tmdbID, tmdbYear, categoryName, err := lookupTmdbMediaWithRules(ctx, media, *rules)
+	officialTitle, tmdbID, tmdbYear, categoryName, tmdbScore, err := lookupTmdbMediaWithRules(ctx, media, *rules)
 	if err != nil {
 		recordSkipped(account, *entry, sourcePath, media.Category, media.Title, media.Year, media.Season, media.Episode, 0, "", "TMDB 未找到匹配结果："+err.Error(), extra)
 		return fmt.Errorf("%w：%v", errMediaUnrecognized, err)
@@ -280,6 +280,27 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 		recordSkipped(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "", "媒体信息不完整，无法构建目标目录", extra)
 		return fmt.Errorf("%w：媒体信息不完整", errMediaUnrecognized)
 	}
+	newQ := ParseQualityFromName(entry.Name)
+
+	// 入库前置过滤（P2-1/P2-3）
+	// 屏蔽词：命中垃圾词表的资源（广告/特典/PV 类）不整理，源文件保留原位
+	if word := matchWashWords(cfg.BlockedWords, entry.Name, media.Title, officialTitle); word != "" {
+		msg := fmt.Sprintf("命中屏蔽词「%s」，不收录", word)
+		result.Details = append(result.Details, fmt.Sprintf("屏蔽词过滤跳过：%s（%s）", entry.Name, msg))
+		_ = models.AddWashLog(&models.WashLog{AccountID: cfg.AccountID, Action: "filter_blocked", TargetPath: relDir, Title: officialTitle, MediaType: media.Category, SeasonNum: media.Season, EpisodeNum: media.Episode, TMDBID: tmdbID, NewName: entry.Name, Message: msg, EventTime: time.Now()})
+		recordSkipped(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, msg, "", extra)
+		return nil
+	}
+	// 定制词：仅注入命名模板 customization 变量（供用户模板使用），不拦整理
+	customWord := matchWashWords(cfg.CustomizationWords, entry.Name, media.Title, officialTitle)
+	// 同名低分过滤：TMDB 评分低于阈值的内容不收录（参考 symedia v1.0.30.2 低分<3 过滤）
+	if cfg.MinTMDBScore > 0 && tmdbScore > 0 && tmdbScore < cfg.MinTMDBScore {
+		msg := fmt.Sprintf("TMDB 评分 %.1f 低于阈值 %.1f，不收录", tmdbScore, cfg.MinTMDBScore)
+		result.Details = append(result.Details, fmt.Sprintf("TMDB 低分过滤跳过：%s（%s）", entry.Name, msg))
+		_ = models.AddWashLog(&models.WashLog{AccountID: cfg.AccountID, Action: "score_filter", TargetPath: relDir, Title: officialTitle, MediaType: media.Category, SeasonNum: media.Season, EpisodeNum: media.Episode, TMDBID: tmdbID, NewName: entry.Name, Message: msg, EventTime: time.Now()})
+		recordSkipped(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, msg, "", extra)
+		return nil
+	}
 
 	// 重复/洗版检测：目标影片目录（不含 Season 段）已存在
 	baseRel := relDir
@@ -288,16 +309,26 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 	}
 	baseFull := strings.TrimRight(organizedRoot, "/") + "/" + baseRel
 	existingBaseID, findErr := findRemoteDirID(ctx, account, baseFull)
-	if findErr == nil && existingBaseID != "" {
-		if !cfg.Overwrite {
-			result.SkippedOverwrite++
-			result.Details = append(result.Details, fmt.Sprintf("目标已存在且非洗版模式，跳过：%s → %s", entry.Name, baseRel))
-			recordSkipped(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "目标已存在且非洗版模式，跳过（保留现有版本）", "", extra)
-			return nil
-		}
+
+	// 追更模式提示（P2-3）：剧集已有整理目录 → 记录追更日志（新增集数正常入库）
+	if cfg.TrackRenewal && existingBaseID != "" && media.Category == "tv" {
+		_ = models.AddWashLog(&models.WashLog{AccountID: cfg.AccountID, Action: "renewal_tip", TargetPath: baseRel, Title: officialTitle, MediaType: "tv", SeasonNum: media.Season, EpisodeNum: media.Episode, TMDBID: tmdbID, NewName: entry.Name, Message: fmt.Sprintf("追更到第 %d 集", media.Episode), EventTime: time.Now()})
+	}
+
+	// 非洗版模式：目标已存在 → 跳过（保留现有版本，不删除任何旧文件）
+	if findErr == nil && existingBaseID != "" && !cfg.Overwrite && !cfg.WashCompare {
+		result.SkippedOverwrite++
+		result.Details = append(result.Details, fmt.Sprintf("目标已存在且非洗版模式，跳过：%s → %s", entry.Name, baseRel))
+		recordSkipped(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "目标已存在且非洗版模式，跳过（保留现有版本）", "", extra)
+		return nil
+	}
+	// 旧版「整目录覆盖」兼容：开启 Overwrite 但显式关闭更优才覆盖 →
+	// 仅当用户明确关闭 WashCompare 时才整目录替换（保留历史行为，且记洗版日志）
+	if findErr == nil && existingBaseID != "" && cfg.Overwrite && !cfg.WashCompare {
 		removed := deleteVideosUnderDir(ctx, account, existingBaseID)
-		result.Details = append(result.Details, fmt.Sprintf("洗版删除旧文件 %d 个：%s", removed, baseRel))
+		result.Details = append(result.Details, fmt.Sprintf("整目录覆盖删除旧文件 %d 个：%s", removed, baseRel))
 		extra["replace"] = true
+		_ = models.AddWashLog(&models.WashLog{AccountID: cfg.AccountID, Action: "wash_legacy_full", TargetPath: baseRel, Title: officialTitle, MediaType: media.Category, SeasonNum: media.Season, EpisodeNum: media.Episode, TMDBID: tmdbID, OldName: "整目录", NewName: entry.Name, NewQuality: newQ.Summary(), Message: fmt.Sprintf("整目录覆盖（更优才覆盖已关闭）：删除旧文件 %d 个", removed), EventTime: time.Now()})
 	}
 
 	targetDirID, err := ensureOrganizeDirInternal(ctx, account, organizedRoot, relDir, dirCache)
@@ -305,7 +336,31 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 		recordFailed(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "创建目标目录失败："+err.Error(), extra)
 		return fmt.Errorf("创建目标目录 %s 失败：%v", relDir, err)
 	}
-	newName := buildAutoOrganizeNewName(media.Category, officialTitle, media.Season, media.Episode, year, entry.Name)
+	newName := buildAutoOrganizeNewNameEx(cfg, media.Category, officialTitle, media.Season, media.Episode, year, tmdbID, entry.Name, customWord, newQ)
+
+	// 更优才覆盖（P0-1/P0-2/P0-3）：仅在目标影片目录已存在时比较
+	// 「同片同名/同集（忽略扩展名与质量后缀）」的旧文件；新文件质量更优才覆盖，
+	// 否则不做任何删除，按 loser_source_action 处置来源文件（默认保留在待整理目录）。
+	if cfg.WashCompare && existingBaseID != "" {
+		oldEntries, lErr := listNetDirByID(ctx, account, targetDirID)
+		if lErr != nil {
+			helpers.AppLogger.Warnf("洗版比较：列出目标目录失败（账号 %d）：%s：%v", cfg.AccountID, relDir, lErr)
+		} else if len(oldEntries) > 0 {
+			decision := washCompareAndApply(ctx, account, cfg, entry, media, officialTitle, year, tmdbID, relDir, newName, newQ, oldEntries)
+			for _, t := range decision.treatments {
+				result.Details = append(result.Details, t)
+			}
+			if !decision.proceed {
+				msg := decision.skipMessage
+				if msg == "" {
+					msg = "新版本质量不高于现版本，跳过"
+				}
+				result.Details = append(result.Details, msg)
+				recordSkipped(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, msg, "", extra)
+				return nil
+			}
+		}
+	}
 	newName = resolveNameConflict(ctx, account, targetDirID, newName)
 
 	if err := moveNetdiskFileInternal(account, entry.ID, entry.ParentID, targetDirID); err != nil {

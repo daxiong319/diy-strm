@@ -274,6 +274,126 @@
       </div>
     </section>
 
+    <!-- 区块：签到与限额（S1 随机窗口 / S2 refresh 提醒 / U2 解锁限额） -->
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">签到与限额</h3>
+        <p class="mv-sec-desc">影巢每日签到（主/子账号）随机时间窗口、refresh token 到期提醒、每日解锁积分限额</p>
+      </div>
+      <div class="mv-sec-body">
+        <div class="mv-fields">
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>主账号每天签到</span>
+              <el-switch v-model="form.daily_checkin_enabled" />
+            </div>
+            <p class="mv-field-desc">开启后主账号每日随机窗口内自动签到（失败自动重试 3 次）。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>主账号签到窗口</span>
+              <el-time-picker
+                v-model="mainWin"
+                is-range
+                value-format="HH:mm"
+                start-placeholder="开始 HH:MM"
+                end-placeholder="结束 HH:MM"
+                range-separator="至"
+                :clearable="true"
+                class="mv-time-range"
+                @change="(v: [string, string] | null) => applyWindow('main', v)"
+              />
+            </div>
+            <p class="mv-field-desc">在窗口内随机选一个时间点签到（避免固定时间触发风控）；留空则用「主账号签到小时」整点策略。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>主账号签到小时</span>
+              <el-input-number v-model="form.daily_checkin_hour" :min="0" :max="23" controls-position="right" class="mv-num" />
+              <span class="mv-unit">时</span>
+            </div>
+            <p class="mv-field-desc">未配置随机窗口时的固定签到小时。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>子账号每天签到</span>
+              <el-switch v-model="form.sub_checkin_enabled" />
+            </div>
+            <p class="mv-field-desc">开启后子账号每日随机窗口内自动签到（失败自动重试 3 次）。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>子账号签到窗口</span>
+              <el-time-picker
+                v-model="subWin"
+                is-range
+                value-format="HH:mm"
+                start-placeholder="开始 HH:MM"
+                end-placeholder="结束 HH:MM"
+                range-separator="至"
+                :clearable="true"
+                class="mv-time-range"
+                @change="(v: [string, string] | null) => applyWindow('sub', v)"
+              />
+            </div>
+            <p class="mv-field-desc">子账号随机签到窗口；留空则用「子账号签到小时」整点策略。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>子账号签到小时</span>
+              <el-input-number v-model="form.sub_checkin_hour" :min="0" :max="23" controls-position="right" class="mv-num" />
+              <span class="mv-unit">时</span>
+            </div>
+            <p class="mv-field-desc">未配置随机窗口时的固定签到小时。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>refresh token 到期提醒</span>
+              <el-input-number v-model="form.refresh_remind_days" :min="0" :max="30" controls-position="right" class="mv-num" />
+              <span class="mv-unit">天</span>
+            </div>
+            <p class="mv-field-desc">refresh token 剩余有效期小于该天数时发送系统通知提醒重新授权。0 表示关闭提醒。</p>
+          </div>
+          <div class="mv-field">
+            <div class="mv-field-label">
+              <span>每日解锁积分限额</span>
+              <el-input-number v-model="form.unlock_daily_limit" :min="0" :max="1000" controls-position="right" class="mv-num" />
+              <span class="mv-unit">积分</span>
+            </div>
+            <p class="mv-field-desc">每天所有影巢解锁消耗积分累计达到该值后停止当日解锁；0 表示不限额。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 区块：订阅默认参数模板（U1） -->
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">订阅默认参数模板</h3>
+        <p class="mv-sec-desc">新建影巢订阅时预填的默认参数（JSON）；也可在订阅页单独修改每条订阅</p>
+      </div>
+      <div class="mv-sec-body">
+        <div class="mv-fields">
+          <div class="mv-field mv-field-wide">
+            <div class="mv-field-label">
+              <span>电影订阅默认参数</span>
+              <el-button link type="primary" size="small" @click="fillDefaultsMovie">填入默认</el-button>
+            </div>
+            <el-input v-model="form.subscription_defaults_movie" type="textarea" :rows="5" class="mv-text mono" placeholder="{}" />
+            <p class="mv-field-desc">字段：resolution / effect / search_sources / include_regex / exclude_regex / target_path / media_server 等。</p>
+          </div>
+          <div class="mv-field mv-field-wide">
+            <div class="mv-field-label">
+              <span>剧集订阅默认参数</span>
+              <el-button link type="primary" size="small" @click="fillDefaultsTv">填入默认</el-button>
+            </div>
+            <el-input v-model="form.subscription_defaults_tv" type="textarea" :rows="5" class="mv-text mono" placeholder="{}" />
+            <p class="mv-field-desc">同上；剧集订阅可另配 season_num / episode_num。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- 附加：四通道负载均衡 -->
     <section class="mv-sec">
       <div class="mv-sec-head">
@@ -406,8 +526,71 @@ const form = reactive({
   pansou_base_url: '',
   pansou_username: '',
   pansou_password: '',
+  // 签到（S1）
+  daily_checkin_enabled: true,
+  daily_checkin_hour: 8,
+  sub_checkin_enabled: true,
+  sub_checkin_hour: 8,
+  // S1 签到随机窗口（HH:MM，留空=按小时策略）
+  checkin_window_start: '',
+  checkin_window_end: '',
+  sub_checkin_window_start: '',
+  sub_checkin_window_end: '',
+  // S2 refresh token 到期提醒
+  refresh_remind_days: 3,
+  // U2 解锁每日限额
+  unlock_daily_limit: 0,
+  // U1 订阅默认参数模板（JSON 文本）
+  subscription_defaults_movie: '',
+  subscription_defaults_tv: '',
 })
 const pansouPasswordSet = ref(false)
+
+// 签到窗口双向：el-time-picker 的 is-range 值 ⇄ form 的 start/end 字符串
+const mainWin = ref<[string, string] | null>(null)
+const subWin = ref<[string, string] | null>(null)
+const applyWindow = (which: 'main' | 'sub', v: [string, string] | null) => {
+  const [s, e] = v && v.length === 2 ? [v[0], v[1]] : ['', '']
+  if (which === 'main') {
+    form.checkin_window_start = s
+    form.checkin_window_end = e
+  } else {
+    form.sub_checkin_window_start = s
+    form.sub_checkin_window_end = e
+  }
+}
+
+const DEFAULT_DEFAULTS_MOVIE = `{
+  "resolution": "1080p",
+  "effect": "默认",
+  "search_sources": ["symedia", "nanshare", "pansou", "official"],
+  "include_regex": "",
+  "exclude_regex": "",
+  "target_path": "",
+  "media_server": ""
+}`
+const DEFAULT_DEFAULTS_TV = `{
+  "resolution": "1080p",
+  "effect": "默认",
+  "search_sources": ["symedia", "nanshare", "pansou", "official"],
+  "include_regex": "",
+  "exclude_regex": "",
+  "target_path": "",
+  "media_server": ""
+}`
+const fillDefaultsMovie = () => {
+  form.subscription_defaults_movie = DEFAULT_DEFAULTS_MOVIE
+}
+const fillDefaultsTv = () => {
+  form.subscription_defaults_tv = DEFAULT_DEFAULTS_TV
+}
+const readWindow = (s: string, e: string): [string, string] | null => {
+  if (!s && !e) return null
+  // value-format 输出 HH:mm，后端保存时自动补秒；回传时若为完整时间取前 5 位
+  const ss = s.length > 5 ? s.slice(0, 5) : s
+  const ee = e.length > 5 ? e.slice(0, 5) : e
+  return [ss, ee]
+}
 
 // 变更追踪
 const base = ref('')
@@ -451,6 +634,24 @@ const load = async (silent = false) => {
       form.pansou_base_url = d.pansou_base_url || ''
       form.pansou_username = d.pansou_username || ''
       pansouPasswordSet.value = d.pansou_password_set === true
+      // 签到（S1）
+      form.daily_checkin_enabled = d.daily_checkin_enabled !== false
+      form.daily_checkin_hour = d.daily_checkin_hour >= 0 ? d.daily_checkin_hour : 8
+      form.sub_checkin_enabled = d.sub_checkin_enabled !== false
+      form.sub_checkin_hour = d.sub_checkin_hour >= 0 ? d.sub_checkin_hour : 8
+      // S1/S2/U2/U1
+      form.checkin_window_start = d.checkin_window_start || ''
+      form.checkin_window_end = d.checkin_window_end || ''
+      form.sub_checkin_window_start = d.sub_checkin_window_start || ''
+      form.sub_checkin_window_end = d.sub_checkin_window_end || ''
+      form.refresh_remind_days = d.refresh_remind_days ?? 3
+      form.unlock_daily_limit = d.unlock_daily_limit ?? 0
+      form.subscription_defaults_movie =
+        typeof d.subscription_defaults_movie === 'string' ? d.subscription_defaults_movie : JSON.stringify(d.subscription_defaults_movie ?? {}, null, 2)
+      form.subscription_defaults_tv =
+        typeof d.subscription_defaults_tv === 'string' ? d.subscription_defaults_tv : JSON.stringify(d.subscription_defaults_tv ?? {}, null, 2)
+      mainWin.value = readWindow(form.checkin_window_start, form.checkin_window_end)
+      subWin.value = readWindow(form.sub_checkin_window_start, form.sub_checkin_window_end)
       base.value = JSON.stringify(form)
       dirty.value = false
     } else {
@@ -463,10 +664,51 @@ const load = async (silent = false) => {
   }
 }
 
+const validTimeWindow = (s: string, label: string): boolean => {
+  if (!s) return true
+  if (!/^\d{2}:\d{2}$/.test(s)) {
+    ElMessage.warning(`${label}格式应为 HH:MM，如 20:30`)
+    return false
+  }
+  const [h, m] = s.split(':').map(Number)
+  if (h < 0 || h > 23 || m < 0 || m > 59) {
+    ElMessage.warning(`${label}时间越界：${s}`)
+    return false
+  }
+  return true
+}
+
+const normalizeDefaultsJson = (s: string): string | null => {
+  const t = s.trim()
+  if (!t) return ''
+  try {
+    const obj = JSON.parse(t)
+    return JSON.stringify(obj)
+  } catch (err: any) {
+    ElMessage.warning(err?.message || '订阅默认参数 JSON 格式不正确')
+    return null
+  }
+}
+
 const save = async () => {
+  if (!validTimeWindow(form.checkin_window_start, '主账号签到窗口开始') ||
+      !validTimeWindow(form.checkin_window_end, '主账号签到窗口结束') ||
+      !validTimeWindow(form.sub_checkin_window_start, '子账号签到窗口开始') ||
+      !validTimeWindow(form.sub_checkin_window_end, '子账号签到窗口结束')) {
+    return
+  }
+  const defaultsMovie = normalizeDefaultsJson(form.subscription_defaults_movie)
+  if (defaultsMovie === null) return
+  const defaultsTv = normalizeDefaultsJson(form.subscription_defaults_tv)
+  if (defaultsTv === null) return
   saveState.value = 'saving'
   try {
-    const resp = await http.post('/api/cloud/hive/settings', { ...form })
+    const resp = await http.post('/api/cloud/hive/settings', {
+      ...form,
+      subscription_defaults_movie: defaultsMovie,
+      subscription_defaults_tv: defaultsTv,
+      pansou_password: form.pansou_password || undefined,
+    })
     if (resp.data?.code === 200) {
       base.value = JSON.stringify(form)
       dirty.value = false
@@ -743,31 +985,9 @@ onMounted(async () => {
   flex-direction: column;
   gap: 16px;
   padding-bottom: 72px;
-}
-.mv-sec {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--surface);
-}
-.mv-sec-head {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-soft);
-}
-.mv-sec-title {
-  font-size: 14px;
-  font-weight: 600;
-}
-.mv-sec-desc {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
-.mv-sec-body {
-  padding: 14px 16px;
-}
-.mv-sec-disabled {
-  opacity: 0.75;
+  max-width: 1300px;
+  margin: 0 auto;
+  width: 100%;
 }
 .mv-pansou-warn {
   display: flex;
@@ -838,57 +1058,17 @@ onMounted(async () => {
   gap: 6px;
   flex-shrink: 0;
 }
-.mv-fields {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 14px 24px;
-}
-@media (min-width: 1280px) {
-  .mv-fields {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-.mv-field {
-  min-width: 0;
-}
-.mv-field-wide {
-  grid-column: span 1;
-}
-@media (min-width: 1280px) {
-  .mv-field-wide {
-    grid-column: span 2;
-  }
-}
-.mv-field-label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  font-weight: 500;
-  flex-wrap: wrap;
-}
-.mv-field-desc {
-  font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.5;
-  margin-top: 4px;
-}
-.mv-num {
-  width: 140px;
-}
 .mv-unit {
   font-size: 12px;
   color: var(--text-muted);
 }
-.mv-text {
-  flex: 1;
-  min-width: 200px;
-}
-.mv-select {
-  width: 220px;
-}
-.mv-table {
+.mv-time-range {
   width: 100%;
+  max-width: 340px;
+}
+.mono :deep(textarea) {
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 .chan-name {
   font-weight: 500;

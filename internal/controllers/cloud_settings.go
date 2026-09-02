@@ -1,4 +1,4 @@
-﻿package controllers
+package controllers
 
 import (
 	"context"
@@ -356,8 +356,10 @@ func RunSubscriptionAPI(c *gin.Context) {
 // 与 tgto123 一致：自动签到（主/子账号的开关/时间/模式）、订阅引擎轮询间隔、解锁积分上限。
 func GetHiveSettingsAPI(c *gin.Context) {
 	throttle := models.GetHiveTransferThrottle()
+	checkinWinStart, checkinWinEnd := models.GetHiveCheckinWindow()
+	subWinStart, subWinEnd := models.GetHiveSubCheckinWindow()
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "查询成功", Data: gin.H{
-		"poll_interval":        models.GetHivePollInterval(),
+		"poll_interval":         models.GetHivePollInterval(),
 		"daily_checkin_enabled": models.GetHiveCheckinEnabled(),
 		"daily_checkin_mode":    models.GetHiveCheckinMode(),
 		"daily_checkin_hour":    models.GetHiveCheckinHour(),
@@ -374,18 +376,18 @@ func GetHiveSettingsAPI(c *gin.Context) {
 		"transfer_jitter":       int(models.GetHiveTransferThrottle().Jitter.Seconds()),
 		"slug_max_attempts":     models.GetHiveSlugMaxAttempts(),
 		// 影巢搜索与订阅引擎（对齐 mediavault resource_search）
-		"hive_enabled":             models.GetHiveEnabled(),
-		"timed_search_enabled":     models.GetHiveTimedSearchEnabled(),
-		"search_transfer":          models.GetHiveSearchTransfer(),
-		"auto_unlock":              models.GetHiveAutoUnlock(),
-		"transfer_use_subdir":      models.GetHiveUseSubdir(),
-		"transfer_media":           models.GetHiveTransferMedia(),
-		"transfer_subtitle":        models.GetHiveTransferSubtitle(),
-		"transfer_non_media":       models.GetHiveTransferNonMedia(),
-		"run_batch_size":           models.GetHiveRunBatchSize(),
-		"tv_completion_grace_days": models.GetHiveTVCompletionGraceDays(),
-		"sync_library":             models.GetHiveSyncLibrary(),
-		"sync_wait":                models.GetHiveSyncWait(),
+		"hive_enabled":                models.GetHiveEnabled(),
+		"timed_search_enabled":        models.GetHiveTimedSearchEnabled(),
+		"search_transfer":             models.GetHiveSearchTransfer(),
+		"auto_unlock":                 models.GetHiveAutoUnlock(),
+		"transfer_use_subdir":         models.GetHiveUseSubdir(),
+		"transfer_media":              models.GetHiveTransferMedia(),
+		"transfer_subtitle":           models.GetHiveTransferSubtitle(),
+		"transfer_non_media":          models.GetHiveTransferNonMedia(),
+		"run_batch_size":              models.GetHiveRunBatchSize(),
+		"tv_completion_grace_days":    models.GetHiveTVCompletionGraceDays(),
+		"sync_library":                models.GetHiveSyncLibrary(),
+		"sync_wait":                   models.GetHiveSyncWait(),
 		"subscription_defaults_movie": models.GetHiveSubscriptionDefaults("movie"),
 		"subscription_defaults_tv":    models.GetHiveSubscriptionDefaults("tv"),
 		// pansou 盘搜（对齐 mediavault pansou 设置；password 只回传是否已设置）
@@ -393,6 +395,13 @@ func GetHiveSettingsAPI(c *gin.Context) {
 		"pansou_base_url":     models.GetHivePansouBaseURL(),
 		"pansou_username":     models.GetHivePansouUsername(),
 		"pansou_password_set": models.GetHivePansouPassword() != "",
+		// S1 签到随机窗口 / S2 refresh 到期提醒 / U2 解锁限额
+		"checkin_window_start":     checkinWinStart,
+		"checkin_window_end":       checkinWinEnd,
+		"sub_checkin_window_start": subWinStart,
+		"sub_checkin_window_end":   subWinEnd,
+		"refresh_remind_days":      models.GetHiveRefreshRemindDays(),
+		"unlock_daily_limit":       models.GetHiveUnlockDailyLimit(),
 	}})
 }
 
@@ -417,25 +426,32 @@ func SetHiveSettingsAPI(c *gin.Context) {
 		TransferJitter      *int   `json:"transfer_jitter"`
 		SlugMaxAttempts     *int   `json:"slug_max_attempts"`
 		// 影巢搜索与订阅引擎（对齐 mediavault resource_search）
-		HiveEnabled         *bool  `json:"hive_enabled"`
-		TimedSearchEnabled  *bool  `json:"timed_search_enabled"`
-		SearchTransfer      *bool  `json:"search_transfer"`
-		AutoUnlock          *bool  `json:"auto_unlock"`
-		UseSubdir           *bool  `json:"transfer_use_subdir"`
-		TransferMedia       *bool  `json:"transfer_media"`
-		TransferSubtitle    *bool  `json:"transfer_subtitle"`
-		TransferNonMedia    *bool  `json:"transfer_non_media"`
-		RunBatchSize        *int   `json:"run_batch_size"`
-		GraceDays           *int   `json:"tv_completion_grace_days"`
-		SyncLibrary         *bool  `json:"sync_library"`
-		SyncWait            *int   `json:"sync_wait"`
-		DefaultsMovie       string `json:"subscription_defaults_movie"`
-		DefaultsTV          string `json:"subscription_defaults_tv"`
+		HiveEnabled        *bool  `json:"hive_enabled"`
+		TimedSearchEnabled *bool  `json:"timed_search_enabled"`
+		SearchTransfer     *bool  `json:"search_transfer"`
+		AutoUnlock         *bool  `json:"auto_unlock"`
+		UseSubdir          *bool  `json:"transfer_use_subdir"`
+		TransferMedia      *bool  `json:"transfer_media"`
+		TransferSubtitle   *bool  `json:"transfer_subtitle"`
+		TransferNonMedia   *bool  `json:"transfer_non_media"`
+		RunBatchSize       *int   `json:"run_batch_size"`
+		GraceDays          *int   `json:"tv_completion_grace_days"`
+		SyncLibrary        *bool  `json:"sync_library"`
+		SyncWait           *int   `json:"sync_wait"`
+		DefaultsMovie      string `json:"subscription_defaults_movie"`
+		DefaultsTV         string `json:"subscription_defaults_tv"`
 		// pansou 盘搜（password 留空=保持原密码，不改动）
 		PansouEnabled  *bool  `json:"pansou_enabled"`
 		PansouBaseURL  string `json:"pansou_base_url"`
 		PansouUsername string `json:"pansou_username"`
 		PansouPassword string `json:"pansou_password"`
+		// S1 签到随机窗口（空=恢复 daily_checkin_hour 小时策略）/ S2 refresh 到期提醒 / U2 解锁限额
+		CheckinWindowStart    string `json:"checkin_window_start"`
+		CheckinWindowEnd      string `json:"checkin_window_end"`
+		SubCheckinWindowStart string `json:"sub_checkin_window_start"`
+		SubCheckinWindowEnd   string `json:"sub_checkin_window_end"`
+		RefreshRemindDays     *int   `json:"refresh_remind_days"`
+		UnlockDailyLimit      *int   `json:"unlock_daily_limit"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error(), Data: nil})
@@ -622,6 +638,37 @@ func SetHiveSettingsAPI(c *gin.Context) {
 	if err := models.SaveHivePansouSettings(req.PansouEnabled, req.PansouBaseURL, req.PansouUsername, req.PansouPassword); err != nil {
 		c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存盘搜设置失败：" + err.Error(), Data: nil})
 		return
+	}
+	// S1 签到随机窗口（空值=恢复 daily_checkin_hour 小时策略，由 getter 回落）
+	if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveCheckinWindowStart, strings.TrimSpace(req.CheckinWindowStart)); err != nil {
+		c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存签到窗口失败：" + err.Error(), Data: nil})
+		return
+	}
+	if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveCheckinWindowEnd, strings.TrimSpace(req.CheckinWindowEnd)); err != nil {
+		c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存签到窗口失败：" + err.Error(), Data: nil})
+		return
+	}
+	if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveSubCheckinWindowStart, strings.TrimSpace(req.SubCheckinWindowStart)); err != nil {
+		c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存子账号签到窗口失败：" + err.Error(), Data: nil})
+		return
+	}
+	if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveSubCheckinWindowEnd, strings.TrimSpace(req.SubCheckinWindowEnd)); err != nil {
+		c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存子账号签到窗口失败：" + err.Error(), Data: nil})
+		return
+	}
+	// S2 refresh token 到期提醒天数（0=关闭）
+	if req.RefreshRemindDays != nil && *req.RefreshRemindDays >= 0 && *req.RefreshRemindDays <= 30 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveRefreshRemindDays, strconv.Itoa(*req.RefreshRemindDays)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存到期提醒设置失败：" + err.Error(), Data: nil})
+			return
+		}
+	}
+	// U2 全局每日自动解锁次数上限（0=不限）
+	if req.UnlockDailyLimit != nil && *req.UnlockDailyLimit >= 0 && *req.UnlockDailyLimit <= 1000 {
+		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveUnlockDailyLimit, strconv.Itoa(*req.UnlockDailyLimit)); err != nil {
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存解锁限额设置失败：" + err.Error(), Data: nil})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "影巢设置已保存", Data: nil})
 }

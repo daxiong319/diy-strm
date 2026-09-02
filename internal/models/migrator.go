@@ -72,6 +72,11 @@ func Migrate() {
 	if err := db.Db.AutoMigrate(&HiveOAuthAccount{}); err != nil {
 		helpers.AppLogger.Errorf("自动迁移影巢账号签到统计列失败：%v", err)
 	}
+	// 洗版清单/洗版日志/签到历史表（幂等创建，兼容既有库升级）
+	db.Db.Statement.PrepareStmt = true
+	if err := db.Db.AutoMigrate(&WashScanItem{}, &WashLog{}, &HiveCheckinRecord{}); err != nil {
+		helpers.AppLogger.Errorf("自动迁移洗版与签到记录表失败：%v", err)
+	}
 	db.Db.Statement.PrepareStmt = true
 	if migrator.VersionCode == 1 {
 		// 数据库版本低于最大版本，需要升级

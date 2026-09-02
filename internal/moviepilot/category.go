@@ -263,15 +263,15 @@ func getCategoryRules() categoryRules {
 }
 
 // lookupTmdbMedia 对已解析媒体执行 TMDB 校验并确定分类：
-// 返回 TMDB 官方标题（当前语言）、TMDB ID、TMDB 年份、分类名。
+// 返回 TMDB 官方标题（当前语言）、TMDB ID、TMDB 年份、分类名、TMDB 评分（vote_average）。
 // 分类策略使用 MoviePilot 全局配置；TMDB 校验失败返回错误（由调用方按无法识别处理）。
-func lookupTmdbMedia(ctx context.Context, media *IdentifyResult) (officialTitle string, tmdbID int64, tmdbYear int, categoryName string, err error) {
+func lookupTmdbMedia(ctx context.Context, media *IdentifyResult) (officialTitle string, tmdbID int64, tmdbYear int, categoryName string, tmdbScore float64, err error) {
 	return lookupTmdbMediaWithRules(ctx, media, getCategoryRules())
 }
 
 // lookupTmdbMediaWithRules 与 lookupTmdbMedia 相同，但分类策略由调用方指定
 // （自动整理功能每个云盘账号可单独配置分类策略 yaml）。
-func lookupTmdbMediaWithRules(ctx context.Context, media *IdentifyResult, rules categoryRules) (officialTitle string, tmdbID int64, tmdbYear int, categoryName string, err error) {
+func lookupTmdbMediaWithRules(ctx context.Context, media *IdentifyResult, rules categoryRules) (officialTitle string, tmdbID int64, tmdbYear int, categoryName string, tmdbScore float64, err error) {
 	isMovie := media.Category != "tv"
 	client := models.GlobalScrapeSettings.GetTmdbClient()
 	lang := models.GlobalScrapeSettings.GetTmdbLanguage()
@@ -295,6 +295,7 @@ func lookupTmdbMediaWithRules(ctx context.Context, media *IdentifyResult, rules 
 				if checkYear <= 0 {
 					checkYear = media.Year
 				}
+				tmdbScore = detail.SearchMovie.VoteAverage
 			} else {
 				helpers.AppLogger.Warnf("自动整理：TMDB 按 ID 查电影详情失败（%d）：%v，回退名称搜索", media.TmdbId, dErr)
 			}
@@ -310,6 +311,7 @@ func lookupTmdbMediaWithRules(ctx context.Context, media *IdentifyResult, rules 
 				if checkYear <= 0 {
 					checkYear = media.Year
 				}
+				tmdbScore = detail.SearchTv.VoteAverage
 			} else {
 				helpers.AppLogger.Warnf("自动整理：TMDB 按 ID 查剧集详情失败（%d）：%v，回退名称搜索", media.TmdbId, dErr)
 			}
@@ -328,7 +330,17 @@ func lookupTmdbMediaWithRules(ctx context.Context, media *IdentifyResult, rules 
 			if err == nil {
 				err = fmt.Errorf("TMDB 校验失败")
 			}
-			return "", 0, 0, "", err
+			return "", 0, 0, "", 0, err
+		}
+		// 名称搜索命中后补拉评分（复用于低分过滤/洗版比较）
+		if isMovie {
+			if detail, dErr := client.GetMovieDetail(checkID, lang); dErr == nil && detail != nil {
+				tmdbScore = detail.SearchMovie.VoteAverage
+			}
+		} else {
+			if detail, dErr := client.GetTvDetail(checkID, lang); dErr == nil && detail != nil {
+				tmdbScore = detail.SearchTv.VoteAverage
+			}
 		}
 	}
 
@@ -349,7 +361,7 @@ func lookupTmdbMediaWithRules(ctx context.Context, media *IdentifyResult, rules 
 			categoryName = rules.matchTv(detail)
 		}
 	}
-	return checkName, checkID, checkYear, categoryName, nil
+	return checkName, checkID, checkYear, categoryName, tmdbScore, nil
 }
 
 // fallbackCategory 无配置时兜底分类名

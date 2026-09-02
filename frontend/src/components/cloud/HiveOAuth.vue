@@ -1,191 +1,359 @@
 <template>
-  <div class="main-content-container cloud-page">
+  <div class="mv-page mv-page-wide">
     <!-- 主渠道（symedia 中转，优先调度） -->
-    <el-card shadow="never" class="cloud-card">
-      <template #header>
-        <div class="card-header">
-          <span>主渠道</span>
-          <div class="header-actions">
-            <el-tag size="small" :type="channelHealth.symedia === 0 ? 'success' : 'danger'">
-              主渠道{{ channelHealth.symedia === 0 ? '正常' : `连续失败 ${channelHealth.symedia} 次` }}
-            </el-tag>
-          </div>
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">
+          主渠道
+          <el-tag v-if="main.authorized" size="small" type="success" effect="plain" disable-transitions>已授权</el-tag>
+          <el-tag v-else size="small" type="warning" effect="plain" disable-transitions>未授权</el-tag>
+        </h3>
+        <div class="mv-sec-actions">
+          <el-tag size="small" :type="channelHealth.symedia === 0 ? 'success' : 'danger'">
+            主渠道{{ channelHealth.symedia === 0 ? '正常' : `连续失败 ${channelHealth.symedia} 次` }}
+          </el-tag>
+          <el-button v-if="!main.authorized" size="small" type="primary" :loading="authing" @click="openAuth()">授权</el-button>
+          <el-button size="small" :loading="refreshing" @click="refreshMain">刷新状态</el-button>
         </div>
-      </template>
-
-      <el-alert
-        type="info"
-        :closable="false"
-        class="cloud-alert"
-        title="资源查询优先走主渠道；主渠道超时或故障时自动切换备用渠道。授权前请先到 hdhive.com 注册影巢账号。"
-        show-icon
-      />
-
-      <div v-if="mainLoading" class="loading-box">
-        <el-skeleton :rows="3" animated />
       </div>
+      <div class="mv-sec-body">
+        <p class="mv-note" style="margin-bottom: 12px">
+          资源查询优先走主渠道；主渠道超时或故障时自动切换备用渠道。授权前请先到 hdhive.com 注册影巢账号。
+        </p>
 
-      <template v-else>
-        <!-- 未授权 -->
-        <template v-if="!main.authorized">
-          <el-empty description="尚未完成授权" :image-size="80">
-            <el-button type="primary" :loading="authing" @click="openAuth()">授权</el-button>
-            <el-button :loading="refreshing" @click="refreshMain">刷新状态</el-button>
-          </el-empty>
-        </template>
-
-        <!-- 已授权：用户快照 -->
-        <template v-else>
-          <el-descriptions :column="2" border class="user-snapshot">
-            <el-descriptions-item label="账号">
-              {{ main.user?.nickname || main.user?.username || '-' }}
-            </el-descriptions-item>
-            <el-descriptions-item label="等级">
-              {{ main.user?.level || '-' }}
-              <el-tag v-if="main.user?.is_forever_vip" size="small" type="warning" class="vip-tag">终身VIP</el-tag>
-            </el-descriptions-item>
-            <el-descriptions-item label="积分">{{ formatNum(main.user?.points) }}</el-descriptions-item>
-            <el-descriptions-item label="签到">
-              {{ main.user?.checked_in_today ? '已签到' : '未签到' }}（累计 {{ main.user?.checkin_days_total || 0 }} 天）
-            </el-descriptions-item>
-            <el-descriptions-item label="周免费额度">
-              {{ main.user?.weekly_free_quota_unlimited ? '不限' : formatQuota(main.user) }}
-            </el-descriptions-item>
-            <el-descriptions-item label="奖励额度">{{ formatNum(main.user?.bonus_quota) }}</el-descriptions-item>
-            <el-descriptions-item label="分享数">{{ main.user?.share_num ?? '-' }}</el-descriptions-item>
-          </el-descriptions>
-
-          <div class="action-row">
-            <el-radio-group v-model="checkinMode" size="default">
-              <el-radio-button value="daily">普通签到</el-radio-button>
-              <el-radio-button value="gamble">赌狗签到</el-radio-button>
-            </el-radio-group>
-            <el-button type="primary" :loading="checkining" @click="doCheckin()">立即签到</el-button>
-            <el-button :loading="refreshing" @click="refreshMain">刷新状态</el-button>
-          </div>
-        </template>
-
-        <div v-if="main.last_checkin_at" class="checkin-result">
-          上次签到：{{ formatTime(main.last_checkin_at) }} ·
-          <span :class="main.last_checkin_ok ? 'ok' : 'fail'">
-            {{ main.last_checkin_ok ? '成功' : '失败' }}：{{ main.last_checkin_message }}
-          </span>
+        <div v-if="mainLoading" class="loading-box">
+          <el-skeleton :rows="3" animated />
         </div>
-      </template>
-    </el-card>
+
+        <template v-else>
+          <template v-if="!main.authorized">
+            <div class="mv-empty">
+              尚未完成授权
+              <div style="margin-top: 12px">
+                <el-button type="primary" :loading="authing" @click="openAuth()">授权</el-button>
+                <el-button :loading="refreshing" @click="refreshMain">刷新状态</el-button>
+              </div>
+            </div>
+          </template>
+
+          <template v-else>
+            <!-- token 到期提醒（S2） -->
+            <div class="mv-token-row">
+              <span v-if="refreshExpireText(main)" :class="refreshExpireTone(main)">
+                <el-icon style="margin-right: 4px"><AlarmClock /></el-icon>
+                Refresh Token 将于 {{ refreshExpireText(main) }} 到期{{ refreshExpireUrgent(main) ? '，请尽快重新授权' : '' }}
+              </span>
+              <span v-else class="mv-note">Refresh Token 有效期未知（无关通道或未返回）</span>
+            </div>
+
+            <!-- 用户快照 hero -->
+            <div class="mv-hero">
+              <div class="mv-stat tone-primary">
+                <span class="mv-stat-num">{{ formatNum(main.user?.points) }}</span>
+                <span class="mv-stat-label">积分</span>
+              </div>
+              <div class="mv-stat tone-info">
+                <span class="mv-stat-num">{{ main.user?.checked_in_today ? '已签到' : '未签到' }}</span>
+                <span class="mv-stat-label">今日签到（累计 {{ main.user?.checkin_days_total || 0 }} 天）</span>
+              </div>
+              <div class="mv-stat tone-warn">
+                <span class="mv-stat-num">{{ main.user?.weekly_free_quota_unlimited ? '不限' : formatQuota(main.user) }}</span>
+                <span class="mv-stat-label">周免费额度</span>
+              </div>
+              <div class="mv-stat tone-success">
+                <span class="mv-stat-num">{{ formatNum(main.user?.bonus_quota) }}</span>
+                <span class="mv-stat-label">奖励额度</span>
+              </div>
+            </div>
+
+            <div class="mv-toolbar" style="margin-top: 14px">
+              <div style="display: flex; align-items: center; gap: 8px">
+                <span class="mv-note">签到方式：</span>
+                <el-radio-group v-model="checkinMode" size="small">
+                  <el-radio-button value="daily">普通签到</el-radio-button>
+                  <el-radio-button value="gamble">赌狗签到</el-radio-button>
+                </el-radio-group>
+              </div>
+              <div style="flex: 1"></div>
+              <el-button type="primary" :loading="checkining" @click="doCheckin()">立即签到</el-button>
+              <el-button :loading="refreshing" @click="refreshMain">刷新状态</el-button>
+            </div>
+
+            <div v-if="main.last_checkin_at" class="checkin-result">
+              上次签到：{{ formatTime(main.last_checkin_at) }} · 连续 {{ main.last_checkin_streak || 0 }} 天 ·
+              <span :class="main.last_checkin_ok ? 'ok' : 'fail'">
+                {{ main.last_checkin_ok ? '成功' : '失败' }}：{{ main.last_checkin_message }}
+              </span>
+              <template v-if="main.last_checkin_points !== undefined && main.last_checkin_points !== null">
+                · 本次 +{{ main.last_checkin_points }} 积分，余额 {{ main.last_checkin_balance }}
+              </template>
+            </div>
+          </template>
+        </template>
+      </div>
+    </section>
 
     <!-- 备用渠道（tgtodrive 中转） -->
-    <el-card shadow="never" class="cloud-card sub-card">
-      <template #header>
-        <div class="card-header">
-          <span>备用渠道</span>
-          <div class="header-actions">
-            <el-tag size="small" :type="channelHealth.tgtodrive === 0 ? 'success' : 'danger'">
-              备用渠道{{ channelHealth.tgtodrive === 0 ? '正常' : `连续失败 ${channelHealth.tgtodrive} 次` }}
-            </el-tag>
-          </div>
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">
+          备用渠道
+          <el-tag v-if="backup.authorized" size="small" type="success" effect="plain" disable-transitions>已授权</el-tag>
+          <el-tag v-else size="small" type="warning" effect="plain" disable-transitions>未授权</el-tag>
+        </h3>
+        <div class="mv-sec-actions">
+          <el-tag size="small" :type="channelHealth.tgtodrive === 0 ? 'success' : 'danger'">
+            备用渠道{{ channelHealth.tgtodrive === 0 ? '正常' : `连续失败 ${channelHealth.tgtodrive} 次` }}
+          </el-tag>
+          <el-button v-if="!backup.authorized" size="small" type="primary" :loading="backupAuthing" @click="openBackupAuth()">授权</el-button>
+          <el-button size="small" :loading="backupRefreshing" @click="refreshBackup">刷新状态</el-button>
         </div>
-      </template>
-
-      <el-alert
-        type="info"
-        :closable="false"
-        class="cloud-alert"
-        title="主渠道超时或故障时自动切换备用渠道，不影响订阅与签到。"
-        show-icon
-      />
-
-      <div v-if="backupLoading" class="loading-box">
-        <el-skeleton :rows="3" animated />
       </div>
+      <div class="mv-sec-body">
+        <p class="mv-note" style="margin-bottom: 12px">主渠道超时或故障时自动切换备用渠道，不影响订阅与签到。</p>
 
-      <template v-else>
-        <!-- 未授权 -->
-        <template v-if="!backup.authorized">
-          <el-empty description="尚未完成授权" :image-size="80">
-            <el-button type="primary" :loading="backupAuthing" @click="openBackupAuth()">授权</el-button>
-            <el-button :loading="backupRefreshing" @click="refreshBackup">刷新状态</el-button>
-          </el-empty>
-        </template>
+        <div v-if="backupLoading" class="loading-box">
+          <el-skeleton :rows="3" animated />
+        </div>
 
-        <!-- 已授权：用户快照 -->
         <template v-else>
-          <el-descriptions :column="2" border class="user-snapshot">
-            <el-descriptions-item label="账号">
-              {{ backup.user?.nickname || backup.user?.username || '-' }}
-            </el-descriptions-item>
-            <el-descriptions-item label="等级">
-              {{ backup.user?.level || '-' }}
-              <el-tag v-if="backup.user?.is_forever_vip" size="small" type="warning" class="vip-tag">终身VIP</el-tag>
-            </el-descriptions-item>
-            <el-descriptions-item label="积分">{{ formatNum(backup.user?.points) }}</el-descriptions-item>
-            <el-descriptions-item label="签到">
-              {{ backup.user?.checked_in_today ? '已签到' : '未签到' }}（累计 {{ backup.user?.checkin_days_total || 0 }} 天）
-            </el-descriptions-item>
-          </el-descriptions>
+          <template v-if="!backup.authorized">
+            <div class="mv-empty">
+              尚未完成授权
+              <div style="margin-top: 12px">
+                <el-button type="primary" :loading="backupAuthing" @click="openBackupAuth()">授权</el-button>
+                <el-button :loading="backupRefreshing" @click="refreshBackup">刷新状态</el-button>
+              </div>
+            </div>
+          </template>
 
-          <div class="action-row">
-            <el-button type="primary" :loading="backupCheckining" @click="doBackupCheckin()">立即签到</el-button>
-            <el-button :loading="backupRefreshing" @click="refreshBackup">刷新状态</el-button>
-          </div>
+          <template v-else>
+            <div class="mv-token-row">
+              <span v-if="refreshExpireText(backup)" :class="refreshExpireTone(backup)">
+                <el-icon style="margin-right: 4px"><AlarmClock /></el-icon>
+                Refresh Token 将于 {{ refreshExpireText(backup) }} 到期{{ refreshExpireUrgent(backup) ? '，请尽快重新授权' : '' }}
+              </span>
+            </div>
+
+            <div class="mv-hero" style="margin-top: 8px">
+              <div class="mv-stat tone-primary">
+                <span class="mv-stat-num">{{ formatNum(backup.user?.points) }}</span>
+                <span class="mv-stat-label">积分</span>
+              </div>
+              <div class="mv-stat tone-info">
+                <span class="mv-stat-num">{{ backup.user?.checked_in_today ? '已签到' : '未签到' }}</span>
+                <span class="mv-stat-label">今日签到（累计 {{ backup.user?.checkin_days_total || 0 }} 天）</span>
+              </div>
+            </div>
+
+            <div class="mv-toolbar" style="margin-top: 14px">
+              <div style="flex: 1"></div>
+              <el-button type="primary" :loading="backupCheckining" @click="doBackupCheckin()">立即签到</el-button>
+              <el-button :loading="backupRefreshing" @click="refreshBackup">刷新状态</el-button>
+            </div>
+
+            <div v-if="backup.last_checkin_at" class="checkin-result">
+              上次签到：{{ formatTime(backup.last_checkin_at) }} · 连续 {{ backup.last_checkin_streak || 0 }} 天 ·
+              <span :class="backup.last_checkin_ok ? 'ok' : 'fail'">
+                {{ backup.last_checkin_ok ? '成功' : '失败' }}：{{ backup.last_checkin_message }}
+              </span>
+            </div>
+          </template>
         </template>
-      </template>
-    </el-card>
+      </div>
+    </section>
 
     <!-- 子账号管理 -->
-    <el-card shadow="never" class="cloud-card sub-card">
-      <template #header>
-        <div class="card-header">
-          <span>子账号</span>
-          <div class="header-actions">
-            <el-button size="small" :loading="checkinAllLoading" @click="checkinAll">全部签到</el-button>
-            <el-button size="small" type="primary" @click="showAdd = true">新增子账号</el-button>
-          </div>
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">子账号</h3>
+        <div class="mv-sec-actions">
+          <el-button size="small" :loading="checkinAllLoading" @click="checkinAll">全部签到</el-button>
+          <el-button size="small" type="primary" @click="showAdd = true">新增子账号</el-button>
         </div>
-      </template>
+      </div>
+      <div class="mv-sec-body">
+        <div class="mv-table-wrap">
+          <table class="mv-table">
+            <thead>
+              <tr>
+                <th>标签</th>
+                <th>状态</th>
+                <th>账号</th>
+                <th>签到</th>
+                <th>启用</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in subs" :key="row.id">
+                <td>{{ row.label }}</td>
+                <td>
+                  <el-tag :type="row.authorized ? 'success' : 'info'" size="small">
+                    {{ row.authorized ? '已授权' : '未授权' }}
+                  </el-tag>
+                </td>
+                <td>
+                  <span style="display: inline-flex; align-items: center">
+                    <img v-if="row.user?.avatar_url" :src="row.user.avatar_url" class="avatar" alt="" />
+                    {{ row.user?.nickname || row.user?.username || '-' }}
+                  </span>
+                </td>
+                <td>
+                  <span v-if="row.last_checkin_at" :class="row.last_checkin_ok ? 'ok' : 'fail'">
+                    {{ formatTime(row.last_checkin_at) }} {{ row.last_checkin_ok ? '成功' : '失败' }}
+                    <template v-if="row.last_checkin_streak">（连签 {{ row.last_checkin_streak }} 天）</template>
+                  </span>
+                  <span v-else>-</span>
+                </td>
+                <td>
+                  <el-switch :model-value="row.enabled" @change="(v: any) => toggleEnabled(row, v)" />
+                </td>
+                <td>
+                  <el-button v-if="!row.authorized" size="small" type="primary" link @click="openSubAuth(row)">授权</el-button>
+                  <el-button size="small" link @click="refreshSub(row)">刷新</el-button>
+                  <el-button size="small" link @click="doCheckin(row)">签到</el-button>
+                  <el-button size="small" link type="danger" @click="removeSub(row)">删除</el-button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-if="!subs.length" class="mv-empty">暂无子账号，点击「新增子账号」创建</div>
+      </div>
+    </section>
 
-      <el-table :data="subs" v-loading="subsLoading" size="default" empty-text="暂无子账号，点击「新增子账号」创建">
-        <el-table-column prop="label" label="标签" min-width="100" />
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag :type="row.authorized ? 'success' : 'info'" size="small">
-              {{ row.authorized ? '已授权' : '未授权' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="账号" min-width="140">
-          <template #default="{ row }">
-            <span class="cell-user">
-              <img v-if="row.user?.avatar_url" :src="row.user.avatar_url" class="avatar" alt="" />
-              {{ row.user?.nickname || row.user?.username || '-' }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="签到" min-width="160">
-          <template #default="{ row }">
-            <span v-if="row.last_checkin_at" :class="row.last_checkin_ok ? 'ok' : 'fail'">
-              {{ formatTime(row.last_checkin_at) }} {{ row.last_checkin_ok ? '成功' : '失败' }}
-            </span>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="启用" width="70">
-          <template #default="{ row }">
-            <el-switch :model-value="row.enabled" @change="(v: any) => toggleEnabled(row, v)" />
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
-          <template #default="{ row }">
-            <el-button v-if="!row.authorized" size="small" type="primary" link @click="openSubAuth(row)">
-              授权
-            </el-button>
-            <el-button size="small" link @click="refreshSub(row)">刷新</el-button>
-            <el-button size="small" link @click="doCheckin(row)">签到</el-button>
-            <el-button size="small" link type="danger" @click="removeSub(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+    <!-- 每日自动签到配置 -->
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">
+          每日自动签到
+          <span class="mv-pill mv-pill-primary">随机窗口</span>
+        </h3>
+      </div>
+      <div class="mv-sec-body">
+        <p class="mv-note" style="margin-bottom: 12px">
+          开启后每天在指定时段内为影巢账号随机签到取积分（随机分钟落在选定时段前 30 分钟内）；失败自动重试，同一天只签到一次。
+        </p>
+
+        <div class="checkin-config-row">
+          <div class="checkin-config-label">主账号</div>
+          <el-switch v-model="checkinForm.main_enabled" />
+          <el-time-select
+            v-model="checkinForm.main_time"
+            :disabled="!checkinForm.main_enabled"
+            start="00:00"
+            end="23:00"
+            step="01:00"
+            format="HH:00"
+            placeholder="选择签到时间"
+            class="checkin-time-picker"
+          />
+          <el-radio-group v-model="checkinForm.main_mode" :disabled="!checkinForm.main_enabled" size="small">
+            <el-radio-button value="daily">普通签到</el-radio-button>
+            <el-radio-button value="gamble">赌狗签到</el-radio-button>
+          </el-radio-group>
+        </div>
+
+        <div class="checkin-config-row">
+          <div class="checkin-config-label">子账号</div>
+          <el-switch v-model="checkinForm.sub_enabled" />
+          <el-time-select
+            v-model="checkinForm.sub_time"
+            :disabled="!checkinForm.sub_enabled"
+            start="00:00"
+            end="23:00"
+            step="01:00"
+            format="HH:00"
+            placeholder="选择签到时间"
+            class="checkin-time-picker"
+          />
+          <el-radio-group v-model="checkinForm.sub_mode" :disabled="!checkinForm.sub_enabled" size="small">
+            <el-radio-button value="daily">普通签到</el-radio-button>
+            <el-radio-button value="gamble">赌狗签到</el-radio-button>
+          </el-radio-group>
+        </div>
+
+        <p class="mv-note" style="margin-top: 8px">
+          更精确的随机签到窗口（HH:MM ~ HH:MM，自定义跨度）请在「影巢设置 → 签到与限额」中配置；此处保存后将沿用小时级策略。
+        </p>
+
+        <div class="checkin-config-save">
+          <el-button size="small" :loading="checkinSaving" @click="saveCheckinSettings">保存签到设置</el-button>
+          <span v-if="checkinSaved" class="checkin-saved-hint">已保存</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 签到历史（S3） -->
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">
+          签到历史
+          <span class="mv-pill mv-pill-muted">每账号保留最近 500 条</span>
+        </h3>
+        <div class="mv-sec-actions">
+          <el-select v-model="historyAccountId" size="small" style="width: 160px" @change="loadHistory">
+            <el-option label="全部账号" :value="0" />
+            <el-option
+              v-for="acc in historyAccounts"
+              :key="acc.key"
+              :label="acc.label"
+              :value="acc.key as number"
+            />
+          </el-select>
+          <el-button size="small" @click="loadHistory">刷新</el-button>
+          <el-button size="small" link type="danger" @click="clearHistory">清空</el-button>
+        </div>
+      </div>
+      <div class="mv-sec-body">
+        <div class="mv-table-wrap">
+          <table class="mv-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>账号</th>
+                <th>通道</th>
+                <th>方式</th>
+                <th>结果</th>
+                <th>积分</th>
+                <th>余额</th>
+                <th>连签</th>
+                <th>触发</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in history" :key="r.id" :class="{ 'mv-row-dim': !r.ok }">
+                <td><span class="mv-note">{{ formatTime(r.checkin_at) }}</span></td>
+                <td>{{ r.label }}<span v-if="r.is_main" class="mv-pill mv-pill-primary" style="margin-left: 4px">主</span></td>
+                <td>{{ channelLabel(r.channel) }}</td>
+                <td>{{ r.mode === 'gamble' ? '赌狗' : '普通' }}</td>
+                <td>
+                  <span v-if="r.ok" class="ok">成功</span>
+                  <span v-else class="fail">失败</span>
+                </td>
+                <td>
+                  <span v-if="r.points !== null && r.points !== undefined" :class="r.points >= 0 ? 'ok' : 'fail'">
+                    {{ r.points >= 0 ? '+' : '' }}{{ r.points }}
+                  </span>
+                  <span v-else class="mv-note">-</span>
+                </td>
+                <td>{{ r.balance ?? '-' }}</td>
+                <td>{{ r.streak || '-' }}</td>
+                <td>
+                  <span class="mv-pill mv-pill-muted">{{ triggerLabel(r.trigger) }}</span>
+                </td>
+                <td>
+                  <span class="mv-note" style="max-width: 320px; word-break: break-all">{{ r.message || '-' }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-if="!history.length" class="mv-empty">暂无签到记录（完成一次签到后产生）</div>
+      </div>
+    </section>
 
     <!-- 新增子账号对话框 -->
     <el-dialog v-model="showAdd" title="新增子账号" width="420px">
@@ -199,71 +367,13 @@
         <el-button type="primary" :loading="adding" @click="addSub">创建</el-button>
       </template>
     </el-dialog>
-
-    <!-- 每日自动签到配置 -->
-    <el-card shadow="never" class="cloud-card">
-      <template #header>
-        <div class="card-header">每日自动签到</div>
-      </template>
-      <el-alert
-        type="info"
-        :closable="false"
-        class="cloud-alert"
-        title="开启后每天在指定时间自动为影巢账号签到，获取积分。加上随机分钟会落在选定时段的前 30 分钟内。"
-        show-icon
-      />
-
-      <!-- 主账号 -->
-      <div class="checkin-config-row">
-        <div class="checkin-config-label">主账号</div>
-        <el-switch v-model="checkinForm.main_enabled" />
-        <el-time-select
-          v-model="checkinForm.main_time"
-          :disabled="!checkinForm.main_enabled"
-          start="00:00"
-          end="23:00"
-          step="01:00"
-          format="HH:00"
-          placeholder="选择签到时间"
-          class="checkin-time-picker"
-        />
-        <el-radio-group v-model="checkinForm.main_mode" :disabled="!checkinForm.main_enabled" size="small">
-          <el-radio-button value="daily">普通签到</el-radio-button>
-          <el-radio-button value="gamble">赌狗签到</el-radio-button>
-        </el-radio-group>
-      </div>
-
-      <!-- 子账号 -->
-      <div class="checkin-config-row">
-        <div class="checkin-config-label">子账号</div>
-        <el-switch v-model="checkinForm.sub_enabled" />
-        <el-time-select
-          v-model="checkinForm.sub_time"
-          :disabled="!checkinForm.sub_enabled"
-          start="00:00"
-          end="23:00"
-          step="01:00"
-          format="HH:00"
-          placeholder="选择签到时间"
-          class="checkin-time-picker"
-        />
-        <el-radio-group v-model="checkinForm.sub_mode" :disabled="!checkinForm.sub_enabled" size="small">
-          <el-radio-button value="daily">普通签到</el-radio-button>
-          <el-radio-button value="gamble">赌狗签到</el-radio-button>
-        </el-radio-group>
-      </div>
-
-      <div class="checkin-config-save">
-        <el-button size="small" :loading="checkinSaving" @click="saveCheckinSettings">保存签到设置</el-button>
-        <span v-if="checkinSaved" class="checkin-saved-hint">已保存</span>
-      </div>
-    </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { AlarmClock } from '@element-plus/icons-vue'
 import { useHttpClient } from '@/http/client'
 
 const http = useHttpClient()
@@ -370,7 +480,7 @@ const doCheckin = async (row?: any) => {
     if (row) payload.account_id = row.id
     const resp = await http.post(url, payload)
     ElMessage.info(resp.data?.message || '签到完成')
-    await Promise.all([loadMain(), loadSubs()])
+    await Promise.all([loadMain(), loadSubs(), loadHistory()])
   } catch (e: any) {
     ElMessage.error('签到失败：' + (e?.message || ''))
   } finally {
@@ -433,6 +543,7 @@ const refreshBackup = async () => {
     const resp = await http.post('/api/cloud/hive/oauth/refresh')
     ElMessage.info(resp.data?.message || '已刷新')
     await loadBackup()
+    await loadHistory()
   } catch (e: any) {
     ElMessage.error('刷新失败：' + (e?.message || ''))
   } finally {
@@ -446,11 +557,36 @@ const doBackupCheckin = async () => {
     const resp = await http.post('/api/cloud/hive/oauth/checkin', { mode: checkinMode.value })
     ElMessage.info(resp.data?.message || '签到完成')
     await loadBackup()
+    await loadHistory()
   } catch (e: any) {
     ElMessage.error('签到失败：' + (e?.message || ''))
   } finally {
     backupCheckining.value = false
   }
+}
+
+// ---- token 到期（S2） ----
+const refreshExpireText = (acc: any): string => {
+  if (!acc?.refresh_expires_at) return ''
+  const t = new Date(acc.refresh_expires_at)
+  if (isNaN(t.getTime())) return ''
+  const days = Math.ceil((t.getTime() - Date.now()) / 86400000)
+  if (days < 0) return '已过期'
+  if (days <= 1) {
+    const h = Math.max(1, Math.ceil((t.getTime() - Date.now()) / 3600000))
+    return `${h} 小时后`
+  }
+  return `${days} 天后`
+}
+const refreshExpireUrgent = (acc: any): boolean => {
+  if (!acc?.refresh_expires_at) return false
+  const t = new Date(acc.refresh_expires_at)
+  if (isNaN(t.getTime())) return false
+  return t.getTime() - Date.now() < 7 * 86400000
+}
+const refreshExpireTone = (acc: any): string => {
+  if (refreshExpireUrgent(acc)) return 'token-urgent'
+  return 'token-ok'
 }
 
 // ---- 子账号 ----
@@ -508,6 +644,7 @@ const refreshSub = async (row: any) => {
     const resp = await http.post(`/api/cloud/hive/sub-accounts/${row.id}/refresh`)
     ElMessage.info(resp.data?.message || '已刷新')
     await loadSubs()
+    await loadHistory()
   } catch (e: any) {
     ElMessage.error('刷新失败：' + (e?.message || ''))
   }
@@ -529,7 +666,7 @@ const checkinAll = async () => {
   try {
     const resp = await http.post('/api/cloud/hive/oauth/checkin-all', { mode: checkinMode.value })
     ElMessage.success(resp.data?.message || '全部签到完成')
-    await Promise.all([loadMain(), loadBackup(), loadSubs()])
+    await Promise.all([loadMain(), loadBackup(), loadSubs(), loadHistory()])
   } catch (e: any) {
     ElMessage.error('批量签到失败：' + (e?.message || ''))
   } finally {
@@ -603,11 +740,95 @@ const saveCheckinSettings = async () => {
   }
 }
 
+// ---- 签到历史（S3） ----
+interface CheckinRecord {
+  id: number
+  account_id: number
+  label: string
+  is_main: boolean
+  channel: string
+  mode: string
+  ok: boolean
+  points: number | null
+  balance: number | null
+  streak: number
+  trigger: string
+  message: string
+  checkin_at: string
+}
+
+const history = ref<CheckinRecord[]>([])
+const historyAccountId = ref(0)
+
+// 账号筛选下拉：主/备用渠道 + 子账号
+const historyAccounts = computed(() => {
+  const seen = new Set<number>()
+  const list: { key: number; label: string }[] = []
+  const push = (id: number, label: string) => {
+    if (!id || seen.has(id)) return
+    seen.add(id)
+    list.push({ key: id, label })
+  }
+  if (main?.id) push(main.id, '主渠道')
+  if (backup?.id && backup.id !== main?.id) push(backup.id, '备用渠道')
+  for (const s of subs.value) push(s.id, s.label || '小号')
+  return list
+})
+
+const loadHistory = async () => {
+  try {
+    const resp = await http.get('/api/cloud/hive/checkin/records', {
+      params: { account_id: historyAccountId.value || undefined, limit: 200 },
+    })
+    if (resp.data?.code === 200) {
+      history.value = resp.data.data || []
+    }
+  } catch (e: any) {
+    ElMessage.error('加载签到历史失败：' + (e?.message || ''))
+  }
+}
+
+const clearHistory = async () => {
+  try {
+    await ElMessageBox.confirm('确定清空签到历史吗？', '清空历史', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    const resp = await http.delete('/api/cloud/hive/checkin/records', {
+      params: { account_id: historyAccountId.value || undefined },
+    })
+    ElMessage.success(resp.data?.message || '已清空')
+    history.value = []
+  } catch (e: any) {
+    ElMessage.error('清空失败：' + (e?.message || ''))
+  }
+}
+
+const channelLabel = (ch: string) => {
+  const map: Record<string, string> = {
+    symedia: '主渠道',
+    tgtodrive: '备用渠道',
+    nanshare: '南巷',
+    official: '官方',
+  }
+  return map[ch] || ch
+}
+
+const triggerLabel = (t: string) => {
+  const map: Record<string, string> = {
+    manual: '手动',
+    daily: '定时',
+    catchup: '补签',
+    retry: '重试',
+  }
+  return map[t] || t
+}
+
 // ---- 工具 ----
 const formatNum = (v: any) => {
   if (v === undefined || v === null) return '-'
-  const n = Number(v)
-  return Number.isInteger(n) ? String(n) : String(n)
+  return String(Number(v))
 }
 
 const formatQuota = (u: any) => {
@@ -624,34 +845,32 @@ const formatTime = (t?: string) => {
   return t.replace('T', ' ').slice(0, 16)
 }
 
-onMounted(() => {
-  loadMain()
-  loadBackup()
-  loadSubs()
-  loadCheckinSettings()
+onMounted(async () => {
+  await Promise.all([loadMain(), loadBackup(), loadSubs(), loadCheckinSettings()])
+  loadHistory()
 })
 </script>
 
 <style scoped>
-.cloud-page {
-  padding: 12px;
+.loading-box {
+  padding: 8px 0;
 }
-.cloud-card {
-  border-radius: 8px;
-  margin-bottom: 16px;
+.ok {
+  color: var(--success, var(--el-color-success));
+  font-weight: 500;
 }
-.card-header {
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.fail {
+  color: var(--danger, var(--el-color-danger));
+  font-weight: 500;
 }
-.nickname {
-  font-weight: 400;
-  color: var(--el-text-color-secondary);
+.checkin-result {
+  margin-top: 12px;
   font-size: 13px;
-  display: inline-flex;
-  align-items: center;
+  color: var(--text-muted, var(--el-text-color-secondary));
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft, var(--el-border-color-lighter));
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface-sunken, transparent);
 }
 .avatar {
   width: 22px;
@@ -660,42 +879,24 @@ onMounted(() => {
   margin-right: 6px;
   vertical-align: middle;
 }
-.cell-user {
-  display: inline-flex;
-  align-items: center;
-}
-.cloud-alert {
-  margin-bottom: 16px;
-}
-.loading-box {
-  padding: 8px 0;
-}
-.user-snapshot {
-  margin-bottom: 16px;
-}
-.vip-tag {
-  margin-left: 6px;
-}
-.action-row {
+.mv-token-row {
   display: flex;
-  gap: 12px;
   align-items: center;
-  flex-wrap: wrap;
-}
-.checkin-result {
-  margin-top: 12px;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-.ok {
-  color: var(--el-color-success);
-}
-.fail {
-  color: var(--el-color-danger);
-}
-.sub-card .header-actions {
-  display: flex;
   gap: 8px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm, 8px);
+}
+.token-ok {
+  color: var(--text-muted, var(--el-text-color-secondary));
+  background: transparent;
+  border: 1px solid var(--border-soft, var(--el-border-color-lighter));
+}
+.token-urgent {
+  color: var(--warning, #e6a23c);
+  background: color-mix(in srgb, var(--warning, #e6a23c) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning, #e6a23c) 30%, transparent);
 }
 .checkin-config-row {
   display: flex;
@@ -709,6 +910,7 @@ onMounted(() => {
   font-size: 13px;
   font-weight: 500;
   flex-shrink: 0;
+  color: var(--text-regular, var(--el-text-color-regular));
 }
 .checkin-time-picker {
   width: 150px;
@@ -719,10 +921,10 @@ onMounted(() => {
   gap: 10px;
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid var(--el-border-color-lighter);
+  border-top: 1px solid var(--border-soft, var(--el-border-color-lighter));
 }
 .checkin-saved-hint {
   font-size: 12px;
-  color: var(--el-color-success);
+  color: var(--success, var(--el-color-success));
 }
 </style>

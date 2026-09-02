@@ -83,11 +83,8 @@
               </el-icon>
             </button>
           </el-tooltip>
-          <el-tooltip
-            :content="isBrutal ? '切换回默认皮肤' : '切换野兽派皮肤'"
-            placement="top"
-          >
-            <button type="button" class="tool-btn" :class="{ active: isBrutal }" @click="toggleSkin">
+<el-tooltip :content="skinTooltip" placement="top">
+            <button type="button" class="tool-btn" :class="{ active: isBrutal || isMv }" @click="toggleSkin">
               <el-icon :size="16">
                 <MagicStick />
               </el-icon>
@@ -253,8 +250,14 @@ const router = useRouter()
 const authStore = useAuthStore()
 const backupStore = useBackupStore()
 const { isMobile } = useDeviceType()
-const { isDark, isBrutal, toggleTheme, toggleSkin } = useTheme()
+const { isDark, isBrutal, isMv, toggleTheme, toggleSkin } = useTheme()
 const isMenuOpen = ref(false)
+
+const skinTooltip = computed(() => {
+  if (isBrutal.value) return '切换为 mediavault 皮肤'
+  if (isMv.value) return '切换回默认皮肤'
+  return '切换野兽派皮肤'
+})
 
 // KeepAlive include 匹配组件名，不匹配路由名
 const cachedComponentNames = [

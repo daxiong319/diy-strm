@@ -13,6 +13,7 @@ import (
 	"diy-strm/internal/hdhive"
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/models"
+	"diy-strm/internal/notificationmanager"
 
 	"github.com/gin-gonic/gin"
 )
@@ -277,13 +278,26 @@ func HiveCheckinAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: msg, Data: gin.H{"success": true, "account_id": acc.ID}})
 }
 
-// RunHiveCheckin 执行单个账号签到并落库（供 API 与定时任务共用）
+// RunHiveCheckin 执行单个账号签到并落库（供 API 与定时任务共用；历史触发来源按 manual 记账）
 func RunHiveCheckin(ctx context.Context, acc *models.HiveOAuthAccount, mode hdhive.CheckinMode) (bool, string) {
+	return RunHiveCheckinWithTrigger(ctx, acc, mode, "manual")
+}
+
+// RunHiveCheckinWithTrigger 执行单个账号签到并落库 + 写入签到历史（S3）。
+// trigger：manual（手动）/ daily（窗口定时）/ catchup（迟到补签）/ retry（失败重试）。
+func RunHiveCheckinWithTrigger(ctx context.Context, acc *models.HiveOAuthAccount, mode hdhive.CheckinMode, trigger string) (bool, string) {
 	client := models.HiveClientForAccount(acc)
 	// 先检查授权状态
 	statusResp, err := hiveTokenStatusFor(ctx, acc, client)
 	if err != nil {
-		return false, "签到失败：" + err.Error()
+		now := time.Now()
+		acc.LastCheckinAt = &now
+		acc.LastCheckinOK = false
+		acc.LastCheckinMsg = "签到失败：" + err.Error()
+		acc.LastCheckinMode = string(mode)
+		_ = models.SaveHiveAccount(acc)
+		writeHiveCheckinRecord(acc, mode, trigger, false, acc.LastCheckinMsg, nil, nil, 0)
+		return false, acc.LastCheckinMsg
 	}
 	hasToken := false
 	if statusResp.HasAccessToken != nil {
@@ -304,6 +318,7 @@ func RunHiveCheckin(ctx context.Context, acc *models.HiveOAuthAccount, mode hdhi
 		acc.LastCheckinMsg = "未授权，请在影巢设置中完成 OAuth 授权"
 		acc.LastCheckinMode = string(mode)
 		_ = models.SaveHiveAccount(acc)
+		writeHiveCheckinRecord(acc, mode, trigger, false, acc.LastCheckinMsg, nil, nil, 0)
 		return false, acc.LastCheckinMsg
 	}
 
@@ -315,6 +330,7 @@ func RunHiveCheckin(ctx context.Context, acc *models.HiveOAuthAccount, mode hdhi
 		acc.LastCheckinMsg = "签到请求失败：" + err.Error()
 		acc.LastCheckinMode = string(mode)
 		_ = models.SaveHiveAccount(acc)
+		writeHiveCheckinRecord(acc, mode, trigger, false, acc.LastCheckinMsg, nil, nil, 0)
 		return false, acc.LastCheckinMsg
 	}
 
@@ -382,7 +398,67 @@ func RunHiveCheckin(ctx context.Context, acc *models.HiveOAuthAccount, mode hdhi
 		acc.UserInfo = string(meResp.Data)
 	}
 	_ = models.SaveHiveAccount(acc)
+	writeHiveCheckinRecord(acc, mode, trigger, success, finalMsg, acc.LastCheckinPoints, acc.LastCheckinBalance, acc.LastCheckinStreak)
 	return success, finalMsg
+}
+
+// writeHiveCheckinRecord 写签到历史（S3；每账号最多保留 500 条，由模型层清理）
+func writeHiveCheckinRecord(acc *models.HiveOAuthAccount, mode hdhive.CheckinMode, trigger string, ok bool, message string, points, balance *int, streak int) {
+	rec := &models.HiveCheckinRecord{
+		AccountID: acc.ID,
+		Label:     acc.Label,
+		IsMain:    acc.IsMain,
+		Channel:   acc.Channel,
+		Mode:      string(mode),
+		OK:        ok,
+		Points:    points,
+		Balance:   balance,
+		Streak:    streak,
+		Trigger:   trigger,
+		Message:   message,
+		CheckinAt: time.Now(),
+	}
+	if err := models.AddHiveCheckinRecord(rec); err != nil {
+		helpers.AppLogger.Warnf("写入签到历史失败（账号 %d）：%v", acc.ID, err)
+	}
+}
+
+// HiveCheckinRecordsAPI 签到历史（GET /cloud/hive/checkin/records?account_id=&limit=）
+func HiveCheckinRecordsAPI(c *gin.Context) {
+	var accountID uint
+	if v := strings.TrimSpace(c.Query("account_id")); v != "" {
+		n, _ := strconv.ParseUint(v, 10, 64)
+		accountID = uint(n)
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	records, err := models.ListHiveCheckinRecords(accountID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "查询签到历史失败：" + err.Error(), Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "查询成功", Data: records})
+}
+
+// HiveCheckinRecordsDeleteAPI 删除签到历史（DELETE /cloud/hive/checkin/records?account_id=&ids=1,2,3；空 ids=清空）
+func HiveCheckinRecordsDeleteAPI(c *gin.Context) {
+	var accountID uint
+	if v := strings.TrimSpace(c.Query("account_id")); v != "" {
+		n, _ := strconv.ParseUint(v, 10, 64)
+		accountID = uint(n)
+	}
+	ids := []uint{}
+	for _, s := range strings.Split(c.Query("ids"), ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			if n, err := strconv.ParseUint(s, 10, 64); err == nil {
+				ids = append(ids, uint(n))
+			}
+		}
+	}
+	if err := models.DeleteHiveCheckinRecords(accountID, ids); err != nil {
+		c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "删除签到历史失败：" + err.Error(), Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "已删除", Data: nil})
 }
 
 // HiveCheckinAllAPI 主账号 + 全部启用子账号签到（POST /cloud/hive/oauth/checkin-all {mode}）
@@ -578,39 +654,50 @@ func HiveSubAccountCheckinAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: msg, Data: gin.H{"success": true, "account_id": acc.ID}})
 }
 
-// RunHiveDailyCheckins 定时任务：主账号 + 启用子账号每日签到
-// 开关 / 签到时间 / 签到模式均读取影巢设置（与 tgto123 的 HDHIVE_CHECKIN_ENABLE/TIME/TYPE、
-// HDHIVE_SUB_CHECKIN_ENABLE/TIME/TYPE 一致），不在设置时间内时直接跳过。
-// hiveCheckinTimers 进程内随机分钟签到定时器（账号ID → 定时器），防止重复排程
-var hiveCheckinTimers = sync.Map{}
-
 // RunHiveDailyCheckins 影巢每日签到调度入口（每小时事件触发 + 启动补排）。
-// 借鉴 NanShare 的确定性哈希随机分钟策略：每天在配置小时的 0-29 分内
-// 由 sha256(账号:日期) 选出一个稳定分钟，到点精确执行；同一天已成功签到的账号自动跳过。
+// S1 随机签到窗口：从设置读签到窗口（start/end "HH:MM"，未配置时回落 daily_checkin_hour 整点小时，
+// 保持旧行为兼容），每天在窗口内由 sha256(账号:日期) 选出一个稳定分钟，到点精确执行，重启不漂移。
+// S4 补签/重试：进程错过窗口（重启/离线）到点立即补签（trigger=catchup）；
+// 执行失败按 +5/+15/+45 分钟阶梯自动重试（trigger=retry），最终仍失败则放弃。
+// S3 签到历史：每次签到动作（含失败）统一写入 HiveCheckinRecord。
+var hiveCheckinTimers = sync.Map{}     // 进程内常规签到定时器去重（账号ID:日期 → bool）
+var hiveCheckinRetries = sync.Map{}    // 进程内失败重试次数（账号ID:日期 → int）
+var hiveRefreshRemindSent = sync.Map{} // 进程内 refresh 到期提醒去重（账号ID:日期 → bool）
+
 func RunHiveDailyCheckins() {
 	now := time.Now()
 	today := now.Format("2006-01-02")
 
-	schedule := func(acc *models.HiveOAuthAccount, enabled bool, hour int, mode hdhive.CheckinMode) {
+	// windowMinutes 解析 "HH:MM" 起止窗口为一天内分钟数 [start, end]（end < start 视为跨午夜）
+	windowMinutes := func(start, end string) (int, int) {
+		toMin := func(s string) int {
+			h, m := 0, 0
+			if _, err := fmt.Sscanf(s, "%d:%d", &h, &m); err != nil {
+				return 0
+			}
+			return h*60 + m
+		}
+		return toMin(start), toMin(end)
+	}
+
+	schedule := func(acc *models.HiveOAuthAccount, enabled bool, startMin, endMin int, mode hdhive.CheckinMode) {
 		if !enabled || !acc.Enabled {
 			return
 		}
-		// 当天已成功签到则跳过（LastCheckinAt 为今天且成功）
-		if acc.LastCheckinAt != nil && acc.LastCheckinOK &&
-			acc.LastCheckinAt.Format("2006-01-02") == today {
+		// 当天已成功签到则跳过（手动/定时/补签历史兜底）
+		if models.HasCheckedInToday(acc.ID) {
 			return
 		}
-		minute := hdhive.RandomCheckinMinute(acc.ID, today)
-		target := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
+		minute := hdhive.RandomCheckinMinuteInRange(acc.ID, today, startMin, endMin)
+		dayOffset := 0
+		if endMin < startMin {
+			dayOffset = 1 // 跨午夜窗口：结束时间视为次日
+		}
+		target := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).
+			Add(time.Duration(minute)*time.Minute + time.Duration(24*dayOffset)*time.Hour)
 		if !now.Before(target) {
-			// 已到点（含启动补排/整点兜底触发）：立即执行
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			if ok, msg := RunHiveCheckin(ctx, acc, mode); ok {
-				helpers.AppLogger.Infof("影巢定时签到：%s 签到成功（%s）", acc.Label, msg)
-			} else {
-				helpers.AppLogger.Errorf("影巢定时签到：%s 签到失败：%s", acc.Label, msg)
-			}
-			cancel()
+			// 已到点（含启动补排/整点兜底触发）：立即补签
+			execScheduledCheckin(acc.ID, mode, "catchup", today)
 			return
 		}
 		// 未到点：精确排程一次（重启后由下次事件/启动补排恢复）
@@ -621,38 +708,145 @@ func RunHiveDailyCheckins() {
 		delay := target.Sub(now)
 		time.AfterFunc(delay, func() {
 			hiveCheckinTimers.Delete(timerKey)
-			latest, err := models.GetHiveAccountByID(acc.ID)
-			if err != nil {
-				return
-			}
-			if latest.LastCheckinAt != nil && latest.LastCheckinOK &&
-				latest.LastCheckinAt.Format("2006-01-02") == today {
-				return // 已签
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-			if ok, msg := RunHiveCheckin(ctx, latest, mode); ok {
-				helpers.AppLogger.Infof("影巢定时签到（随机分钟 %02d:%02d）：%s 签到成功（%s）", hour, minute, latest.Label, msg)
-			} else {
-				helpers.AppLogger.Errorf("影巢定时签到（随机分钟 %02d:%02d）：%s 签到失败：%s", hour, minute, latest.Label, msg)
-			}
+			execScheduledCheckin(acc.ID, mode, "daily", today)
 		})
 	}
 
 	if models.GetHiveCheckinEnabled() {
-		hour := models.GetHiveCheckinHour()
+		startMin, endMin := windowMinutes(models.GetHiveCheckinWindow())
 		mode := hdhive.ResolveCheckinMode(models.GetHiveCheckinMode())
 		mainAcc, err := models.GetHiveMainAccount()
 		if err == nil {
-			schedule(mainAcc, mainAcc.Enabled, hour, mode)
+			schedule(mainAcc, mainAcc.Enabled, startMin, endMin, mode)
 		}
 	}
 	if models.GetHiveSubCheckinEnabled() {
-		hour := models.GetHiveSubCheckinHour()
+		startMin, endMin := windowMinutes(models.GetHiveSubCheckinWindow())
 		mode := hdhive.ResolveCheckinMode(models.GetHiveSubCheckinMode())
 		subs, _ := models.ListHiveSubAccounts()
 		for i := range subs {
-			schedule(&subs[i], subs[i].Enabled, hour, mode)
+			schedule(&subs[i], subs[i].Enabled, startMin, endMin, mode)
+		}
+	}
+}
+
+// execScheduledCheckin 定时签到统一执行点：加载最新账号 → 未授权/已签直接跳过 → 执行 → 失败阶梯重试（S4）。
+func execScheduledCheckin(accountID uint, mode hdhive.CheckinMode, trigger, today string) {
+	acc, err := models.GetHiveAccountByID(accountID)
+	if err != nil {
+		return
+	}
+	if !acc.Enabled {
+		return
+	}
+	if models.HasCheckedInToday(accountID) {
+		return // 已成功签到，不再重复
+	}
+	if !acc.Authorized {
+		helpers.AppLogger.Warnf("影巢定时签到：%s 未授权，跳过定时签到", acc.Label)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ok, msg := RunHiveCheckinWithTrigger(ctx, acc, mode, trigger)
+	cancel()
+	if ok {
+		helpers.AppLogger.Infof("影巢定时签到（%s）：%s 签到成功（%s）", trigger, acc.Label, msg)
+		return
+	}
+	// 失败：按 +5/+15/+45 分钟阶梯重试，最多 3 次
+	retryKey := fmt.Sprintf("%d:%s", accountID, today)
+	attempts := 0
+	if v, loaded := hiveCheckinRetries.Load(retryKey); loaded {
+		attempts = v.(int)
+	}
+	if attempts >= 3 {
+		hiveCheckinRetries.Delete(retryKey)
+		helpers.AppLogger.Errorf("影巢定时签到：%s 重试 %d 次仍失败，放弃：%s", acc.Label, attempts, msg)
+		return
+	}
+	delays := []time.Duration{5 * time.Minute, 15 * time.Minute, 45 * time.Minute}
+	delay := delays[attempts]
+	hiveCheckinRetries.Store(retryKey, attempts+1)
+	time.AfterFunc(delay, func() {
+		execScheduledCheckin(accountID, mode, "retry", today)
+	})
+	helpers.AppLogger.Warnf("影巢定时签到：%s 签到失败，%s 后第 %d 次重试：%s", acc.Label, delay, attempts+1, msg)
+}
+
+// CheckHiveRefreshReminders 巡检 refresh token 到期时间（S2）：
+// 到期前 remindDays 天（默认 3，0=关闭）发送系统提醒，同一账号同一天只提醒一次（进程内去重）。
+func CheckHiveRefreshReminders() {
+	remindDays := models.GetHiveRefreshRemindDays()
+	if remindDays <= 0 {
+		return
+	}
+	today := time.Now().Format("2006-01-02")
+	check := func(acc *models.HiveOAuthAccount) {
+		if acc == nil || !acc.Authorized || acc.RefreshExpiresAt == nil {
+			return
+		}
+		daysLeft := int(time.Until(*acc.RefreshExpiresAt).Hours() / 24)
+		if daysLeft > remindDays {
+			return
+		}
+		if daysLeft < 0 {
+			daysLeft = -1
+		}
+		key := fmt.Sprintf("%d:%s", acc.ID, today)
+		if _, loaded := hiveRefreshRemindSent.LoadOrStore(key, true); loaded {
+			return
+		}
+		var state string
+		switch {
+		case daysLeft < 0:
+			state = "已过期，请尽快在影巢设置中重新授权，否则自动签到/解锁将失效"
+		case daysLeft == 0:
+			state = "今天到期，请尽快重新授权，否则自动签到/解锁将失效"
+		default:
+			state = fmt.Sprintf("剩余 %d 天，请尽快重新授权", daysLeft)
+		}
+		title := "⏰ 影巢 Refresh Token 即将到期"
+		content := fmt.Sprintf("账号：%s（%s）\n%s\n到期时间：%s",
+			acc.Label, hiveChannelLabel(acc.Channel), state, acc.RefreshExpiresAt.Format("2006-01-02 15:04"))
+		sendHiveNotification(title, content)
+		helpers.AppLogger.Infof("影巢 refresh token 到期提醒（账号 %d）：%s", acc.ID, state)
+	}
+	mainAcc, _ := models.GetHiveMainAccount()
+	check(mainAcc)
+	subs, _ := models.ListHiveSubAccounts()
+	for i := range subs {
+		check(&subs[i])
+	}
+}
+
+// hiveChannelLabel 通道显示名（通知文案用）
+func hiveChannelLabel(ch string) string {
+	switch ch {
+	case "symedia":
+		return "影巢中转"
+	case "nanshare":
+		return "NanShare 中转"
+	case "tgtodrive":
+		return "官方直连"
+	default:
+		return "官方"
+	}
+}
+
+// sendHiveNotification 影巢系统通知（复用全局通知管理器）
+func sendHiveNotification(title, content string) {
+	notif := &models.Notification{
+		Type:      models.SystemAlert,
+		Title:     title,
+		Content:   content,
+		Timestamp: time.Now(),
+		Priority:  models.NormalPriority,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if notificationmanager.GlobalEnhancedNotificationManager != nil {
+		if err := notificationmanager.GlobalEnhancedNotificationManager.SendNotification(ctx, notif); err != nil {
+			helpers.AppLogger.Warnf("发送影巢提醒通知失败：%v", err)
 		}
 	}
 }

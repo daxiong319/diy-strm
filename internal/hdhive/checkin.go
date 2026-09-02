@@ -20,9 +20,9 @@ const (
 
 // CheckinResult 签到结果
 type CheckinResult struct {
-	Success  bool
-	Message  string
-	Mode     CheckinMode
+	Success bool
+	Message string
+	Mode    CheckinMode
 }
 
 // ResolveCheckinMode 解析签到模式
@@ -58,22 +58,22 @@ func ResolveCheckinMode(checkinMode string) CheckinMode {
 
 // MeUserInfo /api/me 返回的用户信息（关键字段）
 type MeUserInfo struct {
-	Username                string   `json:"username"` // symedia 通道 status 返回
-	Nickname                string   `json:"nickname"`
-	AvatarURL               string   `json:"avatar_url"`
-	Points                  float64  `json:"points"`
-	Level                   string   `json:"level"`
-	IsForeverVIP            bool     `json:"is_forever_vip"`
-	CheckedInToday          bool     `json:"checked_in_today"`
-	CheckinDaysTotal        int      `json:"checkin_days_total"`
-	SigninDaysTotal         int      `json:"signin_days_total"`
-	WeeklyFreeQuota         float64  `json:"weekly_free_quota"`
+	Username                 string  `json:"username"` // symedia 通道 status 返回
+	Nickname                 string  `json:"nickname"`
+	AvatarURL                string  `json:"avatar_url"`
+	Points                   float64 `json:"points"`
+	Level                    string  `json:"level"`
+	IsForeverVIP             bool    `json:"is_forever_vip"`
+	CheckedInToday           bool    `json:"checked_in_today"`
+	CheckinDaysTotal         int     `json:"checkin_days_total"`
+	SigninDaysTotal          int     `json:"signin_days_total"`
+	WeeklyFreeQuota          float64 `json:"weekly_free_quota"`
 	WeeklyFreeQuotaRemaining float64 `json:"weekly_free_quota_remaining"`
 	WeeklyFreeQuotaUnlimited bool    `json:"weekly_free_quota_unlimited"`
-	WeeklyBonusQuota        float64  `json:"weekly_bonus_quota"`
-	BonusQuota              float64  `json:"bonus_quota"`
-	ShareNum                int      `json:"share_num"`
-	IsUnlocked              bool     `json:"is_unlocked"`
+	WeeklyBonusQuota         float64 `json:"weekly_bonus_quota"`
+	BonusQuota               float64 `json:"bonus_quota"`
+	ShareNum                 int     `json:"share_num"`
+	IsUnlocked               bool    `json:"is_unlocked"`
 }
 
 // FormatUserSnapshot 格式化用户快照为多行文本
@@ -386,4 +386,24 @@ func (s *CheckinStats) FormatStatsSuffix() string {
 func RandomCheckinMinute(id uint, date string) int {
 	h := sha256.Sum256([]byte(fmt.Sprintf("%d:%s", id, date)))
 	return int(binary.BigEndian.Uint64(h[:8]) % 30)
+}
+
+// RandomCheckinMinuteInRange 计算某账号在某日期落在 [minMinute, maxMinute]（一天内分钟数）的确定性随机分钟。
+// 借鉴 RandomCheckinMinute 的哈希策略：sha256(id:date) 前 8 字节映射到窗口长度内，
+// 同账号同一天结果稳定，重启不漂移（S1 随机签到窗口核心）。
+// 要求 0 <= minMinute <= maxMinute < 1440。
+func RandomCheckinMinuteInRange(id uint, date string, minMinute, maxMinute int) int {
+	if minMinute < 0 {
+		minMinute = 0
+	}
+	if maxMinute > 1439 {
+		maxMinute = 1439
+	}
+	if maxMinute <= minMinute {
+		return minMinute
+	}
+	h := sha256.Sum256([]byte(fmt.Sprintf("%d:%s", id, date)))
+	span := uint64(maxMinute-minMinute+1) % 1440
+	off := int(binary.BigEndian.Uint64(h[:8]) % span)
+	return minMinute + off
 }

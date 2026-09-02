@@ -93,7 +93,7 @@
           v-for="t in filteredItems"
           :key="t.id"
           class="hv-card"
-          :class="{ 'hv-card-selected': multiMode && selectedIds.includes(t.id) }"
+          :class="{ 'hv-card-selected': multiMode && selectedIds.includes(t.id), 'hv-card-wash': t.wash }"
           role="button"
           tabindex="0"
           @click="multiMode ? toggleSelect(t.id) : openDetail(t)"
@@ -129,6 +129,10 @@
             <span v-if="(t.existing_episodes || 0) > 0" class="hv-badge hv-badge-owned" title="媒体库中已存在">
               <el-icon :size="10"><Checked /></el-icon>
               已入库
+            </span>
+            <span v-if="t.wash" class="hv-badge hv-badge-wash" title="洗版优先：有更优新源时覆盖库内旧版">
+              <el-icon :size="10"><Refresh /></el-icon>
+              洗版优先
             </span>
           </div>
           <div class="hv-card-info">
@@ -396,6 +400,17 @@
                     <p class="hv-d-cast-name">{{ c.name }}</p>
                     <p class="hv-d-cast-role">{{ c.character || c.job }}</p>
                   </div>
+                </div>
+              </template>
+              <template v-if="detailItem?.wash">
+                <h4 class="hv-d-sec">洗版优先</h4>
+                <div class="hv-d-wash">
+                  <span class="hv-pill hv-pill-primary">洗版优先</span>
+                  <span class="hv-d-wash-tip">
+                    有更优新源（分辨率/编码/声道等评分更高）时自动覆盖库内旧版；
+                    <template v-if="detailItem.wash_target">目标目录：{{ detailItem.wash_target }}</template>
+                    <template v-else>目标为所选分类目录。</template>
+                  </span>
                 </div>
               </template>
               <template v-if="detailSubId > 0">
@@ -1333,6 +1348,24 @@ onMounted(() => {
   left: 8px;
   color: var(--success);
 }
+.hv-badge-wash {
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 22%, rgba(0, 0, 0, 0.6));
+  font-weight: 500;
+  white-space: nowrap;
+  z-index: 5;
+}
+.hv-card-wash {
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 25%, transparent), 0 4px 16px rgba(62, 224, 208, 0.12);
+}
+.hv-card-wash:hover {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 40%, transparent), var(--shadow-soft);
+}
 .hv-card-info {
   padding: 6px 8px;
 }
@@ -1719,5 +1752,33 @@ onMounted(() => {
   flex-shrink: 0;
   font-size: 11px;
   color: var(--text-muted);
+}
+.hv-d-wash {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px solid color-mix(in srgb, var(--brand) 30%, var(--border));
+  background: color-mix(in srgb, var(--brand) 6%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.hv-d-wash-tip {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.hv-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.hv-pill-primary {
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 15%, transparent);
 }
 </style>

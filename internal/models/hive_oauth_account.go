@@ -25,13 +25,14 @@ type HiveOAuthAccount struct {
 	IsMain            bool       `gorm:"index" json:"is_main"` // 是否主账号（每库仅一条）
 	Enabled           bool       `gorm:"default:true" json:"enabled"`
 	Channel           string     `gorm:"size:16;index;default:tgtodrive" json:"channel"` // 通道：symedia / tgtodrive / nanshare / official
-	InstallID         string     `gorm:"size:128" json:"-"` // 独立 install_id（tgtodrive 通道，不对外暴露）
-	SymediaUserID     string     `gorm:"size:64" json:"-"`  // hdhive 用户 ID（symedia 通道，OAuth 回调回传）
-	ProxyUserKey      string     `gorm:"type:text" json:"-"` // symedia 通道用户密钥（OAuth 回调回传）
-	NanShareAccountID string     `gorm:"size:80" json:"-"` // nanshare 通道账号标识（本端生成，中转凭此绑定授权）
-	AccessToken       string     `gorm:"type:text" json:"-"`  // 官方/通用通道用户 Access Token
-	RefreshToken      string     `gorm:"type:text" json:"-"`  // 官方/通用通道 Refresh Token
-	TokenExpiresAt    *time.Time `json:"token_expires_at"`    // 官方通道 Access Token 过期时间
+	InstallID         string     `gorm:"size:128" json:"-"`                              // 独立 install_id（tgtodrive 通道，不对外暴露）
+	SymediaUserID     string     `gorm:"size:64" json:"-"`                               // hdhive 用户 ID（symedia 通道，OAuth 回调回传）
+	ProxyUserKey      string     `gorm:"type:text" json:"-"`                             // symedia 通道用户密钥（OAuth 回调回传）
+	NanShareAccountID string     `gorm:"size:80" json:"-"`                               // nanshare 通道账号标识（本端生成，中转凭此绑定授权）
+	AccessToken       string     `gorm:"type:text" json:"-"`                             // 官方/通用通道用户 Access Token
+	RefreshToken      string     `gorm:"type:text" json:"-"`                             // 官方/通用通道 Refresh Token
+	TokenExpiresAt    *time.Time `json:"token_expires_at"`                               // 官方通道 Access Token 过期时间
+	RefreshExpiresAt  *time.Time `json:"refresh_expires_at"`                             // 官方通道 Refresh Token 过期时间（S2 到期提醒）
 	Authorized        bool       `json:"authorized"`
 	AuthorizedAt      *time.Time `json:"authorized_at"`
 	UserInfo          string     `gorm:"type:text" json:"-"` // 用户快照 JSON（/api/me）
@@ -42,11 +43,11 @@ type HiveOAuthAccount struct {
 	LastCheckinMsg    string     `gorm:"size:500" json:"last_checkin_message"`
 	LastCheckinMode   string     `gorm:"size:16" json:"last_checkin_mode"`
 	// 签到富信息（借鉴 NanShare/mediavault 的结果解析）
-	LastCheckinPoints   *int `json:"last_checkin_points"`    // 最近一次签到获得积分（赌狗可能为负）
-	LastCheckinBalance  *int `json:"last_checkin_balance"`   // 签到后账户余额
-	LastCheckinStreak   int  `json:"last_checkin_streak"`    // 连续签到天数
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	LastCheckinPoints  *int      `json:"last_checkin_points"`  // 最近一次签到获得积分（赌狗可能为负）
+	LastCheckinBalance *int      `json:"last_checkin_balance"` // 签到后账户余额
+	LastCheckinStreak  int       `json:"last_checkin_streak"`  // 连续签到天数
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // TableName 表名
@@ -56,20 +57,23 @@ func (HiveOAuthAccount) TableName() string {
 
 // PublicHiveAccount 对外暴露的账号信息（不含 install_id）
 type PublicHiveAccount struct {
-	ID              uint            `json:"id"`
-	Label           string          `json:"label"`
-	IsMain          bool            `json:"is_main"`
-	Enabled         bool            `json:"enabled"`
-	Authorized      bool            `json:"authorized"`
-	AuthorizedAt    *time.Time      `json:"authorized_at"`
-	InstallHash     string          `json:"install_hash"`
+	ID              uint               `json:"id"`
+	Label           string             `json:"label"`
+	IsMain          bool               `json:"is_main"`
+	Enabled         bool               `json:"enabled"`
+	Authorized      bool               `json:"authorized"`
+	AuthorizedAt    *time.Time         `json:"authorized_at"`
+	InstallHash     string             `json:"install_hash"`
 	User            *hdhive.MeUserInfo `json:"user,omitempty"`
-	UserFetchedAt   *time.Time      `json:"user_fetched_at"`
-	Status          map[string]any  `json:"status,omitempty"`
-	LastCheckinAt   *time.Time      `json:"last_checkin_at"`
-	LastCheckinOK   bool            `json:"last_checkin_ok"`
-	LastCheckinMsg  string          `json:"last_checkin_message"`
-	LastCheckinMode string          `json:"last_checkin_mode"`
+	UserFetchedAt   *time.Time         `json:"user_fetched_at"`
+	Status          map[string]any     `json:"status,omitempty"`
+	LastCheckinAt   *time.Time         `json:"last_checkin_at"`
+	LastCheckinOK   bool               `json:"last_checkin_ok"`
+	LastCheckinMsg  string             `json:"last_checkin_message"`
+	LastCheckinMode string             `json:"last_checkin_mode"`
+	// token 有效期（S2 到期提醒 / 前端倒计时展示）
+	TokenExpiresAt   *time.Time `json:"token_expires_at,omitempty"`
+	RefreshExpiresAt *time.Time `json:"refresh_expires_at,omitempty"`
 	// 签到富信息
 	LastCheckinPoints  *int      `json:"last_checkin_points"`
 	LastCheckinBalance *int      `json:"last_checkin_balance"`
@@ -251,18 +255,20 @@ func HiveInstallHash(installID string) string {
 // PublicHiveAccount 转为对外结构
 func (a *HiveOAuthAccount) Public() *PublicHiveAccount {
 	p := &PublicHiveAccount{
-		ID:              a.ID,
-		Label:           a.Label,
-		IsMain:          a.IsMain,
-		Enabled:         a.Enabled,
-		Authorized:      a.Authorized,
-		AuthorizedAt:    a.AuthorizedAt,
-		InstallHash:     HiveInstallHash(a.InstallID),
-		UserFetchedAt:   a.UserFetchedAt,
-		LastCheckinAt:   a.LastCheckinAt,
-		LastCheckinOK:   a.LastCheckinOK,
-		LastCheckinMsg:  a.LastCheckinMsg,
-		LastCheckinMode: a.LastCheckinMode,
+		ID:               a.ID,
+		Label:            a.Label,
+		IsMain:           a.IsMain,
+		Enabled:          a.Enabled,
+		Authorized:       a.Authorized,
+		AuthorizedAt:     a.AuthorizedAt,
+		InstallHash:      HiveInstallHash(a.InstallID),
+		UserFetchedAt:    a.UserFetchedAt,
+		LastCheckinAt:    a.LastCheckinAt,
+		LastCheckinOK:    a.LastCheckinOK,
+		LastCheckinMsg:   a.LastCheckinMsg,
+		LastCheckinMode:  a.LastCheckinMode,
+		TokenExpiresAt:   a.TokenExpiresAt,
+		RefreshExpiresAt: a.RefreshExpiresAt,
 
 		LastCheckinPoints:  a.LastCheckinPoints,
 		LastCheckinBalance: a.LastCheckinBalance,

@@ -1012,7 +1012,13 @@ onMounted(load)
 
 <style scoped>
 .cloud-page {
-  padding: 16px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 1300px;
+  margin: 0 auto;
+  width: 100%;
 }
 .cloud-card {
   max-width: 1100px;

@@ -818,6 +818,9 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  max-width: 1300px;
+  margin: 0 auto;
+  width: 100%;
 }
 .hs-form {
   display: flex;

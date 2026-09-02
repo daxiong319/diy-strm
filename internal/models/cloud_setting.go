@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -28,34 +29,34 @@ const (
 
 // 影巢（HDHive）配置 key（source_type = "hdhive"）
 const (
-	CloudSettingKeyHiveInterval          = "poll_interval"         // 值：轮询间隔分钟数（默认 15）
-	CloudSettingKeyHiveCheckinEnabled    = "daily_checkin_enabled" // 值："true"/"false" 主账号每日自动签到
-	CloudSettingKeyHiveCheckinMode       = "daily_checkin_mode"    // 值：daily/gamble 主账号签到模式
-	CloudSettingKeyHiveCheckinHour       = "daily_checkin_hour"    // 值：0-23 主账号签到小时
-	CloudSettingKeyHiveSubCheckinEnabled = "sub_checkin_enabled"   // 值："true"/"false" 子账号每日自动签到
-	CloudSettingKeyHiveSubCheckinMode    = "sub_checkin_mode"      // 值：daily/gamble 子账号签到模式
-	CloudSettingKeyHiveSubCheckinHour    = "sub_checkin_hour"      // 值：0-23 子账号签到小时
-	CloudSettingKeyHiveMaxPoints         = "max_points"            // 值：解锁积分上限（0=不限）
-	CloudSettingKeyHiveOnlyOfficial      = "only_official"         // 值："true"/"false" 仅收官组资源（借鉴 mediavault hdhive_only_official）
-	CloudSettingKeyHivePublisherWhitelist = "publisher_whitelist"  // 值：发布者昵称白名单（逗号分隔，空=不过滤）
-	CloudSettingKeyHiveExecPreset        = "exec_preset"           // 值：conservative/balanced/aggressive/custom（执行强度预设）
-	CloudSettingKeyHiveMaxTransfersPerRun = "max_transfers_per_run" // 值：单轮转存上限（custom 模式用，默认 5）
+	CloudSettingKeyHiveInterval            = "poll_interval"         // 值：轮询间隔分钟数（默认 15）
+	CloudSettingKeyHiveCheckinEnabled      = "daily_checkin_enabled" // 值："true"/"false" 主账号每日自动签到
+	CloudSettingKeyHiveCheckinMode         = "daily_checkin_mode"    // 值：daily/gamble 主账号签到模式
+	CloudSettingKeyHiveCheckinHour         = "daily_checkin_hour"    // 值：0-23 主账号签到小时
+	CloudSettingKeyHiveSubCheckinEnabled   = "sub_checkin_enabled"   // 值："true"/"false" 子账号每日自动签到
+	CloudSettingKeyHiveSubCheckinMode      = "sub_checkin_mode"      // 值：daily/gamble 子账号签到模式
+	CloudSettingKeyHiveSubCheckinHour      = "sub_checkin_hour"      // 值：0-23 子账号签到小时
+	CloudSettingKeyHiveMaxPoints           = "max_points"            // 值：解锁积分上限（0=不限）
+	CloudSettingKeyHiveOnlyOfficial        = "only_official"         // 值："true"/"false" 仅收官组资源（借鉴 mediavault hdhive_only_official）
+	CloudSettingKeyHivePublisherWhitelist  = "publisher_whitelist"   // 值：发布者昵称白名单（逗号分隔，空=不过滤）
+	CloudSettingKeyHiveExecPreset          = "exec_preset"           // 值：conservative/balanced/aggressive/custom（执行强度预设）
+	CloudSettingKeyHiveMaxTransfersPerRun  = "max_transfers_per_run" // 值：单轮转存上限（custom 模式用，默认 5）
 	CloudSettingKeyHiveTransferMinInterval = "transfer_min_interval" // 值：两次转存最小间隔秒数（custom 模式用，默认 25）
-	CloudSettingKeyHiveTransferJitter    = "transfer_jitter"       // 值：转存间隔随机抖动秒数（custom 模式用，默认 15）
-	CloudSettingKeyHiveSlugMaxAttempts   = "slug_max_attempts"     // 值：单个资源 slug 最大尝试次数（默认 3）
+	CloudSettingKeyHiveTransferJitter      = "transfer_jitter"       // 值：转存间隔随机抖动秒数（custom 模式用，默认 15）
+	CloudSettingKeyHiveSlugMaxAttempts     = "slug_max_attempts"     // 值：单个资源 slug 最大尝试次数（默认 3）
 	// ---- mediavault search&subscription 设置对齐（v77）----
-	CloudSettingKeyHiveEnabled          = "hive_enabled"             // 值："true"/"false" 影巢搜索启用（手动搜索 hdhive 引擎，默认 true）
-	CloudSettingKeyHiveTimedSearch      = "timed_search_enabled"     // 值："true"/"false" 定时订阅搜索（默认 true）
-	CloudSettingKeyHiveSearchTransfer   = "search_transfer"          // 值："true"/"false" 搜到资源即自动转存（默认 true）
-	CloudSettingKeyHiveAutoUnlock       = "auto_unlock"              // 值："true"/"false" 自动积分解锁（默认 true）
-	CloudSettingKeyHiveUseSubdir        = "transfer_use_subdir"      // 值："true"/"false" 按「片名 (年份)」建子目录（默认 false 保持现状平铺目标目录）
-	CloudSettingKeyHiveTransferMedia    = "transfer_media"           // 值："true"/"false" 转存媒体文件（默认 true）
-	CloudSettingKeyHiveTransferSubtitle = "transfer_subtitle"        // 值："true"/"false" 转存字幕文件（默认 true）
-	CloudSettingKeyHiveTransferNonMedia = "transfer_non_media"       // 值："true"/"false" 转存非媒体文件（默认 true=整包转存）
-	CloudSettingKeyHiveRunBatchSize     = "run_batch_size"           // 值：每轮最多处理的订阅数（0=不限，默认 0）
-	CloudSettingKeyHiveGraceDays        = "tv_completion_grace_days" // 值：剧集完结宽限期天数（默认 7）
-	CloudSettingKeyHiveSyncLibrary      = "transfer_sync_library"    // 值："true"/"false" 转存后同步到媒体库（预留，默认 false）
-	CloudSettingKeyHiveSyncWait         = "transfer_sync_wait"       // 值：同步等待分钟数（预留，默认 0）
+	CloudSettingKeyHiveEnabled          = "hive_enabled"                // 值："true"/"false" 影巢搜索启用（手动搜索 hdhive 引擎，默认 true）
+	CloudSettingKeyHiveTimedSearch      = "timed_search_enabled"        // 值："true"/"false" 定时订阅搜索（默认 true）
+	CloudSettingKeyHiveSearchTransfer   = "search_transfer"             // 值："true"/"false" 搜到资源即自动转存（默认 true）
+	CloudSettingKeyHiveAutoUnlock       = "auto_unlock"                 // 值："true"/"false" 自动积分解锁（默认 true）
+	CloudSettingKeyHiveUseSubdir        = "transfer_use_subdir"         // 值："true"/"false" 按「片名 (年份)」建子目录（默认 false 保持现状平铺目标目录）
+	CloudSettingKeyHiveTransferMedia    = "transfer_media"              // 值："true"/"false" 转存媒体文件（默认 true）
+	CloudSettingKeyHiveTransferSubtitle = "transfer_subtitle"           // 值："true"/"false" 转存字幕文件（默认 true）
+	CloudSettingKeyHiveTransferNonMedia = "transfer_non_media"          // 值："true"/"false" 转存非媒体文件（默认 true=整包转存）
+	CloudSettingKeyHiveRunBatchSize     = "run_batch_size"              // 值：每轮最多处理的订阅数（0=不限，默认 0）
+	CloudSettingKeyHiveGraceDays        = "tv_completion_grace_days"    // 值：剧集完结宽限期天数（默认 7）
+	CloudSettingKeyHiveSyncLibrary      = "transfer_sync_library"       // 值："true"/"false" 转存后同步到媒体库（预留，默认 false）
+	CloudSettingKeyHiveSyncWait         = "transfer_sync_wait"          // 值：同步等待分钟数（预留，默认 0）
 	CloudSettingKeyHiveDefaultsMovie    = "subscription_defaults_movie" // 值：电影订阅默认参数 JSON（{resolution,effect,search_sources,include_regex,exclude_regex,target_path,media_server}）
 	CloudSettingKeyHiveDefaultsTV       = "subscription_defaults_tv"    // 值：剧集订阅默认参数 JSON
 	// ---- pansou 盘搜（对齐 mediavault pansou 设置；pansou_enabled 默认 false，配置服务地址后才启用）----
@@ -63,14 +64,21 @@ const (
 	CloudSettingKeyHivePansouBaseURL  = "pansou_base_url" // 值：盘搜服务地址（如 http://192.168.1.100:80，空=未部署）
 	CloudSettingKeyHivePansouUsername = "pansou_username" // 值：盘搜服务账号（对应 fish2018/pansou AUTH_USERS，空=匿名）
 	CloudSettingKeyHivePansouPassword = "pansou_password" // 值：盘搜服务密码（仅入库，不回传前端）
+	// 签到随机窗口与运维（S1/S2/S4，借鉴 symedia 随机签到 + refresh 到期提醒）
+	CloudSettingKeyHiveCheckinWindowStart    = "checkin_window_start"     // 值："07:00" 主账号签到随机窗口开始（空=回落 daily_checkin_hour）
+	CloudSettingKeyHiveCheckinWindowEnd      = "checkin_window_end"       // 值："09:00" 主账号签到随机窗口结束（含）
+	CloudSettingKeyHiveSubCheckinWindowStart = "sub_checkin_window_start" // 值："07:00" 子账号签到随机窗口开始
+	CloudSettingKeyHiveSubCheckinWindowEnd   = "sub_checkin_window_end"   // 值："09:00" 子账号签到随机窗口结束
+	CloudSettingKeyHiveRefreshRemindDays     = "refresh_remind_days"      // 值：3 refresh token 到期前提醒天数（0=关闭）
+	CloudSettingKeyHiveUnlockDailyLimit      = "unlock_daily_limit"       // 值：全局每日自动解锁次数上限（0=不限，U2）
 )
 
 // HiveTransferThrottle 执行强度参数（借鉴 mediavault 三档预设）
 type HiveTransferThrottle struct {
-	Preset           string // conservative / balanced / aggressive / custom
-	MaxTransfersPerRun int  // 单轮转存上限
-	MinInterval      time.Duration // 两次转存最小间隔
-	Jitter           time.Duration // 随机抖动上限
+	Preset             string        // conservative / balanced / aggressive / custom
+	MaxTransfersPerRun int           // 单轮转存上限
+	MinInterval        time.Duration // 两次转存最小间隔
+	Jitter             time.Duration // 随机抖动上限
 }
 
 // GetHiveTransferThrottle 读取执行强度参数
@@ -181,14 +189,14 @@ func SetCloudSaveDir(sourceType, key, path string) error {
 
 // CloudChannel 云盘资源频道（TG 公开频道，每网盘可添加多个）
 type CloudChannel struct {
-	ID         uint       `gorm:"primaryKey" json:"id"`
-	SourceType string     `gorm:"size:32;index:idx_channel_source" json:"source_type"` // 目标网盘：123 / guangyapan / pan139
-	Channel    string     `gorm:"size:128;index:idx_channel_source,unique" json:"channel"` // 频道 @名（不带 @）
-	Enabled    bool       `gorm:"default:true" json:"enabled"`
-	LastPostID string     `gorm:"size:64" json:"last_post_id"` // 增量游标（频道帖 ID）
-	LastRunAt  time.Time  `json:"last_run_at"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	SourceType string    `gorm:"size:32;index:idx_channel_source" json:"source_type"`     // 目标网盘：123 / guangyapan / pan139
+	Channel    string    `gorm:"size:128;index:idx_channel_source,unique" json:"channel"` // 频道 @名（不带 @）
+	Enabled    bool      `gorm:"default:true" json:"enabled"`
+	LastPostID string    `gorm:"size:64" json:"last_post_id"` // 增量游标（频道帖 ID）
+	LastRunAt  time.Time `json:"last_run_at"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // ChannelName 归一化频道名（去掉 @ 与 URL 前缀）
@@ -250,28 +258,28 @@ func DeleteCloudChannel(id uint) error {
 
 // CloudSubscription 资源订阅规则（TG 频道订阅 / 影巢订阅共用）
 type CloudSubscription struct {
-	ID           uint       `gorm:"primaryKey" json:"id"`
-	SourceType   string     `gorm:"size:32;index" json:"source_type"`       // 目标网盘：123 / guangyapan / pan139
-	ResourceSource string   `gorm:"size:16;index" json:"resource_source"`   // 资源来源：空=TG 频道 / hdhive=影巢
-	Channel      string     `gorm:"size:128;index" json:"channel"`          // 频道 @名（不带 @）或 URL（影巢订阅为空）
-	Keywords     string     `gorm:"type:text" json:"keywords"`              // JSON 数组
-	TargetDir    string     `gorm:"size:512" json:"target_dir"`             // 网盘内目标目录
-	MediaType    string     `gorm:"size:16" json:"media_type"`              // 选片类型：movie / tv / 空=通用订阅
-	TMDBID       int64      `gorm:"index:idx_sub_tmdb" json:"tmdb_id"`
-	TMDBTitle    string     `gorm:"size:256" json:"tmdb_title"`   // 选片标题快照
-	Season       int        `json:"season"`                       // 选季：0=全部季 / N=第N季（仅 tv）
-	TotalSeasons int        `json:"total_seasons"`                // 全部季订阅时 TMDB 当前总季数快照
-	TotalEpisodes int       `json:"total_episodes"`                // TV 订阅目标总集数快照（Season>0 为该季集数；Season=0 为全剧总集数，运行时由 TMDB 刷新）
-	AutoFinish   bool       `json:"auto_finish"`                  // 自动完结开关（收录完毕后自动停用订阅）
-	Wash         bool       `json:"wash"`                         // 洗版开关（影片级订阅）：同片更高规格自动替换
-	WashTarget   string     `gorm:"size:32" json:"wash_target"`   // 洗版目标：空=无限制 / 1080p / 4k / 4k_remux
-	ReplaceOld   bool       `json:"replace_old"`                  // 洗版后旧版本处理：true=删除旧文件 / false=保留共存
-	OldCount     int64      `gorm:"-" json:"old_count"`           // 待清理旧版本数（只读，由接口填充）
-	Enabled      bool       `gorm:"default:true" json:"enabled"`
-	Status       string     `gorm:"size:16;default:subscribing" json:"status"` // 订阅状态：subscribing（进行中）/ completed（已完结）/ paused（已暂停，跳过定时检索；借鉴 mediavault 三态状态机）
-	LastPostID   string     `gorm:"size:64" json:"last_post_id"`  // 增量游标（频道帖 ID；影巢订阅为已处理资源 slug）
-	FinishedAt   *time.Time `json:"finished_at"`                  // 自动完结时间
-	LastRecheckAt *time.Time `json:"last_recheck_at"`             // 已完结 TV 订阅的上次 TMDB 复查时间（宽限复活用）
+	ID             uint       `gorm:"primaryKey" json:"id"`
+	SourceType     string     `gorm:"size:32;index" json:"source_type"`     // 目标网盘：123 / guangyapan / pan139
+	ResourceSource string     `gorm:"size:16;index" json:"resource_source"` // 资源来源：空=TG 频道 / hdhive=影巢
+	Channel        string     `gorm:"size:128;index" json:"channel"`        // 频道 @名（不带 @）或 URL（影巢订阅为空）
+	Keywords       string     `gorm:"type:text" json:"keywords"`            // JSON 数组
+	TargetDir      string     `gorm:"size:512" json:"target_dir"`           // 网盘内目标目录
+	MediaType      string     `gorm:"size:16" json:"media_type"`            // 选片类型：movie / tv / 空=通用订阅
+	TMDBID         int64      `gorm:"index:idx_sub_tmdb" json:"tmdb_id"`
+	TMDBTitle      string     `gorm:"size:256" json:"tmdb_title"` // 选片标题快照
+	Season         int        `json:"season"`                     // 选季：0=全部季 / N=第N季（仅 tv）
+	TotalSeasons   int        `json:"total_seasons"`              // 全部季订阅时 TMDB 当前总季数快照
+	TotalEpisodes  int        `json:"total_episodes"`             // TV 订阅目标总集数快照（Season>0 为该季集数；Season=0 为全剧总集数，运行时由 TMDB 刷新）
+	AutoFinish     bool       `json:"auto_finish"`                // 自动完结开关（收录完毕后自动停用订阅）
+	Wash           bool       `json:"wash"`                       // 洗版开关（影片级订阅）：同片更高规格自动替换
+	WashTarget     string     `gorm:"size:32" json:"wash_target"` // 洗版目标：空=无限制 / 1080p / 4k / 4k_remux
+	ReplaceOld     bool       `json:"replace_old"`                // 洗版后旧版本处理：true=删除旧文件 / false=保留共存
+	OldCount       int64      `gorm:"-" json:"old_count"`         // 待清理旧版本数（只读，由接口填充）
+	Enabled        bool       `gorm:"default:true" json:"enabled"`
+	Status         string     `gorm:"size:16;default:subscribing" json:"status"` // 订阅状态：subscribing（进行中）/ completed（已完结）/ paused（已暂停，跳过定时检索；借鉴 mediavault 三态状态机）
+	LastPostID     string     `gorm:"size:64" json:"last_post_id"`               // 增量游标（频道帖 ID；影巢订阅为已处理资源 slug）
+	FinishedAt     *time.Time `json:"finished_at"`                               // 自动完结时间
+	LastRecheckAt  *time.Time `json:"last_recheck_at"`                           // 已完结 TV 订阅的上次 TMDB 复查时间（宽限复活用）
 	// ---- mediavault 对齐字段（v77）----
 	ExistingEpisodes int        `gorm:"default:0" json:"existing_episodes"` // 媒体库已有集数（去重判定/卡片角标）
 	VoteAverage      float64    `json:"vote_average"`                       // TMDB 评分
@@ -290,9 +298,9 @@ type CloudSubscription struct {
 	Storage          string     `gorm:"size:64" json:"storage"`             // 存储实例（空=默认网盘；diy-strm 与 SourceType 保持一致）
 	MediaServer      string     `gorm:"size:128" json:"media_server"`       // 媒体库实例（空=全部媒体库）
 	LastSearchAt     *time.Time `json:"last_search_at"`                     // 上次搜索时间
-	LastRunAt    time.Time  `json:"last_run_at"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	LastRunAt        time.Time  `json:"last_run_at"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // SubscriptionLog 订阅日志（搜索/转存时间线，对齐 mediavault subscription_logs）
@@ -768,12 +776,12 @@ type CloudTransferRecord struct {
 	PostID         string    `gorm:"size:64" json:"post_id"`
 	LinkURL        string    `gorm:"size:512;index" json:"link_url"`
 	Episode        string    `gorm:"size:255" json:"episode"` // 该帖对应的剧集标识集合（逗号分隔，如 S01E13 / S01E24,S01E25…；空=未识别到集号）
-TargetDir      string    `gorm:"size:512" json:"target_dir"`
-	Resolution     int       `gorm:"index" json:"resolution"` // 洗版规格：0未知 1=720p 2=1080p 3=2160p(4K)
-	Source         int       `gorm:"index" json:"source"`     // 0未知 1=HDTV 2=WEBRip 3=WEB-DL 4=BluRay 5=REMUX
-	Codec          int       `json:"codec"`                   // 0未知 1=H264 2=H265
-	Effect         int       `json:"effect"`                  // 0未知 1=SDR 2=HDR 3=Dolby Vision
-	SizeGB         float64   `json:"size_gb"`                 // 体积（GB）
+	TargetDir      string    `gorm:"size:512" json:"target_dir"`
+	Resolution     int       `gorm:"index" json:"resolution"`     // 洗版规格：0未知 1=720p 2=1080p 3=2160p(4K)
+	Source         int       `gorm:"index" json:"source"`         // 0未知 1=HDTV 2=WEBRip 3=WEB-DL 4=BluRay 5=REMUX
+	Codec          int       `json:"codec"`                       // 0未知 1=H264 2=H265
+	Effect         int       `json:"effect"`                      // 0未知 1=SDR 2=HDR 3=Dolby Vision
+	SizeGB         float64   `json:"size_gb"`                     // 体积（GB）
 	Status         string    `gorm:"size:16;index" json:"status"` // 空=正常 / superseded=被洗版替换（待清理旧版本）
 	CreatedAt      time.Time `json:"created_at"`
 }
@@ -954,4 +962,62 @@ func CountSubscriptionRecords(subID uint) int64 {
 // DeleteSubscriptionRecords 删除订阅时清理其转存记录
 func DeleteSubscriptionRecords(subID uint) error {
 	return db.Db.Where("subscription_id = ?", subID).Delete(&CloudTransferRecord{}).Error
+}
+
+// ---------------------------------------------------------------------------
+// 签到随机窗口 / 提醒 / 解锁限额（S1/S2/U2，2026-09-02 新增）
+// ---------------------------------------------------------------------------
+
+// normalizeHiveTimeWindow 归一化 "HH:MM" 窗口；不合法回落空串
+func normalizeHiveTimeWindow(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	parts := strings.Split(s, ":")
+	if len(parts) != 2 && len(parts) != 1 {
+		return "", false
+	}
+	h, err1 := strconv.Atoi(parts[0])
+	m := 0
+	if err1 != nil || h < 0 || h > 23 {
+		return "", false
+	}
+	if len(parts) == 2 {
+		m, err1 = strconv.Atoi(parts[1])
+		if err1 != nil || m < 0 || m > 59 {
+			return "", false
+		}
+	}
+	return fmt.Sprintf("%02d:%02d", h, m), true
+}
+
+// GetHiveCheckinWindow 主账号签到随机窗口（"HH:MM" 起止）。
+// 窗口未配置时回落 daily_checkin_hour 的单点整点（保持旧行为兼容）。
+func GetHiveCheckinWindow() (string, string) {
+	start, ok1 := normalizeHiveTimeWindow(hiveSettingStr(CloudSettingKeyHiveCheckinWindowStart, ""))
+	end, ok2 := normalizeHiveTimeWindow(hiveSettingStr(CloudSettingKeyHiveCheckinWindowEnd, ""))
+	if ok1 && ok2 {
+		return start, end
+	}
+	h := GetHiveCheckinHour()
+	return fmt.Sprintf("%02d:00", h), fmt.Sprintf("%02d:59", h)
+}
+
+// GetHiveSubCheckinWindow 子账号签到随机窗口
+func GetHiveSubCheckinWindow() (string, string) {
+	start, ok1 := normalizeHiveTimeWindow(hiveSettingStr(CloudSettingKeyHiveSubCheckinWindowStart, ""))
+	end, ok2 := normalizeHiveTimeWindow(hiveSettingStr(CloudSettingKeyHiveSubCheckinWindowEnd, ""))
+	if ok1 && ok2 {
+		return start, end
+	}
+	h := GetHiveSubCheckinHour()
+	return fmt.Sprintf("%02d:00", h), fmt.Sprintf("%02d:59", h)
+}
+
+// GetHiveRefreshRemindDays refresh token 到期前提醒天数（默认 3，0=关闭）
+func GetHiveRefreshRemindDays() int {
+	return hiveSettingInt(CloudSettingKeyHiveRefreshRemindDays, 3, 0, 30)
+}
+
+// GetHiveUnlockDailyLimit 全局每日自动解锁次数上限（默认 0=不限）
+func GetHiveUnlockDailyLimit() int {
+	return hiveSettingInt(CloudSettingKeyHiveUnlockDailyLimit, 0, 0, 1000)
 }

@@ -120,7 +120,7 @@ func organizeOneFile(ctx context.Context, account *models.Account, e organizeEnt
 		recordSkipped(account, e, sourcePath, "", "", 0, 0, 0, 0, "", "文件名无法识别", extra)
 		return "", errMediaUnrecognized
 	}
-	officialTitle, tmdbID, tmdbYear, categoryName, err := lookupTmdbMedia(ctx, media)
+	officialTitle, tmdbID, tmdbYear, categoryName, _, err := lookupTmdbMedia(ctx, media)
 	if err != nil {
 		recordSkipped(account, e, sourcePath, media.Category, media.Title, media.Year, media.Season, media.Episode, 0, "", "TMDB 未找到匹配结果："+err.Error(), extra)
 		return "", fmt.Errorf("%w：%v", errMediaUnrecognized, err)

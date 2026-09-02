@@ -2,6 +2,8 @@
 @import './base.css';
 /* 导入组件公共样式 */
 @import './components.css';
+/* mediavault 风格皮肤与布局类（置于导入尾部即可，无业务依赖） */
+@import './mv.css';
 
 #app {
   width: 100%;
