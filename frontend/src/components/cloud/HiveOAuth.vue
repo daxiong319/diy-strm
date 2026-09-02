@@ -199,6 +199,65 @@
         <el-button type="primary" :loading="adding" @click="addSub">创建</el-button>
       </template>
     </el-dialog>
+
+    <!-- 每日自动签到配置 -->
+    <el-card shadow="never" class="cloud-card">
+      <template #header>
+        <div class="card-header">每日自动签到</div>
+      </template>
+      <el-alert
+        type="info"
+        :closable="false"
+        class="cloud-alert"
+        title="开启后每天在指定时间自动为影巢账号签到，获取积分。加上随机分钟会落在选定时段的前 30 分钟内。"
+        show-icon
+      />
+
+      <!-- 主账号 -->
+      <div class="checkin-config-row">
+        <div class="checkin-config-label">主账号</div>
+        <el-switch v-model="checkinForm.main_enabled" />
+        <el-time-select
+          v-model="checkinForm.main_time"
+          :disabled="!checkinForm.main_enabled"
+          start="00:00"
+          end="23:00"
+          step="01:00"
+          format="HH:00"
+          placeholder="选择签到时间"
+          class="checkin-time-picker"
+        />
+        <el-radio-group v-model="checkinForm.main_mode" :disabled="!checkinForm.main_enabled" size="small">
+          <el-radio-button value="daily">普通签到</el-radio-button>
+          <el-radio-button value="gamble">赌狗签到</el-radio-button>
+        </el-radio-group>
+      </div>
+
+      <!-- 子账号 -->
+      <div class="checkin-config-row">
+        <div class="checkin-config-label">子账号</div>
+        <el-switch v-model="checkinForm.sub_enabled" />
+        <el-time-select
+          v-model="checkinForm.sub_time"
+          :disabled="!checkinForm.sub_enabled"
+          start="00:00"
+          end="23:00"
+          step="01:00"
+          format="HH:00"
+          placeholder="选择签到时间"
+          class="checkin-time-picker"
+        />
+        <el-radio-group v-model="checkinForm.sub_mode" :disabled="!checkinForm.sub_enabled" size="small">
+          <el-radio-button value="daily">普通签到</el-radio-button>
+          <el-radio-button value="gamble">赌狗签到</el-radio-button>
+        </el-radio-group>
+      </div>
+
+      <div class="checkin-config-save">
+        <el-button size="small" :loading="checkinSaving" @click="saveCheckinSettings">保存签到设置</el-button>
+        <span v-if="checkinSaved" class="checkin-saved-hint">已保存</span>
+      </div>
+    </el-card>
   </div>
 </template>
 
@@ -478,6 +537,72 @@ const checkinAll = async () => {
   }
 }
 
+// ---- 每日自动签到配置 ----
+const checkinForm = reactive({
+  main_enabled: true,
+  main_time: '08:00',
+  main_mode: 'daily' as string,
+  sub_enabled: true,
+  sub_time: '08:00',
+  sub_mode: 'daily' as string,
+})
+const checkinSaving = ref(false)
+const checkinSaved = ref(false)
+
+// hour(0-23) -> "HH:00"
+const hourToTime = (h: any) => {
+  const n = Number(h)
+  if (!Number.isInteger(n) || n < 0 || n > 23) return '08:00'
+  return `${String(n).padStart(2, '0')}:00`
+}
+
+const loadCheckinSettings = async () => {
+  try {
+    const resp = await http.get('/api/cloud/hive/settings')
+    if (resp.data?.code === 200) {
+      const d = resp.data.data || {}
+      checkinForm.main_enabled = d.daily_checkin_enabled !== false
+      checkinForm.main_time = hourToTime(d.daily_checkin_hour)
+      checkinForm.main_mode = d.daily_checkin_mode === 'gamble' ? 'gamble' : 'daily'
+      checkinForm.sub_enabled = d.sub_checkin_enabled !== false
+      checkinForm.sub_time = hourToTime(d.sub_checkin_hour)
+      checkinForm.sub_mode = d.sub_checkin_mode === 'gamble' ? 'gamble' : 'daily'
+    }
+  } catch {
+    /* 静默 */
+  }
+}
+
+const saveCheckinSettings = async () => {
+  checkinSaving.value = true
+  checkinSaved.value = false
+  try {
+    const hour = (t: string) => {
+      const n = parseInt(String(t).split(':')[0] || '8', 10)
+      return Number.isInteger(n) && n >= 0 && n <= 23 ? n : 8
+    }
+    const resp = await http.post('/api/cloud/hive/settings', {
+      daily_checkin_enabled: checkinForm.main_enabled,
+      daily_checkin_hour: hour(checkinForm.main_time),
+      daily_checkin_mode: checkinForm.main_mode,
+      sub_checkin_enabled: checkinForm.sub_enabled,
+      sub_checkin_hour: hour(checkinForm.sub_time),
+      sub_checkin_mode: checkinForm.sub_mode,
+    })
+    if (resp.data?.code === 200) {
+      ElMessage.success('签到设置已保存')
+      checkinSaved.value = true
+      setTimeout(() => (checkinSaved.value = false), 2500)
+    } else {
+      ElMessage.error(resp.data?.message || '保存失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('保存失败：' + (e?.message || ''))
+  } finally {
+    checkinSaving.value = false
+  }
+}
+
 // ---- 工具 ----
 const formatNum = (v: any) => {
   if (v === undefined || v === null) return '-'
@@ -503,6 +628,7 @@ onMounted(() => {
   loadMain()
   loadBackup()
   loadSubs()
+  loadCheckinSettings()
 })
 </script>
 
@@ -570,5 +696,33 @@ onMounted(() => {
 .sub-card .header-actions {
   display: flex;
   gap: 8px;
+}
+.checkin-config-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 0;
+  flex-wrap: wrap;
+}
+.checkin-config-label {
+  width: 64px;
+  font-size: 13px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.checkin-time-picker {
+  width: 150px;
+}
+.checkin-config-save {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+.checkin-saved-hint {
+  font-size: 12px;
+  color: var(--el-color-success);
 }
 </style>

@@ -376,9 +376,10 @@ func RunHiveCheckin(ctx context.Context, acc *models.HiveOAuthAccount, mode hdhi
 			acc.LastCheckinStreak = 0
 		}
 	}
-	// 顺带刷新用户信息（签到后积分会变化）
-	if len(resp.Data) > 0 {
-		client.Me(ctx) // 预热，忽略错误
+	// 顺带刷新用户信息（签到后积分会变化）：Me 结果写入 UserInfo，
+	// 否则前端展示的积分一直是上次授权/刷新时的旧值
+	if meResp, meErr := client.Me(ctx); meErr == nil && len(meResp.Data) > 0 {
+		acc.UserInfo = string(meResp.Data)
 	}
 	_ = models.SaveHiveAccount(acc)
 	return success, finalMsg

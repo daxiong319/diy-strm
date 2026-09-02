@@ -322,13 +322,17 @@
           </el-table-column>
           <el-table-column label="操作" min-width="230">
             <template #default="{ row }">
-              <el-button
-                v-if="!row.account?.authorized"
-                type="primary"
-                size="small"
-                :loading="actingOps[row.channel] === 'start'"
-                @click="authorize(row)"
-              >授权</el-button>
+              <template v-if="!row.account?.authorized">
+                <!-- tgtodrive 与上方「影巢搜索」授权卡为同一账号，不再重复授权入口 -->
+                <span v-if="row.channel === 'tgtodrive'" class="chan-key">见上方「影巢搜索」卡片授权</span>
+                <el-button
+                  v-else
+                  type="primary"
+                  size="small"
+                  :loading="actingOps[row.channel] === 'start'"
+                  @click="authorize(row)"
+                >授权</el-button>
+              </template>
               <template v-else>
                 <el-button
                   size="small"
@@ -345,81 +349,6 @@
             </template>
           </el-table-column>
         </el-table>
-      </div>
-    </section>
-
-    <!-- 附加：每日自动签到 -->
-    <section class="mv-sec">
-      <div class="mv-sec-head">
-        <h3 class="mv-sec-title">每日自动签到 · 主账号</h3>
-        <p class="mv-sec-desc">开启后每天在指定时间自动为影巢主账号签到，获取积分</p>
-      </div>
-      <div class="mv-sec-body">
-        <div class="mv-fields">
-          <div class="mv-field">
-            <div class="mv-field-label">
-              <span>自动签到</span>
-              <el-switch v-model="form.daily_checkin_enabled" />
-            </div>
-            <p class="mv-field-desc">开启后每天在指定时间自动为影巢主账号签到。</p>
-          </div>
-          <div class="mv-field">
-            <div class="mv-field-label">
-              <span>签到时间</span>
-              <el-select v-model="form.daily_checkin_hour" :disabled="!form.daily_checkin_enabled" class="mv-select">
-                <el-option v-for="h in hours" :key="h" :label="`${String(h).padStart(2,'0')}:00`" :value="h" />
-              </el-select>
-            </div>
-            <p class="mv-field-desc">服务器时区，每天该时刻触发签到。</p>
-          </div>
-          <div class="mv-field">
-            <div class="mv-field-label">
-              <span>签到模式</span>
-              <el-radio-group v-model="form.daily_checkin_mode" :disabled="!form.daily_checkin_enabled" size="small">
-                <el-radio-button value="daily">普通签到</el-radio-button>
-                <el-radio-button value="gamble">赌狗签到</el-radio-button>
-              </el-radio-group>
-            </div>
-            <p class="mv-field-desc">普通签到积分固定；赌狗签到有概率获得更高积分。</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="mv-sec">
-      <div class="mv-sec-head">
-        <h3 class="mv-sec-title">每日自动签到 · 子账号</h3>
-        <p class="mv-sec-desc">开启后每天在指定时间自动为已启用的子账号签到</p>
-      </div>
-      <div class="mv-sec-body">
-        <div class="mv-fields">
-          <div class="mv-field">
-            <div class="mv-field-label">
-              <span>自动签到</span>
-              <el-switch v-model="form.sub_checkin_enabled" />
-            </div>
-            <p class="mv-field-desc">开启后每天在指定时间自动为已启用的子账号签到。</p>
-          </div>
-          <div class="mv-field">
-            <div class="mv-field-label">
-              <span>签到时间</span>
-              <el-select v-model="form.sub_checkin_hour" :disabled="!form.sub_checkin_enabled" class="mv-select">
-                <el-option v-for="h in hours" :key="h" :label="`${String(h).padStart(2,'0')}:00`" :value="h" />
-              </el-select>
-            </div>
-            <p class="mv-field-desc">服务器时区，每天该时刻触发签到。</p>
-          </div>
-          <div class="mv-field">
-            <div class="mv-field-label">
-              <span>签到模式</span>
-              <el-radio-group v-model="form.sub_checkin_mode" :disabled="!form.sub_checkin_enabled" size="small">
-                <el-radio-button value="daily">普通签到</el-radio-button>
-                <el-radio-button value="gamble">赌狗签到</el-radio-button>
-              </el-radio-group>
-            </div>
-            <p class="mv-field-desc">普通签到积分固定；赌狗签到有概率获得更高积分。</p>
-          </div>
-        </div>
       </div>
     </section>
 
@@ -451,8 +380,6 @@ import { useHttpClient } from '@/http/client'
 const http = useHttpClient()
 const router = useRouter()
 
-const hours = Array.from({ length: 24 }, (_, i) => i)
-
 const form = reactive({
   hive_enabled: true,
   auto_unlock: true,
@@ -475,12 +402,6 @@ const form = reactive({
   transfer_min_interval: 30,
   transfer_jitter: 15,
   slug_max_attempts: 3,
-  daily_checkin_enabled: true,
-  daily_checkin_mode: 'daily' as string,
-  daily_checkin_hour: 8,
-  sub_checkin_enabled: true,
-  sub_checkin_mode: 'daily' as string,
-  sub_checkin_hour: 8,
   pansou_enabled: false,
   pansou_base_url: '',
   pansou_username: '',
@@ -526,12 +447,6 @@ const load = async (silent = false) => {
       form.transfer_min_interval = d.transfer_min_interval > 0 ? d.transfer_min_interval : 30
       form.transfer_jitter = d.transfer_jitter >= 0 ? d.transfer_jitter : 15
       form.slug_max_attempts = d.slug_max_attempts >= 0 ? d.slug_max_attempts : 3
-      form.daily_checkin_enabled = d.daily_checkin_enabled !== false
-      form.daily_checkin_mode = d.daily_checkin_mode === 'gamble' ? 'gamble' : 'daily'
-      form.daily_checkin_hour = (d.daily_checkin_hour >= 0 && d.daily_checkin_hour <= 23) ? d.daily_checkin_hour : 8
-      form.sub_checkin_enabled = d.sub_checkin_enabled !== false
-      form.sub_checkin_mode = d.sub_checkin_mode === 'gamble' ? 'gamble' : 'daily'
-      form.sub_checkin_hour = (d.sub_checkin_hour >= 0 && d.sub_checkin_hour <= 23) ? d.sub_checkin_hour : 8
       form.pansou_enabled = d.pansou_enabled === true
       form.pansou_base_url = d.pansou_base_url || ''
       form.pansou_username = d.pansou_username || ''
