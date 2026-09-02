@@ -726,7 +726,7 @@ onMounted(async () => {
   loadAuth()
   // 频道摘要
   try {
-    const resp = await http.get('/api/cloud/channels')
+    const resp = await http.get('/api/cloud/channels', { params: { source_type: 'hdhive' } })
     if (resp.data?.code === 200 && Array.isArray(resp.data.data)) {
       enabledChannelCount.value = resp.data.data.filter((c: any) => c.enabled).length
     }
