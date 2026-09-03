@@ -9,8 +9,8 @@
           <el-tag v-else size="small" type="warning" effect="plain" disable-transitions>未授权</el-tag>
         </h3>
         <div class="mv-sec-actions">
-          <el-tag size="small" :type="channelHealth.symedia === 0 ? 'success' : 'danger'">
-            主渠道{{ channelHealth.symedia === 0 ? '正常' : `连续失败 ${channelHealth.symedia} 次` }}
+          <el-tag size="small" :type="healthFails(channelHealth.symedia) > 0 ? 'danger' : 'success'">
+            主渠道{{ healthLabel(channelHealth.symedia) }}
           </el-tag>
           <el-button v-if="!main.authorized" size="small" type="primary" :loading="authing" @click="openAuth()">授权</el-button>
           <el-button size="small" :loading="refreshing" @click="refreshMain">刷新状态</el-button>
@@ -102,8 +102,8 @@
           <el-tag v-else size="small" type="warning" effect="plain" disable-transitions>未授权</el-tag>
         </h3>
         <div class="mv-sec-actions">
-          <el-tag size="small" :type="channelHealth.tgtodrive === 0 ? 'success' : 'danger'">
-            备用渠道{{ channelHealth.tgtodrive === 0 ? '正常' : `连续失败 ${channelHealth.tgtodrive} 次` }}
+          <el-tag size="small" :type="healthFails(channelHealth.tgtodrive) > 0 ? 'danger' : 'success'">
+            备用渠道{{ healthLabel(channelHealth.tgtodrive) }}
           </el-tag>
           <el-button v-if="!backup.authorized" size="small" type="primary" :loading="backupAuthing" @click="openBackupAuth()">授权</el-button>
           <el-button size="small" :loading="backupRefreshing" @click="refreshBackup">刷新状态</el-button>
@@ -386,6 +386,19 @@ const authing = ref(false)
 const checkining = ref(false)
 const checkinMode = ref('daily')
 const channelHealth = ref<any>({ symedia: 0, tgtodrive: 0 })
+
+// 通道健康度：后端返回 {fails, cooldown_seconds} 对象；兼容旧版纯数字
+const healthFails = (h: any): number => {
+  if (!h) return 0
+  return typeof h === 'object' ? (h.fails ?? 0) : Number(h) || 0
+}
+const healthLabel = (h: any): string => {
+  const f = healthFails(h)
+  if (f > 0) return `连续失败 ${f} 次`
+  const cd = h && typeof h === 'object' ? h.cooldown_seconds ?? 0 : 0
+  if (cd > 0) return `冷却中 ${Math.ceil(cd)}s`
+  return '正常'
+}
 
 const loadMain = async () => {
   mainLoading.value = true

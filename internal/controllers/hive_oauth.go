@@ -350,6 +350,15 @@ func RunHiveCheckinWithTrigger(ctx context.Context, acc *models.HiveOAuthAccount
 	}
 	success := hdhive.IsCheckinSuccess(resp.Code, &checkedInToday, msg)
 
+	// 留存签到响应原文（截断 2000 字符），便于排查奖励积分解析
+	if len(resp.Data) > 0 {
+		raw := resp.Data
+		if len(raw) > 2000 {
+			raw = raw[:2000]
+		}
+		acc.LastCheckinResponse = string(raw)
+	}
+
 	// 富解析：提取本次奖励积分、余额、连签天数（借鉴 NanShare 递归字段匹配）
 	var stats *hdhive.CheckinStats
 	if len(resp.Data) > 0 {

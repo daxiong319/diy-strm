@@ -935,6 +935,7 @@ func setRouter(r *gin.Engine) {
 		api.POST("/cloud/subscriptions/:id/reset-transferred", controllers.ResetTransferredAPI)     // 重置已转存记录
 		api.GET("/cloud/subscriptions/:id/logs", controllers.SubscriptionLogsAPI)                   // 订阅日志
 		api.GET("/cloud/subscriptions/detail/:id", controllers.SubscriptionDetailAPI)               // 订阅影片详情（TMDB+主创）
+		api.POST("/cloud/subscriptions/backfill-posters", controllers.BackfillPostersAPI)           // 批量补全订阅海报（TMDB 回填）
 		api.POST("/cloud/subscriptions/batch/pause", controllers.BatchSubscriptionPauseAPI)         // 批量暂停
 		api.POST("/cloud/subscriptions/batch/resume", controllers.BatchSubscriptionResumeAPI)       // 批量恢复
 		api.POST("/cloud/subscriptions/batch/delete", controllers.BatchSubscriptionDeleteAPI)       // 批量删除

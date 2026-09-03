@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"diy-strm/internal/db"
+	"diy-strm/internal/helpers"
 )
 
 // CloudSetting 云盘级设置（每网盘一套，key-value 存储）
@@ -295,6 +296,7 @@ type CloudSubscription struct {
 	SearchSources    string     `gorm:"size:64" json:"search_sources"`      // 搜索渠道（逗号串：telegram/hdhive/pansou）
 	IncludeRegex     string     `gorm:"type:text" json:"include_regex"`     // 标题包含正则（命中才转存）
 	ExcludeRegex     string     `gorm:"type:text" json:"exclude_regex"`     // 标题排除正则（命中则跳过）
+	Backfill         bool       `json:"backfill"`                           // 回溯搜索：执行时忽略频道游标，从历史帖全文匹配（不推进游标）
 	Storage          string     `gorm:"size:64" json:"storage"`             // 存储实例（空=默认网盘；diy-strm 与 SourceType 保持一致）
 	MediaServer      string     `gorm:"size:128" json:"media_server"`       // 媒体库实例（空=全部媒体库）
 	LastSearchAt     *time.Time `json:"last_search_at"`                     // 上次搜索时间
@@ -689,7 +691,7 @@ func UpdateCloudSubscription(id uint, req *CloudSubscription, fields map[string]
 	normalizeKeywords(req)
 	if len(fields) == 0 {
 		fields = map[string]bool{}
-		for _, k := range []string{"source_type", "resource_source", "channel", "keywords", "target_dir", "media_type", "tmdb_id", "tmdb_title", "season", "total_seasons", "total_episodes", "auto_finish", "wash", "wash_target", "replace_old", "enabled"} {
+		for _, k := range []string{"source_type", "resource_source", "channel", "keywords", "target_dir", "media_type", "tmdb_id", "tmdb_title", "season", "total_seasons", "total_episodes", "auto_finish", "wash", "wash_target", "replace_old", "enabled", "backfill"} {
 			fields[k] = true
 		}
 	}
@@ -738,6 +740,9 @@ func UpdateCloudSubscription(id uint, req *CloudSubscription, fields map[string]
 	}
 	if has("replace_old") {
 		old.ReplaceOld = req.ReplaceOld
+	}
+	if has("backfill") {
+		old.Backfill = req.Backfill
 	}
 	if has("enabled") {
 		old.Enabled = req.Enabled
@@ -1020,4 +1025,100 @@ func GetHiveRefreshRemindDays() int {
 // GetHiveUnlockDailyLimit 全局每日自动解锁次数上限（默认 0=不限）
 func GetHiveUnlockDailyLimit() int {
 	return hiveSettingInt(CloudSettingKeyHiveUnlockDailyLimit, 0, 0, 1000)
+}
+
+// ---------------------------------------------------------------------------
+// 订阅海报补全（问题修复：历史订阅无封面时按 TMDB 回填）
+// ---------------------------------------------------------------------------
+
+// ListSubscriptionsMissingPosters 所有缺少海报的影片级订阅（tmdb_id>0 且 poster_url 为空）
+func ListSubscriptionsMissingPosters() ([]CloudSubscription, error) {
+	var list []CloudSubscription
+	err := db.Db.Where("tmdb_id > 0 AND (poster_url = '' OR poster_url IS NULL) AND media_type IN ('movie','tv')").
+		Find(&list).Error
+	return list, err
+}
+
+// BackfillSubscriptionPoster 按 TMDB 补全订阅的海报/背景/简介/评分等快照字段（仅填空字段，已有值不覆盖）
+func BackfillSubscriptionPoster(sub *CloudSubscription) error {
+	if sub.TMDBID <= 0 || (sub.MediaType != "movie" && sub.MediaType != "tv") {
+		return nil
+	}
+	client := GlobalScrapeSettings.GetTmdbClient()
+	lang := GlobalScrapeSettings.GetTmdbLanguage()
+	var (
+		posterPath, backdropPath string
+		title, originalTitle     string
+		overview                 string
+		vote                     float64
+		year, totalEpisodes      int
+		genreNames               []string
+	)
+	if sub.MediaType == "tv" {
+		d, err := client.GetTvDetail(sub.TMDBID, lang)
+		if err != nil {
+			return err
+		}
+		posterPath, backdropPath = d.PosterPath, d.BackdropPath
+		title, originalTitle = d.Name, d.OriginalName
+		overview, vote = d.Overview, d.VoteAverage
+		year = helpers.ParseYearFromDate(d.FirstAirDate)
+		totalEpisodes = d.NumberOfEpisodes
+		for _, g := range d.Genres {
+			genreNames = append(genreNames, g.Name)
+		}
+	} else {
+		d, err := client.GetMovieDetail(sub.TMDBID, lang)
+		if err != nil {
+			return err
+		}
+		posterPath, backdropPath = d.PosterPath, d.BackdropPath
+		title, originalTitle = d.Title, d.OriginalTitle
+		overview, vote = d.Overview, d.VoteAverage
+		year = helpers.ParseYearFromDate(d.ReleaseDate)
+		for _, g := range d.Genres {
+			genreNames = append(genreNames, g.Name)
+		}
+	}
+	changed := false
+	if sub.PosterURL == "" && posterPath != "" {
+		sub.PosterURL = GetTmdbImageUrl(posterPath)
+		changed = true
+	}
+	if sub.BackdropURL == "" && backdropPath != "" {
+		sub.BackdropURL = GetTmdbImageUrl(backdropPath)
+		changed = true
+	}
+	if sub.Overview == "" && overview != "" {
+		sub.Overview = overview
+		changed = true
+	}
+	if sub.VoteAverage == 0 && vote > 0 {
+		sub.VoteAverage = vote
+		changed = true
+	}
+	if sub.Year == 0 && year > 0 {
+		sub.Year = year
+		changed = true
+	}
+	if sub.OriginalTitle == "" && originalTitle != "" {
+		sub.OriginalTitle = originalTitle
+		changed = true
+	}
+	if sub.TMDBTitle == "" && title != "" {
+		sub.TMDBTitle = title
+		changed = true
+	}
+	if sub.Genres == "" && len(genreNames) > 0 {
+		sub.Genres = strings.Join(genreNames, ",")
+		changed = true
+	}
+	if sub.TotalEpisodes == 0 && totalEpisodes > 0 {
+		sub.TotalEpisodes = totalEpisodes
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return db.Db.Save(sub).Error
 }

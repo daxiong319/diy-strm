@@ -96,6 +96,7 @@
                 <el-tag v-if="row.wash" size="small" type="danger" class="wash-tag">
                   洗版{{ washTargetLabel(row.wash_target) }}
                 </el-tag>
+                <el-tag v-if="row.backfill" size="small" type="warning" class="backfill-tag">回溯</el-tag>
                 <el-tag v-if="row.finished_at && row.finished_at !== '0001-01-01T00:00:00Z'" size="small" type="success" class="finished-tag">
                   已完结
                 </el-tag>
@@ -325,6 +326,13 @@
             </div>
           </el-form-item>
         </template>
+        <el-form-item label="回溯搜索">
+          <el-switch v-model="form.backfill" />
+          <div class="form-help">
+            开启后：每次执行忽略频道游标，从频道最近的历史帖里全文匹配（用于补收发布在订阅之前的旧资源）。
+            已转存过的影片/链接会自动去重，重复执行安全；回溯模式不推进频道游标。
+          </div>
+        </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
         </el-form-item>
@@ -442,6 +450,7 @@ interface SubRow {
   wash?: boolean
   wash_target?: string
   replace_old?: boolean
+  backfill?: boolean
   old_count?: number
   finished_at?: string
 }
@@ -579,7 +588,7 @@ const load = async () => {
 const formVisible = ref(false)
 const formSaving = ref(false)
 const pickerVisible = ref(false)
-const form = reactive({ id: 0, keywords: '', target_dir: '/影视/待整理', enabled: true, auto_finish: true, wash: false, wash_target: '', replace_old: true })
+const form = reactive({ id: 0, keywords: '', target_dir: '/影视/待整理', enabled: true, auto_finish: true, wash: false, wash_target: '', replace_old: true, backfill: false })
 
 const onDirSelected = (path: string) => {
   form.target_dir = path
@@ -714,7 +723,7 @@ const resetPick = () => {
 }
 
 const openCreate = () => {
-  Object.assign(form, { id: 0, keywords: '', target_dir: '/影视/待整理', enabled: true, auto_finish: true, wash: false, wash_target: '', replace_old: true })
+  Object.assign(form, { id: 0, keywords: '', target_dir: '/影视/待整理', enabled: true, auto_finish: true, wash: false, wash_target: '', replace_old: true, backfill: false })
   resetPick()
   formVisible.value = true
 }
@@ -730,6 +739,7 @@ const openEdit = (row: SubRow) => {
     wash: !!row.wash,
     wash_target: row.wash_target || '',
     replace_old: row.replace_old !== false,
+    backfill: !!row.backfill,
   })
   // 回填选片
   const rowMediaType = row.media_type || ''
@@ -784,6 +794,7 @@ const confirmForm = async () => {
       wash: form.wash,
       wash_target: form.wash_target,
       replace_old: form.replace_old,
+      backfill: form.backfill,
       media_type: m ? (m.media_type === 'movie' ? 'movie' : 'tv') : '',
       tmdb_id: m ? m.tmdb_id : 0,
       tmdb_title: m ? m.title : '',

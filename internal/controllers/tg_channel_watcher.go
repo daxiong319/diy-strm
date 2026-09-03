@@ -154,6 +154,11 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 	}
 
 	lastID := strings.TrimSpace(ch.LastPostID)
+	if sub.Backfill {
+		// 回溯搜索：忽略频道游标，从历史帖全文匹配（用于补收发布在游标之前的老资源）；
+		// 去重仍由转存记录保证（影片级按片/集、通用订阅按分享链接）
+		lastID = ""
+	}
 	kws := sub.KeywordList()
 	targetDir := strings.TrimSpace(sub.TargetDir)
 	if targetDir == "" {
@@ -377,6 +382,21 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 		if n, err := strconv.ParseInt(oldestFailed, 10, 64); err == nil && n > 0 {
 			newMaxID = strconv.FormatInt(n-1, 10)
 		}
+	}
+	if sub.Backfill {
+		// 回溯搜索不推进频道游标：历史帖可能还有其它订阅等待增量命中，
+		// 且本次处理过的帖子已由转存记录去重，重复执行安全
+		ch.LastRunAt = time.Now()
+		if err := models.SaveCloudChannel(ch); err != nil {
+			return fmt.Sprintf("频道 %s 状态保存失败：%v", channel, err), false
+		}
+		summary := fmt.Sprintf("频道 %s：命中 %d 帖，链接 %d 个，转存成功 %d 次，去重跳过 %d 次（回溯模式，未推进游标）",
+			channel, hits, linkFound, transferred, skipped)
+		if len(errs) > 0 {
+			summary += "；失败：" + strings.Join(errs, "；")
+			return summary, false
+		}
+		return summary, true
 	}
 	ch.LastPostID = newMaxID
 	ch.LastRunAt = time.Now()

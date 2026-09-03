@@ -275,12 +275,13 @@ func findCheckinAwardPoints(value any) *int {
 			if !ok {
 				continue
 			}
-			if pts := coerceCheckinPoints(typed[original]); pts != nil {
+			if pts := coerceCheckinPoints(typed[original]); pts != nil && *pts != 0 {
 				return pts
 			}
+			// 值为 0 的奖励不采信（常是占位/余额误命中，避免误报「获得 0 积分」），继续找真实奖励
 		}
 		if original, ok := lowerKeys["points"]; ok && !hasAnyKey(lowerKeys, checkinAccountContextKeys) {
-			if pts := coerceCheckinPoints(typed[original]); pts != nil {
+			if pts := coerceCheckinPoints(typed[original]); pts != nil && *pts != 0 {
 				return pts
 			}
 		}

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -99,6 +100,8 @@ func ListCloudSubscriptionsAPI(c *gin.Context) {
 		} else if models.HasSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season) {
 			sub.ExistingEpisodes = 1
 		}
+		// 历史订阅无海报：异步按 TMDB 补全（不阻塞列表，下次刷新可见）
+		maybeBackfillPosterAsync(&subs[i])
 		items = append(items, sub)
 	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "查询成功", Data: gin.H{
@@ -726,4 +729,63 @@ func TestPan123Account(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: fmt.Sprintf("连接成功，账号：%s", info.Data.Nickname), Data: nil})
+}
+
+// ---------------------------------------------------------------------------
+// 订阅海报补全（历史订阅无封面时按 TMDB 回填）
+// ---------------------------------------------------------------------------
+
+// posterBackfillLocks 防并发：同一订阅同一 tmdb 只补一次（内存级）
+var posterBackfillLocks sync.Map
+
+// posterBackfillRunning 批量回填任务互斥（避免重复触发）
+var posterBackfillRunning atomic.Bool
+
+// maybeBackfillPosterAsync 订阅缺失海报时异步补全（不阻塞列表接口）
+func maybeBackfillPosterAsync(sub *models.CloudSubscription) {
+	if sub.TMDBID <= 0 || sub.PosterURL != "" || (sub.MediaType != "movie" && sub.MediaType != "tv") {
+		return
+	}
+	key := fmt.Sprintf("%d-%d", sub.ID, sub.TMDBID)
+	if _, loaded := posterBackfillLocks.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer posterBackfillLocks.Delete(key)
+		if err := models.BackfillSubscriptionPoster(sub); err != nil {
+			helpers.AppLogger.Warnf("订阅 #%d 海报补全失败：%v", sub.ID, err)
+		}
+	}()
+}
+
+// BackfillPostersAPI 手动批量补全全部缺少海报的订阅（POST /cloud/subscriptions/backfill-posters）
+// 后台串行执行（避免 TMDB 限流），接口立即返回
+func BackfillPostersAPI(c *gin.Context) {
+	if !posterBackfillRunning.CompareAndSwap(false, true) {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "海报回填正在进行中，请稍后再试", Data: nil})
+		return
+	}
+	total := 0
+	if subs, err := models.ListSubscriptionsMissingPosters(); err == nil {
+		total = len(subs)
+	}
+	go func() {
+		defer posterBackfillRunning.Store(false)
+		subs, err := models.ListSubscriptionsMissingPosters()
+		if err != nil || len(subs) == 0 {
+			helpers.AppLogger.Infof("订阅海报回填：无待补全订阅")
+			return
+		}
+		ok, fail := 0, 0
+		for i := range subs {
+			if err := models.BackfillSubscriptionPoster(&subs[i]); err != nil {
+				fail++
+				helpers.AppLogger.Warnf("订阅 #%d 海报补全失败：%v", subs[i].ID, err)
+			} else {
+				ok++
+			}
+		}
+		helpers.AppLogger.Infof("订阅海报回填完成：成功 %d，失败 %d", ok, fail)
+	}()
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: fmt.Sprintf("海报回填已提交，后台执行中（待补全 %d 条）", total), Data: nil})
 }

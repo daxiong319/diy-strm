@@ -20,6 +20,9 @@
           <el-button size="small" :loading="runAllLoading" @click="runAllSearch">
             <el-icon><Refresh /></el-icon>补全
           </el-button>
+          <el-button size="small" :loading="backfillPosterLoading" title="为缺少海报的订阅按 TMDB 批量补全封面" @click="backfillPosters">
+            <el-icon><Picture /></el-icon>补全封面
+          </el-button>
           <el-button size="small" title="预设新建订阅的默认参数（电影 / 电视剧各一套）" @click="openDefaults">
             <el-icon><Setting /></el-icon>默认配置
           </el-button>
@@ -439,7 +442,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Back, Checked, Delete, EditPen, Film, Plus, Refresh, RefreshLeft, Search, Setting, Star,
+  Back, Checked, Delete, EditPen, Film, Picture, Plus, Refresh, RefreshLeft, Search, Setting, Star,
   VideoPause, VideoPlay,
 } from '@element-plus/icons-vue'
 import { useHttpClient } from '@/http/client'
@@ -619,6 +622,26 @@ const confirmBatchDelete = async () => {
 // 单条操作
 // ---------------------------------------------------------------------------
 const runAllLoading = ref(false)
+
+// 批量补全缺失海报（TMDB 回填）
+const backfillPosterLoading = ref(false)
+const backfillPosters = async () => {
+  backfillPosterLoading.value = true
+  try {
+    const resp = await http.post('/api/cloud/subscriptions/backfill-posters')
+    if (resp.data?.code === 200) {
+      ElMessage.success({ message: resp.data.message || '海报回填已提交，后台执行中', duration: 6000, showClose: true })
+      setTimeout(() => load(), 6000)
+    } else {
+      ElMessage.error(resp.data?.message || '操作失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('操作失败：' + (e?.message || ''))
+  } finally {
+    backfillPosterLoading.value = false
+  }
+}
+
 const runAllSearch = async () => {
   runAllLoading.value = true
   try {

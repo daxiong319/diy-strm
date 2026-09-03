@@ -46,6 +46,7 @@ type HiveOAuthAccount struct {
 	LastCheckinPoints  *int      `json:"last_checkin_points"`  // 最近一次签到获得积分（赌狗可能为负）
 	LastCheckinBalance *int      `json:"last_checkin_balance"` // 签到后账户余额
 	LastCheckinStreak  int       `json:"last_checkin_streak"`  // 连续签到天数
+	LastCheckinResponse string   `gorm:"type:text" json:"-"`   // 最近一次签到上游响应原文（截断 2000 字符，排查积分解析用）
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
