@@ -69,6 +69,16 @@ func ListCloudSubscriptionsAPI(c *gin.Context) {
 		subs, err = models.ListSubscriptionsByResourceSource(resourceSource)
 	} else {
 		subs, err = models.ListCloudSubscriptions(sourceType)
+		// 频道订阅页只展示 TG 频道订阅，影巢订阅（资源来源 hdhive）由影巢页面单独管理
+		if err == nil {
+			filtered := subs[:0]
+			for _, s := range subs {
+				if s.ResourceSource != "hdhive" {
+					filtered = append(filtered, s)
+				}
+			}
+			subs = filtered
+		}
 	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "查询失败：" + err.Error(), Data: nil})

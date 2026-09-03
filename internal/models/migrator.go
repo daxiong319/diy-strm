@@ -77,6 +77,11 @@ func Migrate() {
 	if err := db.Db.AutoMigrate(&WashScanItem{}, &WashLog{}, &HiveCheckinRecord{}); err != nil {
 		helpers.AppLogger.Errorf("自动迁移洗版与签到记录表失败：%v", err)
 	}
+	// 订阅表随代码演进的字段（海报快照/回溯搜索等）不依赖版本号，幂等补齐缺失列
+	db.Db.Statement.PrepareStmt = true
+	if err := db.Db.AutoMigrate(&CloudSubscription{}); err != nil {
+		helpers.AppLogger.Errorf("自动迁移订阅表新字段失败：%v", err)
+	}
 	db.Db.Statement.PrepareStmt = true
 	if migrator.VersionCode == 1 {
 		// 数据库版本低于最大版本，需要升级
