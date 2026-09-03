@@ -296,8 +296,9 @@ type CloudSubscription struct {
 	SearchSources    string     `gorm:"size:64" json:"search_sources"`      // 搜索渠道（逗号串：telegram/hdhive/pansou）
 	IncludeRegex     string     `gorm:"type:text" json:"include_regex"`     // 标题包含正则（命中才转存）
 	ExcludeRegex     string     `gorm:"type:text" json:"exclude_regex"`     // 标题排除正则（命中则跳过）
-	Backfill         bool       `json:"backfill"`                           // 回溯搜索：执行时忽略频道游标，从历史帖全文匹配（不推进游标）
-	Storage          string     `gorm:"size:64" json:"storage"`             // 存储实例（空=默认网盘；diy-strm 与 SourceType 保持一致）
+	Backfill         bool   `json:"backfill"`       // 回溯搜索：执行时忽略频道游标，从历史帖全文匹配（不推进游标）
+	BackfillPages    int    `json:"backfill_pages"` // 回溯搜索翻页上限（按 t.me/s ?before= 向后翻；0=默认 50 页，每页约 20 帖）
+	Storage          string `gorm:"size:64" json:"storage"`          // 存储实例（空=默认网盘；diy-strm 与 SourceType 保持一致）
 	MediaServer      string     `gorm:"size:128" json:"media_server"`       // 媒体库实例（空=全部媒体库）
 	LastSearchAt     *time.Time `json:"last_search_at"`                     // 上次搜索时间
 	LastRunAt        time.Time  `json:"last_run_at"`
@@ -691,7 +692,7 @@ func UpdateCloudSubscription(id uint, req *CloudSubscription, fields map[string]
 	normalizeKeywords(req)
 	if len(fields) == 0 {
 		fields = map[string]bool{}
-		for _, k := range []string{"source_type", "resource_source", "channel", "keywords", "target_dir", "media_type", "tmdb_id", "tmdb_title", "season", "total_seasons", "total_episodes", "auto_finish", "wash", "wash_target", "replace_old", "enabled", "backfill"} {
+		for _, k := range []string{"source_type", "resource_source", "channel", "keywords", "target_dir", "media_type", "tmdb_id", "tmdb_title", "season", "total_seasons", "total_episodes", "auto_finish", "wash", "wash_target", "replace_old", "enabled", "backfill", "backfill_pages", "search_keyword", "resolution", "effect", "search_sources", "include_regex", "exclude_regex"} {
 			fields[k] = true
 		}
 	}
@@ -743,6 +744,27 @@ func UpdateCloudSubscription(id uint, req *CloudSubscription, fields map[string]
 	}
 	if has("backfill") {
 		old.Backfill = req.Backfill
+	}
+	if has("backfill_pages") {
+		old.BackfillPages = req.BackfillPages
+	}
+	if has("search_keyword") {
+		old.SearchKeyword = req.SearchKeyword
+	}
+	if has("resolution") {
+		old.Resolution = req.Resolution
+	}
+	if has("effect") {
+		old.Effect = req.Effect
+	}
+	if has("search_sources") {
+		old.SearchSources = req.SearchSources
+	}
+	if has("include_regex") {
+		old.IncludeRegex = req.IncludeRegex
+	}
+	if has("exclude_regex") {
+		old.ExcludeRegex = req.ExcludeRegex
 	}
 	if has("enabled") {
 		old.Enabled = req.Enabled

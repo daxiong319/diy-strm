@@ -140,20 +140,41 @@ func RunSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 // runChannelSubscriptionOnce 单订阅 × 单频道执行一轮抓取与转存
 func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudChannel) (string, bool) {
 	channel := ch.ChannelName()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+
+	// 回溯搜索要按 ?before= 深翻历史（最坏几十页），单频道超时放宽；普通增量保持短超时防阻塞轮询
+	timeout := 3 * time.Minute
+	if sub.Backfill {
+		timeout = 15 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	posts, err := tgchannel.ParseChannelPage(ctx, channel)
+	// 复刻 tgto123 网页通道：带游标边界向后翻页回看历史。
+	// 普通增量以频道游标为界（通常第 1 页即命中边界停止，翻页只兜底两次运行间超 20 帖的缺口）；
+	// 回溯搜索忽略游标，按配置页数深翻历史帖全文匹配（不推进游标）。
+	stopID := strings.TrimSpace(ch.LastPostID)
+	maxPages := 100
+	if sub.Backfill {
+		stopID = ""
+		maxPages = sub.BackfillPages
+		if maxPages <= 0 {
+			maxPages = 50
+		}
+	}
+	posts, pages, err := tgchannel.ParseChannelPageRange(ctx, channel, stopID, maxPages)
 	if err != nil {
 		return fmt.Sprintf("频道 %s 抓取失败：%v", channel, err), false
 	}
 	if len(posts) == 0 {
 		ch.LastRunAt = time.Now()
 		_ = models.SaveCloudChannel(ch)
-		return fmt.Sprintf("频道 %s 无内容", channel), true
+		if sub.Backfill {
+			return fmt.Sprintf("频道 %s：回溯翻 %d 页未命中", channel, pages), true
+		}
+		return fmt.Sprintf("频道 %s 无新帖（翻 %d 页）", channel, pages), true
 	}
 
-	lastID := strings.TrimSpace(ch.LastPostID)
+	lastID := stopID
 	if sub.Backfill {
 		// 回溯搜索：忽略频道游标，从历史帖全文匹配（用于补收发布在游标之前的老资源）；
 		// 去重仍由转存记录保证（影片级按片/集、通用订阅按分享链接）
@@ -182,10 +203,30 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 		if newMaxID == "" || postIDGreater(p.PostID, newMaxID) {
 			newMaxID = p.PostID
 		}
+		// 帖内是否有本订阅网盘类型的链接（回溯留痕判断用：区分「含资源但关键词没对上」与「压根没资源」）
+		probeURL := ""
+		for _, l := range p.Links {
+			if l.Type == sub.SourceType {
+				probeURL = l.URL
+				break
+			}
+		}
 		if !tgchannel.MatchKeywords(p.Text, kws) {
+			// 回溯模式逐帖留痕：帖含本网盘链接但关键词未命中 → 在监控历史标注跳过原因，便于定位断点
+			// （帖文本不含关键词 = 关键词与频道资源命名不匹配等；仅回溯模式记录，避免增量轮询刷屏）
+			if sub.Backfill && probeURL != "" && !models.MonitorRecordExists(sub.ID, msgURLFor(p.PostID)) {
+				skipped++
+				recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), probeURL, targetDir, sub.ID, "关键词未命中(帖含资源链接)")
+			}
 			continue
 		}
 		if len(p.Links) == 0 {
+			// 关键词命中但整帖无网盘链接：若带 123 秒传暗号（123FSLink/123FLCP），tgto123 靠 123 秒传 API 转存，
+			// 本项目暂不支持自动转存，回溯模式留痕提示（防重复，只写一次）
+			if sub.Backfill && tgchannel.HasFastShareMarker(p.Text) && !models.MonitorRecordExists(sub.ID, msgURLFor(p.PostID)) {
+				skipped++
+				recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), "", targetDir, sub.ID, "帖子含 123 秒传暗号(123FSLink/FLCP)，暂不支持自动转存")
+			}
 			continue
 		}
 		hits++
@@ -390,8 +431,8 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 		if err := models.SaveCloudChannel(ch); err != nil {
 			return fmt.Sprintf("频道 %s 状态保存失败：%v", channel, err), false
 		}
-		summary := fmt.Sprintf("频道 %s：命中 %d 帖，链接 %d 个，转存成功 %d 次，去重跳过 %d 次（回溯模式，未推进游标）",
-			channel, hits, linkFound, transferred, skipped)
+		summary := fmt.Sprintf("频道 %s：翻 %d 页，命中 %d 帖，链接 %d 个，转存成功 %d 次，跳过 %d 次（回溯模式，未推进游标）",
+			channel, pages, hits, linkFound, transferred, skipped)
 		if len(errs) > 0 {
 			summary += "；失败：" + strings.Join(errs, "；")
 			return summary, false
@@ -404,8 +445,8 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 		return fmt.Sprintf("频道 %s 游标保存失败：%v", channel, err), false
 	}
 
-	summary := fmt.Sprintf("频道 %s：命中 %d 帖，链接 %d 个，转存成功 %d 次，去重跳过 %d 次，游标推进至 %s",
-		channel, hits, linkFound, transferred, skipped, newMaxID)
+	summary := fmt.Sprintf("频道 %s：翻 %d 页，命中 %d 帖，链接 %d 个，转存成功 %d 次，跳过 %d 次，游标推进至 %s",
+		channel, pages, hits, linkFound, transferred, skipped, newMaxID)
 	if len(errs) > 0 {
 		summary += "；失败：" + strings.Join(errs, "；")
 		return summary, false

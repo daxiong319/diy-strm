@@ -329,9 +329,13 @@
         <el-form-item label="回溯搜索">
           <el-switch v-model="form.backfill" />
           <div class="form-help">
-            开启后：每次执行忽略频道游标，从频道最近的历史帖里全文匹配（用于补收发布在订阅之前的旧资源）。
-            已转存过的影片/链接会自动去重，重复执行安全；回溯模式不推进频道游标。
+            开启后：每次执行忽略频道游标，从频道历史帖里按 t.me/s <code>?before=</code> 向后翻页全文匹配（用于补收发布在订阅之前的旧资源；已转存过的影片/链接会自动去重，重复执行安全，不推进频道游标）。<br />
+            回溯页数控制回看深度：每页约 20 帖，如目标资源发布于频道几百帖之前可调大到 50~100；单次执行随之变慢（翻 50 页约需数十秒），建议仅在补收时开启。未命中的帖会以「跳过」形式记录到监控历史（可在监控历史页查看原因）。
           </div>
+        </el-form-item>
+        <el-form-item v-if="form.backfill" label="回溯页数">
+          <el-input-number v-model="form.backfill_pages" :min="1" :max="200" :step="10" style="width: 160px" />
+          <div class="form-help">回溯搜索时最多向后翻的页数（每页约 20 帖），默认 50。</div>
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
@@ -451,6 +455,7 @@ interface SubRow {
   wash_target?: string
   replace_old?: boolean
   backfill?: boolean
+  backfill_pages?: number
   old_count?: number
   finished_at?: string
 }
@@ -588,7 +593,7 @@ const load = async () => {
 const formVisible = ref(false)
 const formSaving = ref(false)
 const pickerVisible = ref(false)
-const form = reactive({ id: 0, keywords: '', target_dir: '/影视/待整理', enabled: true, auto_finish: true, wash: false, wash_target: '', replace_old: true, backfill: false })
+const form = reactive({ id: 0, keywords: '', target_dir: '/影视/待整理', enabled: true, auto_finish: true, wash: false, wash_target: '', replace_old: true, backfill: false, backfill_pages: 50 })
 
 const onDirSelected = (path: string) => {
   form.target_dir = path
@@ -723,7 +728,7 @@ const resetPick = () => {
 }
 
 const openCreate = () => {
-  Object.assign(form, { id: 0, keywords: '', target_dir: '/影视/待整理', enabled: true, auto_finish: true, wash: false, wash_target: '', replace_old: true, backfill: false })
+  Object.assign(form, { id: 0, keywords: '', target_dir: '/影视/待整理', enabled: true, auto_finish: true, wash: false, wash_target: '', replace_old: true, backfill: false, backfill_pages: 50 })
   resetPick()
   formVisible.value = true
 }
@@ -740,6 +745,7 @@ const openEdit = (row: SubRow) => {
     wash_target: row.wash_target || '',
     replace_old: row.replace_old !== false,
     backfill: !!row.backfill,
+    backfill_pages: row.backfill_pages || 50,
   })
   // 回填选片
   const rowMediaType = row.media_type || ''
@@ -795,6 +801,7 @@ const confirmForm = async () => {
       wash_target: form.wash_target,
       replace_old: form.replace_old,
       backfill: form.backfill,
+      backfill_pages: form.backfill ? Number(form.backfill_pages) || 50 : 0,
       media_type: m ? (m.media_type === 'movie' ? 'movie' : 'tv') : '',
       tmdb_id: m ? m.tmdb_id : 0,
       tmdb_title: m ? m.title : '',

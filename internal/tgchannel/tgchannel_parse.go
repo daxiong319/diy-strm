@@ -35,10 +35,14 @@ var userAgents = []string{
 }
 
 // 分享链接正则（与 telegram_bot 一致）
-// channelHTTPClient 抓取频道的专用客户端：带整体超时。
+// channelHTTPClient 抓取频道的专用客户端：带整体超时，且不自动跟随重定向
+// （3xx 原样返回给调用方判断 —— 失效频道会 302 回 t.me 首页，跟随后会把首页当空页解析）。
 // 不能用 http.DefaultClient：调用方传的是订阅引擎的长生命周期 ctx（无单次超时），
 // t.me 挂起会阻塞整个订阅轮询循环（5 分钟一轮的串行遍历）。
-var channelHTTPClient = &http.Client{Timeout: 45 * time.Second}
+var channelHTTPClient = &http.Client{
+	Timeout:       45 * time.Second,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
+}
 
 var (
 	rePan123 = regexp.MustCompile(`(?:https?://)?(?:[a-z0-9\-]+\.)*(?:123pan\.com|123pan\.cn|123684\.com|123865\.com)/(?:s|123pan|share)/([A-Za-z0-9\-_]{6,})(?:\.html)?`)
@@ -90,20 +94,140 @@ func MatchKeywords(text string, keywords []string) bool {
 	return false
 }
 
-// ParseChannelPage 抓取并解析 t.me/s/{channel} 公开预览页
-// 返回帖子列表（新到旧）。channel 传频道 @名（不带 @）。
-func ParseChannelPage(ctx context.Context, channel string) ([]ChannelPost, error) {
+// normalizeChannelName 归一化频道名为 t.me/s 路径段（去 @ / URL 前缀 / 尾斜杠）
+func normalizeChannelName(channel string) string {
 	channel = strings.TrimPrefix(channel, "@")
 	channel = strings.TrimPrefix(channel, "https://t.me/s/")
 	channel = strings.TrimPrefix(channel, "https://t.me/")
 	channel = strings.TrimPrefix(channel, "t.me/s/")
 	channel = strings.TrimPrefix(channel, "t.me/")
 	channel = strings.TrimRight(channel, "/")
+	return channel
+}
+
+// ParseChannelPage 抓取并解析 t.me/s/{channel} 公开预览页（仅最新一页）
+// 返回帖子列表（新到旧）。channel 传频道 @名（不带 @）。
+func ParseChannelPage(ctx context.Context, channel string) ([]ChannelPost, error) {
+	posts, _, err := ParseChannelPageRange(ctx, channel, "", 1)
+	return posts, err
+}
+
+// ParseChannelPageRange 抓取 t.me/s/{channel} 公开预览页并按 ?before= 向后翻页回看历史。
+// 复刻 tgto123 网页通道语义：
+//   - stopID==""：只抓最新一页即返回（首启/预览走此路径，避免一上来就深翻历史）。
+//   - stopID!=""：逐页新→旧扫描，遇到 PostID <= stopID（游标边界）即截断停止；
+//     整页都新于 stopID 时用本页最旧 PostID 拼 ?before= 抓下一页，直到命中边界 /
+//     空页 / 页数超 maxPages / ctx 取消。maxPages<=0 时按单页处理。
+//
+// 跨页按 PostID 去重、整体新→旧排序。返回帖子列表、实际请求页数与错误。
+func ParseChannelPageRange(ctx context.Context, channel string, stopID string, maxPages int) ([]ChannelPost, int, error) {
+	channel = normalizeChannelName(channel)
 	if channel == "" {
-		return nil, fmt.Errorf("频道名为空")
+		return nil, 0, fmt.Errorf("频道名为空")
+	}
+	stopID = strings.TrimSpace(stopID)
+	if maxPages <= 0 {
+		maxPages = 1
 	}
 
-	url := "https://t.me/s/" + channel
+	var all []ChannelPost
+	seen := map[string]bool{}
+	beforeID := ""
+	pages := 0
+	stop := false
+
+	for page := 1; page <= maxPages && !stop; page++ {
+		select {
+		case <-ctx.Done():
+			if len(all) == 0 {
+				return nil, pages, ctx.Err()
+			}
+			return dedupChannelPosts(all, seen), pages, nil
+		default:
+		}
+
+		pageURL := "https://t.me/s/" + channel
+		if beforeID != "" {
+			pageURL += "?before=" + beforeID
+		}
+		posts, err := fetchChannelPage(ctx, pageURL)
+		if err != nil {
+			if len(all) == 0 {
+				return nil, pages, err
+			}
+			// 已翻到部分页后失败：返回已得结果，不再继续
+			return dedupChannelPosts(all, seen), pages, nil
+		}
+		pages++
+		if len(posts) == 0 {
+			// 空页（无更多可用历史）
+			break
+		}
+
+		// posts 新→旧；找到「<= 游标」的边界帖即截断并停止翻页
+		if stopID != "" {
+			cut := -1
+			for i, p := range posts {
+				if !postIDNewer(p.PostID, stopID) {
+					cut = i
+					break
+				}
+			}
+			if cut >= 0 {
+				posts = posts[:cut]
+				stop = true
+			}
+		}
+		for _, p := range posts {
+			if p.PostID != "" && !seen[p.PostID] {
+				seen[p.PostID] = true
+				all = append(all, p)
+			}
+		}
+		if stop {
+			break
+		}
+
+		// 用本页最旧帖 ID 继续向前翻
+		oldest := posts[len(posts)-1].PostID
+		if oldest == "" {
+			break
+		}
+		beforeID = oldest
+
+		if page < maxPages {
+			select {
+			case <-ctx.Done():
+				stop = true
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+	}
+
+	sort.Slice(all, func(i, j int) bool {
+		return postIDNewer(all[i].PostID, all[j].PostID)
+	})
+	return all, pages, nil
+}
+
+// dedupChannelPosts 追加式去重辅助（ParseChannelPageRange 内部用，保持新→旧输入序）
+func dedupChannelPosts(posts []ChannelPost, seen map[string]bool) []ChannelPost {
+	out := make([]ChannelPost, 0, len(posts))
+	for _, p := range posts {
+		if p.PostID == "" || seen[p.PostID] {
+			continue
+		}
+		seen[p.PostID] = true
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return postIDNewer(out[i].PostID, out[j].PostID)
+	})
+	return out
+}
+
+// fetchChannelPage 抓取单个 t.me/s 页并解析（3 次重试 / 45s 超时 / 4MB 上限 / UA 轮换）
+func fetchChannelPage(ctx context.Context, url string) ([]ChannelPost, error) {
 	ua := userAgents[time.Now().Unix()%int64(len(userAgents))]
 
 	var lastErr error
@@ -130,6 +254,18 @@ func ParseChannelPage(ctx context.Context, channel string) ([]ChannelPost, error
 		if resp.StatusCode >= 500 {
 			resp.Body.Close()
 			lastErr = fmt.Errorf("t.me 返回 %d", resp.StatusCode)
+			continue
+		}
+		if resp.StatusCode == http.StatusMovedPermanently || resp.StatusCode == http.StatusFound ||
+			resp.StatusCode == http.StatusSeeOther || resp.StatusCode == http.StatusTemporaryRedirect ||
+			resp.StatusCode == http.StatusPermanentRedirect {
+			loc := strings.ToLower(resp.Header.Get("Location"))
+			resp.Body.Close()
+			if strings.HasPrefix(loc, "https://t.me/") || strings.HasPrefix(loc, "http://t.me/") || strings.HasPrefix(loc, "//t.me/") {
+				// 频道失效或无法公开访问（重定向回 t.me 首页）
+				return nil, fmt.Errorf("频道已失效或无法公开访问（重定向至 t.me）")
+			}
+			lastErr = fmt.Errorf("t.me 重定向至 %s", loc)
 			continue
 		}
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
@@ -293,6 +429,9 @@ func parseMessageDiv(n *html.Node) (ChannelPost, bool) {
 	if len(hrefs) > 0 {
 		linkText = strings.Join(hrefs, "\n") + "\n" + text
 	}
+	// 资源帖常把 123FSLink 暗号加密成 [ENCRYPTED_LINK_START]..[END] 嵌在按钮/正文，
+	// 先按 tgto123 同款 AES 解密替换回明文，再提取网盘链接。
+	linkText = DecryptEncryptedLinks(linkText)
 	post.Links = ExtractShareLinks(linkText)
 	return post, true
 }

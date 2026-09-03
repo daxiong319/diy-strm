@@ -42,6 +42,21 @@ const (
 	MonitorStatusWash    = "洗版替换"
 )
 
+// MonitorRecordExists 该 (订阅, 消息链接) 是否已有监控历史记录。
+// 用于回溯模式逐帖留痕的防重复：同一帖子只写一次跳过原因，重复执行不刷屏。
+func MonitorRecordExists(subscriptionID uint, messageURL string) bool {
+	if subscriptionID == 0 || strings.TrimSpace(messageURL) == "" {
+		return false
+	}
+	var cnt int64
+	if err := db.Db.Model(&MonitorTransferRecord{}).
+		Where("subscription_id = ? AND message_url = ?", subscriptionID, messageURL).
+		Count(&cnt).Error; err != nil {
+		return false
+	}
+	return cnt > 0
+}
+
 // CreateMonitorTransferRecord 写入一条监控历史（失败仅记日志，不影响主流程）
 func CreateMonitorTransferRecord(r *MonitorTransferRecord) {
 	if r.TransferTime.IsZero() {
