@@ -20,6 +20,19 @@ type ShareLink struct {
 	Type string // 与 models.SourceType 一致：123 / guangyapan / pan139
 }
 
+// FullURL 带提取码的完整链接（监控留痕用：频道删帖后原始 ?pwd= 无处可寻，
+// 凭此仍可人工/自动补转存；转存逻辑不受影响，仍分开传 URL 与 Pwd）
+func (s ShareLink) FullURL() string {
+	if s.Pwd == "" {
+		return s.URL
+	}
+	sep := "?"
+	if strings.Contains(s.URL, "?") {
+		sep = "&"
+	}
+	return s.URL + sep + "pwd=" + s.Pwd
+}
+
 // ChannelPost 频道帖子
 type ChannelPost struct {
 	PostID string

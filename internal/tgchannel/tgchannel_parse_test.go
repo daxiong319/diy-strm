@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +108,36 @@ func TestHasFastShareMarker(t *testing.T) {
 		if got := HasFastShareMarker(c.text); got != c.want {
 			t.Errorf("HasFastShareMarker(%q) = %v, want %v", c.text, got, c.want)
 		}
+	}
+}
+
+func TestShareLinkFullURL(t *testing.T) {
+	cases := []struct {
+		link ShareLink
+		want string
+	}{
+		// 123 标准化链接 + 提取码：以 ?pwd= 附加，可直接转存/人工补传
+		{ShareLink{URL: "https://www.123pan.com/s/Oqtgvd-39Mdh", Pwd: "YSRG", Type: "123"},
+			"https://www.123pan.com/s/Oqtgvd-39Mdh?pwd=YSRG"},
+		// 已含查询串的 URL：用 & 附加
+		{ShareLink{URL: "https://www.139.com/w/i/abcd1234?from=tg", Pwd: "x8y9", Type: "pan139"},
+			"https://www.139.com/w/i/abcd1234?from=tg&pwd=x8y9"},
+		// 无提取码：原样返回
+		{ShareLink{URL: "https://www.guangyapan.com/s/abcdef12", Type: "guangyapan"},
+			"https://www.guangyapan.com/s/abcdef12"},
+		// 空 URL 防御
+		{ShareLink{Pwd: "abc"}, "?pwd=abc"},
+	}
+	for _, c := range cases {
+		if got := c.link.FullURL(); got != c.want {
+			t.Errorf("FullURL(%+v) = %q, want %q", c.link, got, c.want)
+		}
+	}
+	// 往返：FullURL 产物能被 123 分享链接正则重新解析出同一个 shareKey
+	re := regexp.MustCompile(`(?:https?://)?(?:[a-z0-9\-]+\.)*(?:123pan\.com|123pan\.cn|123684\.com|123865\.com)/(?:s|123pan|share)/([A-Za-z0-9\-_]{6,})(?:\.html)?`)
+	m := re.FindStringSubmatch("https://www.123pan.com/s/Oqtgvd-39Mdh?pwd=YSRG")
+	if m == nil || m[1] != "Oqtgvd-39Mdh" {
+		t.Fatalf("FullURL 产物应可被分享正则解析：%v", m)
 	}
 }
 
