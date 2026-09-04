@@ -258,6 +258,10 @@ func checkDownloadHistory() error {
 			historyMu.Lock()
 			historyAttempts[h.DownloadHash] = time.Now()
 			historyMu.Unlock()
+			// 路径匹配失败必须留痕（常见于 LocalViewRoot/DownloadRoot 与下载器实际保存路径不一致），
+			// 否则上传任务静默缺失无从排查
+			helpers.AppLogger.Warnf("MoviePilot 下载历史 %s（%s）本地路径未匹配到（历史 path=%s，LocalViewRoot=%s），跳过创建上传任务；请检查 MoviePilot 设置中的下载根目录配置",
+				h.Title, h.DownloadHash[:min(12, len(h.DownloadHash))], h.Path, cfg.LocalViewRoot)
 			continue
 		}
 		mediaType := ""

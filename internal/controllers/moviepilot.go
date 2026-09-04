@@ -140,6 +140,7 @@ func CreateMoviePilotSubscribe(c *gin.Context) {
 		TotalEpisode: req.TotalEpisode,
 		SavePath:     req.SavePath,
 		Sites:        req.Sites,
+		Include:      moviepilot.PromotionIncludeRegex(req.Promotion),
 	})
 	if err != nil {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: err.Error(), Data: nil})
@@ -236,8 +237,43 @@ func UpdateMoviePilotSubscribeStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "更新订阅状态成功", Data: nil})
 }
 
+// UpdateMoviePilotSubscribePromotion 调整订阅促销优选（免费/普通/2X免费/50%/2X 50%/不限）
+// @Summary 调整 MoviePilot 订阅促销优选
+// @Tags MoviePilot
+// @Success 200 {object} APIResponse[any]
+// @Router /moviepilot/subscribes/:id/promotion [put]
+// @Security JwtAuth
+// @Security ApiKeyAuth
+func UpdateMoviePilotSubscribePromotion(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "订阅 ID 无效", Data: nil})
+		return
+	}
+	var req requests.UpdateMoviePilotSubscribePromotionRequest
+	if err := c.ShouldBind(&req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "请求参数错误：" + err.Error(), Data: nil})
+		return
+	}
+	if err := req.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: err.Error(), Data: nil})
+		return
+	}
+	client, ok := moviePilotClientFromConfig(c)
+	if !ok {
+		return
+	}
+	if err := client.UpdateSubscribeInclude(c, id, moviepilot.PromotionIncludeRegex(req.Promotion)); err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: err.Error(), Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "促销优选已更新，下轮订阅搜索生效", Data: nil})
+}
+
 // ListMoviePilotDownloads 查询 MoviePilot 下载任务列表
-// @Summary 查询 MoviePilot 下载任务列表
+// 聚合「下载器当前任务」+「最近完成（下载历史兜底）」：完成后任务会从下载器列表消失，
+// 用 MP 下载历史补齐，保证已完成条目仍可见并带上传状态。
+// @Summary 查询 MoviePilot 下载任务列表（含最近完成）
 // @Tags MoviePilot
 // @Success 200 {object} APIResponse[any]
 // @Router /moviepilot/downloads [get]
@@ -253,7 +289,72 @@ func ListMoviePilotDownloads(c *gin.Context) {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: err.Error(), Data: nil})
 		return
 	}
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "获取下载任务成功", Data: downloads})
+
+	type downloadRow struct {
+		Hash          string `json:"hash"`
+		Title         string `json:"title"`
+		Name          string `json:"name"`
+		SeasonEpisode string `json:"season_episode"`
+		State         string `json:"state"`
+		Progress      float64 `json:"progress"`
+		SavePath      string `json:"save_path"`
+		Date          string `json:"date"`
+		UploadStatus  string `json:"upload_status"`
+	}
+	rows := make([]downloadRow, 0, len(downloads)+16)
+	activeHashes := make(map[string]bool, len(downloads))
+	uploadStatus := func(hash string) string {
+		if hash == "" {
+			return ""
+		}
+		if t := models.FindMoviePilotUploadTask(hash); t != nil {
+			return string(t.Status)
+		}
+		return ""
+	}
+	for _, t := range downloads {
+		if t == nil {
+			continue
+		}
+		activeHashes[t.Hash] = true
+		rows = append(rows, downloadRow{
+			Hash:          t.Hash,
+			Title:         t.Title,
+			Name:          t.Name,
+			SeasonEpisode: t.SeasonEpisode,
+			State:         t.State,
+			Progress:      t.Progress,
+			SavePath:      t.SavePath,
+			UploadStatus:  uploadStatus(t.Hash),
+		})
+	}
+	// 历史兜底：已完成并从下载器列表移除的任务（取最近 50 条）
+	if histories, herr := client.ListDownloadHistory(c, 1, 50); herr == nil {
+		for _, h := range histories {
+			if h == nil || h.DownloadHash == "" || activeHashes[h.DownloadHash] {
+				continue
+			}
+			seasonEp := h.Seasons
+			if h.Episodes != "" {
+				if seasonEp != "" {
+					seasonEp += " "
+				}
+				seasonEp += h.Episodes
+			}
+			rows = append(rows, downloadRow{
+				Hash:          h.DownloadHash,
+				Title:         h.Title,
+				Name:          h.TorrentName,
+				SeasonEpisode: seasonEp,
+				State:         "completed",
+				Progress:      100,
+				SavePath:      h.Path,
+				Date:          h.Date,
+				UploadStatus:  uploadStatus(h.DownloadHash),
+			})
+		}
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "获取下载任务成功", Data: rows})
 }
 
 // ListMoviePilotUploadTasks 查询 139 上传任务列表

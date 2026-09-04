@@ -54,12 +54,20 @@
               </el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="促销优选" width="110">
+            <template #default="scope">
+              <el-tag v-if="promotionOf(scope.row)" size="small" :type="promotionTagType(promotionOf(scope.row))">
+                {{ promotionLabel(promotionOf(scope.row)) }}
+              </el-tag>
+              <span v-else class="muted-text">不限</span>
+            </template>
+          </el-table-column>
           <el-table-column label="状态" width="100">
             <template #default="scope">
               <el-tag :type="getStateTag(scope.row.state)">{{ getStateText(scope.row.state) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="240" fixed="right">
+          <el-table-column label="操作" width="300" fixed="right">
             <template #default="scope">
               <el-button size="small" type="primary" :loading="scope.row._searching" @click="searchSubscribe(scope.row)"
                 >搜索</el-button
@@ -67,6 +75,7 @@
               <el-button size="small" type="warning" @click="toggleSubscribeState(scope.row)">
                 {{ scope.row.state === 'R' ? '暂停' : '恢复' }}
               </el-button>
+              <el-button size="small" @click="openPromotion(scope.row)">促销</el-button>
               <el-button size="small" type="danger" @click="deleteSubscribe(scope.row)">删除</el-button>
             </template>
           </el-table-column>
@@ -75,15 +84,19 @@
 
       <el-tab-pane label="下载任务" name="downloads">
         <div class="card-header" style="padding-bottom: 12px">
-          <h2 class="hide-on-mobile">MoviePilot 下载任务</h2>
+          <div>
+            <h2 class="hide-on-mobile">MoviePilot 下载任务</h2>
+            <p class="queue-description">下载中/做种任务来自下载器实时列表；完成后仍会以「下载完成」保留（最近完成兜底），并显示上传状态。</p>
+          </div>
           <el-button type="info" @click="loadDownloads" :loading="downloadsLoading">刷新</el-button>
         </div>
         <el-table :data="downloads" v-loading="downloadsLoading" empty-text="暂无下载任务" style="width: 100%">
-          <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
+          <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="name" label="种子" min-width="200" show-overflow-tooltip />
           <el-table-column prop="season_episode" label="集数" width="90" />
           <el-table-column label="状态" width="100">
             <template #default="scope">
-              <el-tag :type="getDownloadStateTag(scope.row.state)">{{ scope.row.state }}</el-tag>
+              <el-tag :type="getDownloadStateTag(scope.row.state)">{{ getDownloadStateText(scope.row.state) }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="上传状态" width="120">
@@ -94,12 +107,15 @@
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column label="进度" min-width="140">
+          <el-table-column label="进度" min-width="130">
             <template #default="scope">
               <el-progress :percentage="Number(scope.row.progress || 0)" />
             </template>
           </el-table-column>
-          <el-table-column prop="save_path" label="保存路径" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="date" label="完成时间" width="150">
+            <template #default="scope">{{ scope.row.date || '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="save_path" label="保存路径" min-width="170" show-overflow-tooltip />
         </el-table>
       </el-tab-pane>
 
@@ -214,6 +230,17 @@
         <el-form-item label="总集数" v-if="createForm.type === 'tv'">
           <el-input-number v-model="createForm.total_episode" :min="1" style="width: 100%" />
         </el-form-item>
+        <el-form-item label="促销优选">
+          <el-select v-model="createForm.promotion" style="width: 100%">
+            <el-option label="不限（默认）" value="" />
+            <el-option label="免费" value="free" />
+            <el-option label="普通" value="normal" />
+            <el-option label="2X免费" value="2xfree" />
+            <el-option label="50%" value="half" />
+            <el-option label="2X 50%" value="2xhalf" />
+          </el-select>
+          <div class="promotion-help">只下载所选促销状态的种子；促销随站点活动变化，过严可能长时间无匹配。</div>
+        </el-form-item>
         <el-form-item label="保存路径">
           <el-input v-model="createForm.save_path" placeholder="可选，MoviePilot 下载保存目录" />
         </el-form-item>
@@ -224,6 +251,27 @@
       <template #footer>
         <el-button @click="createDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="creating" @click="createSubscribe">确认添加</el-button>
+      </template>
+    </el-dialog>
+    <el-dialog v-model="promotionDialogVisible" :title="`促销优选 · ${promotionTarget?.name || ''}`" width="480px">
+      <el-form label-width="110px">
+        <el-form-item label="促销状态">
+          <el-select v-model="promotionValue" style="width: 100%">
+            <el-option label="不限（默认）" value="" />
+            <el-option label="免费" value="free" />
+            <el-option label="普通" value="normal" />
+            <el-option label="2X免费" value="2xfree" />
+            <el-option label="50%" value="half" />
+            <el-option label="2X 50%" value="2xhalf" />
+          </el-select>
+          <div class="promotion-help">
+            只下载所选促销状态的种子。MoviePilot 下轮订阅搜索时生效；促销随站点活动变化，过严可能长时间无匹配。
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="promotionDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="promotionSaving" @click="savePromotion">保存</el-button>
       </template>
     </el-dialog>
   </div>
@@ -271,9 +319,82 @@ const createForm = ref<any>({
   tmdbid: '',
   season: '',
   total_episode: 0,
+  promotion: '',
   save_path: '',
   sites: '',
 })
+
+// ---- 促销优选 ----
+const promotionDialogVisible = ref(false)
+const promotionSaving = ref(false)
+const promotionTarget = ref<any>(null)
+const promotionValue = ref('')
+
+// 与后端 PromotionIncludeRegex 保持一致的促销正则表（用于反向显示已有订阅的促销设置）
+const promotionPatterns: Record<string, string> = {
+  free: '(?<![Xx])免费$',
+  normal: '普通$',
+  '2xfree': '2X免费$',
+  half: '(?<!X )50%$',
+  '2xhalf': '2X 50%$',
+}
+const promotionLabelMap: Record<string, string> = {
+  free: '免费',
+  normal: '普通',
+  '2xfree': '2X免费',
+  half: '50%',
+  '2xhalf': '2X 50%',
+}
+const promotionOf = (row: any): string => {
+  const inc = String(row.include || '')
+  for (const [key, pattern] of Object.entries(promotionPatterns)) {
+    if (inc === pattern) return key
+  }
+  return ''
+}
+const promotionLabel = (key: string) => promotionLabelMap[key] || key
+const promotionTagType = (key: string) => {
+  const map: Record<string, string> = { free: 'success', normal: 'info', '2xfree': 'success', half: 'warning', '2xhalf': 'warning' }
+  return map[key] || 'info'
+}
+const openPromotion = (row: any) => {
+  promotionTarget.value = row
+  promotionValue.value = promotionOf(row)
+  promotionDialogVisible.value = true
+}
+const savePromotion = async () => {
+  if (!promotionTarget.value) return
+  promotionSaving.value = true
+  try {
+    const response = await http.put(`${SERVER_URL}/moviepilot/subscribes/${promotionTarget.value.id}/promotion`, {
+      promotion: promotionValue.value,
+    })
+    if (response?.data.code === 200) {
+      ElMessage.success('促销优选已更新')
+      promotionDialogVisible.value = false
+      loadSubscribes()
+    } else {
+      ElMessage.error(response?.data.message || '更新失败')
+    }
+  } catch (error) {
+    console.error('更新促销优选错误：', error)
+    ElMessage.error('更新失败')
+  } finally {
+    promotionSaving.value = false
+  }
+}
+
+const getDownloadStateText = (state: string) => {
+  const map: Record<string, string> = {
+    downloading: '下载中',
+    seeding: '做种中',
+    completed: '下载完成',
+    paused: '已暂停',
+    stopped: '已暂停',
+    failed: '失败',
+  }
+  return map[state] || state || '-'
+}
 
 const getStateText = (state: string) => {
   const map: Record<string, string> = { R: '订阅中', S: '已订阅', P: '暂停' }
@@ -371,7 +492,7 @@ const handleUploadPageChange = (page: number) => {
 }
 
 const openCreateDialog = () => {
-  createForm.value = { name: '', year: '', type: 'tv', tmdbid: '', season: '', total_episode: 0, save_path: '', sites: '' }
+  createForm.value = { name: '', year: '', type: 'tv', tmdbid: '', season: '', total_episode: 0, promotion: '', save_path: '', sites: '' }
   searchKeyword.value = ''
   tmdbResults.value = []
   createDialogVisible.value = true
@@ -473,6 +594,7 @@ const createSubscribe = async () => {
       if (createForm.value.total_episode > 0) payload.total_episode = createForm.value.total_episode
     }
     if (createForm.value.save_path) payload.save_path = createForm.value.save_path
+    if (createForm.value.promotion) payload.promotion = createForm.value.promotion
     if (createForm.value.sites) {
       payload.sites = String(createForm.value.sites)
         .split(/[,，]/)
@@ -587,6 +709,17 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.promotion-help {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+  margin-top: 4px;
+  width: 100%;
+}
+.muted-text {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
 .quick-search-bar {
   display: flex;
   align-items: center;

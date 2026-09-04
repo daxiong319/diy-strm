@@ -74,6 +74,8 @@ type CreateMoviePilotSubscribeRequest struct {
 	TotalEpisode int    `json:"total_episode"`
 	SavePath     string `json:"save_path"`
 	Sites        []int  `json:"sites,omitempty"`
+	// Promotion 促销优选：空=不限；free=免费 normal=普通 2xfree=2X免费 half=50% 2xhalf=2X 50%
+	Promotion string `json:"promotion"`
 }
 
 // Validate 校验订阅参数
@@ -87,6 +89,11 @@ func (r CreateMoviePilotSubscribeRequest) Validate() error {
 	if r.TmdbId <= 0 {
 		return validation.New("tmdbid", "缺少 TMDB ID")
 	}
+	switch r.Promotion {
+	case "", "free", "normal", "2xfree", "half", "2xhalf":
+	default:
+		return validation.New("promotion", "促销优选必须为 free/normal/2xfree/half/2xhalf 或留空")
+	}
 	if r.SavePath != "" {
 		clean := filepath.ToSlash(strings.TrimSpace(r.SavePath))
 		if !strings.HasPrefix(clean, "/") {
@@ -94,6 +101,20 @@ func (r CreateMoviePilotSubscribeRequest) Validate() error {
 		}
 	}
 	return nil
+}
+
+// UpdateMoviePilotSubscribePromotionRequest 调整订阅促销优选请求
+type UpdateMoviePilotSubscribePromotionRequest struct {
+	Promotion string `json:"promotion"` // 同 Create 的取值，空=不限
+}
+
+// Validate 校验促销优选
+func (r UpdateMoviePilotSubscribePromotionRequest) Validate() error {
+	switch r.Promotion {
+	case "", "free", "normal", "2xfree", "half", "2xhalf":
+		return nil
+	}
+	return validation.New("promotion", "促销优选必须为 free/normal/2xfree/half/2xhalf 或留空")
 }
 
 // UpdateMoviePilotSubscribeStatusRequest 更新订阅状态请求

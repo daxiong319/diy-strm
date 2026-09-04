@@ -90,6 +90,7 @@ type Subscribe struct {
 	Poster       string `json:"poster"`
 	MediaSource  string `json:"media_source"`
 	MediaID      string `json:"media_id"`
+	Include      string `json:"include"` // 包含正则（促销优选锚定促销名）
 }
 
 // ListSubscribes 查询所有订阅
@@ -116,6 +117,9 @@ type CreateSubscribeRequest struct {
 	TotalEpisode int    `json:"total_episode,omitempty"`
 	SavePath     string `json:"save_path,omitempty"`
 	Sites        []int  `json:"sites,omitempty"`
+	// Include MP 订阅「包含」正则：过滤内容含促销串（普通/免费/2X免费/50%/2X 50%…），
+	// 促销优选即通过锚定正则匹配该串实现；空=不过滤
+	Include string `json:"include,omitempty"`
 }
 
 // Response MoviePilot 通用响应
@@ -136,6 +140,7 @@ func (c *Client) CreateSubscribe(ctx context.Context, req *CreateSubscribeReques
 		TotalEpisode int    `json:"total_episode,omitempty"`
 		SavePath     string `json:"save_path,omitempty"`
 		Sites        []int  `json:"sites,omitempty"`
+		Include      string `json:"include,omitempty"`
 	}{
 		Name:         req.Name,
 		Year:         req.Year,
@@ -145,6 +150,7 @@ func (c *Client) CreateSubscribe(ctx context.Context, req *CreateSubscribeReques
 		TotalEpisode: req.TotalEpisode,
 		SavePath:     req.SavePath,
 		Sites:        req.Sites,
+		Include:      req.Include,
 	}
 	var out Response
 	if err := c.do(ctx, http.MethodPost, "/api/v1/subscribe/", &mpReq, &out); err != nil {
@@ -220,6 +226,42 @@ func (c *Client) UpdateSubscribeStatus(ctx context.Context, subscribeID int64, s
 	}
 	if !out.Success {
 		return fmt.Errorf("MoviePilot 更新订阅状态失败：%s", out.Message)
+	}
+	return nil
+}
+
+// PromotionIncludeRegex 促销优选 → MP 订阅 include 正则。
+// MP 的订阅附加过滤把「标题 副标题 标签 促销名」拼成一段内容做正则匹配，
+// 促销名（普通/免费/2X免费/50%/2X 50%…）恒为最后一段，故用 $ 锚定精确匹配：
+//   - free:   排除「2X免费/4X免费」（它们以 X 结尾再接免费）
+//   - half:   排除「2X 50%」（50% 前是 "X "）
+// 返回空串表示不限促销。
+func PromotionIncludeRegex(promotion string) string {
+	switch promotion {
+	case "free":
+		return `(?<![Xx])免费$`
+	case "normal":
+		return `普通$`
+	case "2xfree":
+		return `2X免费$`
+	case "half":
+		return `(?<!X )50%$`
+	case "2xhalf":
+		return `2X 50%$`
+	default:
+		return ""
+	}
+}
+
+// UpdateSubscribeInclude 更新订阅的「包含」过滤正则（促销优选调整用）
+func (c *Client) UpdateSubscribeInclude(ctx context.Context, subscribeID int64, include string) error {
+	var out Response
+	body := map[string]any{"id": subscribeID, "include": include}
+	if err := c.do(ctx, http.MethodPut, "/api/v1/subscribe/", body, &out); err != nil {
+		return err
+	}
+	if !out.Success {
+		return fmt.Errorf("MoviePilot 更新订阅过滤失败：%s", out.Message)
 	}
 	return nil
 }

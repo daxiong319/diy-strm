@@ -39,8 +39,12 @@ var store = struct {
 var checking int32
 
 const (
-	// perCheckTimeout 单账号轻量校验超时
-	perCheckTimeout = 10 * time.Second
+	// perCheckTimeout 单账号轻量校验超时（网盘 API 高峰期可能较慢，过短会把网络超时误判成授权失效）
+	perCheckTimeout = 20 * time.Second
+	// checkAttempts 失败重试次数（超时/网络抖动不应直接判失效）
+	checkAttempts = 3
+	// retryInterval 单次失败后的重试间隔
+	retryInterval = 3 * time.Second
 	// cacheTTL 非强制模式下跳过该时间内已检测过的账号
 	cacheTTL = 5 * time.Minute
 	// renotifyInterval 失效状态持续存在时，重复提醒的最小间隔
@@ -49,8 +53,26 @@ const (
 	maxWorkers = 4
 )
 
-// checkOne 对单个账号做一次轻量授权校验（仅验证凭证可用，不产生副作用写入）
+// checkOne 对单个账号做一次轻量授权校验（仅验证凭证可用，不产生副作用写入）。
+// 失败自动重试：网盘 API 偶发超时/限流（context deadline exceeded）≠ 授权失效，
+// 立即判失效会造成「频繁失效又自动恢复」的误报。
 func checkOne(account *models.Account) (bool, string) {
+	var lastErr string
+	for attempt := 0; attempt < checkAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(retryInterval)
+		}
+		valid, detail := checkOneOnce(account)
+		if valid {
+			return true, ""
+		}
+		lastErr = detail
+	}
+	return false, lastErr
+}
+
+// checkOneOnce 执行单次校验
+func checkOneOnce(account *models.Account) (bool, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), perCheckTimeout)
 	defer cancel()
 
