@@ -100,6 +100,9 @@ func decryptLinkCipher(ciphertext string, key []byte) (string, error) {
 	}
 	iv := raw[:aes.BlockSize]
 	data := raw[aes.BlockSize:]
+	if len(data) == 0 {
+		return "", fmt.Errorf("密文无数据（仅含 IV）")
+	}
 	mode := cipher.NewCBCDecrypter(block, iv)
 	mode.CryptBlocks(data, data)
 	// 去 PKCS7 填充

@@ -81,6 +81,17 @@ func TestDecryptEncryptedLinksKeepInvalid(t *testing.T) {
 	}
 }
 
+func TestDecryptEncryptedLinksIVOnlyCipher(t *testing.T) {
+	// 回归：密文解码后恰好 16 字节（只有 IV 没有数据）时不得越界 panic，且保留原文
+	raw := make([]byte, 16)
+	s := base64.StdEncoding.EncodeToString(raw)
+	s = strings.NewReplacer("+", "-", "/", "_", "=", "").Replace(s)
+	in := "a[ENCRYPTED_LINK_START]" + s + "[ENCRYPTED_LINK_END]b"
+	if got := DecryptEncryptedLinks(in); got != in {
+		t.Fatalf("仅 IV 密文应保留原文不 panic：%s != %s", got, in)
+	}
+}
+
 func TestHasFastShareMarker(t *testing.T) {
 	cases := []struct {
 		text string
@@ -241,6 +252,24 @@ func TestParseChannelPageRangeMaxPages(t *testing.T) {
 	// 不得发出超过 maxPages 的请求
 	if len(rt.urls) != 2 {
 		t.Fatalf("实际请求 %d 次, want 2", len(rt.urls))
+	}
+}
+
+// 服务端忽略 ?before= 重复返回同一窗口：整页无新帖即停，不空转翻满 maxPages
+func TestParseChannelPageRangeStallGuard(t *testing.T) {
+	rt := &pageRoundTripper{pages: map[string][]int{
+		"":     {1100, 1099, 1098, 1097},
+		"1097": {1100, 1099, 1098, 1097}, // 忽略 before，重复同一页
+	}}
+	restore := withMockChannel(t, rt)
+	defer restore()
+
+	posts, pages, err := ParseChannelPageRange(context.Background(), "mockchan", "1", 100)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if pages != 2 || len(posts) != 4 || len(rt.urls) != 2 {
+		t.Fatalf("空转守卫未生效：pages=%d posts=%d 请求=%d, want 2/4/2", pages, len(posts), len(rt.urls))
 	}
 }
 

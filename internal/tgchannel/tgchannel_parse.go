@@ -178,13 +178,19 @@ func ParseChannelPageRange(ctx context.Context, channel string, stopID string, m
 				stop = true
 			}
 		}
+		added := 0
 		for _, p := range posts {
 			if p.PostID != "" && !seen[p.PostID] {
 				seen[p.PostID] = true
 				all = append(all, p)
+				added++
 			}
 		}
 		if stop {
+			break
+		}
+		// 防御：服务端忽略 ?before= 重复返回同一窗口时整页无新帖，继续翻只会空转到 maxPages
+		if added == 0 {
 			break
 		}
 

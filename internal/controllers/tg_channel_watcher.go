@@ -213,8 +213,9 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 		}
 		if !tgchannel.MatchKeywords(p.Text, kws) {
 			// 回溯模式逐帖留痕：帖含本网盘链接但关键词未命中 → 在监控历史标注跳过原因，便于定位断点
-			// （帖文本不含关键词 = 关键词与频道资源命名不匹配等；仅回溯模式记录，避免增量轮询刷屏）
-			if sub.Backfill && probeURL != "" && !models.MonitorRecordExists(sub.ID, msgURLFor(p.PostID)) {
+			// （帖文本不含关键词 = 关键词与频道资源命名不匹配等；仅回溯模式记录，避免增量轮询刷屏；
+			//   防重复由 recordMonitorSkipped 写入层统一守卫，同帖只审计一次）
+			if sub.Backfill && probeURL != "" {
 				skipped++
 				recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), probeURL, targetDir, sub.ID, "关键词未命中(帖含资源链接)")
 			}
@@ -222,8 +223,8 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 		}
 		if len(p.Links) == 0 {
 			// 关键词命中但整帖无网盘链接：若带 123 秒传暗号（123FSLink/123FLCP），tgto123 靠 123 秒传 API 转存，
-			// 本项目暂不支持自动转存，回溯模式留痕提示（防重复，只写一次）
-			if sub.Backfill && tgchannel.HasFastShareMarker(p.Text) && !models.MonitorRecordExists(sub.ID, msgURLFor(p.PostID)) {
+			// 本项目暂不支持自动转存，回溯模式留痕提示（防重复由写入层守卫）
+			if sub.Backfill && tgchannel.HasFastShareMarker(p.Text) {
 				skipped++
 				recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), "", targetDir, sub.ID, "帖子含 123 秒传暗号(123FSLink/FLCP)，暂不支持自动转存")
 			}
