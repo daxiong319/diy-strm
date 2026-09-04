@@ -741,7 +741,6 @@ func setRouter(r *gin.Engine) {
 		api.POST("/moviepilot/subscribes/:id/search", controllers.SearchMoviePilotSubscribe)        // 触发订阅搜索
 		api.DELETE("/moviepilot/subscribes/:id", controllers.DeleteMoviePilotSubscribe)             // 删除订阅
 		api.PUT("/moviepilot/subscribes/:id/status", controllers.UpdateMoviePilotSubscribeStatus)   // 更新订阅状态
-		api.PUT("/moviepilot/subscribes/:id/promotion", controllers.UpdateMoviePilotSubscribePromotion) // 调整订阅促销优选
 		api.GET("/moviepilot/downloads", controllers.ListMoviePilotDownloads)                       // 查询 MoviePilot 下载任务
 		api.GET("/moviepilot/trending", controllers.TrendingMoviePilot)                             // TMDB 热门趋势（发现页）
 		api.GET("/moviepilot/upload-tasks", controllers.ListMoviePilotUploadTasks)                  // 查询 139 上传任务

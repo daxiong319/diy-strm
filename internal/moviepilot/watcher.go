@@ -117,8 +117,116 @@ func StartMoviePilotWatcher() {
 			if err := checkCompletedDownloads(); err != nil {
 				helpers.AppLogger.Errorf("MoviePilot 检测下载任务失败：%v", err)
 			}
+			if err := applyPromotionLadder(current); err != nil {
+				helpers.AppLogger.Errorf("MoviePilot 促销优先监督失败：%v", err)
+			}
 		}
 	}()
+}
+
+// applyPromotionLadder 促销优先阶梯监督：
+// 按配置的促销优先级（默认 免费>2X免费>普通>50%>2X50%）为每条订阅中的订阅维护一个
+// 「当前允许层」，并把 MP 订阅的 include 过滤设为第 0..当前层 的锚定正则：
+//   - 始终只放行最高优先层的促销 → 站点出现该层促销时立即优先下载；
+//   - 当前层持续 PromotionPatienceHours 小时无新下载 → 放宽到下一层（回退）；
+//   - 任一层产生新下载 → 立即回到最高层重新计时（下一集继续优先高价值促销）；
+//   - 订阅完成/暂停/删除 → 不再干预并清理阶梯状态。
+func applyPromotionLadder(cfg *models.MoviePilotConfig) error {
+	order := models.PromotionOrderList(cfg.PromotionOrder)
+	if len(order) == 0 {
+		return nil
+	}
+	patience := time.Duration(cfg.PromotionPatienceHours) * time.Hour
+	if patience <= 0 {
+		patience = 12 * time.Hour
+	}
+
+	client := NewClient(cfg.BaseUrl, cfg.ApiToken)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	subs, err := client.ListSubscribes(ctx)
+	if err != nil {
+		return err
+	}
+
+	// 最近下载时间（按 tmdbid 聚合，来自下载历史前 50 条）
+	latestDownload := map[int64]time.Time{}
+	if histories, herr := client.ListDownloadHistory(ctx, 1, 50); herr == nil {
+		for _, h := range histories {
+			if h == nil || h.TmdbId <= 0 || h.Date == "" {
+				continue
+			}
+			if t, perr := time.ParseInLocation("2006-01-02 15:04:05", h.Date, time.Local); perr == nil {
+				if t.After(latestDownload[h.TmdbId]) {
+					latestDownload[h.TmdbId] = t
+				}
+			}
+		}
+	}
+
+	activeIDs := make(map[uint]bool, len(subs))
+	now := time.Now()
+	for _, sub := range subs {
+		if sub == nil || sub.TmdbId <= 0 {
+			continue
+		}
+		// 只监督订阅中的订阅；完成/暂停时清空过滤并删除阶梯，恢复后重新从最高层开始
+		if sub.State != "R" {
+			if models.GetMoviePilotPromotionLadder(uint(sub.ID)) != nil {
+				_ = client.UpdateSubscribeInclude(ctx, sub.ID, "")
+				models.DeleteMoviePilotPromotionLadder(uint(sub.ID))
+			}
+			continue
+		}
+		activeIDs[uint(sub.ID)] = true
+
+		ladder := models.GetMoviePilotPromotionLadder(uint(sub.ID))
+		if ladder == nil {
+			ladder = &models.MoviePilotPromotionLadder{SubscribeID: uint(sub.ID), Tier: 0, TierStartedAt: now.Unix()}
+			_ = models.SaveMoviePilotPromotionLadder(ladder)
+		} else {
+			ladder.Tier = min(ladder.Tier, len(order)-1)
+		}
+
+		// 该片有新下载（晚于当前层开始时间）→ 回到最高层重新计时
+		if dlAt, ok := latestDownload[sub.TmdbId]; ok && dlAt.Unix() > ladder.TierStartedAt && ladder.Tier > 0 {
+			helpers.AppLogger.Infof("MoviePilot 促销阶梯：订阅 %s 有新下载，重置回最高优先层（%s）", sub.Name, order[0])
+			ladder.Tier = 0
+			ladder.TierStartedAt = now.Unix()
+			_ = models.SaveMoviePilotPromotionLadder(ladder)
+		} else if now.Unix()-ladder.TierStartedAt > int64(patience.Seconds()) && ladder.Tier < len(order)-1 {
+			// 当前层耐心期内无新下载 → 放宽到下一层
+			ladder.Tier++
+			ladder.TierStartedAt = now.Unix()
+			_ = models.SaveMoviePilotPromotionLadder(ladder)
+			helpers.AppLogger.Infof("MoviePilot 促销阶梯：订阅 %s 当前层（%s）%.0f 小时无新下载，放宽到 %s",
+				sub.Name, order[ladder.Tier-1], patience.Hours(), order[ladder.Tier])
+			// 放宽后立即触发一次搜索，让新层的资源尽快参与
+			if serr := client.SearchSubscribe(ctx, sub.ID); serr != nil {
+				helpers.AppLogger.Warnf("MoviePilot 促销阶梯放宽后触发搜索失败：%v", serr)
+			}
+		}
+
+		// include 与目标层不一致时才写 MP（避免每轮无谓写配置）
+		want := PromotionTierIncludeRegex(order, ladder.Tier)
+		if sub.Include != want {
+			if uerr := client.UpdateSubscribeInclude(ctx, sub.ID, want); uerr != nil {
+				helpers.AppLogger.Errorf("MoviePilot 促销阶梯：设置订阅 %s include 失败：%v", sub.Name, uerr)
+			} else {
+				helpers.AppLogger.Infof("MoviePilot 促销阶梯：订阅 %s 允许促销调整为 %s（第 %d/%d 层）",
+					sub.Name, strings.Join(order[:ladder.Tier+1], ">"), ladder.Tier+1, len(order))
+			}
+		}
+	}
+
+	// 清理已删除订阅的阶梯状态
+	for _, l := range models.ListMoviePilotPromotionLadders() {
+		if !activeIDs[l.SubscribeID] {
+			models.DeleteMoviePilotPromotionLadder(l.SubscribeID)
+		}
+	}
+	return nil
 }
 
 // checkCompletedDownloads 检测 MP 已完成的下载任务并创建上传任务。

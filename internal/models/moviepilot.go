@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"diy-strm/internal/db"
@@ -22,6 +23,12 @@ type MoviePilotConfig struct {
 	PollInterval   int      `json:"poll_interval" gorm:"default:5"`  // 轮询间隔（分钟）
 	NotifyEnabled  bool     `json:"notify_enabled" gorm:"default:true"` // 完成后是否发送通知
 	CategoryConfig string   `json:"category_config"`                 // 分类策略配置（MoviePilot category.yaml 风格，空=默认）
+	// PromotionOrder 促销优先阶梯（逗号分隔，从高到低）：free=免费 2xfree=2X免费 normal=普通 half=50% 2xhalf=2X 50%。
+	// 空=默认 free,2xfree,normal,half,2xhalf。订阅促销监督按此顺序逐层回退：
+	// 始终优先下载最高可用促销层，该层持续无新下载则放宽到下一层，一旦下载立即回到最高层
+	PromotionOrder string `json:"promotion_order" gorm:"default:free,2xfree,normal,half,2xhalf"`
+	// PromotionPatienceHours 促销层耐心期（小时）：当前层持续该时长无新下载才放宽到下一层，默认 12
+	PromotionPatienceHours int `json:"promotion_patience_hours" gorm:"default:12"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -60,11 +67,94 @@ func UpdateMoviePilotConfig(req *MoviePilotConfig) (*MoviePilotConfig, bool) {
 	}
 	cfg.NotifyEnabled = req.NotifyEnabled
 	cfg.CategoryConfig = req.CategoryConfig
+	cfg.PromotionOrder = NormalizePromotionOrder(req.PromotionOrder)
+	if req.PromotionPatienceHours > 0 {
+		cfg.PromotionPatienceHours = req.PromotionPatienceHours
+	}
 	if err := db.Db.Model(cfg).Where("id = ?", cfg.ID).Save(cfg).Error; err != nil {
 		helpers.AppLogger.Errorf("更新 MoviePilot 配置失败：%v", err)
 		return nil, false
 	}
 	return cfg, true
+}
+
+// 促销优选合法取值（顺序即默认优先级）
+var PromotionStates = []string{"free", "2xfree", "normal", "half", "2xhalf"}
+
+// PromotionStateNames 促销状态展示名
+var PromotionStateNames = map[string]string{
+	"free": "免费", "2xfree": "2X免费", "normal": "普通", "half": "50%", "2xhalf": "2X 50%",
+}
+
+// NormalizePromotionOrder 归一化促销优先级串：去空格、去未知值、去重；空串返回默认顺序
+func NormalizePromotionOrder(order string) string {
+	if strings.TrimSpace(order) == "" {
+		return strings.Join(PromotionStates, ",")
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(PromotionStates))
+	for _, part := range strings.Split(order, ",") {
+		p := strings.TrimSpace(strings.ToLower(part))
+		if p == "" || seen[p] {
+			continue
+		}
+		for _, valid := range PromotionStates {
+			if p == valid {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return strings.Join(PromotionStates, ",")
+	}
+	return strings.Join(out, ",")
+}
+
+// PromotionOrderList 把配置串解析为状态切片
+func PromotionOrderList(order string) []string {
+	normalized := NormalizePromotionOrder(order)
+	return strings.Split(normalized, ",")
+}
+
+// MoviePilotPromotionLadder 订阅促销优先阶梯状态（diy-strm 促销监督的游标）
+type MoviePilotPromotionLadder struct {
+	SubscribeID   uint  `json:"subscribe_id" gorm:"primaryKey"` // MP 订阅 ID
+	Tier          int   `json:"tier"`                           // 当前允许到的层（0=最高优先层）
+	TierStartedAt int64 `json:"tier_started_at"`                // 当前层开始时间（unix 秒）
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+func (*MoviePilotPromotionLadder) TableName() string { return "movie_pilot_promotion_ladders" }
+
+// GetMoviePilotPromotionLadder 读取订阅的促销阶梯状态
+func GetMoviePilotPromotionLadder(subscribeID uint) *MoviePilotPromotionLadder {
+	var l MoviePilotPromotionLadder
+	if err := db.Db.First(&l, "subscribe_id = ?", subscribeID).Error; err != nil {
+		return nil
+	}
+	return &l
+}
+
+// SaveMoviePilotPromotionLadder 保存订阅的促销阶梯状态（upsert）
+func SaveMoviePilotPromotionLadder(l *MoviePilotPromotionLadder) error {
+	l.UpdatedAt = time.Now()
+	if err := db.Db.Save(l).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+// DeleteMoviePilotPromotionLadder 删除订阅的促销阶梯状态
+func DeleteMoviePilotPromotionLadder(subscribeID uint) {
+	_ = db.Db.Delete(&MoviePilotPromotionLadder{}, "subscribe_id = ?", subscribeID).Error
+}
+
+// ListMoviePilotPromotionLadders 全量促销阶梯状态
+func ListMoviePilotPromotionLadders() []MoviePilotPromotionLadder {
+	var out []MoviePilotPromotionLadder
+	_ = db.Db.Find(&out).Error
+	return out
 }
 
 // MoviePilotUploadStatus 上传任务状态

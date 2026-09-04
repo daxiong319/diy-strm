@@ -156,6 +156,48 @@
           <div class="form-help">检测 MoviePilot 下载任务完成情况的间隔（分钟），默认 5 分钟</div>
         </el-form-item>
 
+        <el-form-item label="促销优先级" prop="promotion_order">
+          <div class="promotion-order">
+            <div v-for="(state, idx) in promotionList" :key="state" class="promotion-order-row">
+              <span class="promotion-order-index">{{ idx + 1 }}</span>
+              <span class="promotion-order-name">{{ promotionStateNames[state] || state }}</span>
+              <div class="promotion-order-ops">
+                <el-button
+                  size="small"
+                  circle
+                  :icon="ArrowUp"
+                  :disabled="idx === 0 || loading || !formData.enabled"
+                  @click="movePromotion(idx, -1)"
+                />
+                <el-button
+                  size="small"
+                  circle
+                  :icon="ArrowDown"
+                  :disabled="idx === promotionList.length - 1 || loading || !formData.enabled"
+                  @click="movePromotion(idx, 1)"
+                />
+              </div>
+            </div>
+          </div>
+          <div class="form-help">
+            按优先级排序促销状态（数字 1 最优先）：订阅下载时只放行当前最高优先层的促销，
+            该层持续「耐心期」无新下载才放宽到下一层；一旦有下载立即回到最高层重新计时。
+          </div>
+        </el-form-item>
+
+        <el-form-item label="促销耐心期" prop="promotion_patience_hours">
+          <el-input-number
+            v-model="formData.promotion_patience_hours"
+            :min="1"
+            :max="720"
+            :disabled="loading || !formData.enabled"
+            style="width: 200px"
+          />
+          <div class="form-help">
+            小时数：当前促销层持续该时长没有下载到新内容，才放宽到下一优先级（默认 12 小时）
+          </div>
+        </el-form-item>
+
         <el-form-item label="通知" prop="notify_enabled">
           <div class="enable-switch">
             <el-switch
@@ -236,7 +278,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Check } from '@element-plus/icons-vue'
+import { ArrowUp, ArrowDown, Check } from '@element-plus/icons-vue'
 import { SERVER_URL } from '@/const'
 import { useHttpClient } from '@/http/client'
 import { isMobile } from '@/utils/deviceUtils'
@@ -256,6 +298,8 @@ interface MoviePilotSettings {
   poll_interval: number
   notify_enabled: boolean
   category_config: string
+  promotion_order: string
+  promotion_patience_hours: number
 }
 
 interface TestStatus {
@@ -290,7 +334,31 @@ const formData = reactive<MoviePilotSettings>({
   poll_interval: 5,
   notify_enabled: true,
   category_config: '',
+  promotion_order: 'free,2xfree,normal,half,2xhalf',
+  promotion_patience_hours: 12,
 })
+
+// ---- 促销优先级排序 ----
+const promotionStateNames: Record<string, string> = {
+  free: '免费',
+  '2xfree': '2X免费',
+  normal: '普通',
+  half: '50%',
+  '2xhalf': '2X 50%',
+}
+const promotionList = computed<string[]>(() =>
+  String(formData.promotion_order || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => !!promotionStateNames[s]),
+)
+const movePromotion = (idx: number, delta: number) => {
+  const list = [...promotionList.value]
+  const target = idx + delta
+  if (target < 0 || target >= list.length) return
+  ;[list[idx], list[target]] = [list[target], list[idx]]
+  formData.promotion_order = list.join(',')
+}
 
 const selectedAccount = computed(() =>
   accounts.value.find((account) => account.id === formData.upload_account_id),
@@ -415,6 +483,8 @@ const saveSettings = async () => {
       poll_interval: formData.poll_interval,
       notify_enabled: !!formData.notify_enabled,
       category_config: formData.category_config,
+      promotion_order: formData.promotion_order,
+      promotion_patience_hours: formData.promotion_patience_hours,
     })
     if (response?.data.code === 200) {
       ElMessage.success(formData.enabled ? 'MoviePilot 配置已保存并启用' : 'MoviePilot 联动已关闭')
@@ -451,6 +521,8 @@ const loadSettings = async () => {
       formData.poll_interval = data.poll_interval || 5
       formData.notify_enabled = data.notify_enabled !== undefined ? !!data.notify_enabled : true
       formData.category_config = data.category_config || ''
+      formData.promotion_order = data.promotion_order || 'free,2xfree,normal,half,2xhalf'
+      formData.promotion_patience_hours = data.promotion_patience_hours || 12
     }
   } catch (error) {
     console.error('加载 MoviePilot 设置错误：', error)
@@ -474,5 +546,39 @@ onMounted(() => {
 }
 .path-input-row .el-input {
   flex: 1;
+}
+.promotion-order {
+  width: 100%;
+  max-width: 320px;
+}
+.promotion-order-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: var(--el-fill-color-lighter);
+}
+.promotion-order-index {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--el-color-primary);
+  color: #fff;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.promotion-order-name {
+  flex: 1;
+  font-size: 13px;
+}
+.promotion-order-ops {
+  display: flex;
+  gap: 4px;
 }
 </style>

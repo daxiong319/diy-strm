@@ -230,8 +230,8 @@ func (c *Client) UpdateSubscribeStatus(ctx context.Context, subscribeID int64, s
 	return nil
 }
 
-// PromotionIncludeRegex 促销优选 → MP 订阅 include 正则。
-// MP 的订阅附加过滤把「标题 副标题 标签 促销名」拼成一段内容做正则匹配，
+// PromotionIncludeRegex 促销优选（单选模式）→ MP 订阅 include 正则。
+// MP 的订阅附加过滤把「标题 副标题 标签 促销名」拼成一段内容做正则匹配（re.I，无 MULTILINE），
 // 促销名（普通/免费/2X免费/50%/2X 50%…）恒为最后一段，故用 $ 锚定精确匹配：
 //   - free:   排除「2X免费/4X免费」（它们以 X 结尾再接免费）
 //   - half:   排除「2X 50%」（50% 前是 "X "）
@@ -251,6 +251,44 @@ func PromotionIncludeRegex(promotion string) string {
 	default:
 		return ""
 	}
+}
+
+// PromotionTierIncludeRegex 促销优先阶梯（多级回退模式）→ MP 订阅 include 正则。
+// order 为促销优先级（高→低），tier 为当前允许到的层下标（0=最高层）：
+// 放行第 0..tier 层的全部促销状态（正则 or 连接），配合促销监督的逐层回退实现
+// 「优先下载高价值促销，没有才退而求其次」。tier 越界或 order 为空返回空串（不限）。
+func PromotionTierIncludeRegex(order []string, tier int) string {
+	if len(order) == 0 || tier < 0 || tier >= len(order) {
+		return ""
+	}
+	// 各促销状态的单选正则（与 PromotionIncludeRegex 一致，显式列出避免顺序耦合）
+	statePatterns := map[string]string{
+		"free":   `(?<![Xx])免费$`,
+		"2xfree": `2X免费$`,
+		"normal": `普通$`,
+		"half":   `(?<!X )50%$`,
+		"2xhalf": `2X 50%$`,
+	}
+	parts := make([]string, 0, tier+1)
+	for i := 0; i <= tier; i++ {
+		if p, ok := statePatterns[order[i]]; ok {
+			parts = append(parts, p)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "|")
+}
+
+// PromotionMonitorState 推导促销监督的正则与描述：给定优先级与当前层，
+// 返回 include 正则与当前层名（用于日志）。
+func PromotionMonitorState(order []string, tier int) (include, tierName string) {
+	include = PromotionTierIncludeRegex(order, tier)
+	if tier >= 0 && tier < len(order) {
+		tierName = order[tier]
+	}
+	return include, tierName
 }
 
 // UpdateSubscribeInclude 更新订阅的「包含」过滤正则（促销优选调整用）

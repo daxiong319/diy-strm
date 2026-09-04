@@ -32,7 +32,7 @@ var AllTables = []any{
 	RequestStat{}, EmbyConfig{}, EmbyMediaItem{}, EmbyMediaSyncFile{}, EmbyLibrary{}, EmbyLibrarySyncPath{}, EmbyLibraryRefreshTask{},
 	DbDownloadTask{}, DbUploadTask{}, UploadSession{}, StrmGenerationTask{}, NotificationChannel{}, TelegramChannelConfig{}, MeoWChannelConfig{}, BarkChannelConfig{},
 	ServerChanChannelConfig{}, CustomWebhookChannelConfig{}, NotificationRule{},
-	MoviePilotConfig{}, MoviePilotUploadTask{}, MoviePilotFailedFile{},
+	MoviePilotConfig{}, MoviePilotUploadTask{}, MoviePilotFailedFile{}, MoviePilotPromotionLadder{},
 	CloudSetting{}, CloudSubscription{}, CloudTransferRecord{}, CloudChannel{},
 	HiveSlugAttempt{},
 	MonitorTransferRecord{},
@@ -61,7 +61,7 @@ func Migrate() {
 	// MoviePilot 对接表（幂等创建，兼容既有库升级）
 	// 注意：PG 驱动下 AutoMigrate 必须开启 PrepareStmt，否则报 "pq: got 2 parameters but the statement requires 1"
 	db.Db.Statement.PrepareStmt = true
-	if err := db.Db.AutoMigrate(&MoviePilotConfig{}, &MoviePilotUploadTask{}, &MoviePilotFailedFile{}); err != nil {
+	if err := db.Db.AutoMigrate(&MoviePilotConfig{}, &MoviePilotUploadTask{}, &MoviePilotFailedFile{}, &MoviePilotPromotionLadder{}); err != nil {
 		helpers.AppLogger.Errorf("自动迁移 MoviePilot 表失败：%v", err)
 	}
 	db.Db.Statement.PrepareStmt = true

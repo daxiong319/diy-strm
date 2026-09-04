@@ -47,18 +47,20 @@ func UpdateMoviePilotConfig(c *gin.Context) {
 		return
 	}
 	cfg, ok := models.UpdateMoviePilotConfig(&models.MoviePilotConfig{
-		Enabled:         req.Enabled,
-		BaseUrl:         req.BaseUrl,
-		ApiToken:        req.ApiToken,
-		DownloadRoot:    req.DownloadRoot,
-		LocalViewRoot:   req.LocalViewRoot,
-		UploadAccountId: req.UploadAccountId,
-		UploadRoot:      req.UploadRoot,
-		UploadRootId:    req.UploadRootId,
-		StrmLocalDir:    req.StrmLocalDir,
-		PollInterval:    req.PollInterval,
-		NotifyEnabled:   req.NotifyEnabled,
-		CategoryConfig:  req.CategoryConfig,
+		Enabled:                req.Enabled,
+		BaseUrl:                req.BaseUrl,
+		ApiToken:               req.ApiToken,
+		DownloadRoot:           req.DownloadRoot,
+		LocalViewRoot:          req.LocalViewRoot,
+		UploadAccountId:        req.UploadAccountId,
+		UploadRoot:             req.UploadRoot,
+		UploadRootId:           req.UploadRootId,
+		StrmLocalDir:           req.StrmLocalDir,
+		PollInterval:           req.PollInterval,
+		NotifyEnabled:          req.NotifyEnabled,
+		CategoryConfig:         req.CategoryConfig,
+		PromotionOrder:         req.PromotionOrder,
+		PromotionPatienceHours: req.PromotionPatienceHours,
 	})
 	if !ok {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "更新 MoviePilot 配置失败", Data: nil})
@@ -140,7 +142,8 @@ func CreateMoviePilotSubscribe(c *gin.Context) {
 		TotalEpisode: req.TotalEpisode,
 		SavePath:     req.SavePath,
 		Sites:        req.Sites,
-		Include:      moviepilot.PromotionIncludeRegex(req.Promotion),
+		// 促销优选由全局促销优先阶梯（applyPromotionLadder）统一按层管理，
+		// 新订阅先不限制，下一轮监督自动从最高优先层（默认免费）开始
 	})
 	if err != nil {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: err.Error(), Data: nil})
@@ -235,39 +238,6 @@ func UpdateMoviePilotSubscribeStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "更新订阅状态成功", Data: nil})
-}
-
-// UpdateMoviePilotSubscribePromotion 调整订阅促销优选（免费/普通/2X免费/50%/2X 50%/不限）
-// @Summary 调整 MoviePilot 订阅促销优选
-// @Tags MoviePilot
-// @Success 200 {object} APIResponse[any]
-// @Router /moviepilot/subscribes/:id/promotion [put]
-// @Security JwtAuth
-// @Security ApiKeyAuth
-func UpdateMoviePilotSubscribePromotion(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "订阅 ID 无效", Data: nil})
-		return
-	}
-	var req requests.UpdateMoviePilotSubscribePromotionRequest
-	if err := c.ShouldBind(&req); err != nil {
-		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "请求参数错误：" + err.Error(), Data: nil})
-		return
-	}
-	if err := req.Validate(); err != nil {
-		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: err.Error(), Data: nil})
-		return
-	}
-	client, ok := moviePilotClientFromConfig(c)
-	if !ok {
-		return
-	}
-	if err := client.UpdateSubscribeInclude(c, id, moviepilot.PromotionIncludeRegex(req.Promotion)); err != nil {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: err.Error(), Data: nil})
-		return
-	}
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "促销优选已更新，下轮订阅搜索生效", Data: nil})
 }
 
 // ListMoviePilotDownloads 查询 MoviePilot 下载任务列表
