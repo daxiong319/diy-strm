@@ -400,6 +400,9 @@ func parseMessageDiv(n *html.Node) (ChannelPost, bool) {
 				hrefs = append(hrefs, href)
 			}
 		}
+		// 正文 div：记录纯文本，但不 return —— 必须继续遍历子节点，
+		// 否则正文内嵌的 <a href="https://...123pan...">（regeng123 等频道把分享链接写在
+		// 正文行内而非按钮里）会全部丢失，导致该频道永远提取不到任何网盘链接
 		if n.Type == html.ElementNode && n.Data == "div" {
 			isText := false
 			for _, a := range n.Attr {
@@ -407,9 +410,8 @@ func parseMessageDiv(n *html.Node) (ChannelPost, bool) {
 					isText = true
 				}
 			}
-			if isText {
+			if isText && text == "" {
 				text = collectText(n)
-				return
 			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
