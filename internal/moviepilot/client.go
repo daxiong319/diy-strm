@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -291,11 +292,39 @@ func PromotionMonitorState(order []string, tier int) (include, tierName string) 
 	return include, tierName
 }
 
-// UpdateSubscribeInclude 更新订阅的「包含」过滤正则（促销优选调整用）
+// UpdateSubscribeInclude 更新订阅的「包含」过滤正则（促销阶梯用）。
+// MP 的 PUT /api/v1/subscribe/ 是全量更新（缺 name 等必填字段会 500），
+// 故先取订阅全量 JSON，补丁式修改 include 后整体回传，避免清空其它字段。
 func (c *Client) UpdateSubscribeInclude(ctx context.Context, subscribeID int64, include string) error {
+	var subs []map[string]any
+	if err := c.do(ctx, http.MethodGet, "/api/v1/subscribe/list", nil, &subs); err != nil {
+		return err
+	}
+	var target map[string]any
+	for _, s := range subs {
+		if s == nil {
+			continue
+		}
+		switch idv := s["id"].(type) {
+		case float64:
+			if int64(idv) == subscribeID {
+				target = s
+			}
+		case string:
+			if idv == strconv.FormatInt(subscribeID, 10) {
+				target = s
+			}
+		}
+		if target != nil {
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Errorf("MoviePilot 订阅 %d 不存在", subscribeID)
+	}
+	target["include"] = include
 	var out Response
-	body := map[string]any{"id": subscribeID, "include": include}
-	if err := c.do(ctx, http.MethodPut, "/api/v1/subscribe/", body, &out); err != nil {
+	if err := c.do(ctx, http.MethodPut, "/api/v1/subscribe/", &target, &out); err != nil {
 		return err
 	}
 	if !out.Success {
