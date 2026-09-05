@@ -49,6 +49,21 @@
 
 - `115`、`123`：文件 ID（字符串数字）。
 - `baidupan`、`openlist`：完整路径（如 `/Media/剧集/某某.S01E01.mkv`）。
+- `local`：服务器本地绝对路径（如 `/downloads/外语电影/群体 Colony 2026/xxx.mkv`）。
+
+## 本地文件模式（source_type=local）
+
+文件列表、创建目录、删除、重命名、移动接口均支持 `source_type=local`，用于浏览和管理
+服务器本地文件系统（文件管理器左侧「本地文件」入口）：
+
+- `source_type=local` 时不经过账号表，`account_id` 固定传 `0`；未传 `source_type` 时行为不变（必须传有效 `account_id`）。
+- 文件列表：`GET /api/path/files?source_type=local&account_id=0&path=/downloads`，`path` 为本地绝对路径（空=根 `/`，Windows 部署为盘符列表入口 `GET /api/path/list?source_type=local`）；`os.ReadDir` 全量读取后内存排序切片，目录恒排在文件前，支持 `sort_by=name/size/time` 与 `sort_order=asc/desc`；隐藏目录（`.` 开头）跳过。
+- 创建目录：`POST /api/path/create`（`makeLocalPath`，`parent_id` 为本地父目录路径）。
+- 删除：`DELETE /api/path`，`os.RemoveAll` 直接删除（**本地无回收站，不可恢复**）；拒绝根目录 `/` 与不以 `/` 开头的非法路径。
+- 重命名：`POST /api/path/rename`，同目录 `os.Rename`；目标已存在同名文件时报错。
+- 移动：`POST /api/path/move`，跨目录 `os.Rename`；目标目录不存在、目标已有同名、把目录移动到其自身子目录内均报错。
+- 前端：本地模式下自动隐藏网盘专属功能（STRM 生成/刮削整理/ED2K/命名对齐/目录整理/批量重命名/跨盘秒传/小号秒传），保留浏览、新建文件夹、重命名、移动、删除。
+- 安全边界：容器内可访问的路径即接口可操作的范围（与 MP 上传源目录一致，如 `/downloads`），无额外白名单；删除/重命名/移动接口与网盘模式共用鉴权。
 
 ## 重命名
 
