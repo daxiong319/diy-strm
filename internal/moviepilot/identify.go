@@ -36,7 +36,7 @@ func IdentifyFileWithAI(ctx context.Context, fileName string) (IdentifyResult, b
 	}
 	aiInfo, err := client.TakeMoiveName(fileName, settings.GetAiPrompt())
 	if err != nil {
-		helpers.AppLogger.Warnf("MoviePilot AI 识别文件名失败（%s）：%v", fileName, err)
+		helpers.AppLogger.Warnf("AI 识别文件名失败（%s）：%v", fileName, err)
 		return IdentifyResult{}, false
 	}
 	if aiInfo == nil || strings.TrimSpace(aiInfo.Name) == "" {
@@ -49,7 +49,7 @@ func IdentifyFileWithAI(ctx context.Context, fileName string) (IdentifyResult, b
 	if res, ok := verifyIdentifyByTmdb(ctx, fileName, aiInfo.Name, aiInfo.Year, false); ok {
 		return res, true
 	}
-	helpers.AppLogger.Warnf("MoviePilot AI 识别结果未通过 TMDB 校验（%s → %s %d）", fileName, aiInfo.Name, aiInfo.Year)
+	helpers.AppLogger.Warnf("AI 识别结果未通过 TMDB 校验（%s → %s %d）", fileName, aiInfo.Name, aiInfo.Year)
 	return IdentifyResult{}, false
 }
 
@@ -88,6 +88,6 @@ func verifyIdentifyByTmdb(ctx context.Context, fileName, name string, year int, 
 			res.Episode = parsed.Episode
 		}
 	}
-	helpers.AppLogger.Infof("MoviePilot AI 识别成功：%s → %s（%s，TMDB %d）", fileName, officialName, res.Category, tmdbID)
+	helpers.AppLogger.Infof("AI 识别成功：%s → %s（%s，TMDB %d）", fileName, officialName, res.Category, tmdbID)
 	return res, true
 }

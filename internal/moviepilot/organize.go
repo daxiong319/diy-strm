@@ -65,6 +65,9 @@ func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, r
 	dirIDCache := map[string]string{} // relPath -> 目录 ID
 	aiBudget := aiTryBudget
 	aiConsecutiveFail := 0
+	// MP 识别客户端：自身 AI 未启用/失败时的识别兜底（MP 侧识别并查 TMDB）
+	cfg := models.LoadMoviePilotConfig()
+	mpClient := NewClient(cfg.BaseUrl, cfg.ApiToken)
 	for _, e := range entries {
 		if e.IsDir || !mediaparse.IsVideoExt(e.Name) {
 			continue
@@ -76,11 +79,17 @@ func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, r
 		media := &IdentifyResult{Category: category, Title: title, Season: season, Episode: episode, Year: year}
 		dir, err := organizeOneFile(ctx, account, e, organizeRoot, dirIDCache, media)
 		if err == errMediaUnrecognized && aiBudget > 0 {
-			// 正则识别失败：AI 兜底
+			// 正则识别失败：优先自身 AI（刮削 AI 配置），失败再用 MP 识别兜底
 			aiBudget--
 			if ai, ok := IdentifyFileWithAI(ctx, e.Name); ok {
 				aiConsecutiveFail = 0
 				dir, err = organizeOneFile(ctx, account, e, organizeRoot, dirIDCache, &ai)
+			} else if mp, ok := mpClient.RecognizeMedia(ctx, e.Name); ok {
+				helpers.AppLogger.Infof("MoviePilot MP 识别兜底成功：%s → %s（%s，TMDB %d）", e.Name, mp.Title, mp.Category, mp.TmdbID)
+				aiConsecutiveFail = 0
+				dir, err = organizeOneFile(ctx, account, e, organizeRoot, dirIDCache, &IdentifyResult{
+					Category: mp.Category, Title: mp.Title, Season: mp.Season, Episode: mp.Episode, Year: mp.Year, TmdbId: mp.TmdbID,
+				})
 			} else if aiConsecutiveFail++; aiConsecutiveFail >= aiConsecutiveFailStop {
 				aiBudget = 0
 			}

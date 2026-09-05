@@ -385,6 +385,12 @@ func organizeRootPath(uploadRoot string) string {
 	return "已整理"
 }
 
+// OrganizeRootPath 由 MP 配置的上传根目录推导已整理根目录（供控制器拼接 STRM 源路径）。
+// 例如 /影视/待整理 → /影视/已整理。
+func OrganizeRootPath(uploadRoot string) string {
+	return organizeRootPath(uploadRoot)
+}
+
 // failedRootPath 由待整理目录推导默认失败目录：父目录下的「整理失败」
 // 例如 /影视/待整理 → 影视/整理失败
 func failedRootPath(uploadRoot string) string {

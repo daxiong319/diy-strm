@@ -495,7 +495,7 @@ func IdentifyMoviePilotFailedFile(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c, 120*time.Second)
 	defer cancel()
 
-	// 解析来源标记：AI 命中 / 正则命中 / 均未命中
+	// 解析来源标记：AI 命中 / 正则命中 / MP 识别兜底 / 均未命中
 	source := "none"
 	parsed := moviepilot.IdentifyResult{Episode: 1}
 	if res, ok := moviepilot.IdentifyFileWithAI(ctx, f.FileName); ok {
@@ -507,6 +507,17 @@ func IdentifyMoviePilotFailedFile(c *gin.Context) {
 			parsed.Episode = 1
 		}
 		source = "regex"
+	} else if cfg := models.LoadMoviePilotConfig(); cfg.BaseUrl != "" && cfg.ApiToken != "" {
+		// 自身 AI 与正则均未命中 → MP 识别兜底
+		mpClient := moviepilot.NewClient(cfg.BaseUrl, cfg.ApiToken)
+		if mp, ok := mpClient.RecognizeMedia(ctx, f.FileName); ok {
+			episode := mp.Episode
+			if episode <= 0 {
+				episode = 1
+			}
+			parsed = moviepilot.IdentifyResult{Category: mp.Category, Title: mp.Title, Season: mp.Season, Episode: episode, Year: mp.Year, TmdbId: mp.TmdbID}
+			source = "mp"
+		}
 	}
 	if parsed.Title == "" {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "AI 与正则均未识别出标题，请手动填写并搜索 TMDB", Data: nil})
@@ -632,10 +643,12 @@ func ResolveMoviePilotFailedFile(c *gin.Context) {
 	f.TmdbId = req.TmdbID
 	f.Reason = ""
 	_ = models.UpdateMoviePilotFailedFile(f)
-	// 整理成功的目标目录触发 STRM 同步
+	// 整理成功的目标目录触发 STRM 同步。
+	// dir 是相对「已整理根目录」的路径，源路径必须拼 organizeRoot（已整理），
+	// 而不是 f.RootPath（待整理源目录）——文件已被移动到已整理目录下
 	cfg := models.LoadMoviePilotConfig()
 	if strings.TrimSpace(cfg.StrmLocalDir) != "" {
-		sourcePath := strings.TrimRight(f.RootPath, "/") + "/" + dir
+		sourcePath := strings.TrimRight(moviepilot.OrganizeRootPath(cfg.UploadRoot), "/") + "/" + dir
 		moviepilot.TriggerStrmSyncForDir(&account, sourcePath, cfg.StrmLocalDir)
 	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "整理完成", Data: map[string]any{"dir": dir}})

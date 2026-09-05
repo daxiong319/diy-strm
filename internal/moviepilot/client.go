@@ -403,6 +403,74 @@ func (c *Client) ListDownloadHistory(ctx context.Context, page, count int) ([]*D
 	return out, nil
 }
 
+// MPRecognizeResult MP /api/v1/media/recognize 的识别结果（只取整理所需字段）
+type MPRecognizeResult struct {
+	Category string // movie/tv
+	Title    string // 中文标题（TMDB 官方名）
+	Year     int
+	Season   int
+	Episode  int
+	TmdbID   int64
+}
+
+// RecognizeMedia 调 MP 文件名识别接口（GET /api/v1/media/recognize?title=）。
+// MP 侧用自身元数据链识别并查 TMDB，识别失败（查不到媒体）返回 ok=false。
+func (c *Client) RecognizeMedia(ctx context.Context, fileName string) (*MPRecognizeResult, bool) {
+	path := fmt.Sprintf("/api/v1/media/recognize?title=%s", url.QueryEscape(fileName))
+	var out struct {
+		MediaInfo map[string]any `json:"media_info"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, false
+	}
+	mi := out.MediaInfo
+	if mi == nil {
+		return nil, false
+	}
+	// MP 识别未命中媒体时 type 为「未知」/ tmdb_id 为空
+	if t, _ := mi["type"].(string); t == "" || t == "未知" {
+		return nil, false
+	}
+	tmdbID := toInt64(mi["tmdb_id"])
+	if tmdbID <= 0 {
+		return nil, false
+	}
+	res := &MPRecognizeResult{TmdbID: tmdbID}
+	if t, _ := mi["type"].(string); t == "电视剧" {
+		res.Category = "tv"
+	} else {
+		res.Category = "movie"
+	}
+	if s, ok := mi["title"].(string); ok {
+		res.Title = s
+	}
+	if res.Title == "" {
+		return nil, false
+	}
+	res.Year = int(toInt64(mi["year"]))
+	res.Season = int(toInt64(mi["season"]))
+	res.Episode = int(toInt64(mi["episode"]))
+	return res, true
+}
+
+// toInt64 宽松转换 JSON 数值（int/float64/string 数字均接受）
+func toInt64(v any) int64 {
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case string:
+		var f float64
+		if _, err := fmt.Sscanf(strings.TrimSpace(n), "%g", &f); err == nil {
+			return int64(f)
+		}
+	}
+	return 0
+}
+
 // TestConnection 测试连接（查询下载器列表，失败时回退订阅列表）
 func (c *Client) TestConnection(ctx context.Context) error {
 	var out any
