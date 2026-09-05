@@ -1,0 +1,237 @@
+# ============================================================================
+# diy-strm 媒体栈一键恢复模板（134.185.85.200，aarch64）
+#
+# 覆盖 diy-strm 全链路依赖：TG 转存(tgto123) → PT 下载(MoviePilot + qBittorrent)
+# → 云盘挂载(alist/openlist/clouddrive2) → diy-strm 上传整理(内置 postgres)
+# → STRM → Emby 播放(302 代理)
+#
+# 使用：
+#   1. 把此文件放到服务器 /opt/media-stack/docker-compose.yml
+#   2. 同目录放 .env（参考 media-stack.env.example，填入真实密钥）
+#   3. 按恢复文档把备份的数据目录拷回原路径（见 deploy/README-recovery.md）
+#   4. docker compose up -d
+#
+# 全部数据都在 bind mount，容器可随时删掉重建；重装系统前备份这些目录即可。
+# ============================================================================
+
+name: media-stack
+
+networks:
+  media-net:
+    name: media-net
+
+services:
+  # ==================== diy-strm（本体）====================
+
+  # diy-strm 外部数据库（推荐外置，升级/重建容器数据不丢）
+  diy-strm-postgres:
+    image: postgres:15-alpine
+    container_name: diy-strm-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=diystrm
+      - POSTGRES_PASSWORD=${POSTGRES_DIYSTRM_PASSWORD}
+      - POSTGRES_DB=diystrm
+      - TZ=${TZ}
+    volumes:
+      - /home/diy-strm/postgres:/var/lib/postgresql/data
+    networks: [media-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U diystrm -d diystrm"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  diy-strm:
+    image: afengj/diy-strm:latest
+    container_name: diy-strm
+    restart: unless-stopped
+    depends_on:
+      diy-strm-postgres:
+        condition: service_healthy
+    ports:
+      - "12333:12333" # Web 管理界面 (http)
+      - "12332:12332" # Web 管理界面 (https)
+      - "8095:8095"   # Emby 302 代理 (http)
+      - "8094:8094"   # Emby 302 代理 (https)
+    environment:
+      - TZ=${TZ}
+      # 外部 PostgreSQL（与上方 diy-strm-postgres 对应）
+      - DB_HOST=diy-strm-postgres
+      - DB_PORT=5432
+      - DB_USER=diystrm
+      - DB_PASSWORD=${POSTGRES_DIYSTRM_PASSWORD}
+      - DB_NAME=diystrm
+      - DB_SSLMODE=disable
+    volumes:
+      - /opt/diy-strm/config:/app/config          # 应用配置（必须备份）
+      - /media/qbittorrent/下载:/downloads        # MP 下载目录（本地识别上传源）
+      - /media/QMediaSync/strm:/media             # STRM 输出目录（与 Emby 挂载同一宿主路径）
+    # extra_hosts:
+    #   # STRM 直连地址用自定义域名时，解析到本容器/宿主机
+    #   - "your_domain:127.0.0.1"
+    networks: [media-net]
+
+  # ==================== MoviePilot v2（PT 订阅下载）====================
+
+  postgresql: # MP 数据库（服务名保持 postgresql/redis，与 MP 环境变量对应）
+    image: postgres:18
+    container_name: moviepilot-postgresql
+    restart: always
+    environment:
+      - POSTGRES_USER=moviepilot
+      - POSTGRES_PASSWORD=${MP_PG_PASSWORD}
+      - POSTGRES_DB=moviepilot
+      - PGDATA=/var/lib/postgresql/18/docker
+      - TZ=${TZ}
+    volumes:
+      - /media/mp-postgresql:/var/lib/postgresql
+    networks: [media-net]
+
+  redis:
+    image: redis:7
+    container_name: moviepilot-redis
+    restart: always
+    command: ["redis-server", "--requirepass", "${MP_REDIS_PASSWORD}"]
+    volumes:
+      - /media/redis/data:/data
+    networks: [media-net]
+
+  moviepilot:
+    image: jxxghp/moviepilot-v2:latest
+    container_name: moviepilot-v2
+    restart: always
+    depends_on: [postgresql, redis]
+    ports:
+      - "3000:3000" # NGINX Web 入口
+      - "3001:3001" # API 端口
+    environment:
+      - TZ=${TZ}
+      - SUPERUSER=${MP_SUPERUSER}
+      - SUPERUSER_PASSWORD=${MP_SUPERUSER_PASSWORD}
+      - PUID=0
+      - PGID=0
+      - UMASK=000
+      - PORT=3001
+      - NGINX_PORT=3000
+      - DB_TYPE=postgresql
+      - DB_POSTGRESQL_HOST=postgresql
+      - DB_POSTGRESQL_PORT=5432
+      - DB_POSTGRESQL_USERNAME=moviepilot
+      - DB_POSTGRESQL_PASSWORD=${MP_PG_PASSWORD}
+      - DB_POSTGRESQL_DATABASE=moviepilot
+      - CACHE_BACKEND_TYPE=redis
+      - CACHE_BACKEND_URL=redis://:${MP_REDIS_PASSWORD}@redis:6379
+    volumes:
+      - /media/moviepilot-v2/config:/config              # MP 配置（必须备份）
+      - /media:/media                                     # 媒体根目录
+      - /media/qbittorrent/下载:/downloads                # 下载目录（与 qb/diy-strm 同源）
+      - /media/moviepilot-v2/torrents:/torrents
+      - /media/moviepilot-v2/BT_backup:/BT_backup
+      - /media/moviepilot-v2/core:/moviepilot/.cache/ms-playwright
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [media-net]
+
+  # ==================== qBittorrent（下载器，host 网络）====================
+
+  qbittorrent:
+    image: linuxserver/qbittorrent:14.3.9
+    container_name: qbittorrent
+    restart: always
+    network_mode: host # WebUI http://IP:8080
+    environment:
+      - PUID=0
+      - PGID=0
+      - TZ=${TZ}
+      - WEBUI_PORT=8080
+    volumes:
+      - /media/qbittorrent/config:/config   # 配置（必须备份）
+      - /media/qbittorrent/下载:/downloads  # 下载目录
+
+  # ==================== Emby（播放端，aarch64 增强版镜像）====================
+
+  emby:
+    image: amilys/embyserver_arm64v8:4.8.10.0
+    container_name: embyserver115
+    restart: always
+    ports:
+      - "8099:8096" # Emby Web（diy-strm 的 302 代理与 Emby 配置均指向此端口）
+    environment:
+      - UID=0
+      - GID=0
+      - GIDLIST=0
+      - TZ=${TZ}
+    volumes:
+      - /media/QMediaSync/strm:/media      # STRM 目录（与 diy-strm 输出目录同一宿主路径）
+      - /media/embytest/config:/config     # Emby 配置（必须备份）
+    networks: [media-net]
+
+  # ==================== 云盘挂载（alist / openlist / clouddrive2）====================
+
+  alist:
+    image: xhofe/alist:v3.60.0
+    container_name: alist
+    restart: unless-stopped
+    ports:
+      - "5243:5244" # Alist Web（宿主 5243）
+    environment:
+      - PUID=0
+      - PGID=0
+      - UMASK=022
+      - RUN_ARIA2=false
+      - TZ=${TZ}
+    volumes:
+      - /media/alist/data:/opt/alist/data  # 配置与数据库（必须备份）
+      - /media:/media
+      - /media/qbittorrent/下载:/下载
+    networks: [media-net]
+
+  openlist:
+    image: openlistteam/openlist:latest
+    container_name: openlist
+    restart: always
+    ports:
+      - "5244:5244" # OpenList Web
+      - "5246:5246"
+    environment:
+      - TZ=${TZ}
+      - UMASK=022
+      - RUN_ARIA2=false
+    volumes:
+      # 原为 1Panel 管理路径；不用 1Panel 也可自建该目录，或改为 /media/openlist/data
+      # （改路径后需重新在 Web 里配置存储，或恢复备份到此新路径）
+      - /opt/1panel/apps/openlist/openlist/data:/opt/openlist/data
+      - /media:/media
+      - /media/qbittorrent/下载:/下载
+    networks: [media-net]
+
+  clouddrive2:
+    image: cloudnas/clouddrive2
+    container_name: clouddrive2
+    restart: unless-stopped
+    network_mode: host # Web http://IP:19798；host 网络保证 CloudNAS 挂载可用
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - /media/clouddrive2/CloudNAS:/CloudNAS
+      - /media/clouddrive2/Config:/Config  # 配置（必须备份）
+      - /media/clouddrive2/Video:/media
+    privileged: true # fuse 挂载需要
+
+  # ==================== tgto123（TG 转存机器人，host 网络）====================
+
+  tgto123:
+    image: walkingd/tgto123:latest
+    container_name: tgto123
+    restart: always
+    network_mode: host
+    environment:
+      - TZ=${TZ}
+      - ENV_TG_BOT_TOKEN=${TGTO_TG_BOT_TOKEN}
+      - ENV_TG_ADMIN_USER_ID=${TGTO_TG_ADMIN_USER_ID}
+      - ENV_WEB_PASSPORT=${TGTO_WEB_USER}
+      - ENV_WEB_PASSWORD=${TGTO_WEB_PASSWORD}
+    volumes:
+      - /media/tgto123/db:/app/db            # 数据库（必须备份）
+      - /media/tgto123/downloads:/app/downloads
+      - /media/qbittorrent/下载:/app/upload
