@@ -1133,7 +1133,7 @@ async function loadFileList(options: LoadFileListOptions = {}) {
   try {
     await runRefresh(async () => {
       const accountId = selectedAccountId.value
-      if (!accountId) {
+      if (accountId === null) {
         return
       }
 
