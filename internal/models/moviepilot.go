@@ -1,6 +1,7 @@
 package models
 
 import (
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -207,7 +208,8 @@ func FindMoviePilotUploadTask(hash string) *MoviePilotUploadTask {
 }
 
 // FindMoviePilotUploadTaskByLocalPath 按本地源目录查询上传任务（excludeHash 用于排除自身）。
-// 同一保存目录可能对应多条下载记录（分集种子各一个 hash），目录只应上传一次。
+// 同一保存目录可能对应多条下载记录（分集种子各一个 hash），目录不应整批重复上传；
+// 调用方需结合 MoviePilotOccupiedByLocalPaths 判断目录内是否有尚未上传的新文件缺口。
 func FindMoviePilotUploadTaskByLocalPath(localPath, excludeHash string) *MoviePilotUploadTask {
 	var task MoviePilotUploadTask
 	q := db.Db.Where("local_path = ?", localPath)
@@ -218,6 +220,36 @@ func FindMoviePilotUploadTaskByLocalPath(localPath, excludeHash string) *MoviePi
 		return nil
 	}
 	return &task
+}
+
+// MoviePilotOccupiedByLocalPaths 返回 paths 中已被其他 MoviePilot 批次占用的本地文件路径集合。
+// 占用判定：存在 movie_pilot_task_id>0 且状态非 failed/cancelled 的文件级上传记录。
+// excludeMpTaskID 用于排除自身批次（创建文件任务前调用，避免自己批次的旧记录被算作"其它"）。
+// 季包补种目录：整季种子（hash A）已上传目录内 E01~E10，新集 E11 由另一条下载（hash B）补进同一目录时，
+// 只有 E11 是缺口：E01~E10 已被 hash A 批次占用不应重传，E11 不在任何批次内应放行。
+func MoviePilotOccupiedByLocalPaths(paths []string, excludeMpTaskID uint) map[string]bool {
+	out := map[string]bool{}
+	if len(paths) == 0 {
+		return out
+	}
+	cleaned := make([]string, 0, len(paths))
+	for _, p := range paths {
+		cleaned = append(cleaned, filepath.Clean(p))
+	}
+	var found []string
+	q := db.Db.Model(&DbUploadTask{}).
+		Where("local_full_path IN ? AND movie_pilot_task_id > 0 AND status NOT IN ?",
+			cleaned, []UploadStatus{UploadStatusFailed, UploadStatusCancelled})
+	if excludeMpTaskID > 0 {
+		q = q.Where("movie_pilot_task_id <> ?", excludeMpTaskID)
+	}
+	if err := q.Pluck("local_full_path", &found).Error; err != nil {
+		return out
+	}
+	for _, p := range found {
+		out[filepath.Clean(p)] = true
+	}
+	return out
 }
 
 // CreateMoviePilotUploadTask 创建上传任务

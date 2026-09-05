@@ -364,14 +364,18 @@ func checkCompletedDownloads() error {
 	return checkDownloadHistory()
 }
 
-// createUploadTaskFromDownload 创建上传任务并加入上传队列（hash 幂等 + 目录幂等）。
-// 同一保存目录可能对应多条下载记录（如分集种子各一个 hash 落在同目录），
-// 目录已被其他任务占用时跳过，避免整批文件重复上传。
+// createUploadTaskFromDownload 创建上传任务并加入上传队列（hash 幂等 + 文件级占用去重）。
+// 同一保存目录可能对应多条下载记录：季包补种场景整季种子（hash A）先上传了 E01~E10，
+// 后续单集下载（hash B）把新集补进同一目录 —— 此时不应整体跳过，而应检测目录内是否存在
+// 尚未被任何既有批次占用的新文件缺口；有缺口才建任务，文件级过滤保证只上传缺口文件。
 func createUploadTaskFromDownload(client *Client, cfg *models.MoviePilotConfig, hash, title, name, localPath, mediaType string, tmdbId int64, seasonEpisode string) error {
-	// 目录幂等：该源目录已被其他上传任务使用（无论成败）则不再重复上传
+	// 目录已由其他 hash 处理过：仅当目录内仍有未被既有批次占用的新文件（新集/缺集）才放行
 	if dup := models.FindMoviePilotUploadTaskByLocalPath(localPath, hash); dup != nil {
-		helpers.AppLogger.Infof("MoviePilot 跳过重复上传：%s 的源目录 %s 已由任务 #%d（hash=%s）处理", title, localPath, dup.ID, dup.TorrentHash)
-		return nil
+		if !localDirHasUnclaimedFiles(localPath) {
+			helpers.AppLogger.Infof("MoviePilot 跳过重复上传：%s 的源目录 %s 已由任务 #%d（hash=%s）处理", title, localPath, dup.ID, dup.TorrentHash)
+			return nil
+		}
+		helpers.AppLogger.Infof("MoviePilot 目录 %s 已由任务 #%d 处理过，但存在未上传的新文件，放行增量上传", localPath, dup.ID)
 	}
 	remotePath := strings.TrimRight(cfg.UploadRoot, "/")
 	if remotePath == "" {
@@ -399,6 +403,26 @@ func createUploadTaskFromDownload(client *Client, cfg *models.MoviePilotConfig, 
 		helpers.AppLogger.Warnf("MoviePilot 上传队列已满，任务 %s（%s）已落库待人工重试", hash, title)
 	}
 	return nil
+}
+
+// localDirHasUnclaimedFiles 目录内是否存在未被任何既有 MoviePilot 批次占用的本地文件。
+// 用于季包补种目录的放行判定：目录整体已上传过，但出现了新集文件（不在任何批次的文件任务里）。
+func localDirHasUnclaimedFiles(localPath string) bool {
+	files, err := CollectLocalFiles(localPath)
+	if err != nil {
+		return false
+	}
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		paths = append(paths, f.AbsPath)
+	}
+	claimed := models.MoviePilotOccupiedByLocalPaths(paths, 0)
+	for _, f := range files {
+		if _, ok := claimed[filepath.Clean(f.AbsPath)]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 // 下载历史检测游标：已扫描到的最大历史 ID；attempts 记录本地路径未匹配的 hash 及上次尝试时间

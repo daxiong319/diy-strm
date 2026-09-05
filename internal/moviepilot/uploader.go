@@ -81,6 +81,33 @@ func localDirFingerprint(root string) (string, error) {
 	return strings.Join(parts, "|"), nil
 }
 
+// filterClaimedFiles 剔除已被其他 MoviePilot 批次占用的本地文件（返回未被占用的文件）。
+// 季包补种目录：整季种子先上传了 E01~E10，新集 E11 由另一 hash 下载进同目录时，
+// E01~E10 已属于既有批次不应重传，只有 E11 是待上传缺口。
+// excludeMpTaskID：排除自身批次 ID（为当前批次新建文件任务时，避免把自己刚建的记录误算为"其它批次"）。
+func filterClaimedFiles(files []LocalFile, excludeMpTaskID uint) ([]LocalFile, error) {
+	if len(files) == 0 {
+		return files, nil
+	}
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		paths = append(paths, f.AbsPath)
+	}
+	claimed := models.MoviePilotOccupiedByLocalPaths(paths, excludeMpTaskID)
+	if len(claimed) == 0 {
+		return files, nil
+	}
+	out := make([]LocalFile, 0, len(files))
+	for _, f := range files {
+		if _, ok := claimed[filepath.Clean(f.AbsPath)]; ok {
+			helpers.AppLogger.Debugf("MoviePilot 文件已被其他批次占用，跳过：%s", f.AbsPath)
+			continue
+		}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
 // CreateMoviePilotUploadTasks 为本地目录生成文件级上传任务（走系统统一上传队列）
 // remoteRootPath 为目标网盘上传根目录路径，remoteRootId 为根目录 ID（各网盘语义：ID 或路径）
 // 返回创建的文件任务数
@@ -88,6 +115,14 @@ func CreateMoviePilotUploadTasks(ctx context.Context, account *models.Account, m
 	files, err := CollectLocalFiles(localRoot)
 	if err != nil {
 		return 0, err
+	}
+	// 只上传未被其他批次占用的文件缺口：防止季包补种目录把已上传过的旧文件重复入队
+	files, err = filterClaimedFiles(files, moviePilotTaskId)
+	if err != nil {
+		return 0, err
+	}
+	if len(files) == 0 {
+		return 0, fmt.Errorf("源目录 %s 中没有待上传的新文件（文件均已被其他批次处理）", localRoot)
 	}
 	return createUploadTasksForFiles(ctx, account, moviePilotTaskId, remoteRootPath, remoteRootId, files)
 }
@@ -155,6 +190,11 @@ func createUploadTasksForFiles(ctx context.Context, account *models.Account, mov
 // 用于下载任务被判定为"完成"后仍有文件陆续落盘的场景（如快照发布大文件后到）。
 func createMissingUploadTasks(ctx context.Context, task *models.MoviePilotUploadTask, account *models.Account) (int, error) {
 	files, err := CollectLocalFiles(task.LocalPath)
+	if err != nil {
+		return 0, err
+	}
+	// 先剔除已被其他批次占用的文件（同目录多 hash 场景：他任务已传的文件不算缺口）
+	files, err = filterClaimedFiles(files, task.ID)
 	if err != nil {
 		return 0, err
 	}
