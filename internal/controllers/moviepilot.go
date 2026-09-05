@@ -2,6 +2,7 @@
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -61,6 +62,7 @@ func UpdateMoviePilotConfig(c *gin.Context) {
 		CategoryConfig:         req.CategoryConfig,
 		PromotionOrder:         req.PromotionOrder,
 		PromotionPatienceHours: req.PromotionPatienceHours,
+		SeedRetentionHours:     req.SeedRetentionHours,
 	})
 	if !ok {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "更新 MoviePilot 配置失败", Data: nil})
@@ -270,6 +272,36 @@ func ListMoviePilotDownloads(c *gin.Context) {
 		SavePath      string `json:"save_path"`
 		Date          string `json:"date"`
 		UploadStatus  string `json:"upload_status"`
+		SeedTime      string `json:"seed_time"` // 做种时长（下载完成至今），如 25h3m
+	}
+	// 做种起点：下载器列表不返回完成时间，用下载历史 date（hash 匹配）近似；
+	// 一次查询全量构建映射，避免逐条请求
+	seedStart := map[string]time.Time{}
+	if histories, herr := client.ListDownloadHistory(c, 1, 50); herr == nil {
+		for _, h := range histories {
+			if h == nil || h.DownloadHash == "" || h.Date == "" {
+				continue
+			}
+			if t, perr := time.ParseInLocation("2006-01-02 15:04:05", h.Date, time.Local); perr == nil {
+				if old, ok := seedStart[h.DownloadHash]; !ok || t.After(old) {
+					seedStart[h.DownloadHash] = t
+				}
+			}
+		}
+	}
+	seedTimeText := func(hash string) string {
+		started, ok := seedStart[hash]
+		if !ok {
+			return ""
+		}
+		d := time.Since(started)
+		if d < 0 {
+			return ""
+		}
+		if d >= 24*time.Hour {
+			return fmt.Sprintf("%dd%dh", int(d.Hours()/24), int(d.Hours())%24)
+		}
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
 	}
 	rows := make([]downloadRow, 0, len(downloads)+16)
 	activeHashes := make(map[string]bool, len(downloads))
@@ -295,6 +327,7 @@ func ListMoviePilotDownloads(c *gin.Context) {
 			State:         t.State,
 			Progress:      t.Progress,
 			SavePath:      t.SavePath,
+			SeedTime:      seedTimeText(t.Hash),
 			UploadStatus:  uploadStatus(t.Hash),
 		})
 	}
@@ -320,6 +353,7 @@ func ListMoviePilotDownloads(c *gin.Context) {
 				Progress:      100,
 				SavePath:      h.Path,
 				Date:          h.Date,
+				SeedTime:      seedTimeText(h.DownloadHash),
 				UploadStatus:  uploadStatus(h.DownloadHash),
 			})
 		}

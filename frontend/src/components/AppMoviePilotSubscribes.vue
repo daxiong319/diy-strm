@@ -109,6 +109,9 @@
               <el-progress :percentage="Number(scope.row.progress || 0)" />
             </template>
           </el-table-column>
+          <el-table-column label="做种时间" width="100">
+            <template #default="scope">{{ scope.row.seed_time || '-' }}</template>
+          </el-table-column>
           <el-table-column prop="date" label="完成时间" width="150">
             <template #default="scope">{{ scope.row.date || '-' }}</template>
           </el-table-column>

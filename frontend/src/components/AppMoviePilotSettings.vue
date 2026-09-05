@@ -211,6 +211,23 @@
           </div>
         </el-form-item>
 
+        <el-form-item label="自动删种" prop="seed_retention_hours">
+          <el-select
+            v-model="formData.seed_retention_hours"
+            :disabled="loading || !formData.enabled"
+            style="width: 200px"
+          >
+            <el-option label="不自动删除" :value="0" />
+            <el-option label="做种 24 小时后删除" :value="24" />
+            <el-option label="做种 48 小时后删除" :value="48" />
+            <el-option label="做种 72 小时后删除" :value="72" />
+            <el-option label="做种 7 天后删除" :value="168" />
+          </el-select>
+          <div class="form-help">
+            下载完成且上传网盘成功后，做种达到所选时长即自动删除种子并删除本地文件释放磁盘空间；做种时长按下载完成时间计算
+          </div>
+        </el-form-item>
+
         <el-form-item>
           <div class="form-actions">
             <el-button
@@ -300,6 +317,7 @@ interface MoviePilotSettings {
   category_config: string
   promotion_order: string
   promotion_patience_hours: number
+  seed_retention_hours: number
 }
 
 interface TestStatus {
@@ -336,6 +354,7 @@ const formData = reactive<MoviePilotSettings>({
   category_config: '',
   promotion_order: 'free,2xfree,normal,half,2xhalf',
   promotion_patience_hours: 12,
+  seed_retention_hours: 0,
 })
 
 // ---- 促销优先级排序 ----
@@ -485,6 +504,7 @@ const saveSettings = async () => {
       category_config: formData.category_config,
       promotion_order: formData.promotion_order,
       promotion_patience_hours: formData.promotion_patience_hours,
+      seed_retention_hours: Number(formData.seed_retention_hours) || 0,
     })
     if (response?.data.code === 200) {
       ElMessage.success(formData.enabled ? 'MoviePilot 配置已保存并启用' : 'MoviePilot 联动已关闭')
@@ -523,6 +543,7 @@ const loadSettings = async () => {
       formData.category_config = data.category_config || ''
       formData.promotion_order = data.promotion_order || 'free,2xfree,normal,half,2xhalf'
       formData.promotion_patience_hours = data.promotion_patience_hours || 12
+      formData.seed_retention_hours = Number(data.seed_retention_hours) || 0
     }
   } catch (error) {
     console.error('加载 MoviePilot 设置错误：', error)

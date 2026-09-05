@@ -133,6 +133,7 @@ func StartMoviePilotWatcher() {
 			if err := applyPromotionLadder(current); err != nil {
 				helpers.AppLogger.Errorf("MoviePilot 促销优先监督失败：%v", err)
 			}
+			autoDeleteSeeds(current)
 		}
 	}()
 }
@@ -242,6 +243,80 @@ func applyPromotionLadder(cfg *models.MoviePilotConfig) error {
 	return nil
 }
 
+// seedStartedAt 从 MP 下载历史推断种子的做种起点（下载完成时间）。
+// 下载器列表接口不返回完成时间，历史记录 date（yyyy-MM-dd HH:mm:ss）是可靠来源。
+func seedStartedAt(client *Client, ctx context.Context, hash string) time.Time {
+	var started time.Time
+	histories, err := client.ListDownloadHistory(ctx, 1, 50)
+	if err != nil {
+		return started
+	}
+	for _, h := range histories {
+		if h == nil || h.DownloadHash != hash || h.Date == "" {
+			continue
+		}
+		if t, perr := time.ParseInLocation("2006-01-02 15:04:05", h.Date, time.Local); perr == nil {
+			started = t
+		}
+		break
+	}
+	return started
+}
+
+// autoDeleteSeeds 自动删种：做种达到 SeedRetentionHours 且对应上传任务已全部完成时，
+// 调 MP 删除接口移除种子并删除本地文件释放磁盘空间。0=关闭。
+// 删除条件刻意从严：任务不存在（尚未建上传任务）或未到 uploaded 终态都不删，宁可多留不做种。
+func autoDeleteSeeds(cfg *models.MoviePilotConfig) {
+	retention := cfg.SeedRetentionHours
+	if retention <= 0 {
+		return
+	}
+	client := NewClient(cfg.BaseUrl, cfg.ApiToken)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	torrents, err := client.ListDownloads(ctx)
+	if err != nil {
+		helpers.AppLogger.Warnf("MoviePilot 自动删种：获取下载任务失败：%v", err)
+		return
+	}
+	for _, t := range torrents {
+		if t == nil || t.Hash == "" || t.Name == "" {
+			continue
+		}
+		// 只处理做种中的完成任务；仍在下载/校验的不动
+		if t.Progress < 100 || (t.State != "seeding" && t.State != "completed" && t.State != "paused") {
+			continue
+		}
+		task := models.FindMoviePilotUploadTask(t.Hash)
+		if task == nil || task.Status != models.MoviePilotUploadUploaded {
+			continue
+		}
+		started := seedStartedAt(client, ctx, t.Hash)
+		if started.IsZero() {
+			continue
+		}
+		seeded := time.Since(started)
+		if seeded < time.Duration(retention)*time.Hour {
+			continue
+		}
+		if err := client.DeleteDownload(ctx, t.Hash, t.Name); err != nil {
+			helpers.AppLogger.Errorf("MoviePilot 自动删种失败：%s（hash=%s）：%v", t.Title, t.Hash[:min(12, len(t.Hash))], err)
+			continue
+		}
+		helpers.AppLogger.Infof("MoviePilot 自动删种完成：%s（做种 %s，上传任务 #%d 已完成），已删除种子及本地文件",
+			t.Title, formatDurationCN(seeded), task.ID)
+	}
+}
+
+// formatDurationCN 时长中文简写（如 25h3m / 3d2h）
+func formatDurationCN(d time.Duration) string {
+	if d >= 24*time.Hour {
+		return fmt.Sprintf("%dd%dh", int(d.Hours()/24), int(d.Hours())%24)
+	}
+	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
 // checkCompletedDownloads 检测 MP 已完成的下载任务并创建上传任务。
 // 先检查下载列表中的完成任务，再兜底检查下载历史（任务完成后即从下载列表移除）。
 func checkCompletedDownloads() error {
@@ -289,8 +364,15 @@ func checkCompletedDownloads() error {
 	return checkDownloadHistory()
 }
 
-// createUploadTaskFromDownload 创建上传任务并加入上传队列（hash 幂等）
+// createUploadTaskFromDownload 创建上传任务并加入上传队列（hash 幂等 + 目录幂等）。
+// 同一保存目录可能对应多条下载记录（如分集种子各一个 hash 落在同目录），
+// 目录已被其他任务占用时跳过，避免整批文件重复上传。
 func createUploadTaskFromDownload(client *Client, cfg *models.MoviePilotConfig, hash, title, name, localPath, mediaType string, tmdbId int64, seasonEpisode string) error {
+	// 目录幂等：该源目录已被其他上传任务使用（无论成败）则不再重复上传
+	if dup := models.FindMoviePilotUploadTaskByLocalPath(localPath, hash); dup != nil {
+		helpers.AppLogger.Infof("MoviePilot 跳过重复上传：%s 的源目录 %s 已由任务 #%d（hash=%s）处理", title, localPath, dup.ID, dup.TorrentHash)
+		return nil
+	}
 	remotePath := strings.TrimRight(cfg.UploadRoot, "/")
 	if remotePath == "" {
 		remotePath = "/影视/订阅下载"
@@ -416,8 +498,7 @@ func checkDownloadHistory() error {
 
 // resolveHistoryLocalPath 从下载历史记录定位容器内可访问的本地路径。
 // 取历史 path 最后一段（MP 转移后的目录/文件名），在本地视图根下递归匹配（最多 3 层）。
-func resolveHistoryLocalPath(h *DownloadHistory, cfg *models.MoviePilotConfig) string {
-	lastSeg := path.Base(strings.TrimRight(strings.ReplaceAll(h.Path, "\\", "/"), "/"))
+func resolveHistoryLocalPath(h *DownloadHistory, cfg *models.MoviePilotConfig) string {	lastSeg := path.Base(strings.TrimRight(strings.ReplaceAll(h.Path, "\\", "/"), "/"))
 	if lastSeg == "" || lastSeg == "." || lastSeg == "/" {
 		return ""
 	}

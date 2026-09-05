@@ -358,6 +358,21 @@ func (c *Client) ListDownloads(ctx context.Context) ([]*DownloadTorrent, error) 
 	return out, nil
 }
 
+// DeleteDownload 删除下载任务（MP DELETE /api/v1/download/{hash}?name=）。
+// MP 侧 remove_torrents 的 delete_file 默认为 True，即同时删除种子与本地文件，
+// 用于做种保留期满后释放磁盘空间。
+func (c *Client) DeleteDownload(ctx context.Context, hash, name string) error {
+	path := fmt.Sprintf("/api/v1/download/%s?name=%s", hash, url.QueryEscape(name))
+	var out Response
+	if err := c.do(ctx, http.MethodDelete, path, nil, &out); err != nil {
+		return err
+	}
+	if !out.Success {
+		return fmt.Errorf("MoviePilot 删除下载任务失败：%s", out.Message)
+	}
+	return nil
+}
+
 // DownloadHistory MP 下载历史记录（对应 /api/v1/history/download 返回项）
 // 下载任务完成后会从下载列表移除，历史记录是可靠的完成事件来源。
 type DownloadHistory struct {

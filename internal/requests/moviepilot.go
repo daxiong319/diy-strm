@@ -46,6 +46,8 @@ type UpdateMoviePilotConfigRequest struct {
 	PromotionOrder string `json:"promotion_order"`
 	// PromotionPatienceHours 促销层耐心期（小时）：当前层持续无新下载才放宽到下一层
 	PromotionPatienceHours int `json:"promotion_patience_hours"`
+	// SeedRetentionHours 种子做种保留时长（小时）：0=不自动删除，24/48/72... 达到后删除种子释放磁盘
+	SeedRetentionHours int `json:"seed_retention_hours"`
 }
 
 // Validate 校验配置

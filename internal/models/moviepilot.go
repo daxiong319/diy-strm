@@ -29,6 +29,9 @@ type MoviePilotConfig struct {
 	PromotionOrder string `json:"promotion_order" gorm:"default:free,2xfree,normal,half,2xhalf"`
 	// PromotionPatienceHours 促销层耐心期（小时）：当前层持续该时长无新下载才放宽到下一层，默认 12
 	PromotionPatienceHours int `json:"promotion_patience_hours" gorm:"default:12"`
+	// SeedRetentionHours 种子做种保留时长（小时）：下载完成上传成功后，做种达到该时长自动
+	// 删除种子及本地文件释放磁盘空间；0=不自动删除
+	SeedRetentionHours int `json:"seed_retention_hours" gorm:"default:0"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -70,6 +73,10 @@ func UpdateMoviePilotConfig(req *MoviePilotConfig) (*MoviePilotConfig, bool) {
 	cfg.PromotionOrder = NormalizePromotionOrder(req.PromotionOrder)
 	if req.PromotionPatienceHours > 0 {
 		cfg.PromotionPatienceHours = req.PromotionPatienceHours
+	}
+	// 做种保留时长：允许 0（不自动删除），只拦负数
+	if req.SeedRetentionHours >= 0 {
+		cfg.SeedRetentionHours = req.SeedRetentionHours
 	}
 	if err := db.Db.Model(cfg).Where("id = ?", cfg.ID).Save(cfg).Error; err != nil {
 		helpers.AppLogger.Errorf("更新 MoviePilot 配置失败：%v", err)
@@ -194,6 +201,20 @@ func (*MoviePilotUploadTask) TableName() string { return "movie_pilot_upload_tas
 func FindMoviePilotUploadTask(hash string) *MoviePilotUploadTask {
 	var task MoviePilotUploadTask
 	if err := db.Db.Where("torrent_hash = ?", hash).First(&task).Error; err != nil {
+		return nil
+	}
+	return &task
+}
+
+// FindMoviePilotUploadTaskByLocalPath 按本地源目录查询上传任务（excludeHash 用于排除自身）。
+// 同一保存目录可能对应多条下载记录（分集种子各一个 hash），目录只应上传一次。
+func FindMoviePilotUploadTaskByLocalPath(localPath, excludeHash string) *MoviePilotUploadTask {
+	var task MoviePilotUploadTask
+	q := db.Db.Where("local_path = ?", localPath)
+	if excludeHash != "" {
+		q = q.Where("torrent_hash <> ?", excludeHash)
+	}
+	if err := q.Order("id desc").First(&task).Error; err != nil {
 		return nil
 	}
 	return &task
