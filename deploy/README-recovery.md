@@ -7,8 +7,7 @@
 
 ```bash
 tar -czf /tmp/media-stack-backup.tar.gz \
-  /opt/diy-strm/config \                    # diy-strm 应用配置
-  /home/diy-strm/postgres \                 # diy-strm 数据库（账号/订阅/转存记录全在这）
+  /opt/diy-strm/config \                    # diy-strm 应用配置 + 内置数据库（单容器模式全在这）
   /media/moviepilot-v2/config \             # MoviePilot 配置
   /media/moviepilot-v2/BT_backup \          # MP 种子备份
   /media/mp-postgresql \                    # MP 数据库
@@ -22,6 +21,7 @@ tar -czf /tmp/media-stack-backup.tar.gz \
   /media/tgto123/db                         # tgto123 数据库
 ```
 
+> 若使用外部 PostgreSQL 模式，额外备份 `/home/diy-strm/postgres`（diy-strm 数据库）。
 > 建议用 diy-strm 内置备份功能（`backup_config`/`backup_record` 表对应的后台备份）定期备份 diy-strm 配置与数据库。
 
 ## 二、重装后：恢复目录 + 拉起
@@ -34,9 +34,21 @@ tar -xzf media-stack-backup.tar.gz -C /
 mkdir -p /opt/media-stack && cd /opt/media-stack
 # 上传 deploy/docker-compose.media-stack.yml 与 .env（照 media-stack.env.example 填真实值）
 
-# 3. 启动（先数据库后应用，compose 已用 depends_on/healthcheck 排序）
+# 3. 启动（MP 的数据库与应用已用 depends_on 排序）
 docker compose -f docker-compose.media-stack.yml --env-file .env up -d
 ```
+
+## 二点五、diy-strm 数据库模式说明（单容器 vs 外置 PostgreSQL）
+
+diy-strm 支持三种数据库模式（`config.yaml` 的 `db.engine`，环境变量 `DB_ENGINE` 可覆盖）：
+
+| 模式 | 说明 | 适用 |
+|---|---|---|
+| `sqlite`（默认） | 单文件库，落在 `/app/config/qmediasync.db` | **推荐**：单容器即跑，备份只需 `/app/config` |
+| `postgres` + `embedded` | 容器内嵌 PostgreSQL，数据在 `/app/config/postgres/data` | 需要 PG 特性且保持单容器 |
+| `postgres` + `external` | 连独立 postgres 容器（当前 134 服务器在用） | 已有外部库/多实例共享 |
+
+**新装机推荐 sqlite（什么都不用改，默认即是）**；想切到外部 PG 时，启用 compose 里注释的 `diy-strm-postgres` 服务，并在 `config.yaml` 设 `db.engine: postgres`、`db.postgresType: external`、`host: diy-strm-postgres`（或用 `DB_*` 环境变量覆盖）。模板默认按单容器（sqlite）编排。
 
 ## 三、启动后核对清单（按依赖顺序）
 

@@ -21,34 +21,16 @@ networks:
     name: media-net
 
 services:
-  # ==================== diy-strm（本体）====================
+  # ==================== diy-strm（本体，单容器模式）====================
 
-  # diy-strm 外部数据库（推荐外置，升级/重建容器数据不丢）
-  diy-strm-postgres:
-    image: postgres:15-alpine
-    container_name: diy-strm-postgres
-    restart: unless-stopped
-    environment:
-      - POSTGRES_USER=diystrm
-      - POSTGRES_PASSWORD=${POSTGRES_DIYSTRM_PASSWORD}
-      - POSTGRES_DB=diystrm
-      - TZ=${TZ}
-    volumes:
-      - /home/diy-strm/postgres:/var/lib/postgresql/data
-    networks: [media-net]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U diystrm -d diystrm"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
+  # diy-strm 内置 SQLite（默认）或嵌入式 PostgreSQL，数据全部落在 /app/config 下，
+  # 单容器即可运行（与 tgto123 同类）；无需单独的数据库容器。
+  # 如想改用外部 PostgreSQL，取消注释下方 diy-strm-postgres 服务，并在 config.yaml
+  # 中设 db.engine: postgres、db.postgresType: external、host: diy-strm-postgres。
   diy-strm:
     image: afengj/diy-strm:latest
     container_name: diy-strm
     restart: unless-stopped
-    depends_on:
-      diy-strm-postgres:
-        condition: service_healthy
     ports:
       - "12333:12333" # Web 管理界面 (http)
       - "12332:12332" # Web 管理界面 (https)
@@ -56,21 +38,35 @@ services:
       - "8094:8094"   # Emby 302 代理 (https)
     environment:
       - TZ=${TZ}
-      # 外部 PostgreSQL（与上方 diy-strm-postgres 对应）
-      - DB_HOST=diy-strm-postgres
-      - DB_PORT=5432
-      - DB_USER=diystrm
-      - DB_PASSWORD=${POSTGRES_DIYSTRM_PASSWORD}
-      - DB_NAME=diystrm
-      - DB_SSLMODE=disable
+      # 数据库引擎（可选，默认 sqlite；也可在 config.yaml 里配置，env 优先）
+      # - DB_ENGINE=sqlite
     volumes:
-      - /opt/diy-strm/config:/app/config          # 应用配置（必须备份）
+      - /opt/diy-strm/config:/app/config          # 应用配置 + 内置数据库（必须备份）
       - /media/qbittorrent/下载:/downloads        # MP 下载目录（本地识别上传源）
       - /media/QMediaSync/strm:/media             # STRM 输出目录（与 Emby 挂载同一宿主路径）
     # extra_hosts:
     #   # STRM 直连地址用自定义域名时，解析到本容器/宿主机
     #   - "your_domain:127.0.0.1"
     networks: [media-net]
+
+  # ---- 可选：外部 PostgreSQL（当前服务器在用的方式，默认注释掉）----
+  # diy-strm-postgres:
+  #   image: postgres:15-alpine
+  #   container_name: diy-strm-postgres
+  #   restart: unless-stopped
+  #   environment:
+  #     - POSTGRES_USER=diystrm
+  #     - POSTGRES_PASSWORD=${POSTGRES_DIYSTRM_PASSWORD}
+  #     - POSTGRES_DB=diystrm
+  #     - TZ=${TZ}
+  #   volumes:
+  #     - /home/diy-strm/postgres:/var/lib/postgresql/data
+  #   networks: [media-net]
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U diystrm -d diystrm"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 10
 
   # ==================== MoviePilot v2（PT 订阅下载）====================
 
