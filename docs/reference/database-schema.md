@@ -1113,6 +1113,9 @@ MoviePilot 对接配置（单行表，首次读取时自动创建默认行）。
 - `poll_interval`：轮询间隔（分钟，默认 5）。
 - `notify_enabled`：完成后是否发送通知。
 - `category_config`：分类策略配置（MoviePilot `category.yaml` 风格 YAML 文本，空表示使用内置默认分类）；整理时按 TMDB 元数据匹配分类，归入「已整理/{分类}/…」。新增字段需手动迁移：`ALTER TABLE movie_pilot_configs ADD COLUMN IF NOT EXISTS category_config TEXT;`
+- `promotion_order`：促销优先阶梯（逗号分隔，高→低，默认 `free,2xfree,normal,half,2xhalf`）。
+- `promotion_patience_hours`：促销层耐心期（小时，默认 12）。
+- `seed_retention_hours`：种子做种保留时长（小时，默认 0=不自动删除；24/48/72/168 达到后自动删种子及本地文件）。
 
 ### `movie_pilot_upload_tasks`
 
