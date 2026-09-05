@@ -46,14 +46,14 @@
           </div>
           <div class="account-list">
             <div
-              v-for="account in accountList"
-              :key="account.id"
+              v-for="account in accountSidebarList"
+              :key="account.source_type === 'local' ? 'local' : account.id"
               :class="['account-item', { active: selectedAccountId === account.id }]"
               @click="selectAccount(account)"
             >
               <div class="account-info">
                 <el-icon class="account-icon">
-                  <component :is="getAccountIcon()" />
+                  <component :is="account.source_type === 'local' ? Monitor : getAccountIcon()" />
                 </el-icon>
                 <div class="account-details">
                   <div class="account-name">
@@ -70,7 +70,7 @@
         <!-- 右侧：文件列表 -->
         <div class="file-content">
           <!-- 未选择账号时的提示 -->
-          <div v-if="!selectedAccountId" class="no-account-selected">
+          <div v-if="selectedAccountId === null" class="no-account-selected">
             <el-empty description="选择一个网盘账号" />
           </div>
 
@@ -120,7 +120,7 @@
                   :icon="Refresh"
                   size="small"
                   :loading="isRefreshing"
-                  :disabled="!selectedAccountId"
+                  :disabled="selectedAccountId === null"
                   @click="handleRefreshFileList"
                 >
                   刷新
@@ -139,34 +139,38 @@
                   :icon="FolderAdd"
                   size="small"
                   @click="openCreateDialog"
-                  :disabled="!selectedAccountId"
+                  :disabled="selectedAccountId === null"
                 >
                   新建文件夹
                 </el-button>
                 <el-button
+                  v-if="!isLocalAccount"
                   size="small"
-                  :disabled="!selectedAccountId"
+                  :disabled="selectedAccountId === null"
                   @click="openOrganizeDialog"
                 >
                   目录整理
                 </el-button>
                 <el-button
+                  v-if="!isLocalAccount"
                   size="small"
-                  :disabled="!selectedAccountId"
+                  :disabled="selectedAccountId === null"
                   @click="openBatchRenameDialog"
                 >
                   批量重命名
                 </el-button>
                 <el-button
+                  v-if="!isLocalAccount"
                   size="small"
-                  :disabled="!selectedAccountId"
+                  :disabled="selectedAccountId === null"
                   @click="openCrossTransferDialog"
                 >
                   跨盘秒传
                 </el-button>
                 <el-button
+                  v-if="!isLocalAccount"
                   size="small"
-                  :disabled="!selectedAccountId"
+                  :disabled="selectedAccountId === null"
                   @click="openSmallTransferDialog"
                 >
                   小号秒传
@@ -217,10 +221,15 @@
                     </el-button>
                     <template #dropdown>
                       <el-dropdown-menu>
-                        <el-dropdown-item command="STRM_GENERATE">STRM 生成</el-dropdown-item>
-                        <el-dropdown-item command="SCRAPE_ORGANIZE">刮削整理</el-dropdown-item>
+                        <el-dropdown-item v-if="!isLocalAccount" command="STRM_GENERATE"
+                          >STRM 生成</el-dropdown-item
+                        >
+                        <el-dropdown-item v-if="!isLocalAccount" command="SCRAPE_ORGANIZE"
+                          >刮削整理</el-dropdown-item
+                        >
                         <el-dropdown-item
                           v-if="
+                            !isLocalAccount &&
                             !row.is_directory &&
                             (getFileType(row.name) === 'video' || getFileType(row.name) === 'image')
                           "
@@ -230,7 +239,10 @@
                         </el-dropdown-item>
                         <el-dropdown-item command="RENAME">重命名</el-dropdown-item>
                         <el-dropdown-item command="MOVE">移动到</el-dropdown-item>
-                        <el-dropdown-item v-if="!row.is_directory" command="NAME_ALIGN">
+                        <el-dropdown-item
+                          v-if="!isLocalAccount && !row.is_directory"
+                          command="NAME_ALIGN"
+                        >
                           命名对齐
                         </el-dropdown-item>
                         <el-dropdown-item command="DELETE" divided>删除</el-dropdown-item>
@@ -262,6 +274,7 @@
                     <p><strong>修改时间：</strong>{{ formatDateTime(row.modified_time) }}</p>
                     <div style="margin-top: 10px">
                       <el-button
+                        v-if="!isLocalAccount"
                         size="small"
                         type="primary"
                         @click="handleSingleOperation('STRM_GENERATE', row)"
@@ -269,6 +282,7 @@
                         STRM 生成
                       </el-button>
                       <el-button
+                        v-if="!isLocalAccount"
                         size="small"
                         type="success"
                         @click="handleSingleOperation('SCRAPE_ORGANIZE', row)"
@@ -277,6 +291,7 @@
                       </el-button>
                       <el-button
                         v-if="
+                          !isLocalAccount &&
                           !row.is_directory &&
                           (getFileType(row.name) === 'video' || getFileType(row.name) === 'image')
                         "
@@ -287,7 +302,7 @@
                         生成 ED2K
                       </el-button>
                       <el-button
-                        v-if="!row.is_directory"
+                        v-if="!isLocalAccount && !row.is_directory"
                         size="small"
                         @click="handleSingleOperation('NAME_ALIGN', row)"
                       >
@@ -505,7 +520,7 @@ import {
   useTemplateRef,
 } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { ArrowDown, Files, FolderAdd, InfoFilled, Refresh, Share } from '@element-plus/icons-vue'
+import { ArrowDown, Files, FolderAdd, InfoFilled, Monitor, Refresh, Share } from '@element-plus/icons-vue'
 import type { FileSystemItem, FileOperationType, DirInfo } from '@/typing'
 import { createActiveRequestGate } from '@/composables/useActiveRequestGate'
 import { useBackgroundRefresh } from '@/composables/useBackgroundRefresh'
@@ -526,12 +541,23 @@ import CrossTransferDialog from './CrossTransferDialog.vue'
 import GuangYaSmallTransferDialog from './GuangYaSmallTransferDialog.vue'
 import Pan139ShareDialog from './Pan139ShareDialog.vue'
 
+// 本地文件伪账号：不来自账号表，selectedAccountId 用 0 表示
+const localPseudoAccount: NetdiskAccount = {
+  id: 0,
+  name: '本地文件',
+  username: '本地文件',
+  user_id: '',
+  source_type: 'local',
+  token: '',
+  created_at: 0,
+}
+
 interface NetdiskAccount {
   id: number
   name: string
   username: string
   user_id: string
-  source_type: '115' | '123' | 'openlist' | 'baidupan' | 'pan139' | 'guangyapan'
+  source_type: '115' | '123' | 'openlist' | 'baidupan' | 'pan139' | 'guangyapan' | 'local'
   token: string
   created_at: number
   base_url?: string
@@ -687,6 +713,8 @@ const { isMobile } = useDeviceType()
 
 const http = useHttpClient()
 const accountList = ref<NetdiskAccount[]>([])
+// 左侧栏展示用：本地文件伪账号置顶 + 网盘账号
+const accountSidebarList = computed<NetdiskAccount[]>(() => [localPseudoAccount, ...accountList.value])
 const selectedAccountId = computed<number | null>({
   get: () => {
     const value = pageState.filters.selectedAccountId
@@ -695,7 +723,7 @@ const selectedAccountId = computed<number | null>({
   set: (value) => pageStateStore.setFilter('file-manager', 'selectedAccountId', value),
 })
 const selectedAccount = computed(() =>
-  accountList.value.find((account) => account.id === selectedAccountId.value),
+  accountSidebarList.value.find((account) => account.id === selectedAccountId.value),
 )
 const supportedSortFields = computed(() =>
   getSupportedSortFields(selectedAccount.value?.source_type),
@@ -769,6 +797,8 @@ const showShareDialog = ref(false)
 const showBatchRenameDialog = ref(false)
 
 const isPan139Account = computed(() => selectedAccount.value?.source_type === 'pan139')
+// 本地文件伪账号（id=0）：走服务器本地文件系统，仅支持浏览/新建/重命名/移动/删除
+const isLocalAccount = computed(() => selectedAccount.value?.source_type === 'local')
 
 function openShareDialog() {
   showShareDialog.value = true
@@ -1006,8 +1036,9 @@ async function loadAccountList() {
 }
 
 // 选择账号
+// 选择账号（本地文件伪账号 id 固定为 0）
 function selectAccount(account: NetdiskAccount) {
-  selectedAccountId.value = account.id
+  selectedAccountId.value = account.source_type === 'local' ? 0 : account.id
   setPathItems([])
   pageStateStore.setPagination('file-manager', 1, pageState.pageSize)
   loadFileListForContextSwitch()
@@ -1021,6 +1052,8 @@ function getAccountIcon() {
 // 获取账号类型名称
 function getAccountTypeName(sourceType: string): string {
   switch (sourceType) {
+    case 'local':
+      return '服务器本地'
     case '115':
       return '115 网盘'
     case '123':
@@ -1043,6 +1076,8 @@ function getSupportedSortFields(sourceType?: NetdiskAccount['source_type']): Net
     case '115':
       return ['name', 'size', 'time', 'type']
     case 'baidupan':
+      return ['name', 'size', 'time']
+    case 'local':
       return ['name', 'size', 'time']
     case 'openlist':
       return ['default']
@@ -1083,7 +1118,7 @@ async function loadFileList(options: LoadFileListOptions = {}) {
     return
   }
 
-  if (!selectedAccountId.value) {
+  if (selectedAccountId.value === null) {
     fileList.value = []
     total.value = 0
     pageStateStore.setExpandedRowKeys('file-manager', [])
@@ -1111,6 +1146,10 @@ async function loadFileList(options: LoadFileListOptions = {}) {
         page: currentPage.value,
         page_size: pageSize.value,
         refresh: options.refresh ? 1 : 0,
+      }
+      if (isLocalAccount.value) {
+        // 本地文件入口：account_id 固定 0，由 source_type 标识
+        requestParams.source_type = 'local'
       }
       if (isFileManagerSortControlVisible) {
         requestParams.sort_by = sortBy.value
@@ -1266,7 +1305,7 @@ async function handleSingleOperation(operation: FileOperationType, item: FileSys
 
   if (operation === 'STRM_GENERATE') {
     const operationContext = createFileOperationContextSnapshot()
-    if (!operationContext.accountId) {
+    if (operationContext.accountId === null) {
       ElMessage.warning('请先选择网盘账号')
       return
     }
@@ -1317,7 +1356,7 @@ async function handleDeleteItem(item: FileSystemItem) {
       return
     }
 
-    if (!operationContext.accountId) {
+    if (operationContext.accountId === null) {
       ElMessage.warning('请先选择网盘账号')
       return
     }
@@ -1327,6 +1366,7 @@ async function handleDeleteItem(item: FileSystemItem) {
         parent_id: operationContext.parentId,
         file_id: item.id,
         account_id: operationContext.accountId,
+        ...(operationContext.sourceType === 'local' ? { source_type: 'local' } : {}),
       },
     })
 
@@ -1355,7 +1395,7 @@ async function handleDeleteItem(item: FileSystemItem) {
 function openRenameDialog(item: FileSystemItem) {
   const operationContext = createFileOperationContextSnapshot()
 
-  if (!operationContext.accountId) {
+  if (operationContext.accountId === null) {
     ElMessage.warning('请先选择网盘账号')
     return
   }
@@ -1376,7 +1416,7 @@ async function handleRenameSubmit() {
   }
 
   const item = renameItem.value
-  if (!item || !operationContext.accountId) {
+  if (!item || operationContext.accountId === null) {
     ElMessage.warning('请先选择网盘账号')
     return
   }
@@ -1401,6 +1441,7 @@ async function handleRenameSubmit() {
       file_id: item.id,
       account_id: operationContext.accountId,
       new_name: newName,
+      ...(operationContext.sourceType === 'local' ? { source_type: 'local' } : {}),
     })
 
     if (!isFileOperationContextCurrent(operationContext)) {
@@ -1429,7 +1470,7 @@ async function handleRenameSubmit() {
 function openMoveDialog(item: FileSystemItem) {
   const operationContext = createFileOperationContextSnapshot()
 
-  if (!operationContext.accountId) {
+  if (operationContext.accountId === null) {
     ElMessage.warning('请先选择网盘账号')
     return
   }
@@ -1452,7 +1493,7 @@ async function confirmMove() {
     return
   }
 
-  if (!operationContext.accountId) {
+  if (operationContext.accountId === null) {
     ElMessage.warning('请先选择网盘账号')
     return
   }
@@ -1468,6 +1509,7 @@ async function confirmMove() {
       file_id: moveItem.value.id,
       account_id: operationContext.accountId,
       target_parent_id: moveTargetDir.value.id,
+      ...(operationContext.sourceType === 'local' ? { source_type: 'local' } : {}),
     })
 
     if (!isFileOperationContextCurrent(operationContext)) {
@@ -1492,7 +1534,7 @@ async function confirmMove() {
 function openNameAlignDialog(item: FileSystemItem) {
   const operationContext = createFileOperationContextSnapshot()
 
-  if (!operationContext.accountId) {
+  if (operationContext.accountId === null) {
     ElMessage.warning('请先选择网盘账号')
     return
   }
@@ -1508,7 +1550,7 @@ function openNameAlignDialog(item: FileSystemItem) {
 function openOrganizeDialog() {
   const operationContext = createFileOperationContextSnapshot()
 
-  if (!operationContext.accountId) {
+  if (operationContext.accountId === null) {
     ElMessage.warning('请先选择网盘账号')
     return
   }
@@ -1524,7 +1566,7 @@ function openOrganizeDialog() {
 function openBatchRenameDialog() {
   const operationContext = createFileOperationContextSnapshot()
 
-  if (!operationContext.accountId) {
+  if (operationContext.accountId === null) {
     ElMessage.warning('请先选择网盘账号')
     return
   }
@@ -1538,7 +1580,7 @@ function openBatchRenameDialog() {
 }
 
 function openCrossTransferDialog() {
-  if (!selectedAccountId.value) {
+  if (selectedAccountId.value === null) {
     ElMessage.warning('请先选择网盘账号')
     return
   }
@@ -1546,7 +1588,7 @@ function openCrossTransferDialog() {
 }
 
 function openSmallTransferDialog() {
-  if (!selectedAccountId.value) {
+  if (selectedAccountId.value === null) {
     ElMessage.warning('请先选择网盘账号')
     return
   }
@@ -1556,7 +1598,7 @@ function openSmallTransferDialog() {
 function openCreateDialog() {
   const operationContext = createFileOperationContextSnapshot()
 
-  if (!operationContext.accountId || !operationContext.sourceType) {
+  if (operationContext.accountId === null || !operationContext.sourceType) {
     ElMessage.warning('请先选择网盘账号')
     return
   }
@@ -1575,7 +1617,7 @@ async function handleCreateDirectory() {
     return
   }
 
-  if (!operationContext.accountId || !operationContext.sourceType) {
+  if (operationContext.accountId === null || !operationContext.sourceType) {
     ElMessage.warning('请先选择网盘账号')
     return
   }
@@ -1633,7 +1675,7 @@ async function confirmStrmGenerate() {
     return
   }
 
-  if (!operationContext.accountId) {
+  if (operationContext.accountId === null) {
     ElMessage.warning('请先选择网盘账号')
     return
   }

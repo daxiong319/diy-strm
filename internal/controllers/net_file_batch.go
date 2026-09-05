@@ -83,6 +83,9 @@ func getNetFileSourceCapability(sourceType models.SourceType, sortBy string, sor
 		return netFileSourceCapability{BatchSize: guangyapan.PageSize, TotalExact: true}, nil
 	case models.SourceTypePan139:
 		return netFileSourceCapability{BatchSize: pan139.PageSize, TotalExact: true}, nil
+	case models.SourceTypeLocal:
+		// 本地文件系统：一次读全量再切片，批次大小仅决定分片粒度
+		return netFileSourceCapability{BatchSize: 1000, TotalExact: true}, nil
 	default:
 		return netFileSourceCapability{}, fmt.Errorf("未知的网盘类型")
 	}
@@ -164,6 +167,12 @@ func normalizeNetFileCachePath(sourceType models.SourceType, value string) strin
 		return value
 	case models.SourceTypeBaiduPan, models.SourceTypeOpenList:
 		value = normalizeOpenListPath(value)
+		if value == "" {
+			return "/"
+		}
+		return value
+	case models.SourceTypeLocal:
+		value = strings.TrimSpace(value)
 		if value == "" {
 			return "/"
 		}

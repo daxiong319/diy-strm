@@ -204,18 +204,29 @@ func (r *PathListRequest) Validate() error {
 }
 
 // NetFileListRequest 网盘文件列表请求。
+// source_type 为 local 时表示服务器本地文件（不查账号表，account_id 须为 0）。
 type NetFileListRequest struct {
-	ParentID  string `json:"parent_id" form:"path"`
-	AccountID uint   `json:"account_id" form:"account_id"`
-	Refresh   bool   `json:"refresh" form:"refresh"`
-	SortBy    string `json:"sort_by" form:"sort_by"`
-	SortOrder string `json:"sort_order" form:"sort_order"`
+	ParentID   string            `json:"parent_id" form:"path"`
+	SourceType models.SourceType `json:"source_type" form:"source_type"`
+	AccountID  uint              `json:"account_id" form:"account_id"`
+	Refresh    bool              `json:"refresh" form:"refresh"`
+	SortBy     string            `json:"sort_by" form:"sort_by"`
+	SortOrder  string            `json:"sort_order" form:"sort_order"`
 	PaginationRequest
 }
 
 // Validate 校验网盘文件列表请求。
 func (r *NetFileListRequest) Validate() error {
-	if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+	if r.SourceType != "" {
+		if err := validateSourceType(r.SourceType); err != nil {
+			return err
+		}
+		if r.SourceType != models.SourceTypeLocal {
+			if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+				return err
+			}
+		}
+	} else if err := validation.PositiveID("account_id", r.AccountID); err != nil {
 		return err
 	}
 	if err := r.PaginationRequest.NormalizeNetFileUI(); err != nil {
@@ -260,15 +271,26 @@ func (r CreateDirRequest) Validate() error {
 }
 
 // DeleteDirRequest 删除远程目录请求。
+// source_type 为 local 时表示服务器本地文件（不查账号表，account_id 须为 0）。
 type DeleteDirRequest struct {
-	ParentID  string `json:"parent_id" form:"parent_id"`
-	FileID    string `json:"file_id" form:"file_id"`
-	AccountID uint   `json:"account_id" form:"account_id"`
+	ParentID   string            `json:"parent_id" form:"parent_id"`
+	FileID     string            `json:"file_id" form:"file_id"`
+	SourceType models.SourceType `json:"source_type" form:"source_type"`
+	AccountID  uint              `json:"account_id" form:"account_id"`
 }
 
 // Validate 校验删除远程目录请求。
 func (r DeleteDirRequest) Validate() error {
-	if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+	if r.SourceType != "" {
+		if err := validateSourceType(r.SourceType); err != nil {
+			return err
+		}
+		if r.SourceType != models.SourceTypeLocal {
+			if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+				return err
+			}
+		}
+	} else if err := validation.PositiveID("account_id", r.AccountID); err != nil {
 		return err
 	}
 	if strings.TrimSpace(r.FileID) == "" || r.FileID == "0" {
@@ -278,16 +300,27 @@ func (r DeleteDirRequest) Validate() error {
 }
 
 // RenameFileRequest 重命名网盘文件或目录请求。
+// source_type 为 local 时表示服务器本地文件（不查账号表，account_id 须为 0）。
 type RenameFileRequest struct {
-	AccountID uint   `json:"account_id" form:"account_id"`
-	ParentID  string `json:"parent_id" form:"parent_id"`
-	FileID    string `json:"file_id" form:"file_id"`
-	NewName   string `json:"new_name" form:"new_name"`
+	SourceType models.SourceType `json:"source_type" form:"source_type"`
+	AccountID  uint              `json:"account_id" form:"account_id"`
+	ParentID   string            `json:"parent_id" form:"parent_id"`
+	FileID     string            `json:"file_id" form:"file_id"`
+	NewName    string            `json:"new_name" form:"new_name"`
 }
 
 // Validate 校验重命名请求。
 func (r RenameFileRequest) Validate() error {
-	if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+	if r.SourceType != "" {
+		if err := validateSourceType(r.SourceType); err != nil {
+			return err
+		}
+		if r.SourceType != models.SourceTypeLocal {
+			if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+				return err
+			}
+		}
+	} else if err := validation.PositiveID("account_id", r.AccountID); err != nil {
 		return err
 	}
 	if strings.TrimSpace(r.FileID) == "" || r.FileID == "0" {
@@ -297,16 +330,27 @@ func (r RenameFileRequest) Validate() error {
 }
 
 // MoveFileRequest 移动网盘文件或目录请求。
+// source_type 为 local 时表示服务器本地文件（不查账号表，account_id 须为 0）。
 type MoveFileRequest struct {
-	AccountID      uint   `json:"account_id" form:"account_id"`
-	ParentID       string `json:"parent_id" form:"parent_id"`
-	FileID         string `json:"file_id" form:"file_id"`
-	TargetParentID string `json:"target_parent_id" form:"target_parent_id"`
+	SourceType     models.SourceType `json:"source_type" form:"source_type"`
+	AccountID      uint              `json:"account_id" form:"account_id"`
+	ParentID       string            `json:"parent_id" form:"parent_id"`
+	FileID         string            `json:"file_id" form:"file_id"`
+	TargetParentID string            `json:"target_parent_id" form:"target_parent_id"`
 }
 
 // Validate 校验移动请求。
 func (r MoveFileRequest) Validate() error {
-	if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+	if r.SourceType != "" {
+		if err := validateSourceType(r.SourceType); err != nil {
+			return err
+		}
+		if r.SourceType != models.SourceTypeLocal {
+			if err := validation.PositiveID("account_id", r.AccountID); err != nil {
+				return err
+			}
+		}
+	} else if err := validation.PositiveID("account_id", r.AccountID); err != nil {
 		return err
 	}
 	if strings.TrimSpace(r.FileID) == "" || r.FileID == "0" {

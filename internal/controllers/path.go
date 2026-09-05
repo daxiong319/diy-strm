@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -382,10 +383,17 @@ func GetNetFileList(c *gin.Context) {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: err.Error(), Data: nil})
 		return
 	}
-	account, err := models.GetAccountById(req.AccountID)
-	if err != nil {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取账号信息失败：" + err.Error(), Data: nil})
-		return
+	// source_type=local 时为「本地文件」入口，不经过网盘账号表（account_id 固定传 0）
+	var account *models.Account
+	if req.SourceType == models.SourceTypeLocal {
+		account = &models.Account{SourceType: models.SourceTypeLocal}
+	} else {
+		var err error
+		account, err = models.GetAccountById(req.AccountID)
+		if err != nil {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取账号信息失败：" + err.Error(), Data: nil})
+			return
+		}
 	}
 	resp, err := getNetFileListPage(c.Request.Context(), netFileListQuery{
 		Account:   account,
@@ -549,9 +557,110 @@ func fetchNetFileBatch(ctx context.Context, account *models.Account, parentID st
 		return fetchGuangYaPanNetFileBatch(ctx, account, parentID, start, size)
 	case models.SourceTypePan139:
 		return fetchPan139NetFileBatch(ctx, account, parentID, start, size)
+	case models.SourceTypeLocal:
+		return fetchLocalNetFileBatch(parentID, start, size, sortBy, sortOrder)
 	default:
 		return netFileBatch{}, fmt.Errorf("未知的网盘类型")
 	}
+}
+
+// fetchLocalNetFileBatch 读取服务器本地目录（文件管理器「本地文件」入口）。
+// parentID 为目录绝对路径；一次读全量后在内存中排序再切片，
+// 目录/文件分块下载对本地文件系统无意义（读取开销远小于网盘 API）。
+func fetchLocalNetFileBatch(parentID string, start int, size int, sortBy string, sortOrder string) (netFileBatch, error) {
+	if parentID == "" {
+		parentID = "/"
+	}
+	info, err := os.Stat(parentID)
+	if err != nil {
+		return netFileBatch{}, fmt.Errorf("目录不存在或不可访问：%s", parentID)
+	}
+	if !info.IsDir() {
+		return netFileBatch{}, fmt.Errorf("不是目录：%s", parentID)
+	}
+	entries, err := os.ReadDir(parentID)
+	if err != nil {
+		return netFileBatch{}, err
+	}
+	items := make([]*FileItem, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		full := filepath.ToSlash(filepath.Join(parentID, name))
+		var fsize int64
+		var mtime int64
+		if stat, serr := entry.Info(); serr == nil {
+			fsize = stat.Size()
+			mtime = stat.ModTime().Unix()
+		}
+		items = append(items, &FileItem{
+			Id:          full,
+			IsDirectory: entry.IsDir(),
+			Name:        name,
+			Size:        fsize,
+			ModifiedAt:  mtime,
+		})
+	}
+	sortLocalFileItems(items, sortBy, sortOrder)
+	total := int64(len(items))
+	end := start + size
+	if start > len(items) {
+		start = len(items)
+	}
+	if end > len(items) {
+		end = len(items)
+	}
+	return netFileBatch{
+		Items:      items[start:end],
+		Total:      total,
+		TotalExact: true,
+		HasMore:    int64(end) < total,
+	}, nil
+}
+
+// sortLocalFileItems 本地文件列表排序；默认名称升序，目录恒排在文件前面
+func sortLocalFileItems(items []*FileItem, sortBy string, sortOrder string) {
+	asc := sortOrder != "desc"
+	lessName := func(a, b *FileItem) bool {
+		if asc {
+			return a.Name < b.Name
+		}
+		return a.Name > b.Name
+	}
+	var less func(a, b *FileItem) bool
+	switch sortBy {
+	case "size":
+		less = func(a, b *FileItem) bool {
+			if a.Size != b.Size {
+				if asc {
+					return a.Size < b.Size
+				}
+				return a.Size > b.Size
+			}
+			return lessName(a, b)
+		}
+	case "time":
+		less = func(a, b *FileItem) bool {
+			if a.ModifiedAt != b.ModifiedAt {
+				if asc {
+					return a.ModifiedAt < b.ModifiedAt
+				}
+				return a.ModifiedAt > b.ModifiedAt
+			}
+			return lessName(a, b)
+		}
+	default:
+		less = lessName
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		// 目录始终排在文件之前（与主流文件管理器一致，不随排序方向翻转）
+		if items[i].IsDirectory != items[j].IsDirectory {
+			return items[i].IsDirectory
+		}
+		return less(items[i], items[j])
+	})
 }
 
 func fetch115NetFileBatch(ctx context.Context, account *models.Account, parentID string, start int, size int, sortBy string, sortOrder string) (netFileBatch, error) {
@@ -1071,11 +1180,27 @@ func DeleteDir(c *gin.Context) {
 	}
 	account, err := models.GetAccountById(req.AccountID)
 	if err != nil {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取账号失败：" + err.Error(), Data: nil})
-		return
+		// source_type=local 时为「本地文件」入口，不经过网盘账号表（account_id 固定传 0）
+		if req.SourceType == models.SourceTypeLocal {
+			account = &models.Account{SourceType: models.SourceTypeLocal}
+		} else {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取账号失败：" + err.Error(), Data: nil})
+			return
+		}
 	}
 	invalidateParentID := req.ParentID
 	switch account.SourceType {
+	case models.SourceTypeLocal:
+		// 本地删除不可恢复（无回收站），做路径基本校验后直接删除
+		target := filepath.Clean(req.FileID)
+		if target == "/" || target == "." || !strings.HasPrefix(target, "/") {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "非法的本地删除路径", Data: nil})
+			return
+		}
+		if err := os.RemoveAll(target); err != nil {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "删除本地文件失败：" + err.Error(), Data: nil})
+			return
+		}
 	case models.SourceType115:
 		client := account.Get115Client()
 		_, err = client.Del(context.Background(), []string{req.FileID}, req.ParentID)
