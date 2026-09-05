@@ -48,7 +48,7 @@ diy-strm 支持三种数据库模式（`config.yaml` 的 `db.engine`，环境变
 | `postgres` + `embedded` | 容器内嵌 PostgreSQL，数据在 `/app/config/postgres/data` | 需要 PG 特性且保持单容器 |
 | `postgres` + `external` | 连独立 postgres 容器（当前 134 服务器在用） | 已有外部库/多实例共享 |
 
-**新装机推荐 sqlite（什么都不用改，默认即是）**；想切到外部 PG 时，启用 compose 里注释的 `diy-strm-postgres` 服务，并在 `config.yaml` 设 `db.engine: postgres`、`db.postgresType: external`、`host: diy-strm-postgres`（或用 `DB_*` 环境变量覆盖）。模板默认按单容器（sqlite）编排。
+**新装机推荐内嵌 PostgreSQL（什么都不用改，默认即是）**；134 服务器已于 2026-09-05 从外部 PG 切换为内嵌模式（数据经 pg_dump 迁移，旧数据目录 `/home/diy-strm/postgres` 与 dump `/opt/diy-strm/backup-*.sql` 保留作冷备）。想用外部 PG 时，启用 compose 里注释的 `diy-strm-postgres` 服务，并在 `config.yaml` 设 `db.postgresType: external`、`host: diy-strm-postgres`。sqlite 同样可用（`db.engine: sqlite`）。
 
 ## 三、启动后核对清单（按依赖顺序）
 
