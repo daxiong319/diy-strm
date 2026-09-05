@@ -43,7 +43,8 @@ ENV TZ=Asia/Shanghai \
 
 RUN apk add --no-cache ca-certificates tzdata inotify-tools postgresql15 su-exec && \
     addgroup -S -g 12331 qms && \
-    adduser -S -D -H -u 12331 -G qms qms && \
+    # 内嵌 PostgreSQL 以 qms 用户运行（su - qms），需要可用 shell 与家目录
+    adduser -S -D -u 12331 -G qms -s /bin/sh -h /home/qms qms && \
     mkdir -p /dev/shm /app/scripts && \
     chmod 1777 /dev/shm && \
     chmod 777 /app
