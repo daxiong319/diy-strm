@@ -61,7 +61,8 @@ func (u *UserSwitcher) RunCommandAsUserWithEnv(env map[string]string, command st
 		envVars += fmt.Sprintf("export %s=%s; ", key, value)
 	}
 	fullCommand := fmt.Sprintf("%s%s", envVars, command+" "+strings.Join(args, " "))
-	fullArgs := []string{"-", u.username, "-s", "/bin/bash", "-c", fullCommand}
+	// shell 用 /bin/sh：alpine 镜像没有 bash，/bin/bash 会让 su 静默失败（内嵌 PG 启动路径）
+	fullArgs := []string{"-", u.username, "-s", "/bin/sh", "-c", fullCommand}
 	cmd = exec.Command("su", fullArgs...)
 	helpers.AppLogger.Infof("执行命令：%s", cmd.String())
 	cmd.Stdout = os.Stdout
