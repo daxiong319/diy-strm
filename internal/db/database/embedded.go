@@ -187,8 +187,28 @@ func (m *EmbeddedManager) InitDataDir() error {
 // 在 Windows 非 ASCII 代码页环境下，若 share 路径包含中文等非 ASCII 字符，
 // initdb 引导阶段会报 "invalid byte sequence for encoding UTF8" 错误。
 // 此时将 share 目录复制到纯 ASCII 临时路径后返回，initdb 通过 -L 参数使用。
+// binaryPath 为空（Docker/Linux 发行版 postgres）时通过 pg_config --sharedir 探测。
 func asciiShareDir(binaryPath string) (string, error) {
-	shareDir := filepath.Join(filepath.Dir(binaryPath), "share")
+	var shareDir string
+	if strings.TrimSpace(binaryPath) == "" {
+		out, err := exec.Command("pg_config", "--sharedir").Output()
+		if err != nil || strings.TrimSpace(string(out)) == "" {
+			// 常见发行版路径兜底
+			for _, p := range []string{"/usr/share/postgresql15", "/usr/share/postgresql"} {
+				if helpers.PathExists(p) {
+					shareDir = p
+					break
+				}
+			}
+			if shareDir == "" {
+				return "", fmt.Errorf("探测 PostgreSQL share 目录失败（pg_config 不可用）：%v", err)
+			}
+		} else {
+			shareDir = strings.TrimSpace(string(out))
+		}
+	} else {
+		shareDir = filepath.Join(filepath.Dir(binaryPath), "share")
+	}
 	if isAsciiPath(shareDir) {
 		return shareDir, nil
 	}
