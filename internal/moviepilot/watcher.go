@@ -22,6 +22,19 @@ import (
 var uploadQueue = make(chan *models.MoviePilotUploadTask, 32)
 var watcherRunning atomicBool
 
+// 源目录为空时的重试计数（key=任务 ID）。
+// 下载完成判定早于文件落盘（qb 校验/搬移中），批次创建时源目录可能暂时为空，
+// 需延迟重新入队重试，而不是直接失败导致整批剧集漏传。
+var (
+	emptySourceRetries   = make(map[uint]int)
+	emptySourceRetriesMu sync.Mutex
+)
+
+const (
+	emptySourceRetryMax   = 6               // 最多重试次数
+	emptySourceRetryDelay = 5 * time.Minute // 每次重试间隔
+)
+
 type atomicBool struct {
 	mu sync.Mutex
 	v  bool
@@ -559,9 +572,37 @@ func runUploadTask(task *models.MoviePilotUploadTask) {
 		return
 	}
 	if created == 0 {
-		failUploadTask(task, fmt.Errorf("没有可上传的文件"))
+		// 源目录为空：文件可能尚未落盘（下载完成判定早于文件就绪），
+		// 延迟重新入队重试；超过次数才真正失败，避免整批剧集漏传
+		emptySourceRetriesMu.Lock()
+		emptySourceRetries[task.ID]++
+		attempts := emptySourceRetries[task.ID]
+		emptySourceRetriesMu.Unlock()
+		if attempts <= emptySourceRetryMax {
+			helpers.AppLogger.Warnf("MoviePilot 源目录暂无可上传文件（第 %d/%d 次重试）：%s，%v 后重新入队",
+				attempts, emptySourceRetryMax, task.LocalPath, emptySourceRetryDelay)
+			task.Status = models.MoviePilotUploadPending
+			task.Error = fmt.Sprintf("源目录暂空，等待文件落盘（重试 %d/%d）", attempts, emptySourceRetryMax)
+			_ = models.UpdateMoviePilotUploadTask(task)
+			go func(t *models.MoviePilotUploadTask) {
+				time.Sleep(emptySourceRetryDelay)
+				select {
+				case uploadQueue <- t:
+				default:
+					helpers.AppLogger.Warnf("MoviePilot 上传队列已满，任务 %d 重试入队失败（请稍后手动重试）", t.ID)
+				}
+			}(task)
+			return
+		}
+		emptySourceRetriesMu.Lock()
+		delete(emptySourceRetries, task.ID)
+		emptySourceRetriesMu.Unlock()
+		failUploadTask(task, fmt.Errorf("源目录始终没有可上传的文件（已重试 %d 次）", emptySourceRetryMax))
 		return
 	}
+	emptySourceRetriesMu.Lock()
+	delete(emptySourceRetries, task.ID)
+	emptySourceRetriesMu.Unlock()
 	helpers.AppLogger.Infof("MoviePilot 已创建上传批次：%s 共 %d 个文件 → %s", task.Title, created, task.RemotePath)
 	// 异步等待批次完成，避免阻塞串行上传队列
 	go waitMoviePilotBatchFinalize(task, &account, cfg)
