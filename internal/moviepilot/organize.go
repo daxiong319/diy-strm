@@ -30,6 +30,7 @@ type organizeEntry struct {
 	Name     string
 	ParentID string
 	IsDir    bool
+	Size     int64 // 文件大小（字节），洗版比较用；目录为 0
 }
 
 // errMediaUnrecognized 文件名无法识别（正则与 AI 均未命中）
@@ -135,12 +136,62 @@ func organizeOneFile(ctx context.Context, account *models.Account, e organizeEnt
 		return "", fmt.Errorf("%w：媒体信息不完整", errMediaUnrecognized)
 	}
 	newName := buildOrganizeNewName(media.Category, officialTitle, media.Season, media.Episode, year, path.Ext(e.Name))
+	// 新文件质量快照：洗版比较用；命名追加的质量标签用 officialTitle 重算
+	// （ParseQualityFromName 内部用 ParseMedia 的标题剥标签，中英混合名可能解析出垃圾标题）
+	newQ := ParseQualityFromName(e.Name)
+	newName = appendQualityTagsToName(media.Category, officialTitle, media.Season, media.Episode, year, path.Ext(e.Name), extractQualityTags(e.Name, officialTitle))
 
 	targetDirID, err := ensureOrganizeDirInternal(ctx, account, rootPath, relDir, dirCache)
 	if err != nil {
-		recordFailed(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "创建目标目录失败："+err.Error(), extra)
+		recordSkipped(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "", "创建目标目录失败："+err.Error(), extra)
 		return "", fmt.Errorf("创建目标目录 %s 失败：%v", relDir, err)
 	}
+
+	// 洗版：目标目录已有同集/同名（忽略扩展名与质量后缀）旧视频时，
+	// 新文件质量更优 → 删除旧文件后放入；持平或更差 → 保留旧文件、
+	// 删除新文件（同质量绝不堆积副本，139 的同名自动改名不会触发）。
+	if oldEntries, lErr := listNetDirByID(ctx, account, targetDirID); lErr == nil && len(oldEntries) > 0 {
+		targets := findWashTargets(newName, newQ, oldEntries)
+		if len(targets) > 0 {
+			newBetter := true
+			for _, idx := range targets {
+				old := &oldEntries[idx]
+				oldQ := ParseQualityFromName(old.Name)
+				cmp := CompareQuality(newQ, oldQ, nil, DefaultWashRules)
+				if cmp > 0 {
+					continue
+				}
+				if cmp == 0 {
+					// 质量标签打平：用文件大小兜底（大小与分辨率/码率正相关，tgto123 同以大小作比较项）
+					if e.Size > old.Size {
+						continue
+					}
+				}
+				newBetter = false
+				break
+			}
+			if !newBetter {
+				if err := deleteNetdiskFileInternal(account, e.ID, e.ParentID); err != nil {
+					helpers.AppLogger.Warnf("MoviePilot 洗版删除新文件失败：%s：%v", e.Name, err)
+					recordSkipped(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "同集旧版本质量不低于新版本，新文件保留原目录（删除失败）", "", extra)
+					return relDir, nil
+				}
+				helpers.AppLogger.Infof("MoviePilot 洗版：同集旧版本质量不低于新版本，删除新文件 %s（保留库内版本）", e.Name)
+				recordSkipped(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "同集旧版本质量不低于新版本，删除新文件（保留库内版本）", "", extra)
+				return relDir, nil
+			}
+			// 新文件更优：删除所有匹配的旧版本
+			for _, idx := range targets {
+				old := &oldEntries[idx]
+				if err := deleteNetdiskFileInternal(account, old.ID, old.ParentID); err != nil {
+					helpers.AppLogger.Warnf("MoviePilot 洗版删除旧版本失败：%s：%v", old.Name, err)
+				} else {
+					helpers.AppLogger.Infof("MoviePilot 洗版：新版本质量更优，删除旧版本 %s", old.Name)
+				}
+			}
+		}
+	}
+
 	if err := moveNetdiskFileInternal(account, e.ID, e.ParentID, targetDirID); err != nil {
 		recordFailed(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "移动失败："+err.Error(), extra)
 		return "", fmt.Errorf("移动 %s 失败：%v", e.Name, err)
@@ -264,6 +315,30 @@ func buildOrganizeNewName(category, title string, season, episode, year int, ext
 	return title + ext
 }
 
+// appendQualityTagsToName 在规范化文件名上追加原始文件的质量标签段（如 2160p.WEB-DL.H.265-Ocat），
+// 与云盘自动整理命名格式对齐：剧集 标题.年份.S01E01.第1集.质量标签.ext，电影 标题 (年份).质量标签.ext。
+// tags 由调用方用 extractQualityTags(原始文件名, officialTitle) 提取；空则保持原命名。
+// 已含质量标签的文件名（base 末段已是质量 token）不重复追加。
+func appendQualityTagsToName(category, title string, season, episode, year int, ext string, tags string) string {
+	tags = strings.TrimSpace(tags)
+	if tags == "" {
+		return buildOrganizeNewName(category, title, season, episode, year, ext)
+	}
+	base := strings.TrimSuffix(buildOrganizeNewName(category, title, season, episode, year, ext), ext)
+	if base == "" {
+		return base + ext
+	}
+	// 已带质量标签（base 末段已是质量 token）则不重复追加
+	lastTok := base
+	if idx := strings.LastIndexByte(base, '.'); idx >= 0 {
+		lastTok = base[idx+1:]
+	}
+	if washQualityTokenRe.MatchString(lastTok) || pureGroupTokenRe.MatchString(lastTok) {
+		return base + ext
+	}
+	return base + "." + tags + ext
+}
+
 // collectOrganizeEntries 递归收集目录项（限深度与数量）
 func collectOrganizeEntries(ctx context.Context, account *models.Account, parentID string, out *[]organizeEntry, counter *int, depth int) error {
 	if depth > organizeMaxDepth || *counter > organizeMaxEntries {
@@ -299,7 +374,7 @@ func listNetDirByID(ctx context.Context, account *models.Account, parentID strin
 		}
 		entries := make([]organizeEntry, 0, len(resp.Data))
 		for i := range resp.Data {
-			entries = append(entries, organizeEntry{ID: resp.Data[i].FileId, Name: resp.Data[i].FileName, ParentID: parentID, IsDir: resp.Data[i].FileCategory == "0"})
+			entries = append(entries, organizeEntry{ID: resp.Data[i].FileId, Name: resp.Data[i].FileName, ParentID: parentID, IsDir: resp.Data[i].FileCategory == "0", Size: int64(resp.Data[i].FileSize)})
 		}
 		return entries, nil
 	case models.SourceType123:
@@ -310,7 +385,7 @@ func listNetDirByID(ctx context.Context, account *models.Account, parentID strin
 		}
 		entries := make([]organizeEntry, 0, len(files))
 		for i := range files {
-			entries = append(entries, organizeEntry{ID: fmt.Sprintf("%d", files[i].FileId), Name: files[i].FileName, ParentID: parentID, IsDir: files[i].Type == 1})
+			entries = append(entries, organizeEntry{ID: fmt.Sprintf("%d", files[i].FileId), Name: files[i].FileName, ParentID: parentID, IsDir: files[i].Type == 1, Size: files[i].Size})
 		}
 		return entries, nil
 	case models.SourceTypeBaiduPan:
@@ -321,7 +396,7 @@ func listNetDirByID(ctx context.Context, account *models.Account, parentID strin
 		}
 		entries := make([]organizeEntry, 0, len(files))
 		for i := range files {
-			entries = append(entries, organizeEntry{ID: files[i].Path, Name: files[i].ServerFilename, ParentID: parentID, IsDir: files[i].IsDir == 1})
+			entries = append(entries, organizeEntry{ID: files[i].Path, Name: files[i].ServerFilename, ParentID: parentID, IsDir: files[i].IsDir == 1, Size: int64(files[i].Size)})
 		}
 		return entries, nil
 	case models.SourceTypeOpenList:
@@ -337,7 +412,7 @@ func listNetDirByID(ctx context.Context, account *models.Account, parentID strin
 				break
 			}
 			for _, item := range resp.Content {
-				entries = append(entries, organizeEntry{ID: joinOpenListPath(p, item.Name), Name: item.Name, ParentID: p, IsDir: item.IsDir})
+				entries = append(entries, organizeEntry{ID: joinOpenListPath(p, item.Name), Name: item.Name, ParentID: p, IsDir: item.IsDir, Size: item.Size})
 			}
 			if int64(len(entries)) >= resp.Total {
 				break
@@ -355,7 +430,7 @@ func listNetDirByID(ctx context.Context, account *models.Account, parentID strin
 		}
 		entries := make([]organizeEntry, 0, len(files))
 		for i := range files {
-			entries = append(entries, organizeEntry{ID: files[i].GetID(), Name: files[i].FileName, ParentID: parentID, IsDir: files[i].Type == "folder"})
+			entries = append(entries, organizeEntry{ID: files[i].GetID(), Name: files[i].FileName, ParentID: parentID, IsDir: files[i].Type == "folder", Size: files[i].GetSize()})
 		}
 		return entries, nil
 	case models.SourceTypeGuangYaPan:
@@ -366,7 +441,7 @@ func listNetDirByID(ctx context.Context, account *models.Account, parentID strin
 		}
 		entries := make([]organizeEntry, 0, len(files))
 		for i := range files {
-			entries = append(entries, organizeEntry{ID: files[i].GetID(), Name: files[i].FileName, ParentID: parentID, IsDir: files[i].ResType == 2})
+			entries = append(entries, organizeEntry{ID: files[i].GetID(), Name: files[i].FileName, ParentID: parentID, IsDir: files[i].ResType == 2, Size: files[i].GetSize()})
 		}
 		return entries, nil
 	default:
