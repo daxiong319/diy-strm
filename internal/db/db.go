@@ -111,6 +111,12 @@ func ConnectPostgres(dbConfig *database.Config) error {
 	sqlDB.SetConnMaxLifetime(60 * time.Minute)   // 连接最多使用 60 分钟
 	sqlDB.SetConnMaxIdleTime(1 * time.Minute)    // 空闲超过 1 分钟则关闭
 
+	// 会话时区对齐本地时钟：外置库常见 GMT/UTC 默认，时间读出显示与宿主差 8 小时
+	// （失败仅告警，时区只影响显示不影响存储的绝对时刻）
+	if quotedDBName, qerr := database.QuotePostgresIdentifier(dbConfig.DBName); qerr == nil {
+		database.ApplyDatabaseTimezone(sqlDB, quotedDBName, database.SessionTimezone())
+	}
+
 	// 设置全局 Logger
 	Db.Logger = newLogger
 

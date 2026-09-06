@@ -51,10 +51,41 @@ func CollectLocalFiles(root string) ([]LocalFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(files) == 0 {
-		return nil, fmt.Errorf("源目录 %s 中没有可上传的文件", root)
-	}
 	return files, nil
+}
+
+// localDirEmpty 目录内没有任何可上传的普通文件（含目录不存在）。
+// MP 的"下载完成"信号可能早于文件真正落盘（qb 校验/搬移/从其他盘拷贝中），
+// 空目录只代表文件尚未就绪，不代表应该失败。
+func localDirEmpty(localPath string) bool {
+	files, err := CollectLocalFiles(localPath)
+	return err != nil || len(files) == 0
+}
+
+// errEmptySource 源目录当前没有可上传文件（区分"空目录等待落盘"与"文件全被其他批次占用"）
+type errEmptySource struct {
+	msg  string
+	wait bool // true=目录暂无文件（等待落盘，应重试）；false=有文件但全被其他批次处理（正常终态，不重试）
+}
+
+func (e *errEmptySource) Error() string { return e.msg }
+
+// isErrEmptySource 判断错误是否为"源目录没有可上传文件"
+func isErrEmptySource(err error) bool {
+	if err == nil {
+		return false
+	}
+	_, ok := err.(*errEmptySource)
+	return ok
+}
+
+// isErrEmptySourceWait 判断是否"目录暂无文件、需等待落盘后重试"
+func isErrEmptySourceWait(err error) bool {
+	if err == nil {
+		return false
+	}
+	e, ok := err.(*errEmptySource)
+	return ok && e.wait
 }
 
 // localDirFingerprint 本地目录文件集指纹（relPath+size，含未完成临时文件，用于判定下载是否仍在写入）
@@ -116,13 +147,18 @@ func CreateMoviePilotUploadTasks(ctx context.Context, account *models.Account, m
 	if err != nil {
 		return 0, err
 	}
+	if len(files) == 0 {
+		// 目录尚无文件：文件未落盘（下载完成判定早于文件就绪），等待后续重试
+		return 0, &errEmptySource{msg: fmt.Sprintf("源目录 %s 中没有可上传的文件（等待文件落盘）", localRoot), wait: true}
+	}
 	// 只上传未被其他批次占用的文件缺口：防止季包补种目录把已上传过的旧文件重复入队
 	files, err = filterClaimedFiles(files, moviePilotTaskId)
 	if err != nil {
 		return 0, err
 	}
 	if len(files) == 0 {
-		return 0, fmt.Errorf("源目录 %s 中没有待上传的新文件（文件均已被其他批次处理）", localRoot)
+		// 目录有文件但全部被其他批次占用：正常终态，不应反复重试
+		return 0, &errEmptySource{msg: fmt.Sprintf("源目录 %s 中没有待上传的新文件（文件均已被其他批次处理）", localRoot), wait: false}
 	}
 	return createUploadTasksForFiles(ctx, account, moviePilotTaskId, remoteRootPath, remoteRootId, files)
 }
@@ -192,6 +228,10 @@ func createMissingUploadTasks(ctx context.Context, task *models.MoviePilotUpload
 	files, err := CollectLocalFiles(task.LocalPath)
 	if err != nil {
 		return 0, err
+	}
+	// 目录为空属"等待文件落盘"而非失败，跳过本轮收敛扫描（避免误 break 收敛循环）
+	if localDirEmpty(task.LocalPath) {
+		return 0, nil
 	}
 	// 先剔除已被其他批次占用的文件（同目录多 hash 场景：他任务已传的文件不算缺口）
 	files, err = filterClaimedFiles(files, task.ID)

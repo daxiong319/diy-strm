@@ -192,8 +192,12 @@ type MoviePilotUploadTask struct {
 	TotalBytes    int64                 `json:"total_bytes"`
 	UploadedBytes int64                 `json:"uploaded_bytes"`
 	Error         string                `json:"error" gorm:"type:text"`
-	CreatedAt     time.Time             `json:"created_at"`
-	UpdatedAt     time.Time             `json:"updated_at"`
+	// EmptySourceSince 源目录暂无文件（等待落盘）的开始时间；nil=非等待中。
+	// MP 完成信号可能早于文件落盘，空源时任务保持等待由轮询自动重试而非立即失败，
+	// 超过 emptySourceWaitLimit 仍无文件才终态失败。
+	EmptySourceSince *time.Time `json:"empty_source_since"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 func (*MoviePilotUploadTask) TableName() string { return "movie_pilot_upload_tasks" }

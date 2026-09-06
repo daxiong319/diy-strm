@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -568,6 +569,35 @@ func (m *EmbeddedManager) connectToDB() error {
 	return nil
 }
 
+// SessionTimezone PG 会话时区：跟随容器/进程 TZ 环境变量（IANA 名称），未设置或格式异常时用上海时区。
+// 不写 postgresql.conf——非法时区值会导致 postgres 拒绝启动；用 ALTER DATABASE 设置失败仅影响显示可忽略。
+func SessionTimezone() string {
+	tz := strings.TrimSpace(os.Getenv("TZ"))
+	if tz == "" || len(tz) > 64 {
+		return "Asia/Shanghai"
+	}
+	segRe := regexp.MustCompile(`^[A-Za-z0-9_+\-]+$`)
+	for _, seg := range strings.Split(tz, "/") {
+		if !segRe.MatchString(seg) {
+			return "Asia/Shanghai"
+		}
+	}
+	return tz
+}
+
+// ApplyDatabaseTimezone 把会话时区固化到数据库级（对全部新连接生效，含 psql）。
+// 失败仅告警：时区只影响时间显示方式，不影响存储的绝对时刻。
+// 内嵌与外置 PG 共用：外置库常见 GMT/UTC 默认，时间读出显示与宿主差 8 小时。
+func ApplyDatabaseTimezone(execer interface{ Exec(string, ...interface{}) (sql.Result, error) }, quotedDBName, tz string) {
+	if _, err := execer.Exec(fmt.Sprintf("ALTER DATABASE %s SET timezone TO '%s'", quotedDBName, tz)); err != nil {
+		helpers.AppLogger.Warnf("设置数据库会话时区失败（忽略，仅影响时间显示）：%v", err)
+	} else if _, err := execer.Exec(fmt.Sprintf("ALTER DATABASE %s SET log_timezone TO '%s'", quotedDBName, tz)); err != nil {
+		helpers.AppLogger.Warnf("设置数据库日志时区失败（忽略）：%v", err)
+	} else {
+		helpers.AppLogger.Infof("数据库会话时区已设置为 %s", tz)
+	}
+}
+
 func (m *EmbeddedManager) createAppDatabase() error {
 	quotedDBName, qerr := QuotePostgresIdentifier(m.config.DBName)
 	if qerr != nil {
@@ -592,6 +622,9 @@ func (m *EmbeddedManager) createAppDatabase() error {
 		}
 		helpers.AppLogger.Info("数据库创建成功")
 	}
+
+	// 会话时区对齐本地时钟：initdb 环境无 TZ 时集群默认 GMT，时间读出显示为 UTC、与宿主/MP 差 8 小时
+	ApplyDatabaseTimezone(m.db, quotedDBName, SessionTimezone())
 
 	return nil
 }

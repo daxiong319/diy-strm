@@ -22,17 +22,18 @@ import (
 var uploadQueue = make(chan *models.MoviePilotUploadTask, 32)
 var watcherRunning atomicBool
 
-// 源目录为空时的重试计数（key=任务 ID）。
-// 下载完成判定早于文件落盘（qb 校验/搬移中），批次创建时源目录可能暂时为空，
-// 需延迟重新入队重试，而不是直接失败导致整批剧集漏传。
-var (
-	emptySourceRetries   = make(map[uint]int)
-	emptySourceRetriesMu sync.Mutex
+// 源目录为空的"等待落盘"策略：MP 下载完成信号可能早于文件真正落盘（qb 校验/搬移中），
+// 空源目录不判失败而是置为等待，由轮询自愈扫描在文件到位后自动重试入队；
+// 等待超过上限仍未等到文件才终态失败，避免整批剧集因文件晚到而漏传，也避免任务永久挂起。
+const (
+	emptySourceWaitLimit = 48 * time.Hour // 等待文件落盘的总时限，超过仍未等到则终态失败
 )
 
-const (
-	emptySourceRetryMax   = 6               // 最多重试次数
-	emptySourceRetryDelay = 5 * time.Minute // 每次重试间隔
+// queued 已入队待执行的上传任务（内存去重）：启动恢复/自愈/重试多处都可能入队同一任务，
+// 不做去重会导致同一任务在串行队列里排多份、重复建批次重复上传。
+var (
+	queuedMu sync.Mutex
+	queued   = map[uint]struct{}{}
 )
 
 type atomicBool struct {
@@ -64,12 +65,23 @@ func (b *atomicBool) CompareAndSwap(oldV, newV bool) bool {
 }
 
 // enqueueUploadTask 入队上传任务：队列满时返回 false 而不是无限阻塞
-// （HTTP 重试路径在请求协程里直接 send，队列满且 worker 忙时会一直阻塞到 HTTP 超时）
+// （HTTP 重试路径在请求协程里直接 send，队列满且 worker 忙时会一直阻塞到 HTTP 超时）。
+// 同一任务已在队列中时直接返回 true（幂等），避免多处入队导致重复执行。
 func enqueueUploadTask(task *models.MoviePilotUploadTask) bool {
+	queuedMu.Lock()
+	if _, ok := queued[task.ID]; ok {
+		queuedMu.Unlock()
+		return true
+	}
+	queued[task.ID] = struct{}{}
+	queuedMu.Unlock()
 	select {
 	case uploadQueue <- task:
 		return true
 	default:
+		queuedMu.Lock()
+		delete(queued, task.ID)
+		queuedMu.Unlock()
 		return false
 	}
 }
@@ -83,6 +95,9 @@ func StartMoviePilotWatcher() {
 	// 上传 worker：串行处理上传任务
 	go func() {
 		for task := range uploadQueue {
+			queuedMu.Lock()
+			delete(queued, task.ID)
+			queuedMu.Unlock()
 			runUploadTask(task)
 		}
 	}()
@@ -111,6 +126,11 @@ func StartMoviePilotWatcher() {
 				helpers.AppLogger.Warnf("MoviePilot 启动恢复：内存队列已满，%d 个任务未入队（请在上传任务页手动重试）", dropped)
 			}
 		}
+		// 启动一次自愈扫描：空源失败/等待类任务若文件已落盘则自动恢复上传（无需等首个轮询周期）
+		go func() {
+			time.Sleep(15 * time.Second)
+			healEmptySourceTasks()
+		}()
 	}()
 
 	go func() {
@@ -130,6 +150,8 @@ func StartMoviePilotWatcher() {
 			if err := checkCompletedDownloads(); err != nil {
 				helpers.AppLogger.Errorf("MoviePilot 检测下载任务失败：%v", err)
 			}
+			// 源目录晚落盘任务的自动恢复（空源失败/等待 → 文件到位后自动重试上传）
+			healEmptySourceTasks()
 			if err := applyPromotionLadder(current); err != nil {
 				helpers.AppLogger.Errorf("MoviePilot 促销优先监督失败：%v", err)
 			}
@@ -673,41 +695,47 @@ func runUploadTask(task *models.MoviePilotUploadTask) {
 	}
 	created, err := CreateMoviePilotUploadTasks(ctx, &account, task.ID, task.LocalPath, task.RemotePath, baseDirID)
 	if err != nil {
+		if isErrEmptySourceWait(err) {
+			// 源目录暂无文件 = 文件尚未落盘（下载完成判定早于文件就绪），
+			// 置为等待状态由轮询自动重试，避免整批剧集漏传；仅超时才终态失败
+			if task.EmptySourceSince == nil {
+				now := time.Now()
+				task.EmptySourceSince = &now
+				_ = models.UpdateMoviePilotUploadTask(task)
+			}
+			if time.Since(*task.EmptySourceSince) >= emptySourceWaitLimit {
+				failUploadTask(task, fmt.Errorf("源目录长时间无文件（已等待 %v）：%s", emptySourceWaitLimit, task.LocalPath))
+				return
+			}
+			helpers.AppLogger.Warnf("MoviePilot 源目录暂无文件，等待落盘后自动重试：%s（已等 %v）", task.LocalPath, time.Since(*task.EmptySourceSince).Round(time.Minute))
+			task.Status = models.MoviePilotUploadPending
+			task.Error = fmt.Sprintf("源目录暂无文件，等待落盘后自动重试（已等待 %v）", time.Since(*task.EmptySourceSince).Round(time.Minute))
+			_ = models.UpdateMoviePilotUploadTask(task)
+			return
+		}
+		if isErrEmptySource(err) {
+			// 目录有文件但全部已被其他批次占用：正常终态，无新增文件可传
+			helpers.AppLogger.Infof("MoviePilot 源目录无新增文件（文件均已被既有批次处理）：%s", task.LocalPath)
+			task.Status = models.MoviePilotUploadUploaded
+			task.TotalFiles = 0
+			task.Error = ""
+			_ = models.UpdateMoviePilotUploadTask(task)
+			return
+		}
 		failUploadTask(task, fmt.Errorf("创建上传任务失败：%v", err))
 		return
 	}
 	if created == 0 {
-		// 源目录为空：文件可能尚未落盘（下载完成判定早于文件就绪），
-		// 延迟重新入队重试；超过次数才真正失败，避免整批剧集漏传
-		emptySourceRetriesMu.Lock()
-		emptySourceRetries[task.ID]++
-		attempts := emptySourceRetries[task.ID]
-		emptySourceRetriesMu.Unlock()
-		if attempts <= emptySourceRetryMax {
-			helpers.AppLogger.Warnf("MoviePilot 源目录暂无可上传文件（第 %d/%d 次重试）：%s，%v 后重新入队",
-				attempts, emptySourceRetryMax, task.LocalPath, emptySourceRetryDelay)
-			task.Status = models.MoviePilotUploadPending
-			task.Error = fmt.Sprintf("源目录暂空，等待文件落盘（重试 %d/%d）", attempts, emptySourceRetryMax)
-			_ = models.UpdateMoviePilotUploadTask(task)
-			go func(t *models.MoviePilotUploadTask) {
-				time.Sleep(emptySourceRetryDelay)
-				select {
-				case uploadQueue <- t:
-				default:
-					helpers.AppLogger.Warnf("MoviePilot 上传队列已满，任务 %d 重试入队失败（请稍后手动重试）", t.ID)
-				}
-			}(task)
-			return
-		}
-		emptySourceRetriesMu.Lock()
-		delete(emptySourceRetries, task.ID)
-		emptySourceRetriesMu.Unlock()
-		failUploadTask(task, fmt.Errorf("源目录始终没有可上传的文件（已重试 %d 次）", emptySourceRetryMax))
+		// 目录有文件且未被占用，却一条文件任务都没建成（建记录失败）：是错误，不能标 uploaded 静默丢片
+		failUploadTask(task, fmt.Errorf("源目录存在文件但未能创建任何文件上传任务：%s", task.LocalPath))
 		return
 	}
-	emptySourceRetriesMu.Lock()
-	delete(emptySourceRetries, task.ID)
-	emptySourceRetriesMu.Unlock()
+	// 成功创建批次：清空等待计时，进入批次收敛
+	if task.EmptySourceSince != nil {
+		task.EmptySourceSince = nil
+		task.Error = ""
+		_ = models.UpdateMoviePilotUploadTask(task)
+	}
 	helpers.AppLogger.Infof("MoviePilot 已创建上传批次：%s 共 %d 个文件 → %s", task.Title, created, task.RemotePath)
 	// 异步等待批次完成，避免阻塞串行上传队列
 	go waitMoviePilotBatchFinalize(task, &account, cfg)
@@ -900,6 +928,66 @@ func TriggerStrmSyncForDir(account *models.Account, sourcePath, strmLocalDir str
 		return
 	}
 	helpers.AppLogger.Infof("MoviePilot 已触发 STRM 同步：%s → %s", sourcePath, strmLocalDir)
+}
+
+// healEmptySourceTasks 自愈扫描：源目录文件晚于"下载完成"信号落盘时，
+// 旧版会把空源任务直接判失败（或进入等待后无人再拉起），文件到位后 hash 幂等又挡住重建路径，
+// 只能靠手动重试。本函数让这类任务在源目录出现可上传文件后自动恢复入队上传，彻底自愈闭环。
+// 仅处理空源类失败/等待任务；用户手动取消或其他原因失败的任务不受影响。
+func healEmptySourceTasks() {
+	var tasks []models.MoviePilotUploadTask
+	if err := db.Db.Where("status IN ?", []models.MoviePilotUploadStatus{
+		models.MoviePilotUploadFailed, models.MoviePilotUploadPending,
+	}).Find(&tasks).Error; err != nil {
+		return
+	}
+	healed := 0
+	for i := range tasks {
+		task := &tasks[i]
+		// 候选：failed 且错误为空源类（旧版判失败）；或 pending 且处于等待落盘（empty_source_since 非空）
+		isFailedEmpty := task.Status == models.MoviePilotUploadFailed &&
+			(strings.Contains(task.Error, "没有可上传的文件") || strings.Contains(task.Error, "没有待上传的新文件"))
+		isWaiting := task.Status == models.MoviePilotUploadPending && task.EmptySourceSince != nil
+		if !isFailedEmpty && !isWaiting {
+			continue
+		}
+		if localDirEmpty(task.LocalPath) {
+			// 文件仍未落盘：等待类任务超过总时限仍未等到 → 转终态失败（可见可清理），避免无限挂起
+			if isWaiting && task.EmptySourceSince != nil && time.Since(*task.EmptySourceSince) >= emptySourceWaitLimit {
+				task.Status = models.MoviePilotUploadFailed
+				task.Error = fmt.Sprintf("源目录长时间无文件（已等待 %v），已终止：%s", emptySourceWaitLimit, task.LocalPath)
+				task.EmptySourceSince = nil
+				_ = models.UpdateMoviePilotUploadTask(task)
+				helpers.AppLogger.Warnf("MoviePilot 自愈：%s 源目录等待超时，任务 #%d 置为失败", task.Title, task.ID)
+			}
+			continue // 其余继续原状态等下轮
+		}
+		// 目录已可上传：仅当存在未被其他批次占用的缺口文件才恢复（防重复传已被更新的批次处理完的目录）
+		if !localDirHasUnclaimedFiles(task.LocalPath) {
+			if task.Status == models.MoviePilotUploadFailed {
+				task.Status = models.MoviePilotUploadUploaded
+				task.Error = ""
+				task.EmptySourceSince = nil
+				_ = models.UpdateMoviePilotUploadTask(task)
+				helpers.AppLogger.Infof("MoviePilot 自愈：%s 目录文件已由其他批次处理，任务 #%d 置为完成", task.Title, task.ID)
+			}
+			continue
+		}
+		task.Status = models.MoviePilotUploadPending
+		task.Error = ""
+		task.EmptySourceSince = nil
+		if err := models.UpdateMoviePilotUploadTask(task); err != nil {
+			continue
+		}
+		healed++
+		helpers.AppLogger.Infof("MoviePilot 自愈：%s 源目录已出现可上传文件，自动恢复任务 #%d 上传", task.Title, task.ID)
+		if !enqueueUploadTask(task) {
+			helpers.AppLogger.Warnf("MoviePilot 自愈：任务 #%d 上传队列已满，保持 pending 待下轮入队", task.ID)
+		}
+	}
+	if healed > 0 {
+		helpers.AppLogger.Infof("MoviePilot 自愈扫描完成：恢复 %d 个待上传任务", healed)
+	}
 }
 
 // RetryUploadTask 重试失败/取消的上传任务
