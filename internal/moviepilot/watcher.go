@@ -2,6 +2,7 @@ package moviepilot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -390,12 +391,17 @@ func checkCompletedDownloads() error {
 // 同一保存目录可能对应多条下载记录：季包补种场景整季种子（hash A）先上传了 E01~E10，
 // 后续单集下载（hash B）把新集补进同一目录 —— 此时不应整体跳过，而应检测目录内是否存在
 // 尚未被任何既有批次占用的新文件缺口；有缺口才建任务，文件级过滤保证只上传缺口文件。
+// errUploadSkipped 目录已由既有批次处理且当前无新增文件缺口。
+// 可能是暂态（新集文件尚未拷贝完落盘），由 checkDownloadHistory 记入重试、不推进游标，
+// 文件落盘后下一轮即可补传；避免游标越过导致新集永久漏传（飞到我心上 E12 案例）。
+var errUploadSkipped = errors.New("upload skipped: directory already handled without new files")
+
 func createUploadTaskFromDownload(client *Client, cfg *models.MoviePilotConfig, hash, title, name, localPath, mediaType string, tmdbId int64, seasonEpisode string) error {
 	// 目录已由其他 hash 处理过：仅当目录内仍有未被既有批次占用的新文件（新集/缺集）才放行
 	if dup := models.FindMoviePilotUploadTaskByLocalPath(localPath, hash); dup != nil {
 		if !localDirHasUnclaimedFiles(localPath) {
 			helpers.AppLogger.Infof("MoviePilot 跳过重复上传：%s 的源目录 %s 已由任务 #%d（hash=%s）处理", title, localPath, dup.ID, dup.TorrentHash)
-			return nil
+			return errUploadSkipped
 		}
 		helpers.AppLogger.Infof("MoviePilot 目录 %s 已由任务 #%d 处理过，但存在未上传的新文件，放行增量上传", localPath, dup.ID)
 	}
@@ -520,6 +526,18 @@ func checkDownloadHistory() error {
 			mediaType = "movie"
 		}
 		if err := createUploadTaskFromDownload(client, cfg, h.DownloadHash, h.Title, h.TorrentName, localPath, mediaType, h.TmdbId, h.Seasons); err != nil {
+			if errors.Is(err, errUploadSkipped) {
+				// 暂态跳过（目录已处理但暂无新文件缺口）：记入重试且不推进游标，
+				// 文件（新集）落盘后下一轮即可补传；首次跳过下一轮立即重试，之后 1 小时节流
+				historyMu.Lock()
+				if _, tried := historyAttempts[h.DownloadHash]; tried {
+					historyAttempts[h.DownloadHash] = time.Now()
+				} else {
+					historyAttempts[h.DownloadHash] = time.Now().Add(-1 * time.Hour)
+				}
+				historyMu.Unlock()
+				continue
+			}
 			helpers.AppLogger.Errorf("MoviePilot 为历史下载 %s（%s）创建上传任务失败：%v", h.Title, h.DownloadHash, err)
 		} else {
 			processed++

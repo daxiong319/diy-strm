@@ -1,4 +1,4 @@
-﻿package moviepilot
+package moviepilot
 
 import (
 	"context"
@@ -77,6 +77,19 @@ func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, r
 		}
 		category, title, season, episode, year := mediaparse.ParseMedia(e.Name)
 		media := &IdentifyResult{Category: category, Title: title, Season: season, Episode: episode, Year: year}
+		// 注入任务自带元数据（MP 订阅识别的 TMDB ID）：TMDB 未收录片名/文件名搜索失败时，
+		// 直接按 ID 查详情完成整理（星辰之怒案例）；文件名解析缺标题/类型时同样回退任务值
+		if task != nil {
+			if task.TmdbId > 0 && media.TmdbId == 0 {
+				media.TmdbId = task.TmdbId
+			}
+			if media.Title == "" && task.Title != "" {
+				media.Title = task.Title
+			}
+			if media.Category == "" && task.MediaType != "" {
+				media.Category = task.MediaType
+			}
+		}
 		dir, err := organizeOneFile(ctx, account, e, organizeRoot, dirIDCache, media)
 		if err == errMediaUnrecognized && aiBudget > 0 {
 			// 正则识别失败：优先自身 AI（刮削 AI 配置），失败再用 MP 识别兜底
@@ -236,6 +249,9 @@ func saveFailedFile(task *models.MoviePilotUploadTask, account *models.Account, 
 		AccountID: account.ID,
 		Status:    string(models.MoviePilotFailedPending),
 		Reason:    reason,
+		MediaType: task.MediaType,
+		Title:     task.Title,
+		TmdbId:    task.TmdbId,
 	}
 	if err := models.CreateMoviePilotFailedFile(f); err != nil {
 		helpers.AppLogger.Errorf("保存 MoviePilot 识别失败记录失败：%v", err)
