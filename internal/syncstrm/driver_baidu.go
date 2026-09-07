@@ -69,7 +69,7 @@ mainloop:
 				}
 				fileItems = append(fileItems, &fileItem)
 			}
-			if len(resp) <= pageSize {
+			if len(resp) < pageSize {
 				break mainloop
 			}
 		}

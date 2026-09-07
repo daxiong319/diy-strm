@@ -340,6 +340,11 @@ func TestNewSyncTaskKeyUsesMachineTaskTypeValue(t *testing.T) {
 			task: NewSyncTask{SourcePathId: "/movie", TaskType: SyncTaskTypeScrape},
 			want: "/movie-scrape_organize",
 		},
+		{
+			name: "无 ID 触发任务按源路径区分",
+			task: NewSyncTask{SourcePath: "/media/emby", TaskType: SyncTaskTypeStrm},
+			want: "/media/emby-strm_sync",
+		},
 	}
 
 	for _, tt := range tests {

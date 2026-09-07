@@ -592,7 +592,8 @@ func ApplyDatabaseTimezone(execer interface{ Exec(string, ...interface{}) (sql.R
 	if _, err := execer.Exec(fmt.Sprintf("ALTER DATABASE %s SET timezone TO '%s'", quotedDBName, tz)); err != nil {
 		helpers.AppLogger.Warnf("设置数据库会话时区失败（忽略，仅影响时间显示）：%v", err)
 	} else if _, err := execer.Exec(fmt.Sprintf("ALTER DATABASE %s SET log_timezone TO '%s'", quotedDBName, tz)); err != nil {
-		helpers.AppLogger.Warnf("设置数据库日志时区失败（忽略）：%v", err)
+		// log_timezone 是 SIGHUP 参数，运行中常报 55P02（lock not available），属次要目标降为 Debug
+		helpers.AppLogger.Debugf("设置数据库日志时区失败（忽略，仅影响 PG 自身日志时间戳）：%v", err)
 	} else {
 		helpers.AppLogger.Infof("数据库会话时区已设置为 %s", tz)
 	}

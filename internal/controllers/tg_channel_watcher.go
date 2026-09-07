@@ -245,6 +245,7 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 					// 按集判断：任一集缺失或可升级即转存；全部集已达洗版目标则跳过
 					worth := false
 					var upgrade []*models.CloudTransferRecord
+					washTargetScore := WashTargetScore(sub.WashTarget)
 					for _, ek := range epKeys {
 						o := models.LatestEpisodeRecord(sub.ID, sub.TMDBID, sub.Season, ek)
 						if o == nil {
@@ -252,7 +253,8 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 							continue
 						}
 						oldSpec := recordToSpec(o)
-						if oldSpec.Score() >= WashTargetScore(sub.WashTarget) {
+						// 无洗版目标（wash_target 为空 = 无限制）时不算已达标，仍可继续升级
+						if sub.WashTarget != "" && oldSpec.Score() >= washTargetScore {
 							continue // 该集已达标，不再升级
 						}
 						if newSpec.BetterThan(oldSpec) {

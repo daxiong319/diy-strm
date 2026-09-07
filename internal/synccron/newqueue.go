@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -84,7 +85,16 @@ func (t *NewSyncTask) Key() string {
 	if t.ID > 0 {
 		return fmt.Sprintf("%d-%s", t.ID, string(t.TaskType))
 	}
-	return fmt.Sprintf("%s-%s", t.SourcePathId, string(t.TaskType))
+	// ID=0 的手动/触发型任务（如 MP 整理后按目录触发 STRM 同步）：
+	// 用 SourcePath 参与去重键，避免所有无 ID 任务共享同一键导致互撞丢弃
+	// （此前键恒为 "-strm"，多目录触发时第 2 个起被"任务已存在"拒绝且无重试）
+	parts := make([]string, 0, 3)
+	for _, p := range []string{t.SourcePathId, t.SourcePath, string(t.TaskType)} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, "-")
 }
 
 type NewSyncQueuePerType struct {
