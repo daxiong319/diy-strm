@@ -25,6 +25,8 @@ type SettingThreads struct {
 	OpenlistRetry      int `form:"openlist_retry" json:"openlist_retry" binding:"required" gorm:"default:1"`              // OpenList 重试次数
 	OpenlistRetryDelay int `form:"openlist_retry_delay" json:"openlist_retry_delay" binding:"required" gorm:"default:60"` // OpenList 重试间隔，单位：秒
 	FileListPageSize   int `form:"file_list_page_size" json:"file_list_page_size" gorm:"default:1150"`                    // 115 文件列表每页查询数量，范围 100-1150
+	Pan139QPS          int `form:"pan139_qps" json:"pan139_qps" gorm:"default:5"`                                         // 移动云盘接口 QPS，范围 1-10
+	Pan139WorkerMax    int `form:"pan139_worker_max" json:"pan139_worker_max" gorm:"default:6"`                           // 移动云盘遍历并发 worker 数，范围 2-16
 }
 
 type SettingStrm struct {
@@ -89,6 +91,8 @@ func (t SettingThreads) ToMap() map[string]any {
 		"openlist_retry":       t.OpenlistRetry,
 		"openlist_retry_delay": t.OpenlistRetryDelay,
 		"file_list_page_size":  t.FileListPageSize,
+		"pan139_qps":           t.Pan139QPS,
+		"pan139_worker_max":    t.Pan139WorkerMax,
 	}
 }
 
@@ -357,6 +361,28 @@ func GetFileListPageSize() int {
 		return 1150
 	}
 	return pageSize
+}
+
+// GetPan139QPS 获取移动云盘接口 QPS（范围 1-10，默认 5）
+func GetPan139QPS() int {
+	if SettingsGlobal == nil {
+		return 5
+	}
+	if SettingsGlobal.Pan139QPS < 1 || SettingsGlobal.Pan139QPS > 10 {
+		return 5
+	}
+	return SettingsGlobal.Pan139QPS
+}
+
+// GetPan139WorkerMax 获取移动云盘遍历并发 worker 数（范围 2-16，默认 6）
+func GetPan139WorkerMax() int {
+	if SettingsGlobal == nil {
+		return 6
+	}
+	if SettingsGlobal.Pan139WorkerMax < 2 || SettingsGlobal.Pan139WorkerMax > 16 {
+		return 6
+	}
+	return SettingsGlobal.Pan139WorkerMax
 }
 
 // IsURLValidityCheckEnabled 返回 115 直链缓存有效性检查是否启用。

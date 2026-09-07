@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -50,7 +51,22 @@ type Client struct {
 	limiterLock    sync.RWMutex
 	limiters       map[string]*rate.Limiter
 	defaultLimiter *rate.Limiter // 未显式配置的路径统一走该限流
+
+	// 失败退避：连续触发服务端限流后暂停请求（指数递增），成功一次即复位。
+	// 目的是高 QPS 同步时被 139 风控，退避几十秒比硬吃 429 更稳。
+	backoffMu    sync.Mutex
+	backoffUntil time.Time
+	backoffLevel int
 }
+
+// DefaultQPS 默认限流（未调用 SetDefaultQPS 时生效）
+const DefaultQPS = 2
+
+// MinBackoffDelay / MaxBackoffDelay 单次退避的上下限
+const (
+	MinBackoffDelay = 30 * time.Second
+	MaxBackoffDelay = 5 * time.Minute
+)
 
 // NewClient 创建中国移动云盘客户端
 // authorization 为 Web 端抓取的 Authorization（base64 编码，格式 accountId:account:token|...|过期毫秒时间戳）
@@ -63,7 +79,66 @@ func NewClient(accountID uint, authorization string) *Client {
 		authorization:  strings.TrimSpace(authorization),
 		client:         client,
 		limiters:       make(map[string]*rate.Limiter),
-		defaultLimiter: rate.NewLimiter(2, 1), // 默认 2 QPS，防 burst 触发服务端限流
+		defaultLimiter: rate.NewLimiter(DefaultQPS, 1), // 默认 2 QPS，防 burst 触发服务端限流
+	}
+}
+
+// SetDefaultQPS 设置默认限流 QPS（账号级，覆盖 NewClient 的内置默认值）
+func (c *Client) SetDefaultQPS(qps int) {
+	if qps <= 0 {
+		return
+	}
+	c.limiterLock.Lock()
+	c.defaultLimiter = rate.NewLimiter(rate.Limit(qps), 1)
+	c.limiterLock.Unlock()
+}
+
+// markRateLimited 请求被服务端限流后进入退避：指数递增（30s→1m→2m→…上限 5 分钟）
+func (c *Client) markRateLimited() {
+	c.backoffMu.Lock()
+	c.backoffLevel++
+	delay := MinBackoffDelay << (c.backoffLevel - 1)
+	if delay > MaxBackoffDelay || delay <= 0 {
+		delay = MaxBackoffDelay
+	}
+	c.backoffUntil = time.Now().Add(delay)
+	level := c.backoffLevel
+	c.backoffMu.Unlock()
+	helpers.AppLogger.Warnf("中国移动云盘触发服务端限流，第 %d 次退避，暂停 %s", level, delay)
+}
+
+// resetBackoff 请求成功即复位退避状态
+func (c *Client) resetBackoff() {
+	c.backoffMu.Lock()
+	c.backoffLevel = 0
+	c.backoffUntil = time.Time{}
+	c.backoffMu.Unlock()
+}
+
+// isRateLimitText 识别业务响应里的限流/风控文案（139 可能以 HTTP 200 + success=false 返回）
+func isRateLimitText(text string) bool {
+	t := strings.ToLower(text)
+	for _, kw := range []string{"频繁", "限流", "稍后再试", "稍后重试", "操作过快", "too many", "rate limit", "try again later"} {
+		if strings.Contains(t, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// waitBackoff 退避生效时阻塞等待（可被 ctx 取消）
+func (c *Client) waitBackoff(ctx context.Context) error {
+	c.backoffMu.Lock()
+	delay := time.Until(c.backoffUntil)
+	c.backoffMu.Unlock()
+	if delay <= 0 {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(delay):
+		return nil
 	}
 }
 
@@ -109,8 +184,11 @@ func (c *Client) SetRateLimit(path string, qps int) {
 	c.limiters[path] = rate.NewLimiter(rate.Limit(qps), 1)
 }
 
-// waitForPermission 等待限流许可（未配置的路径走默认限流）
+// waitForPermission 等待限流许可（未配置的路径走默认限流），退避生效时先等退避结束
 func (c *Client) waitForPermission(ctx context.Context, path string) error {
+	if err := c.waitBackoff(ctx); err != nil {
+		return err
+	}
 	c.limiterLock.RLock()
 	limiter, exists := c.limiters[path]
 	c.limiterLock.RUnlock()
@@ -363,9 +441,14 @@ func (c *Client) Request(ctx context.Context, path string, body interface{}, out
 			return fmt.Errorf("中国移动云盘请求失败 %s：%v", path, err)
 		}
 		defer res.Body.Close()
+		if res.StatusCode() == http.StatusTooManyRequests {
+			c.markRateLimited()
+			return fmt.Errorf("中国移动云盘请求被限流 %s：HTTP 429", path)
+		}
 		if res.StatusCode() >= 400 {
 			return fmt.Errorf("中国移动云盘请求失败：status=%d body=%s", res.StatusCode(), res.String())
 		}
+		c.resetBackoff()
 		return nil
 	}
 	return nil

@@ -130,7 +130,8 @@ func newSyncStrm(account *models.Account, syncPathId uint, sourcePath, sourcePat
 	case models.SourceTypeGuangYaPan:
 		pathWorkerMax = int64(models.SettingsGlobal.FileDetailThreads)
 	case models.SourceTypePan139:
-		pathWorkerMax = int64(models.SettingsGlobal.FileDetailThreads)
+		// 139 列表接口与 115 的详情线程解耦：独立配置默认 6（范围 2-16）
+		pathWorkerMax = int64(models.GetPan139WorkerMax())
 	}
 	if pathWorkerMax <= 1 {
 		pathWorkerMax = 2 // 最小为 2，否则并发操作会出错
@@ -413,6 +414,8 @@ func (s *SyncStrm) Start() error {
 			s.Start115Sync()
 		case models.SourceTypeBaiduPan:
 			s.StartBaiduPanSync()
+		case models.SourceTypePan139:
+			s.StartPan139Sync()
 		default:
 			// 如果是本地类型，先删除所有数据表中的数据
 			if s.Account.SourceType == models.SourceTypeLocal {

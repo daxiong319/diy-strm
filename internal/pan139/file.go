@@ -22,8 +22,9 @@ const (
 	APIBatchRename  = "/file/batchRename"
 )
 
-// PageSize 单页列表大小（与 Web 端一致）
-const PageSize = 100
+// PageSize 单页列表大小
+// 参考同类实现目录选择器实测 200/页可用（Web 端 100 是保守值），配合限流器防 burst
+const PageSize = 200
 
 // ListPage 获取一页文件列表
 // parentID 为目录 ID（根目录为空字符串或 "root"）
@@ -33,10 +34,10 @@ func (c *Client) ListPage(ctx context.Context, parentID, cursor string) ([]File,
 	if strings.TrimSpace(parentID) == "" {
 		parentID = "root"
 	}
+	// 不携带 imageThumbnailStyleList 缩略图参数：本项目不消费缩略图，去掉后响应体显著变小
 	body := map[string]interface{}{
-		"imageThumbnailStyleList": []string{"Small", "Large"},
-		"orderBy":                 "updated_at",
-		"orderDirection":          "DESC",
+		"orderBy":        "updated_at",
+		"orderDirection": "DESC",
 		"pageInfo": map[string]interface{}{
 			"pageCursor": cursor,
 			"pageSize":   PageSize,
@@ -48,6 +49,9 @@ func (c *Client) ListPage(ctx context.Context, parentID, cursor string) ([]File,
 		return nil, "", err
 	}
 	if !out.Success {
+		if isRateLimitText(out.Message) {
+			c.markRateLimited()
+		}
 		return nil, "", fmt.Errorf("中国移动云盘获取文件列表失败：code=%s msg=%s", out.Code, out.Message)
 	}
 	files := make([]File, 0, len(out.Data.Items))

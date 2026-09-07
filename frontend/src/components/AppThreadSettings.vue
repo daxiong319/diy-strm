@@ -86,6 +86,34 @@
         </div>
       </el-form-item>
 
+      <el-divider content-position="left">移动云盘（139）</el-divider>
+      <el-form-item label="移动云盘接口 QPS" prop="pan139QPS">
+        <el-input-number
+          v-model="formData.pan139QPS"
+          :min="THREAD_LIMITS.pan139QPS.min"
+          :max="THREAD_LIMITS.pan139QPS.max"
+          :disabled="loading"
+          size="large"
+        />
+        <div class="form-help">
+          控制移动云盘接口每秒请求数，影响 STRM 同步与文件浏览速度，范围 1 到 10，默认
+          5。触发风控时会自动退避暂停后再继续。
+        </div>
+      </el-form-item>
+      <el-form-item label="移动云盘遍历并发数" prop="pan139WorkerMax">
+        <el-input-number
+          v-model="formData.pan139WorkerMax"
+          :min="THREAD_LIMITS.pan139WorkerMax.min"
+          :max="THREAD_LIMITS.pan139WorkerMax.max"
+          :disabled="loading"
+          size="large"
+        />
+        <div class="form-help">
+          STRM 同步时同时遍历的目录数，范围 2 到 16，默认 6。实际请求速率仍受上面 QPS
+          限制，调大主要减少空闲等待。
+        </div>
+      </el-form-item>
+
       <el-divider content-position="left">115 直链缓存有效性检查</el-divider>
       <el-form-item label="启用有效性检查" prop="urlValidityCheckEnabled">
         <el-switch
@@ -240,6 +268,8 @@ interface ThreadSettings {
   openlistRetryCount: number
   openlistRetryDelay: number
   fileListPageSize: number
+  pan139QPS: number
+  pan139WorkerMax: number
   urlValidityCheckEnabled: boolean
   urlValidityCheckTimeoutSeconds: number
   uploadRapidWaitEnabled: boolean
@@ -268,6 +298,8 @@ const formData = reactive<ThreadSettings>({
   openlistRetryCount: 1,
   openlistRetryDelay: 30,
   fileListPageSize: 1150,
+  pan139QPS: 5,
+  pan139WorkerMax: 6,
   urlValidityCheckEnabled: true,
   urlValidityCheckTimeoutSeconds: 3,
   uploadRapidWaitEnabled: false,
@@ -309,6 +341,8 @@ async function fetchThreadSettings() {
     formData.openlistRetryCount = response?.data.data.openlist_retry
     formData.openlistRetryDelay = response?.data.data.openlist_retry_delay
     formData.fileListPageSize = response?.data.data.file_list_page_size || 1150
+    formData.pan139QPS = response?.data.data.pan139_qps || 5
+    formData.pan139WorkerMax = response?.data.data.pan139_worker_max || 6
     formData.urlValidityCheckEnabled = response?.data.data.url_validity_check_enabled !== 0
     const urlValidityCheckTimeout = response?.data.data.url_validity_check_timeout_seconds || 3
     formData.urlValidityCheckTimeoutSeconds = Math.min(
@@ -345,6 +379,8 @@ async function saveSettings() {
       openlist_retry: formData.openlistRetryCount,
       openlist_retry_delay: formData.openlistRetryDelay,
       file_list_page_size: formData.fileListPageSize,
+      pan139_qps: formData.pan139QPS,
+      pan139_worker_max: formData.pan139WorkerMax,
       url_validity_check_enabled: formData.urlValidityCheckEnabled ? 1 : 0,
       url_validity_check_timeout_seconds: formData.urlValidityCheckTimeoutSeconds,
       upload_rapid_wait_enabled: formData.uploadRapidWaitEnabled ? 1 : 0,

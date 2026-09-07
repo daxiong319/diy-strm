@@ -20,7 +20,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 79
+var MaxVersionCode = 80
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -914,6 +914,22 @@ func Migrate() {
 			return
 		}
 		helpers.AppLogger.Info("自动整理：STRM 联动输出目录字段已就绪")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 79 {
+		// 移动云盘（139）提速：settings 补 pan139_qps / pan139_worker_max 列并回填默认值
+		if err := db.Db.AutoMigrate(&Settings{}); err != nil {
+			helpers.AppLogger.Errorf("迁移移动云盘设置字段失败：%v", err)
+			return
+		}
+		if err := db.Db.Model(&Settings{}).Where("id >= ?", 1).Updates(map[string]any{
+			"pan139_qps":        5,
+			"pan139_worker_max": 6,
+		}).Error; err != nil {
+			helpers.AppLogger.Errorf("回填移动云盘设置默认值失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("移动云盘：QPS 与遍历并发设置字段已就绪（默认 QPS=5，worker=6）")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)

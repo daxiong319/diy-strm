@@ -5,6 +5,8 @@ export const THREAD_LIMITS = {
   openlistRetry: { min: 1, max: 10 },
   openlistRetryDelay: { min: 30, max: 3600 },
   fileListPageSize: { min: 100, max: 1150 },
+  pan139QPS: { min: 1, max: 10 },
+  pan139WorkerMax: { min: 2, max: 16 },
   urlValidityCheckTimeout: { min: 1, max: 9 },
 } as const
 

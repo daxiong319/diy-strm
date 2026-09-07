@@ -78,6 +78,8 @@ type UpdateThreadsRequest struct {
 	OpenlistRetry                  int    `form:"openlist_retry" json:"openlist_retry" binding:"required"`
 	OpenlistRetryDelay             int    `form:"openlist_retry_delay" json:"openlist_retry_delay" binding:"required"`
 	FileListPageSize               int    `form:"file_list_page_size" json:"file_list_page_size" binding:"required"`
+	Pan139QPS                      *int   `form:"pan139_qps" json:"pan139_qps"`
+	Pan139WorkerMax                *int   `form:"pan139_worker_max" json:"pan139_worker_max"`
 	UploadRapidWaitEnabled         *int   `form:"upload_rapid_wait_enabled" json:"upload_rapid_wait_enabled"`
 	UploadRapidWaitTimeoutSeconds  *int   `form:"upload_rapid_wait_timeout_seconds" json:"upload_rapid_wait_timeout_seconds"`
 	UploadRapidWaitIntervalSeconds *int   `form:"upload_rapid_wait_interval_seconds" json:"upload_rapid_wait_interval_seconds"`
@@ -107,6 +109,16 @@ func (r UpdateThreadsRequest) Validate() error {
 	}
 	if err := validation.RangeInt("file_list_page_size", r.FileListPageSize, 100, 1150); err != nil {
 		return err
+	}
+	if r.Pan139QPS != nil {
+		if err := validation.RangeInt("pan139_qps", *r.Pan139QPS, 1, 10); err != nil {
+			return err
+		}
+	}
+	if r.Pan139WorkerMax != nil {
+		if err := validation.RangeInt("pan139_worker_max", *r.Pan139WorkerMax, 2, 16); err != nil {
+			return err
+		}
 	}
 	if r.UploadRapidWaitEnabled != nil {
 		if err := validation.OneOfInt("upload_rapid_wait_enabled", *r.UploadRapidWaitEnabled, []int{0, 1}); err != nil {
@@ -169,6 +181,12 @@ func (r UpdateThreadsRequest) ToModel(baseRapidWait models.SettingUploadRapidWai
 		},
 		SettingUploadRapidWait:  baseRapidWait,
 		SettingURLValidityCheck: baseURLValidityCheck,
+	}
+	if r.Pan139QPS != nil {
+		modelReq.Pan139QPS = *r.Pan139QPS
+	}
+	if r.Pan139WorkerMax != nil {
+		modelReq.Pan139WorkerMax = *r.Pan139WorkerMax
 	}
 	if r.UploadRapidWaitEnabled != nil {
 		modelReq.UploadRapidWaitEnabled = *r.UploadRapidWaitEnabled

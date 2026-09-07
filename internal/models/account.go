@@ -161,6 +161,7 @@ func (account *Account) GetGuangYaPanClient() *guangyapan.Client {
 // 使用保存的 Authorization（base64 凭据）恢复会话，令牌自动刷新并持久化
 func (account *Account) GetPan139Client() *pan139.Client {
 	client := pan139.NewClient(account.ID, account.Token)
+	client.SetDefaultQPS(GetPan139QPS())
 	client.SetAuthChanged(func(newAuth string) {
 		account.UpdatePan139Login(newAuth, "")
 	})
