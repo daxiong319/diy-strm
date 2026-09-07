@@ -831,6 +831,21 @@ func (task *DbUploadTask) UploadBaiduPanFile() bool {
 	return true
 }
 
+// pan123EffectiveFileID 从 123 上传响应提取有效文件 ID：
+// data.FileId 为 0 时回落 data.Info.FileId（upload_request 对部分响应/占位对象顶层返回 0）。
+func pan123EffectiveFileID(resp *pan123.UploadResp) int64 {
+	if resp == nil {
+		return 0
+	}
+	if resp.Data.FileId != 0 {
+		return resp.Data.FileId
+	}
+	if resp.Data.Info != nil {
+		return resp.Data.Info.FileId
+	}
+	return 0
+}
+
 // Upload123File 123 云盘上传文件
 // 上传完成后记录远端文件 ID（123 的 PickCode 即文件 ID），供 STRM 生成任务使用
 func (task *DbUploadTask) Upload123File() bool {
@@ -864,10 +879,7 @@ func (task *DbUploadTask) Upload123File() bool {
 	}
 	// 记录上传结果。data.FileId 可能为 0（真实 ID 在 data.Info.FileId，见 pan123/types.go 注释），
 	// 两者都拿不到说明上传响应异常，不能把 "0" 当成完成 ID 落库（后续 STRM/整理都依赖该 ID）
-	fileID := resp.Data.FileId
-	if fileID == 0 && resp.Data.Info != nil {
-		fileID = resp.Data.Info.FileId
-	}
+	fileID := pan123EffectiveFileID(resp)
 	if fileID == 0 {
 		task.Fail(fmt.Errorf("123 云盘上传完成但响应未返回有效文件 ID（fileId=0）"))
 		return false

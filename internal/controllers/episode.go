@@ -56,11 +56,13 @@ func ParseEpisodeKeys(text string, fallbackSeason int) []string {
 	}
 
 	// 剔除已带季号的片段后，处理独立 Eyy / 第 N 集
-	// （季号来源：中文季号 > fallbackSeason；都未知时仍发裸 E 键保持历史兼容，带季号时必须入键防跨季碰撞）
+	// （季号来源：帖内中文季号 > fallbackSeason——帖内显式季号是资源真实归属，
+	//   必须优先于订阅季，否则「第2季第5集」在单季订阅（fallback=1）下被归成 S01E05 撞键；
+	//   都未知时仍发裸 E 键保持历史兼容，带季号时必须入键防跨季碰撞）
 	stripped := reSeasonEp.ReplaceAllString(text, " ")
-	season := fallbackSeason
+	season := cnSeason
 	if season <= 0 {
-		season = cnSeason
+		season = fallbackSeason
 	}
 	for _, m := range reBareEp.FindAllStringSubmatch(stripped, -1) {
 		if e, err := strconv.Atoi(m[1]); err == nil {
