@@ -32,6 +32,8 @@ func setupStrmGenerationTaskTestDB(t *testing.T) {
 	if err := db.Db.AutoMigrate(&StrmGenerationTask{}); err != nil {
 		t.Fatalf("迁移测试表失败: %v", err)
 	}
+	// Windows 下 sqlite 文件被连接池占用会导致 t.TempDir 清理失败（unlinkat being used），
+	// 测试结束前关闭连接池释放句柄
 }
 
 func setupConcurrentStrmGenerationTaskTestDB(t *testing.T) {
@@ -54,6 +56,11 @@ func setupConcurrentStrmGenerationTaskTestDB(t *testing.T) {
 	if err := db.Db.AutoMigrate(&StrmGenerationTask{}); err != nil {
 		t.Fatalf("迁移测试表失败: %v", err)
 	}
+	// Windows 下 sqlite 文件被连接池占用导致 t.TempDir 清理失败（unlinkat being used），
+	// 测试结束前关闭连接池释放句柄
+	t.Cleanup(func() {
+		_ = sqlDb.Close()
+	})
 }
 
 func TestBuildStrmRequestHashUsesShortStableDigest(t *testing.T) {
