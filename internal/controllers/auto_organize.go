@@ -203,6 +203,19 @@ func RunAutoOrganizeNow(c *gin.Context) {
 	c.JSON(200, APIResponse[any]{Code: Success, Message: "已开始整理", Data: map[string]any{"started": started, "busy": busySkipped}})
 }
 
+// TriggerAutoOrganizeForAccount 转存落盘后即刻联动触发该账号的自动整理（后台异步）。
+// symedia「转存→秒级归档」同语义：不做也要等 5 分钟监控轮询。账号未配置/未启用自动整理
+// 或已有整理在跑（防重入）时静默跳过，不打扰转存主流程。
+func TriggerAutoOrganizeForAccount(accountID uint) {
+	cfg, err := models.GetAutoOrganizeConfigByAccount(accountID)
+	if err != nil || cfg == nil || !cfg.Enabled {
+		return
+	}
+	if startAutoOrganizeInBackground(*cfg) {
+		helpers.AppLogger.Infof("转存联动：已触发账号 %d 自动整理（即刻归档）", accountID)
+	}
+}
+
 // startAutoOrganizeInBackground 在后台 goroutine 中异步执行一次整理：
 // 运行使用独立 context（不随 HTTP 请求取消，避免请求超时/断连导致整理中断），
 // 完成后写回配置的 last_run_at / last_result 供前端轮询展示。

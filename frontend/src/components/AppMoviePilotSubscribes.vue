@@ -758,13 +758,13 @@ onMounted(() => {
   .mp-sub-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @media (min-width: 768px) {
-  .mp-sub-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-}
-@media (min-width: 1024px) {
   .mp-sub-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }
-@media (min-width: 1280px) {
+@media (min-width: 1024px) {
   .mp-sub-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+}
+@media (min-width: 1280px) {
+  .mp-sub-grid { grid-template-columns: repeat(9, minmax(0, 1fr)); }
 }
 .mp-sub-empty {
   grid-column: 1 / -1;

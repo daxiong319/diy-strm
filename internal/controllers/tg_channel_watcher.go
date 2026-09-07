@@ -432,6 +432,7 @@ func processChannelPostsForSub(sub *models.CloudSubscription, ch *models.CloudCh
 					recTitle = title
 				}
 				recordMonitorWash("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.FullURL(), title, targetDir, total, sub.ID, sub.WashTarget)
+				TriggerAutoOrganizeForAccount(botTargetAccountID(sub.SourceType))
 				_ = models.CreateTransferRecord(&models.CloudTransferRecord{
 					SourceType:     sub.SourceType,
 					SubscriptionID: sub.ID,
@@ -497,6 +498,7 @@ func processChannelPostsForSub(sub *models.CloudSubscription, ch *models.CloudCh
 				if recTitle == "" {
 					recTitle = title
 				}
+				TriggerAutoOrganizeForAccount(botTargetAccountID(sub.SourceType))
 				recordMonitorSuccess("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.FullURL(), title, targetDir, total, sub.ID)
 				_ = models.CreateTransferRecord(&models.CloudTransferRecord{
 					SourceType:     sub.SourceType,
@@ -541,6 +543,7 @@ func processChannelPostsForSub(sub *models.CloudSubscription, ch *models.CloudCh
 				if recTitle == "" {
 					recTitle = title
 				}
+				TriggerAutoOrganizeForAccount(botTargetAccountID(sub.SourceType))
 				recordMonitorSuccess("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.FullURL(), title, targetDir, total, sub.ID)
 				_ = models.CreateTransferRecord(&models.CloudTransferRecord{
 					SourceType:     sub.SourceType,

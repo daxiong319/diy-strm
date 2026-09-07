@@ -98,27 +98,25 @@
               洗版{{ washTargetLabel(row.wash_target) }}
             </span>
             <span v-if="row.backfill" class="cs-badge cs-badge-backfill">回溯</span>
-            <span
-              v-if="row.finished_at && row.finished_at !== '0001-01-01T00:00:00Z'"
-              class="cs-badge cs-badge-finished"
-              >已完结</span
-            >
+
           </div>
           <div class="cs-card-info">
             <div class="cs-title-row">
               <p class="cs-title" :title="row.tmdb_title || keywordText(row)">
                 {{ row.tmdb_title || keywordText(row) || '通用订阅' }}
               </p>
-              <el-switch
-                :model-value="row.enabled"
-                size="small"
-                @change="(v: boolean) => toggleEnabled(row, v)"
-              />
+              <el-tag size="small" :type="csStatusBadge(row).type" effect="dark" disable-transitions>
+                {{ csStatusBadge(row).label }}
+              </el-tag>
             </div>
             <div class="cs-meta">
-              <p class="cs-meta-line" v-if="row.media_type === 'tv'">
-                {{ (row.season ?? 0) > 0 ? `第 ${row.season} 季` : `全 ${row.total_seasons || '?'} 季` }}
-                <template v-if="row.total_episodes"> · 已收 {{ collectedText(row) }}</template>
+              <p class="cs-meta-line" v-if="row.media_type">
+                <template v-if="row.year">{{ row.year }} · </template>
+                <template v-if="row.media_type === 'tv'">
+                  {{ (row.season ?? 0) > 0 ? `第 ${row.season} 季` : (row.total_seasons ? `全 ${row.total_seasons} 季` : '全季') }}
+                  <template v-if="row.total_episodes"> · 共 {{ row.total_episodes }} 集</template>
+                </template>
+                <template v-if="row.wash"> · 洗版{{ washTargetLabel(row.wash_target) }}</template>
               </p>
               <p class="cs-meta-line" v-else-if="!row.media_type">{{ keywordText(row) || '全部资源（按链接去重）' }}</p>
               <p class="cs-meta-line" v-if="row.channel">频道 {{ row.channel }}</p>
@@ -129,6 +127,11 @@
               </p>
             </div>
             <div class="cs-actions">
+              <el-tooltip :content="row.enabled ? '停用订阅' : '启用订阅'" placement="top">
+                <el-button circle size="small" class="cs-act" :type="row.enabled ? 'warning' : 'success'" plain @click="toggleEnabled(row, !row.enabled)">
+                  <el-icon><VideoPause v-if="row.enabled" /><VideoPlay v-else /></el-icon>
+                </el-button>
+              </el-tooltip>
               <el-tooltip content="立即执行" placement="top">
                 <el-button circle size="small" class="cs-act cs-act-primary" :loading="runningId === row.id" @click="run(row)">
                   <el-icon><VideoPlay /></el-icon>
@@ -896,6 +899,13 @@ const cleanOld = async (row: SubRow) => {
   }
 }
 
+const csStatusBadge = (row: SubRow): { label: string; type: 'success' | 'info' | 'primary' | 'warning' } => {
+  if (!row.enabled) return { label: '已停用', type: 'info' }
+  if (row.status === 'completed' || (row.finished_at && row.finished_at !== '0001-01-01T00:00:00Z')) return { label: '已完成', type: 'success' }
+  if (row.status === 'paused') return { label: '已暂停', type: 'warning' }
+  return { label: '进行中', type: 'primary' }
+}
+
 const keywordText = (row: SubRow) => {
   if (Array.isArray(row.keywords)) return row.keywords.join(' / ')
   if (!row.keywords) return ''
@@ -1079,7 +1089,7 @@ onMounted(load)
   width: 100%;
 }
 .cloud-card {
-  max-width: 1100px;
+  width: 100%;
 }
 .card-header {
   display: flex;
@@ -1345,13 +1355,13 @@ onMounted(load)
   .cs-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @media (min-width: 768px) {
-  .cs-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-}
-@media (min-width: 1024px) {
   .cs-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }
-@media (min-width: 1280px) {
+@media (min-width: 1024px) {
   .cs-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+}
+@media (min-width: 1280px) {
+  .cs-grid { grid-template-columns: repeat(9, minmax(0, 1fr)); }
 }
 .cs-empty {
   grid-column: 1 / -1;
@@ -1423,14 +1433,6 @@ onMounted(load)
   right: 8px;
   color: var(--warning);
   background: color-mix(in srgb, var(--warning) 22%, rgba(0, 0, 0, 0.6));
-}
-.cs-badge-finished {
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: var(--success);
-  background: color-mix(in srgb, var(--success) 20%, transparent);
-  font-weight: 500;
 }
 .cs-card-info {
   padding: 6px 8px;

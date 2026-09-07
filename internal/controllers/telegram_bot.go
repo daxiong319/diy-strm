@@ -653,6 +653,21 @@ func parsePan123ShareText(text string) (shareKey, sharePwd string) {
 	return shareKey, sharePwd
 }
 
+// botTargetAccountID 按网盘类型解析 bot 转存目标账号 ID（用于转存后联动自动整理）；
+// 无该类型账号返回 0（联动静默跳过）
+func botTargetAccountID(sourceType string) uint {
+	accounts, err := models.GetAllAccount()
+	if err != nil {
+		return 0
+	}
+	for i := range accounts {
+		if string(accounts[i].SourceType) == sourceType {
+			return accounts[i].ID
+		}
+	}
+	return 0
+}
+
 // handlePan123ShareSave 处理 123 云盘分享转存
 func handlePan123ShareSave(text string, chatID int64) helpers.CommandResponse {
 	shareKey, sharePwd := parsePan123ShareText(text)
@@ -669,6 +684,7 @@ func handlePan123ShareSave(text string, chatID int64) helpers.CommandResponse {
 		return helpers.CommandResponse{Text: "❌ 转存失败：" + htmlEscape(err.Error())}
 	}
 	helpers.AppLogger.Infof("Telegram 123 转存成功：chatID=%d shareKey=%s 分享「%s」共 %d 项已转存到 %s", chatID, shareKey, title, total, targetDir)
+	TriggerAutoOrganizeForAccount(botTargetAccountID(string(models.SourceType123)))
 	recordMonitorSuccess("bot", string(models.SourceType123), "TG机器人", "", "", trimmedShareText(text), title, targetDir, total, 0)
 	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享「%s」共 %d 项到 %s", htmlEscape(title), total, htmlEscape(targetDir))}
 }
@@ -704,6 +720,7 @@ func handleGuangYaShareSave(text string, chatID int64) helpers.CommandResponse {
 		return helpers.CommandResponse{Text: "❌ 转存失败：" + htmlEscape(err.Error())}
 	}
 	helpers.AppLogger.Infof("Telegram 光鸭转存成功：chatID=%d shareID=%s 分享「%s」共 %d 项已转存到 %s", chatID, shareID, title, total, targetDir)
+	TriggerAutoOrganizeForAccount(botTargetAccountID(string(models.SourceTypeGuangYaPan)))
 	recordMonitorSuccess("bot", string(models.SourceTypeGuangYaPan), "TG机器人", "", "", trimmedShareText(text), title, targetDir, total, 0)
 	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享「%s」共 %d 项到 %s", htmlEscape(title), total, htmlEscape(targetDir))}
 }
@@ -766,6 +783,7 @@ func handleTelegramShareSave(text string, chatID int64, defaultDir string) helpe
 		return helpers.CommandResponse{Text: "❌ " + htmlEscape(err.Error())}
 	}
 	helpers.AppLogger.Infof("Telegram 转存成功：chatID=%d linkID=%s 分享「%s」共 %d 项已转存到 %s", chatID, linkID, title, total, saveDir)
+	TriggerAutoOrganizeForAccount(botTargetAccountID(string(models.SourceTypePan139)))
 	recordMonitorSuccess("bot", string(models.SourceTypePan139), "TG机器人", "", "", trimmedShareText(text), title, saveDir, total, 0)
 	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享「%s」共 %d 项到 %s", htmlEscape(title), total, htmlEscape(saveDir))}
 }

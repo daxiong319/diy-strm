@@ -505,6 +505,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			extra = "剧集：" + JoinEpisodeKeys(epKeys)
 		}
 		sendTransferSuccessNotification(sub.SourceType, recTitle, transferDir, total, extra, notifChannel)
+		TriggerAutoOrganizeForAccount(botTargetAccountID(sub.SourceType))
 		if old != nil {
 			old.Status = "superseded"
 			_ = models.SaveTransferRecord(old)
