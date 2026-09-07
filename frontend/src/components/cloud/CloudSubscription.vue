@@ -71,78 +71,94 @@
         </div>
       </el-card>
 
-      <el-table :data="subs" v-loading="loading" empty-text="暂无订阅，点击「新增订阅」创建">
-        <el-table-column prop="id" label="ID" width="60" />
-        <el-table-column label="关键词" min-width="160">
-          <template #default="{ row }">
-            <template v-if="row.keywords.length">
-              <el-tag v-for="k in row.keywords" :key="k" size="small" class="kw-tag">{{ k }}</el-tag>
-            </template>
-            <span v-else class="muted">全部</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="影片" min-width="150">
-          <template #default="{ row }">
-            <div v-if="row.tmdb_title">
-              <div class="media-title-line">
-                <span class="media-title">{{ row.tmdb_title }}</span>
-                <el-tag v-if="row.media_type === 'movie'" size="small">电影</el-tag>
-                <el-tag v-else size="small" type="warning">剧集</el-tag>
-              </div>
-              <div class="muted media-sub">
-                <span v-if="row.media_type === 'tv'">
-                  {{ row.season > 0 ? `S${row.season}` : `全 ${row.total_seasons || '?'} 季` }}
-                </span>
-                <el-tag v-if="row.wash" size="small" type="danger" class="wash-tag">
-                  洗版{{ washTargetLabel(row.wash_target) }}
-                </el-tag>
-                <el-tag v-if="row.backfill" size="small" type="warning" class="backfill-tag">回溯</el-tag>
-                <el-tag v-if="row.finished_at && row.finished_at !== '0001-01-01T00:00:00Z'" size="small" type="success" class="finished-tag">
-                  已完结
-                </el-tag>
-              </div>
-            </div>
-            <span v-else class="muted">通用订阅</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="target_dir" label="目标目录" min-width="140" show-overflow-tooltip />
-        <el-table-column label="状态" width="80">
-          <template #default="{ row }">
-            <el-switch
-              :model-value="row.enabled"
-              @change="(v: boolean) => toggleEnabled(row, v)"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column label="上次运行" width="130">
-          <template #default="{ row }">
-            <span v-if="row.last_run_at && row.last_run_at !== '0001-01-01T00:00:00Z'">
-              {{ formatTime(row.last_run_at) }}
-            </span>
-            <span v-else class="muted">未运行</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="290" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" @click="openEdit(row)">编辑</el-button>
-            <el-button
-              v-if="row.old_count > 0"
-              size="small"
-              type="warning"
-              plain
-              :loading="cleaningId === row.id"
-              @click="cleanOld(row)"
+      <div v-loading="loading" class="cs-grid">
+        <div v-for="row in subs" :key="row.id" class="cs-card" :class="{ 'cs-card-wash': row.wash, 'cs-card-off': !row.enabled }">
+          <div class="cs-poster-wrap" @click="openEdit(row)">
+            <el-image
+              v-if="row.poster_url"
+              :src="row.poster_url"
+              fit="cover"
+              class="cs-poster"
+              lazy
             >
-              清理旧版({{ row.old_count }})
-            </el-button>
-            <el-button size="small" type="primary" plain :loading="runningId === row.id" @click="run(row)">
-              执行
-            </el-button>
-            <el-button size="small" plain @click="openRecords(row)">纪录</el-button>
-            <el-button size="small" type="danger" plain @click="remove(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+              <template #error>
+                <div class="cs-poster-fallback"><el-icon :size="24"><Film /></el-icon></div>
+              </template>
+            </el-image>
+            <div v-else class="cs-poster-fallback"><el-icon :size="24"><Film /></el-icon></div>
+            <span v-if="row.media_type" class="cs-badge cs-badge-type">
+              <el-icon :size="10"><template v-if="row.media_type === 'tv'"><VideoPlay /></template><template v-else><Film /></template></el-icon>
+              {{ row.media_type === 'tv' ? '剧集' : '电影' }}
+            </span>
+            <span v-if="(row.vote_average || 0) > 0" class="cs-badge cs-badge-vote">
+              <el-icon :size="10"><Star /></el-icon>
+              {{ Number(row.vote_average).toFixed(1) }}
+            </span>
+            <span v-if="row.wash" class="cs-badge cs-badge-wash" title="洗版：有更优新源时覆盖旧版">
+              洗版{{ washTargetLabel(row.wash_target) }}
+            </span>
+            <span v-if="row.backfill" class="cs-badge cs-badge-backfill">回溯</span>
+            <span
+              v-if="row.finished_at && row.finished_at !== '0001-01-01T00:00:00Z'"
+              class="cs-badge cs-badge-finished"
+              >已完结</span
+            >
+          </div>
+          <div class="cs-card-info">
+            <div class="cs-title-row">
+              <p class="cs-title" :title="row.tmdb_title || keywordText(row)">
+                {{ row.tmdb_title || keywordText(row) || '通用订阅' }}
+              </p>
+              <el-switch
+                :model-value="row.enabled"
+                size="small"
+                @change="(v: boolean) => toggleEnabled(row, v)"
+              />
+            </div>
+            <div class="cs-meta">
+              <p class="cs-meta-line" v-if="row.media_type === 'tv'">
+                {{ (row.season ?? 0) > 0 ? `第 ${row.season} 季` : `全 ${row.total_seasons || '?'} 季` }}
+                <template v-if="row.total_episodes"> · 已收 {{ collectedText(row) }}</template>
+              </p>
+              <p class="cs-meta-line" v-else-if="!row.media_type">{{ keywordText(row) || '全部资源（按链接去重）' }}</p>
+              <p class="cs-meta-line" v-if="row.channel">频道 {{ row.channel }}</p>
+              <p class="cs-meta-line" :title="row.target_dir || '/'">{{ row.target_dir || '/' }}</p>
+              <p class="cs-meta-line muted">
+                <template v-if="row.last_run_at && row.last_run_at !== '0001-01-01T00:00:00Z'">运行于 {{ formatTime(row.last_run_at) }}</template>
+                <template v-else>未运行</template>
+              </p>
+            </div>
+            <div class="cs-actions">
+              <el-tooltip content="立即执行" placement="top">
+                <el-button circle size="small" class="cs-act cs-act-primary" :loading="runningId === row.id" @click="run(row)">
+                  <el-icon><VideoPlay /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="编辑" placement="top">
+                <el-button circle size="small" class="cs-act cs-act-info" @click="openEdit(row)">
+                  <el-icon><EditPen /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="转存纪录" placement="top">
+                <el-button circle size="small" class="cs-act cs-act-success" @click="openRecords(row)">
+                  <el-icon><Document /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-tooltip v-if="(row.old_count ?? 0) > 0" :content="`清理旧版（${row.old_count ?? 0}）`" placement="top">
+                <el-button circle size="small" class="cs-act cs-act-warning" :loading="cleaningId === row.id" @click="cleanOld(row)">
+                  <el-icon><RefreshLeft /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="删除" placement="top">
+                <el-button circle size="small" class="cs-act cs-act-danger" @click="remove(row)">
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </el-tooltip>
+            </div>
+          </div>
+        </div>
+        <div v-if="!loading && subs.length === 0" class="cs-empty">暂无订阅，点击「新增订阅」创建</div>
+      </div>
     </el-card>
 
     <el-dialog v-model="channelFormVisible" title="订阅频道" width="520px">
@@ -425,6 +441,7 @@
 <script setup lang="ts">
 import { useHttpClient } from '@/http/client'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete, Document, EditPen, Film, RefreshLeft, Star, VideoPlay } from '@element-plus/icons-vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { isMobile } from '@/utils/deviceUtils'
 import CloudDirPicker from './CloudDirPicker.vue'
@@ -440,6 +457,12 @@ const http = useHttpClient()
 interface SubRow {
   id: number
   channel: string
+  poster_url?: string
+  backdrop_url?: string
+  vote_average?: number
+  original_title?: string
+  year?: number
+  status?: string
   keywords: string | string[]
   target_dir: string
   enabled: boolean
@@ -873,6 +896,23 @@ const cleanOld = async (row: SubRow) => {
   }
 }
 
+const keywordText = (row: SubRow) => {
+  if (Array.isArray(row.keywords)) return row.keywords.join(' / ')
+  if (!row.keywords) return ''
+  try {
+    const arr = JSON.parse(row.keywords)
+    return Array.isArray(arr) ? arr.join(' / ') : String(row.keywords)
+  } catch {
+    return String(row.keywords)
+  }
+}
+
+const collectedText = (row: SubRow) => {
+  // 卡片轻量展示：无独立计数接口，用已完成状态或已收季/集快照兜底
+  if (row.finished_at && row.finished_at !== '0001-01-01T00:00:00Z') return '全部'
+  return row.total_episodes ? `${row.total_episodes} 集` : '—'
+}
+
 const washTargetLabel = (t?: string) => {
   if (!t) return ''
   if (t === '1080p') return ' · 目标1080p'
@@ -1294,3 +1334,143 @@ onMounted(load)
   justify-content: flex-end;
 }
 </style>
+
+/* ---- 订阅卡片网格（对齐影巢订阅卡片） ---- */
+.cs-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (min-width: 640px) {
+  .cs-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (min-width: 768px) {
+  .cs-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
+@media (min-width: 1024px) {
+  .cs-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+}
+@media (min-width: 1280px) {
+  .cs-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+}
+.cs-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 32px 0;
+  color: var(--text-muted);
+}
+.cs-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.cs-card:hover {
+  border-color: var(--brand-strong);
+  box-shadow: var(--shadow-soft);
+}
+.cs-card-wash {
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--border));
+}
+.cs-card-off {
+  opacity: 0.55;
+}
+.cs-poster-wrap {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  background: var(--surface-muted);
+  cursor: pointer;
+}
+.cs-poster,
+.cs-poster-fallback {
+  width: 100%;
+  height: 100%;
+}
+.cs-poster-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: linear-gradient(160deg, var(--surface-muted), var(--border-soft));
+}
+.cs-badge {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  line-height: 1.3;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  white-space: nowrap;
+}
+.cs-badge-type { top: 8px; left: 8px; }
+.cs-badge-vote { top: 8px; right: 8px; color: var(--warning); }
+.cs-badge-wash {
+  bottom: 8px;
+  left: 8px;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 22%, rgba(0, 0, 0, 0.6));
+  font-weight: 500;
+  z-index: 5;
+}
+.cs-badge-backfill {
+  bottom: 8px;
+  right: 8px;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 22%, rgba(0, 0, 0, 0.6));
+}
+.cs-badge-finished {
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 20%, transparent);
+  font-weight: 500;
+}
+.cs-card-info {
+  padding: 6px 8px;
+}
+.cs-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cs-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-meta {
+  margin-top: 2px;
+}
+.cs-meta-line {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-meta-line.muted {
+  opacity: 0.8;
+}
+.cs-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.cs-act.cs-act-primary { color: var(--brand); }
+.cs-act.cs-act-success { color: var(--success); }
+.cs-act.cs-act-warning { color: var(--warning); }
+.cs-act.cs-act-danger { color: var(--danger); }
+.cs-act.cs-act-info { color: var(--text-muted); }

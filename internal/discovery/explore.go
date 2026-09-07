@@ -51,7 +51,7 @@ type PageResult struct {
 }
 
 // ---------------------------------------------------------------------------
-// 内存 TTL 缓存（对应 tgto123 SOURCE_TTLS + _cache_entry 的进程内简化版）
+// 内存 TTL 缓存（对应参考实现 SOURCE_TTLS + _cache_entry 的进程内简化版）
 // ---------------------------------------------------------------------------
 
 type cacheEntry struct {
@@ -120,7 +120,7 @@ func feedExecute(ctx context.Context, call func(fc hdhive.FeedClient) (*hdhive.O
 }
 
 // ---------------------------------------------------------------------------
-// 影视探索（TMDB discover 多条件筛选 + 豆瓣 tag 探索，对应 tgto123 discover/discover_douban）
+// 影视探索（TMDB discover 多条件筛选 + 豆瓣 tag 探索，对应参考实现 discover/discover_douban）
 // ---------------------------------------------------------------------------
 
 // tmdbGenreMap 电影/剧集类型 ID 表（TMDB 官方 genre id）
@@ -326,7 +326,7 @@ func estimatePages(total int) int {
 }
 
 // ---------------------------------------------------------------------------
-// 榜单推荐（对应 tgto123 rankings：
+// 榜单推荐（对应参考实现 rankings：
 // 影巢流媒体榜 streaming-top / TMDB 分类榜 / 豆瓣片单 三源聚合）
 // ---------------------------------------------------------------------------
 

@@ -9,7 +9,14 @@
         <div class="card-header">
           <div class="header-title-group">
             <h2 class="card-title">日志查看器</h2>
-            <LogLevelFilter v-model="selectedLogLevels" />
+            <el-input
+              v-model="logSearchKeyword"
+              placeholder="关键词过滤（标题/内容）"
+              clearable
+              size="small"
+              class="log-search-input"
+              :prefix-icon="Search"
+            />
             <div class="status-toggle" role="group" aria-label="日志状态筛选">
               <button
                 type="button"
@@ -105,6 +112,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, shallowRef, watch, useTemplateRef } from 'vue'
 import { ElMessageBox } from 'element-plus'
+import { Search } from '@element-plus/icons-vue'
 import LogActionToolbar from '@/components/log/LogActionToolbar.vue'
 import LogLevelFilter from '@/components/log/LogLevelFilter.vue'
 import { useLogFileActions } from '@/composables/useLogFileActions'
@@ -140,6 +148,7 @@ const logViewerStyle = computed<Record<string, string>>(() => ({
 const stream = shallowRef<EventSource | null>(null)
 const logLines = ref<LogEntry[]>([])
 const selectedLogLevels = ref<LogLevel[]>([...DEFAULT_VISIBLE_LOG_LEVELS])
+const logSearchKeyword = ref('')
 const statusFilter = ref<'all' | 'normal' | 'error'>('all')
 const streamConnectionState = ref<StreamConnectionState>('idle')
 const isConnected = computed(() => streamConnectionState.value === 'connected')
@@ -183,6 +192,10 @@ const limitedLogLines = computed(() => {
     visible = visible.filter((entry) => entry.level === 'info' || entry.level === 'debug')
   } else if (statusFilter.value === 'error') {
     visible = visible.filter((entry) => entry.level === 'error' || entry.level === 'warn')
+  }
+  const kw = logSearchKeyword.value.trim().toLowerCase()
+  if (kw) {
+    visible = visible.filter((entry) => (entry.message || '').toLowerCase().includes(kw))
   }
   return filterLogEntriesByLevels(visible, selectedLogLevels.value).slice(0, MAX_LOG_ENTRIES)
 })
@@ -535,6 +548,9 @@ defineExpose({
 </script>
 
 <style scoped>
+.log-search-input {
+  width: 220px;
+}
 .log-viewer-container {
   width: 100%;
   max-width: none;

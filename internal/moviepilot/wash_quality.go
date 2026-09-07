@@ -11,7 +11,7 @@ import (
 	"diy-strm/internal/mediaparse"
 )
 
-// FileQuality 从文件名解析出的质量快照（借鉴 mediavault MediaUpgradeRecord 的质量维度）
+// FileQuality 从文件名解析出的质量快照（借鉴成熟方案 MediaUpgradeRecord 的质量维度）
 type FileQuality struct {
 	Resolution int    `json:"resolution"` // 0/480/720/1080/2160
 	ResTag     string `json:"res_tag"`
@@ -68,7 +68,7 @@ var (
 	groupSuffixRe       = regexp.MustCompile(`[-\[\]]([A-Z][A-Za-z]{1,20})$`)
 )
 
-// codecRank 编码评分（越高越优，参考 mediavault preferred_codecs=hevc,h265,av1）
+// codecRank 编码评分（越高越优，参考 成熟方案 preferred_codecs=hevc,h265,av1）
 func codecRank(c string) int {
 	switch strings.ToLower(c) {
 	case "av1", "hevc", "h265", "x265":
@@ -177,7 +177,7 @@ func ParseQualityFromName(fileName string) *FileQuality {
 	return q
 }
 
-// ---- 洗版比较规则（P1-3，借鉴 mediavault upgrade_rules）----
+// ---- 洗版比较规则（P1-3，借鉴成熟方案 upgrade_rules）----
 
 // WashRule 一条比较规则：字段 + 是否「更高更优」
 type WashRule struct {
@@ -185,7 +185,7 @@ type WashRule struct {
 	Higher bool   `json:"higher"` // true=分数高者为优（默认全 true）
 }
 
-// DefaultWashRules 默认比较优先级（逐项比较，先决胜负；与 mediavault「按优先级逐项比较」一致）
+// DefaultWashRules 默认比较优先级（逐项比较，先决胜负；与 成熟方案「按优先级逐项比较」一致）
 var DefaultWashRules = []WashRule{
 	{Field: "resolution", Higher: true},
 	{Field: "codec", Higher: true},
@@ -260,7 +260,7 @@ func groupRank(group string, priority []string) int {
 }
 
 // CompareQuality 洗版质量比较：newQ 相对 oldQ。
-// 返回 1=新更优，-1=新更差，0=持平。按规则逐项比较（借鉴 mediavault 综合评分逐项比较）。
+// 返回 1=新更优，-1=新更差，0=持平。按规则逐项比较（借鉴成熟方案 综合评分逐项比较）。
 func CompareQuality(newQ, oldQ *FileQuality, groupPriority []string, rules []WashRule) int {
 	if newQ == nil || oldQ == nil {
 		return 1 // 无法解析旧质量时按可覆盖处理，避免阻塞整理

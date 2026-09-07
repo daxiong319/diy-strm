@@ -455,7 +455,7 @@ const router = useRouter()
 const mobile = computed(() => isMobile())
 
 // ---------------------------------------------------------------------------
-// 列表数据（mediavault Gz 数据流：media_type + history 双键查询 + refreshing 轮询）
+// 列表数据（成熟方案 Gz 数据流：media_type + history 双键查询 + refreshing 轮询）
 // ---------------------------------------------------------------------------
 const subs = ref<any[]>([])
 const loading = ref(false)
@@ -1176,7 +1176,7 @@ const openDetail = async (t: any) => {
   }
 }
 
-// 构造搜索关键词（对齐 mediavault aF：tv + 第 N 季 → 中文数字 / S0N / 原标题）
+// 构造搜索关键词（对齐成熟方案 aF：tv + 第 N 季 → 中文数字 / S0N / 原标题）
 const cnNums = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二', '十三', '十四', '十五', '十六', '十七', '十八', '十九', '二十', '二十一', '二十二', '二十三', '二十四', '二十五', '二十六', '二十七', '二十八', '二十九', '三十']
 const buildSearchKeywords = (title: string, mediaType: string, season: number) => {
   const kw = (detail.value?.search_keyword) || title || ''

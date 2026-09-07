@@ -160,7 +160,7 @@ const resolving = ref(false)
 const currentFile = ref<any>(null)
 const resolveForm = ref<any>({ media_type: 'movie', title: '', year: 0, season: 1, tmdb_id: 0 })
 
-// TMDB 候选（对齐 tgto123 识别测试：候选卡片一键选中，避免同名歧义）
+// TMDB 候选（对齐参考实现 识别测试：候选卡片一键选中，避免同名歧义）
 interface TmdbCandidate {
   title: string
   original_title?: string

@@ -13,12 +13,12 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 影巢 symedia 主渠道：授权启动 / 回调落库 / 状态刷新 / 签到 / 连通性测试
+// 影巢 中转主渠道：授权启动 / 回调落库 / 状态刷新 / 签到 / 连通性测试
 // （hdhive.symedia.top 中转，与 tgtodrive 备用渠道互为备份，symedia 优先调度）
 // ---------------------------------------------------------------------------
 
 // HiveSymediaStatusAPI GET /cloud/hive/symedia/status
-// 返回 symedia 通道账号（公共信息）+ 未授权时授权 URL + 各通道健康度
+// 返回 中转通道账号（公共信息）+ 未授权时授权 URL + 各通道健康度
 func HiveSymediaStatusAPI(c *gin.Context) {
 	acc := models.FindOrCreateHiveSymediaAccount("主渠道")
 	pub := acc.Public()

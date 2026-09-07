@@ -5,7 +5,7 @@ import { SERVER_URL } from '@/const'
 import { CircleCheck } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
-// 影视发现：复刻 tgto123 media_discovery 分区式布局
+// 影视发现：复刻参考实现 media_discovery 分区式布局
 // 四个互斥分区：影视探索（含番剧/收藏子入口）/ 榜单推荐 / 追剧日历 / 基础配置
 
 interface DiscoverItem {
@@ -1606,7 +1606,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* ============ 令牌（对齐 tgto123 media_discovery 视觉） ============ */
+/* ============ 令牌（对齐参考实现 media_discovery 视觉） ============ */
 .md-page {
   --md-primary: #6366f1;
   --md-primary-hover: #4f46e5;

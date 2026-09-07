@@ -31,12 +31,12 @@ type AutoOrganizeConfig struct {
 	// true=删除旧文件重新整理；false=跳过并在报告中提示。
 	Overwrite bool `gorm:"default:true" json:"overwrite"`
 
-	// ---- 洗版策略（v2，借鉴 mediavault MediaUpgradeConfig / symedia 覆盖规则）----
+	// ---- 洗版策略（v2，借鉴成熟方案 MediaUpgradeConfig / symedia 覆盖规则）----
 	// WashCompare 更优才覆盖：仅当新文件质量综合评分高于被替换旧文件时才执行覆盖
 	// （关闭后回到「存在即覆盖」，但仍是同名覆盖而非整目录删除）。
 	WashCompare bool `gorm:"default:true" json:"wash_compare"`
 	// LoserArchiveDir 被替换旧版的归档目录（网盘内路径）。为空=旧版直接删除；
-	// 配置后旧版先移入此目录保留备份（mediavault loser archive 语义），如 洗版淘汰
+	// 配置后旧版先移入此目录保留备份（成熟方案 loser archive 语义），如 洗版淘汰
 	LoserArchiveDir string `gorm:"size:255" json:"loser_archive_dir"`
 	// LoserSourceAction 落败新文件（比较中输给库内旧版）源文件的处置：
 	// keep（默认，源保留在待整理目录）/ delete（直接删除源，避免反复比对）
@@ -61,7 +61,7 @@ type AutoOrganizeConfig struct {
 	// LastWashScanResult 最近一次违规扫描结果摘要（JSON 文本，前端展示）
 	LastWashScanResult string `gorm:"type:text" json:"last_wash_scan_result"`
 
-	// ---- 整理过滤与命名（P2，借鉴 mediavault OrganizeConfig / symedia 归档）----
+	// ---- 整理过滤与命名（P2，借鉴成熟方案 OrganizeConfig / symedia 归档）----
 	// BlockedWords 文件名/目录名黑名单正则（每行一条）。命中视为垃圾内容跳过整理
 	// （如 \b(SP|NC[OPED]+|PV|CM|特典|Preview|Trailer)\b 类），内容保留原位不移动。
 	BlockedWords string `gorm:"type:text" json:"blocked_words"`

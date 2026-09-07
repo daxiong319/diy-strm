@@ -19,7 +19,7 @@ import (
 	"resty.dev/v3"
 )
 
-// 扫码登录常量（逆向自 yun.139.com 网页 thirdlogin 接口，协议参考 LitePan 139Cloud 驱动）
+// 扫码登录常量（逆向自 yun.139.com 网页 thirdlogin 接口，协议参考 参考 UI 实现 139Cloud 驱动）
 const (
 	qrThirdLoginURL = "https://user-njs.yun.139.com/user/thirdlogin"
 	qrPagePrefix    = "https://yun.139.com/w/#/qrcLogin"

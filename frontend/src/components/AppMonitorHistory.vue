@@ -14,7 +14,7 @@
       </div>
     </div>
 
-    <!-- 来源标签（对齐 tgto123：115/123/光鸭/天翼 → 本项目 123/光鸭/移动） -->
+    <!-- 来源标签（对齐参考实现：115/123/光鸭/天翼 → 本项目 123/光鸭/移动） -->
     <div class="filter-row">
       <el-radio-group v-model="sourceFilter" @change="handleFilterChange">
         <el-radio-button value="">全部</el-radio-button>
@@ -174,7 +174,7 @@ const statusFilter = ref('')
 const keyword = ref('')
 const selection = ref<any[]>([])
 
-// 自动刷新（对齐 tgto123 的 180 秒静默刷新）
+// 自动刷新（对齐 参考实现的 180 秒静默刷新）
 const autoRefresh = ref(false)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 const toggleAutoRefresh = (on: boolean) => {

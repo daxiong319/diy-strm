@@ -254,7 +254,7 @@ const { isDark, isBrutal, isMv, toggleTheme, toggleSkin } = useTheme()
 const isMenuOpen = ref(false)
 
 const skinTooltip = computed(() => {
-  if (isBrutal.value) return '切换为 mediavault 皮肤'
+  if (isBrutal.value) return '切换为 成熟方案 皮肤'
   if (isMv.value) return '切换回默认皮肤'
   return '切换野兽派皮肤'
 })

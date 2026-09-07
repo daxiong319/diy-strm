@@ -85,7 +85,7 @@ func normalizeEntityKey(source, mediaType, externalID string) string {
 }
 
 // DiscoverySubjectCache 豆瓣/番剧目录条目缓存 + TMDB 匹配结果
-// （对应 tgto123 media_douban_subjects / media_anime_subjects 的合并简化版）
+// （对应参考实现 media_douban_subjects / media_anime_subjects 的合并简化版）
 type DiscoverySubjectCache struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	CatalogKey string   `gorm:"size:128;index" json:"catalog_key"` // 目录键 douban:movie_hot_gaia / anime:bangumi:calendar

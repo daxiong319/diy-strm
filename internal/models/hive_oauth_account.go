@@ -18,7 +18,7 @@ import (
 )
 
 // HiveOAuthAccount 影巢 OAuth 授权账号（主账号 + 子账号统一存储）
-// 参考 tgto123 hdhive_sub_accounts 模块，diy-strm 使用数据库存储。
+// 参考 参考实现 hdhive_sub_accounts 模块，diy-strm 使用数据库存储。
 type HiveOAuthAccount struct {
 	ID                uint       `gorm:"primaryKey" json:"id"`
 	Label             string     `gorm:"size:80" json:"label"` // 账号标签（主账号/小号1）
@@ -42,7 +42,7 @@ type HiveOAuthAccount struct {
 	LastCheckinOK     bool       `json:"last_checkin_ok"`
 	LastCheckinMsg    string     `gorm:"size:500" json:"last_checkin_message"`
 	LastCheckinMode   string     `gorm:"size:16" json:"last_checkin_mode"`
-	// 签到富信息（借鉴 NanShare/mediavault 的结果解析）
+	// 签到富信息（借鉴 NanShare/成熟方案 的结果解析）
 	LastCheckinPoints  *int      `json:"last_checkin_points"`  // 最近一次签到获得积分（赌狗可能为负）
 	LastCheckinBalance *int      `json:"last_checkin_balance"` // 签到后账户余额
 	LastCheckinStreak  int       `json:"last_checkin_streak"`  // 连续签到天数
@@ -120,7 +120,7 @@ func GetHiveAccountByID(id uint) (*HiveOAuthAccount, error) {
 }
 
 // SaveHiveAccount 保存账号
-// FindOrCreateHiveSymediaAccount 获取或创建 symedia 通道账号（channel=symedia，唯一一条）
+// FindOrCreateHiveSymediaAccount 获取或创建 中转通道账号（channel=symedia，唯一一条）
 func FindOrCreateHiveSymediaAccount(label string) *HiveOAuthAccount {
 	var acc HiveOAuthAccount
 	if err := db.Db.Where("channel = ?", HiveChannelSymedia).First(&acc).Error; err == nil {
@@ -237,7 +237,7 @@ func UpdateHiveSubAccount(id uint, label string, enabled *bool) error {
 // 内部工具
 // ---------------------------------------------------------------------------
 
-// newHiveInstallID 生成随机 install_id（与 tgto123 secrets.token_urlsafe(48) 等价）
+// newHiveInstallID 生成随机 install_id（与 参考实现 secrets.token_urlsafe(48) 等价）
 func newHiveInstallID() string {
 	b := make([]byte, 48)
 	if _, err := rand.Read(b); err != nil {

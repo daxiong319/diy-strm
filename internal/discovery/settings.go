@@ -1,4 +1,4 @@
-// Package discovery 提供影视发现功能（复刻 tgto123 media_discovery）：
+// Package discovery 提供影视发现功能（复刻参考实现 media_discovery）：
 // 影视探索、榜单推荐、追剧日历、番剧目录、收藏与发现设置。
 package discovery
 
@@ -9,7 +9,7 @@ import (
 	"diy-strm/internal/db"
 )
 
-// DiscoverySetting 发现页键值设置（对应 tgto123 media_settings 表）
+// DiscoverySetting 发现页键值设置（对应参考实现 media_settings 表）
 type DiscoverySetting struct {
 	Key       string    `gorm:"primaryKey;size:64" json:"key"`
 	Value     string    `gorm:"type:text" json:"value"` // JSON 编码
@@ -18,7 +18,7 @@ type DiscoverySetting struct {
 
 func (DiscoverySetting) TableName() string { return "discovery_settings" }
 
-// 默认设置项（与 tgto123 DEFAULT_SETTINGS 对齐的 diy-strm 子集）
+// 默认设置项（与 参考实现 DEFAULT_SETTINGS 对齐的 diy-strm 子集）
 const (
 	SettingDefaultExploreSource   = "default_explore_source"   // 默认探索来源 tmdb/douban/anime
 	SettingDefaultExploreSort     = "default_explore_sort"     // 默认排序 popular/latest/rating

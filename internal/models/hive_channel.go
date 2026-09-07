@@ -15,16 +15,16 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 影巢四通道：symedia 中转 / tgtodrive 中转 / nanshare 中转 / 官方直连。
+// 影巢四通道：中转通道 / 直连通道 / nanshare 中转 / 官方直连。
 // 上层查询与调用统一走通道抽象，按优先级调度，通道故障时逐个降级尝试。
 // ---------------------------------------------------------------------------
 
 // 通道常量
 const (
 	HiveChannelSymedia   = "symedia"   // 主渠道：hdhive.symedia.top（会话握手 + HMAC 签名）
-	HiveChannelTgtodrive = "tgtodrive" // 备用渠道：hdhive-open.tgtodrive.top（install_id 签名，tgto123 同款）
+	HiveChannelTgtodrive = "tgtodrive" // 备用渠道：hdhive-open.tgtodrive.top（install_id 签名，同款）
 	HiveChannelNanShare  = "nanshare"  // 中转渠道：hdhive.nanl.top（NanShare 项目签名 + 中转托管 OAuth）
-	HiveChannelOfficial  = "official"  // 官方直连：hdhive.com OpenAPI（OAuth 授权码，mediavault 同款）
+	HiveChannelOfficial  = "official"  // 官方直连：hdhive.com OpenAPI（OAuth 授权码，成熟方案 同款）
 )
 
 // HiveChannelLabels 通道显示名（前端展示用）
@@ -78,7 +78,7 @@ func HiveClientForAccount(acc *HiveOAuthAccount) hdhive.ChannelClient {
 		}
 		return client
 	}
-	// tgtodrive 备用通道：注入 AccessToken（优先）或 InstallID 作为 Feed 授权标识，
+	// 直连通道 备用通道：注入 AccessToken（优先）或 InstallID 作为 Feed 授权标识，
 	// 否则 HDHive 对资源查询返回误导性的 "Premium membership required"。
 	oc := hdhive.NewOAuthClient(acc.InstallID)
 	oc.AccessToken = acc.AccessToken

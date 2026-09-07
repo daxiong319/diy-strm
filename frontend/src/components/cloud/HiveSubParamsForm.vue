@@ -155,7 +155,7 @@ const form = props.modelValue
 const resolutionOptions = ['720P', '1080P', '2160P']
 const effectOptions = ['特效', '双语', '国语']
 
-// 搜索渠道 chips（对齐 mediavault SIM 选择器：不选则使用全局启用渠道）
+// 搜索渠道 chips（对齐成熟方案 SIM 选择器：不选则使用全局启用渠道）
 const sourceOptions = [
   { label: 'Telegram', value: 'telegram' },
   { label: '影巢', value: 'hdhive' },

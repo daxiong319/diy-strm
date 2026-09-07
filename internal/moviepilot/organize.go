@@ -186,7 +186,7 @@ func organizeOneFile(ctx context.Context, account *models.Account, e organizeEnt
 					continue
 				}
 				if cmp == 0 {
-					// 质量标签打平：用文件大小兜底（大小与分辨率/码率正相关，tgto123 同以大小作比较项）
+					// 质量标签打平：用文件大小兜底（大小与分辨率/码率正相关，参考实现 同以大小作比较项）
 					if e.Size > old.Size {
 						continue
 					}

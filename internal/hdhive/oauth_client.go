@@ -1,7 +1,7 @@
 // Package hdhive 提供影巢（HDHive）Open API 与 OAuth 签名客户端。
 //
 // 本文件实现 OAuth 签名认证客户端（install_id + HMAC-SHA256），
-// 参考 tgto123 的 hdhive_user_client 模块实现。
+// 参考 参考实现的 hdhive_user_client 模块实现。
 package hdhive
 
 import (
@@ -26,7 +26,7 @@ import (
 )
 
 // OAuth 默认常量
-// 注意：base URL 为 TgtoDrive 提供的影巢代理服务（tgto123 同款）。
+// 注意：base URL 为 TgtoDrive 提供的影巢代理服务（同款）。
 // 签名密钥来自该代理服务，而非 hdhive.com 官方 Open API（官方走 X-API-Key）。
 const (
 	DefaultOAuthBaseURL = "https://hdhive-open.tgtodrive.top"
@@ -34,7 +34,7 @@ const (
 	OAuthMaxRetries     = 3
 )
 
-// 默认共享密钥（从 tgto123 镜像 load_shared_secret_bytes() 提取）
+// 默认共享密钥（从 参考实现 镜像 load_shared_secret_bytes() 提取）
 var defaultOAuthSharedSecret = []byte("d45WcKoZp6dk9bXKpHG-mndXIEGhug36f20jYo5jWeuL7MLEIIYavUGEmPHSxCqV7pBCJ3pOr24qAT8nu9bu_A")
 
 // OAuthClient HDHive OAuth 签名客户端
@@ -48,9 +48,9 @@ type OAuthClient struct {
 
 // feedAuthValue 计算 X-HDHive-Feed-Authorization 头值。
 //
-// 该头由官方 hdhive_user_client（tgto123 同款）在 with_hdhive_authorization=True 时注入，
+// 该头由官方 hdhive_user_client（同款）在 with_hdhive_authorization=True 时注入，
 // 缺失时 HDHive 对资源/feeds 类请求返回误导性的 "Premium membership required"。
-// 经逆向确认：install_id 模式下（tgto123 默认，用户未各自 OAuth）该头值即 install_id；
+// 经逆向确认：install_id 模式下（参考实现 默认，用户未各自 OAuth）该头值即 install_id；
 // 若已拿到用户 OAuth AccessToken（token_status 回传）则优先使用。
 func (c *OAuthClient) feedAuthValue() string {
 	if c.AccessToken != "" {
@@ -59,7 +59,7 @@ func (c *OAuthClient) feedAuthValue() string {
 	return c.InstallID
 }
 
-// oauthUserAgent 与 tgto123 客户端一致的 User-Agent（Cloudflare 校验）
+// oauthUserAgent 与 参考实现 客户端一致的 User-Agent（Cloudflare 校验）
 const oauthUserAgent = "TgtoDrive-HDHive-Client/1.0"
 
 // NewOAuthClient 创建 OAuth 客户端。

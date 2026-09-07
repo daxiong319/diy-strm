@@ -1,6 +1,6 @@
 <template>
   <div class="mv-page mv-page-wide">
-    <!-- ============ 洗版工作台（mediavault 风格：统计 + 清单 + 一键洗版） ============ -->
+    <!-- ============ 洗版工作台（成熟方案 风格：统计 + 清单 + 一键洗版） ============ -->
     <section v-if="accounts.length" class="mv-sec">
       <div class="mv-sec-head">
         <div>

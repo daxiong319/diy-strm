@@ -44,7 +44,7 @@ type EmbyConfig struct {
 	EnableDailyFirstFullSync int    `json:"enable_daily_first_full_sync" gorm:"default:1"`    // 每日首次定时同步是否执行全量同步
 	EnablePlaybackOverview   int    `json:"enable_playback_overview" gorm:"default:0"`        // 播放通知是否显示剧情简介
 	EnablePlaybackProgress   int    `json:"enable_playback_progress" gorm:"default:0"`        // 播放通知是否显示播放进度
-	ProxyPort                int    `json:"proxy_port" gorm:"default:0"`                      // Emby 302 独立反代播放端口（tgto123 形态，0=关闭仅用 12333 单端口兜底）
+	ProxyPort                int    `json:"proxy_port" gorm:"default:0"`                      // Emby 302 独立反代播放端口（独立端口形态，0=关闭仅用 12333 单端口兜底）
 	// DeleteNetdiskLibrary    string `json:"delete_netdisk_library" gorm:"type:varchar(200);default:''"` // 允许联动删除的媒体库 ID，用英文逗号分隔，空表示允许全部
 }
 

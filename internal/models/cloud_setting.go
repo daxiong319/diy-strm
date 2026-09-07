@@ -38,14 +38,14 @@ const (
 	CloudSettingKeyHiveSubCheckinMode      = "sub_checkin_mode"      // 值：daily/gamble 子账号签到模式
 	CloudSettingKeyHiveSubCheckinHour      = "sub_checkin_hour"      // 值：0-23 子账号签到小时
 	CloudSettingKeyHiveMaxPoints           = "max_points"            // 值：解锁积分上限（0=不限）
-	CloudSettingKeyHiveOnlyOfficial        = "only_official"         // 值："true"/"false" 仅收官组资源（借鉴 mediavault hdhive_only_official）
+	CloudSettingKeyHiveOnlyOfficial        = "only_official"         // 值："true"/"false" 仅收官组资源（借鉴成熟方案 hdhive_only_official）
 	CloudSettingKeyHivePublisherWhitelist  = "publisher_whitelist"   // 值：发布者昵称白名单（逗号分隔，空=不过滤）
 	CloudSettingKeyHiveExecPreset          = "exec_preset"           // 值：conservative/balanced/aggressive/custom（执行强度预设）
 	CloudSettingKeyHiveMaxTransfersPerRun  = "max_transfers_per_run" // 值：单轮转存上限（custom 模式用，默认 5）
 	CloudSettingKeyHiveTransferMinInterval = "transfer_min_interval" // 值：两次转存最小间隔秒数（custom 模式用，默认 25）
 	CloudSettingKeyHiveTransferJitter      = "transfer_jitter"       // 值：转存间隔随机抖动秒数（custom 模式用，默认 15）
 	CloudSettingKeyHiveSlugMaxAttempts     = "slug_max_attempts"     // 值：单个资源 slug 最大尝试次数（默认 3）
-	// ---- mediavault search&subscription 设置对齐（v77）----
+	// ---- 成熟方案 search&subscription 设置对齐（v77）----
 	CloudSettingKeyHiveEnabled          = "hive_enabled"                // 值："true"/"false" 影巢搜索启用（手动搜索 hdhive 引擎，默认 true）
 	CloudSettingKeyHiveTimedSearch      = "timed_search_enabled"        // 值："true"/"false" 定时订阅搜索（默认 true）
 	CloudSettingKeyHiveSearchTransfer   = "search_transfer"             // 值："true"/"false" 搜到资源即自动转存（默认 true）
@@ -60,7 +60,7 @@ const (
 	CloudSettingKeyHiveSyncWait         = "transfer_sync_wait"          // 值：同步等待分钟数（预留，默认 0）
 	CloudSettingKeyHiveDefaultsMovie    = "subscription_defaults_movie" // 值：电影订阅默认参数 JSON（{resolution,effect,search_sources,include_regex,exclude_regex,target_path,media_server}）
 	CloudSettingKeyHiveDefaultsTV       = "subscription_defaults_tv"    // 值：剧集订阅默认参数 JSON
-	// ---- pansou 盘搜（对齐 mediavault pansou 设置；pansou_enabled 默认 false，配置服务地址后才启用）----
+	// ---- pansou 盘搜（对齐成熟方案 pansou 设置；pansou_enabled 默认 false，配置服务地址后才启用）----
 	CloudSettingKeyHivePansouEnabled  = "pansou_enabled"  // 值："true"/"false" 盘搜启用（默认 false）
 	CloudSettingKeyHivePansouBaseURL  = "pansou_base_url" // 值：盘搜服务地址（如 http://192.168.1.100:80，空=未部署）
 	CloudSettingKeyHivePansouUsername = "pansou_username" // 值：盘搜服务账号（对应 fish2018/pansou AUTH_USERS，空=匿名）
@@ -74,7 +74,7 @@ const (
 	CloudSettingKeyHiveUnlockDailyLimit      = "unlock_daily_limit"       // 值：全局每日自动解锁次数上限（0=不限，U2）
 )
 
-// HiveTransferThrottle 执行强度参数（借鉴 mediavault 三档预设）
+// HiveTransferThrottle 执行强度参数（借鉴成熟方案 三档预设）
 type HiveTransferThrottle struct {
 	Preset             string        // conservative / balanced / aggressive / custom
 	MaxTransfersPerRun int           // 单轮转存上限
@@ -277,11 +277,11 @@ type CloudSubscription struct {
 	ReplaceOld     bool       `json:"replace_old"`                // 洗版后旧版本处理：true=删除旧文件 / false=保留共存
 	OldCount       int64      `gorm:"-" json:"old_count"`         // 待清理旧版本数（只读，由接口填充）
 	Enabled        bool       `gorm:"default:true" json:"enabled"`
-	Status         string     `gorm:"size:16;default:subscribing" json:"status"` // 订阅状态：subscribing（进行中）/ completed（已完结）/ paused（已暂停，跳过定时检索；借鉴 mediavault 三态状态机）
+	Status         string     `gorm:"size:16;default:subscribing" json:"status"` // 订阅状态：subscribing（进行中）/ completed（已完结）/ paused（已暂停，跳过定时检索；借鉴成熟方案 三态状态机）
 	LastPostID     string     `gorm:"size:64" json:"last_post_id"`               // 增量游标（频道帖 ID；影巢订阅为已处理资源 slug）
 	FinishedAt     *time.Time `json:"finished_at"`                               // 自动完结时间
 	LastRecheckAt  *time.Time `json:"last_recheck_at"`                           // 已完结 TV 订阅的上次 TMDB 复查时间（宽限复活用）
-	// ---- mediavault 对齐字段（v77）----
+	// ---- 成熟方案 对齐字段（v77）----
 	ExistingEpisodes int        `gorm:"default:0" json:"existing_episodes"` // 媒体库已有集数（去重判定/卡片角标）
 	VoteAverage      float64    `json:"vote_average"`                       // TMDB 评分
 	PosterURL        string     `gorm:"size:512" json:"poster_url"`         // 海报
@@ -306,7 +306,7 @@ type CloudSubscription struct {
 	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
-// SubscriptionLog 订阅日志（搜索/转存时间线，对齐 mediavault subscription_logs）
+// SubscriptionLog 订阅日志（搜索/转存时间线，对齐成熟方案 subscription_logs）
 type SubscriptionLog struct {
 	ID             uint      `gorm:"primaryKey" json:"id"`
 	SubscriptionID uint      `gorm:"index:idx_sub_log_sub_id" json:"subscription_id"`
@@ -476,7 +476,7 @@ func GetHiveMaxPoints() int {
 	return hiveSettingInt(CloudSettingKeyHiveMaxPoints, 0, 0, 999999)
 }
 
-// ---- mediavault 设置读取（v77）----
+// ---- 成熟方案 设置读取（v77）----
 
 // GetHiveEnabled 影巢搜索启用（手动搜索 hdhive 引擎，默认 true）
 func GetHiveEnabled() bool {
@@ -596,7 +596,7 @@ func SaveHiveSubscriptionDefaults(mediaType, jsonStr string) error {
 	return SetCloudSetting("hdhive", key, strings.TrimSpace(jsonStr))
 }
 
-// ListHiveSubscriptionsFiltered 影巢订阅列表（mediavault 对齐：media_type 筛选 + status=completed 历史过滤）
+// ListHiveSubscriptionsFiltered 影巢订阅列表（成熟方案 对齐：media_type 筛选 + status=completed 历史过滤）
 // statusFilter 传 "completed" 只返回已完成；otherwise 传空返回非 completed（进行中+已暂停）
 func ListHiveSubscriptionsFiltered(mediaType, statusFilter string) ([]CloudSubscription, int64, error) {
 	var list []CloudSubscription

@@ -13,7 +13,7 @@ import (
 )
 
 // 频道资源帖加密分享链接支持。
-// tgto123 原版把 123FSLink/123FLCP 等资源暗号按
+// 参考实现 原版把 123FSLink/123FLCP 等资源暗号按
 // [ENCRYPTED_LINK_START]<urlsafe_base64(iv+ciphertext)>[ENCRYPTED_LINK_END]
 // 嵌在帖子里；本包按同款算法（AES-256-CBC + PKCS7，默认密钥 "123456" 补 ASCII '0' 至 32B）
 // 解密后照常提取网盘链接。密钥可用环境变量 TG_CHANNEL_LINK_ENC_KEY 覆盖。
@@ -27,7 +27,7 @@ var (
 )
 
 // encryptedLinkKey 返回 AES 密钥：env TG_CHANNEL_LINK_ENC_KEY，空则默认 "123456"
-// （与 tgto123 decrypt_tool 一致：长度不足右侧补 ASCII '0'，超过截断到 32 字节）。
+// （与 参考实现 decrypt_tool 一致：长度不足右侧补 ASCII '0'，超过截断到 32 字节）。
 func encryptedLinkKey() []byte {
 	linkEncKeyOnce.Do(func() {
 		key := os.Getenv("TG_CHANNEL_LINK_ENC_KEY")

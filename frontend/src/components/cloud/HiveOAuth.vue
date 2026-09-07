@@ -1,6 +1,6 @@
 <template>
   <div class="mv-page mv-page-wide">
-    <!-- 主渠道（symedia 中转，优先调度） -->
+    <!-- 主渠道（中转通道，优先调度） -->
     <section class="mv-sec">
       <div class="mv-sec-head">
         <h3 class="mv-sec-title">
@@ -93,7 +93,7 @@
       </div>
     </section>
 
-    <!-- 备用渠道（tgtodrive 中转） -->
+    <!-- 备用渠道（直连通道） -->
     <section class="mv-sec">
       <div class="mv-sec-head">
         <h3 class="mv-sec-title">
@@ -378,7 +378,7 @@ import { useHttpClient } from '@/http/client'
 
 const http = useHttpClient()
 
-// ---- 主渠道（symedia） ----
+// ---- 主渠道（中转通道） ----
 const main = reactive<any>({})
 const mainLoading = ref(false)
 const refreshing = ref(false)
@@ -501,7 +501,7 @@ const doCheckin = async (row?: any) => {
   }
 }
 
-// ---- 备用渠道（tgtodrive 主账号） ----
+// ---- 备用渠道（直连通道主账号） ----
 const backup = reactive<any>({})
 const backupLoading = ref(false)
 const backupAuthing = ref(false)

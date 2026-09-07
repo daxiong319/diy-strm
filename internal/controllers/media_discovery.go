@@ -15,12 +15,12 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 影视发现（复刻 tgto123 media_discovery）：影视探索 / 榜单推荐 / 追剧日历 /
+// 影视发现（复刻参考实现 media_discovery）：影视探索 / 榜单推荐 / 追剧日历 /
 // 番剧目录 / 收藏 / 基础配置。数据层在 internal/discovery 包。
 // ---------------------------------------------------------------------------
 
 func init() {
-	// 注入影巢 Feed 双通道 failover 执行器（symedia 主渠道 → tgtodrive 备用渠道）
+	// 注入影巢 Feed 双通道 failover 执行器（中转主渠道 → 直连通道 备用渠道）
 	discovery.FeedExecFn = func(ctx context.Context, call func(fc hdhive.FeedClient) (*hdhive.OAuthAPIResponse, error)) (*hdhive.OAuthAPIResponse, error) {
 		accs := models.ListHiveAccountsForQuery()
 		if len(accs) == 0 {

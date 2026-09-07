@@ -9,7 +9,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 影巢候选资源失败历史（借鉴 mediavault 的 attempt 轮转与确定性失败惩罚）：
+// 影巢候选资源失败历史（借鉴成熟方案 的 attempt 轮转与确定性失败惩罚）：
 //   - 失败的 slug 记录尝试次数与最后错误，下一轮降权（排后）
 //   - 命中确定性失败标记（分享失效/违规/删除等）→ 拉长惩罚期
 //   - 尝试次数达上限的 slug 跳过，避免反复撞同一批问题资源浪费配额
@@ -35,7 +35,7 @@ func (HiveSlugAttempt) TableName() string {
 	return "hive_slug_attempts"
 }
 
-// 确定性失败标记（借鉴 mediavault _PENALIZED_PERMANENT_FAIL_DEAD_SHARE_MARKERS）：
+// 确定性失败标记（借鉴成熟方案 _PENALIZED_PERMANENT_FAIL_DEAD_SHARE_MARKERS）：
 // 命中即认为该资源短期内不会恢复，拉长惩罚期
 var hivePermanentFailMarkers = []string{
 	"已取消", "已过期", "已失效", "已删除", "违规", "不存在",

@@ -8,7 +8,7 @@ import (
 	"diy-strm/internal/helpers"
 )
 
-// MonitorTransferRecord 监控历史转存记录（对齐 tgto123 的 messages 表）
+// MonitorTransferRecord 监控历史转存记录（对齐 参考实现的 messages 表）
 // 记录 TG 频道订阅 / 影巢订阅 / TG 机器人三类监控入口的每一次转存尝试（成功/失败/跳过），
 // 与 CloudTransferRecord 的分工：后者只记成功转存、用于订阅去重与完结判定；本表为全量审计展示。
 type MonitorTransferRecord struct {
@@ -34,7 +34,7 @@ type MonitorTransferRecord struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// 监控历史状态常量（对齐 tgto123：转存成功/转存失败；跳过与洗版为本项目扩展）
+// 监控历史状态常量（对齐参考实现：转存成功/转存失败；跳过与洗版为本项目扩展）
 const (
 	MonitorStatusSuccess = "转存成功"
 	MonitorStatusFailed  = "转存失败"

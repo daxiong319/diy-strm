@@ -474,7 +474,7 @@ func ListMoviePilotFailedFiles(c *gin.Context) {
 }
 
 // IdentifyMoviePilotFailedFile 识别失败文件：AI 优先、正则兜底，返回建议媒体信息 + TMDB 候选列表
-// （对齐 tgto123 识别测试：解析结果与候选并出，候选可一键选中避免同名歧义）
+// （对齐参考实现 识别测试：解析结果与候选并出，候选可一键选中避免同名歧义）
 // @Summary 识别失败文件（AI + 正则 + TMDB 候选）
 // @Tags MoviePilot
 // @Success 200 {object} APIResponse[any]

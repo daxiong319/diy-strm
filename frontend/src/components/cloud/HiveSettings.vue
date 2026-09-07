@@ -443,7 +443,7 @@
           <el-table-column label="操作" min-width="230">
             <template #default="{ row }">
               <template v-if="!row.account?.authorized">
-                <!-- tgtodrive 与上方「影巢搜索」授权卡为同一账号，不再重复授权入口 -->
+                <!-- 直连通道 与上方「影巢搜索」授权卡为同一账号，不再重复授权入口 -->
                 <span v-if="row.channel === 'tgtodrive'" class="chan-key">见上方「影巢搜索」卡片授权</span>
                 <el-button
                   v-else
@@ -727,7 +727,7 @@ const save = async () => {
 }
 
 // ---------------------------------------------------------------------------
-// OAuth 授权卡（mediavault vN：3s 轮询 × 6 次 = 18s 超时）
+// OAuth 授权卡（成熟方案 vN：3s 轮询 × 6 次 = 18s 超时）
 // ---------------------------------------------------------------------------
 const auth = ref<any>(null)
 const waiting = ref(false)

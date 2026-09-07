@@ -23,8 +23,8 @@ import (
 // ---------------------------------------------------------------------------
 
 // hiveAuthURLFor 按账号通道生成授权 URL：
-// symedia 通道走会话握手 OAuth（回调指向本站 /hive-symedia/callback）；
-// tgtodrive 通道直接生成 install_id 签名授权链接
+// 中转通道走会话握手 OAuth（回调指向本站 /hive-symedia/callback）；
+// 直连通道直接生成 install_id 签名授权链接
 func hiveAuthURLFor(ctx context.Context, acc *models.HiveOAuthAccount, origin string) (string, error) {
 	if sc, ok := models.HiveClientForAccount(acc).(*hdhive.SymediaClient); ok {
 		callback := ""
@@ -39,8 +39,8 @@ func hiveAuthURLFor(ctx context.Context, acc *models.HiveOAuthAccount, origin st
 	return "", nil
 }
 
-// hiveTokenStatusFor 按通道取 token 状态：symedia 通道以 proxy_user_key 是否绑定代替，
-// tgtodrive 通道调 token/status
+// hiveTokenStatusFor 按通道取 token 状态：中转通道以 proxy_user_key 是否绑定代替，
+// 直连通道调 token/status
 func hiveTokenStatusFor(ctx context.Context, acc *models.HiveOAuthAccount, client hdhive.ChannelClient) (*hdhive.OAuthAPIResponse, error) {
 	if sc, ok := client.(*hdhive.SymediaClient); ok {
 		hasTok := sc.ProxyUserKey != ""

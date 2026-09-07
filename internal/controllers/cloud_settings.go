@@ -52,7 +52,7 @@ func SetCloudSettingAPI(c *gin.Context) {
 }
 
 // ListCloudSubscriptionsAPI 订阅列表（?resource_source= / ?source_type= 可选）
-// 响应对齐 mediavault 订阅页：{items, total, completed, refreshing_counts}
+// 响应对齐成熟方案 订阅页：{items, total, completed, refreshing_counts}
 //   - items：按 media_type（movie/tv）与 status（active/completed）过滤后的订阅列表
 //   - total / completed：供页头「当前共有 n 个订阅 / 已完成 n 个」统计（不随 status 过滤）
 //   - refreshing_counts：正在后台执行的订阅搜索数（前端轮询直至归零）
@@ -366,7 +366,7 @@ func RunSubscriptionAPI(c *gin.Context) {
 }
 
 // GetHiveSettingsAPI 获取影巢设置（GET /cloud/hive/settings）
-// 与 tgto123 一致：自动签到（主/子账号的开关/时间/模式）、订阅引擎轮询间隔、解锁积分上限。
+// 与参考实现一致：自动签到（主/子账号的开关/时间/模式）、订阅引擎轮询间隔、解锁积分上限。
 func GetHiveSettingsAPI(c *gin.Context) {
 	throttle := models.GetHiveTransferThrottle()
 	checkinWinStart, checkinWinEnd := models.GetHiveCheckinWindow()
@@ -380,7 +380,7 @@ func GetHiveSettingsAPI(c *gin.Context) {
 		"sub_checkin_mode":      models.GetHiveSubCheckinMode(),
 		"sub_checkin_hour":      models.GetHiveSubCheckinHour(),
 		"max_points":            models.GetHiveMaxPoints(),
-		// 执行强度与过滤（借鉴 mediavault）
+		// 执行强度与过滤（借鉴 成熟方案）
 		"only_official":         models.GetHiveOnlyOfficial(),
 		"publisher_whitelist":   strings.Join(models.GetHivePublisherWhitelist(), ","),
 		"exec_preset":           throttle.Preset,
@@ -388,7 +388,7 @@ func GetHiveSettingsAPI(c *gin.Context) {
 		"transfer_min_interval": int(models.GetHiveTransferThrottle().MinInterval.Seconds()),
 		"transfer_jitter":       int(models.GetHiveTransferThrottle().Jitter.Seconds()),
 		"slug_max_attempts":     models.GetHiveSlugMaxAttempts(),
-		// 影巢搜索与订阅引擎（对齐 mediavault resource_search）
+		// 影巢搜索与订阅引擎（对齐成熟方案 resource_search）
 		"hive_enabled":                models.GetHiveEnabled(),
 		"timed_search_enabled":        models.GetHiveTimedSearchEnabled(),
 		"search_transfer":             models.GetHiveSearchTransfer(),
@@ -403,7 +403,7 @@ func GetHiveSettingsAPI(c *gin.Context) {
 		"sync_wait":                   models.GetHiveSyncWait(),
 		"subscription_defaults_movie": models.GetHiveSubscriptionDefaults("movie"),
 		"subscription_defaults_tv":    models.GetHiveSubscriptionDefaults("tv"),
-		// pansou 盘搜（对齐 mediavault pansou 设置；password 只回传是否已设置）
+		// pansou 盘搜（对齐成熟方案 pansou 设置；password 只回传是否已设置）
 		"pansou_enabled":      models.GetHivePansouEnabled(),
 		"pansou_base_url":     models.GetHivePansouBaseURL(),
 		"pansou_username":     models.GetHivePansouUsername(),
@@ -430,7 +430,7 @@ func SetHiveSettingsAPI(c *gin.Context) {
 		SubCheckinMode      string `json:"sub_checkin_mode"`
 		SubCheckinHour      *int   `json:"sub_checkin_hour"`
 		MaxPoints           *int   `json:"max_points"`
-		// 执行强度与过滤（借鉴 mediavault）
+		// 执行强度与过滤（借鉴 成熟方案）
 		OnlyOfficial        *bool  `json:"only_official"`
 		PublisherWhitelist  string `json:"publisher_whitelist"`
 		ExecPreset          string `json:"exec_preset"`
@@ -438,7 +438,7 @@ func SetHiveSettingsAPI(c *gin.Context) {
 		TransferMinInterval *int   `json:"transfer_min_interval"`
 		TransferJitter      *int   `json:"transfer_jitter"`
 		SlugMaxAttempts     *int   `json:"slug_max_attempts"`
-		// 影巢搜索与订阅引擎（对齐 mediavault resource_search）
+		// 影巢搜索与订阅引擎（对齐成熟方案 resource_search）
 		HiveEnabled        *bool  `json:"hive_enabled"`
 		TimedSearchEnabled *bool  `json:"timed_search_enabled"`
 		SearchTransfer     *bool  `json:"search_transfer"`
@@ -518,7 +518,7 @@ func SetHiveSettingsAPI(c *gin.Context) {
 			return
 		}
 	}
-	// 执行强度与过滤（借鉴 mediavault）
+	// 执行强度与过滤（借鉴 成熟方案）
 	if req.OnlyOfficial != nil {
 		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveOnlyOfficial, strconv.FormatBool(*req.OnlyOfficial)); err != nil {
 			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存官组过滤设置失败：" + err.Error(), Data: nil})
@@ -562,7 +562,7 @@ func SetHiveSettingsAPI(c *gin.Context) {
 			return
 		}
 	}
-	// 影巢搜索与订阅引擎（对齐 mediavault resource_search）
+	// 影巢搜索与订阅引擎（对齐成熟方案 resource_search）
 	if req.HiveEnabled != nil {
 		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveEnabled, strconv.FormatBool(*req.HiveEnabled)); err != nil {
 			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存影巢搜索开关失败：" + err.Error(), Data: nil})
@@ -687,7 +687,7 @@ func SetHiveSettingsAPI(c *gin.Context) {
 }
 
 // SetCloudSubscriptionPausedAPI 订阅暂停/恢复（POST /cloud/subscriptions/pause {id, paused}）
-// paused=true 置为 paused（跳过定时检索，配置保留）；false 恢复 subscribing（借鉴 mediavault 状态机）
+// paused=true 置为 paused（跳过定时检索，配置保留）；false 恢复 subscribing（借鉴成熟方案 状态机）
 func SetCloudSubscriptionPausedAPI(c *gin.Context) {
 	var req struct {
 		ID     int64 `json:"id"`

@@ -1,6 +1,6 @@
-// Package hdhive —— Symedia 中转通道客户端。
+// Package hdhive —— 中转通道通道客户端。
 //
-// hdhive.symedia.top 是 Symedia 提供的影巢（HDHive）OpenAPI 中转服务
+// hdhive.symedia.top 是影巢（HDHive）OpenAPI 的中转服务域名
 // （协议经镜像脱壳 + 黑盒验证完全还原）：
 //   - 共享密钥 HMAC proof 握手建立会话（POST /api/v1/auth/session）
 //   - HKDF-SHA256 派生会话密钥（注意 Extract 阶段 hmac key=salt、msg=secret）
@@ -8,8 +8,8 @@
 //     / X-Proxy-User-Key / X-Proxy-Signature（HMAC-SHA256(session_key, 签名串)）
 //   - 会话有效期 6 小时，提前 60 秒自动重握；403 签名无效时重置会话重试一次
 //
-// 与 tgtodrive 中转通道（*OAuthClient）互为备份，上层通过 ChannelClient 抽象统一调度，
-// symedia 作为主渠道（超时更短，快速失败快速切换）。
+// 与 直连通道通道（*OAuthClient）互为备份，上层通过 ChannelClient 抽象统一调度，
+// 中转通道作为主渠道（超时更短，快速失败快速切换）。
 package hdhive
 
 import (
@@ -31,11 +31,11 @@ import (
 	"time"
 )
 
-// Symedia 中转常量
+// 中转通道常量
 const (
 	DefaultSymediaBaseURL = "https://hdhive.symedia.top"
-	// SymediaTimeout 主渠道超时：比默认 30s 短，故障时快速切换备用渠道
-	SymediaTimeout = 12 * time.Second
+	// ProxyChannelTimeout 主渠道超时：比默认 30s 短，故障时快速切换备用渠道
+	ProxyChannelTimeout = 12 * time.Second
 	// symediaSessionLinger 会话提前重握余量
 	symediaSessionLinger = 60 * time.Second
 	// symediaSessionPath 握手端点
@@ -48,10 +48,10 @@ const (
 	symediaProofPrefix = "hdhive-openproxy-proof\n"
 )
 
-// 默认共享密钥（symedia 镜像 config 明文，可用环境变量覆盖）
+// 默认共享密钥（中转通道 镜像 config 明文，可用环境变量覆盖）
 var defaultSymediaSharedSecret = []byte("qXo2bETzfGpJlIBiEkRLGqnB3oY1Sb9NiHrALR5_ggdlnr8409MbApGVZbKrAr3X")
 
-// SymediaClient Symedia 中转通道客户端（有状态：持有一个账号的 userid + proxy_user_key）
+// SymediaClient 中转通道通道客户端（有状态：持有一个账号的 userid + proxy_user_key）
 type SymediaClient struct {
 	BaseURL      string
 	UserID       string // hdhive 用户 ID（OAuth 回调回传）
@@ -66,7 +66,7 @@ type SymediaClient struct {
 	sequence      int64 // 下一个请求的序列号（首个请求为 1）
 }
 
-// NewSymediaClient 创建 Symedia 通道客户端
+// NewSymediaClient 创建 中转通道客户端
 func NewSymediaClient(userID, proxyUserKey string) *SymediaClient {
 	secret := defaultSymediaSharedSecret
 	if env := os.Getenv("HDHIVE_SYMEDIA_SHARED_SECRET"); env != "" {
@@ -80,7 +80,7 @@ func NewSymediaClient(userID, proxyUserKey string) *SymediaClient {
 		BaseURL:      baseURL,
 		UserID:       userID,
 		ProxyUserKey: proxyUserKey,
-		HTTP:         &http.Client{Timeout: SymediaTimeout},
+		HTTP:         &http.Client{Timeout: ProxyChannelTimeout},
 		secret:       secret,
 	}
 }

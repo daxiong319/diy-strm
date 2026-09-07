@@ -23,7 +23,7 @@ import (
 // 整理历史任务系统（重整理异步任务，内存态 + TTL 清理）
 // ---------------------------------------------------------------------------
 
-// organizeHistoryTaskTTL 任务状态保留时长（与 tgto123 一致 6 小时）
+// organizeHistoryTaskTTL 任务状态保留时长（与参考实现一致 6 小时）
 const organizeHistoryTaskTTL = 6 * time.Hour
 
 // organizeHistoryTaskStatus 异步任务状态
@@ -305,7 +305,7 @@ func ReorganizeOrganizeHistory(c *gin.Context) {
 			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: fmt.Sprintf("记录 #%d 不存在", id), Data: nil})
 			return
 		}
-		// 批量模式仅支持 TV（与 tgto123 一致）
+		// 批量模式仅支持 TV（与参考实现一致）
 		if len(ids) > 1 && !strings.EqualFold(rec.MediaType, "TV") {
 			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: fmt.Sprintf("批量重整理仅支持剧集记录（#%d 为 %s）", rec.ID, rec.MediaType), Data: nil})
 			return

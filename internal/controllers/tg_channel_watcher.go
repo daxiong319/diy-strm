@@ -242,7 +242,7 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// 复刻 tgto123 网页通道：带游标边界向后翻页回看历史。
+	// 复刻参考实现 网页通道：带游标边界向后翻页回看历史。
 	// 普通增量以频道游标为界（通常第 1 页即命中边界停止，翻页只兜底两次运行间超 20 帖的缺口）；
 	// 回溯搜索忽略游标，按配置页数深翻历史帖全文匹配（不推进游标）。
 	stopID := strings.TrimSpace(ch.LastPostID)
@@ -295,6 +295,15 @@ func processChannelPostsForSub(sub *models.CloudSubscription, ch *models.CloudCh
 		lastID = ""
 	}
 	kws := sub.KeywordList()
+	// 影片级订阅未配置关键词时以 TMDB 标题/原名为隐式关键词：
+	// 空 kws 在 MatchKeywords 中等于全命中，聚合频道（regeng123 等）任意资源帖
+	// 都会被当成订阅影片处理，把无关剧集整包转进目标目录（无上神帝误转事故根因）
+	if sub.MediaType != "" && len(kws) == 0 && sub.TMDBTitle != "" {
+		kws = []string{sub.TMDBTitle}
+		if t := strings.TrimSpace(sub.OriginalTitle); t != "" && t != sub.TMDBTitle {
+			kws = append(kws, t)
+		}
+	}
 	targetDir := strings.TrimSpace(sub.TargetDir)
 	if targetDir == "" {
 		targetDir = "/"
@@ -311,6 +320,7 @@ func processChannelPostsForSub(sub *models.CloudSubscription, ch *models.CloudCh
 
 	// posts 新到旧；游标推进到最新帖
 	for _, p := range posts {
+		notifChannel := fmt.Sprintf("TG 频道订阅 #%d · 频道 %s · 帖 %s", sub.ID, channel, msgURLFor(p.PostID))
 		if lastID != "" && !postIDGreater(p.PostID, lastID) {
 			break // 已处理过，更旧的跳过
 		}
@@ -336,7 +346,7 @@ func processChannelPostsForSub(sub *models.CloudSubscription, ch *models.CloudCh
 			continue
 		}
 		if len(p.Links) == 0 {
-			// 关键词命中但整帖无网盘链接：若带 123 秒传暗号（123FSLink/123FLCP），tgto123 靠 123 秒传 API 转存，
+			// 关键词命中但整帖无网盘链接：若带 123 秒传暗号（123FSLink/123FLCP），参考实现靠 123 秒传 API 转存，
 			// 本项目暂不支持自动转存，回溯模式留痕提示（防重复由写入层守卫）
 			if sub.Backfill && tgchannel.HasFastShareMarker(p.Text) {
 				skipped++
@@ -401,12 +411,19 @@ func processChannelPostsForSub(sub *models.CloudSubscription, ch *models.CloudCh
 						}
 					}
 				}
+				// 影片级转存前分享标题复核（聚合帖防误转）：分享顶级条目名与订阅影片/关键词
+				// 不符时跳过——regeng123 等聚合频道一帖多剧，整包转存会把无关剧集带进目标目录
+				if len(kws) > 0 && !shareTitleMatchesKeywords(ctx, link.URL, link.Pwd, kws) {
+					skipped++
+					recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.FullURL(), targetDir, sub.ID, "跳过：分享标题与订阅影片不匹配（聚合帖防误转）")
+					continue
+				}
 				title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
 					failedIDs = append(failedIDs, p.PostID)
 					recordMonitorFailed("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.FullURL(), targetDir, sub.ID, err)
-					sendTransferFailedNotification(sub.SourceType, transferNotifTitle(sub, p.Text), targetDir, err.Error())
+					sendTransferFailedNotification(sub.SourceType, transferNotifTitle(sub, p.Text), targetDir, err.Error(), notifChannel)
 					continue
 				}
 				transferred++
@@ -436,7 +453,7 @@ func processChannelPostsForSub(sub *models.CloudSubscription, ch *models.CloudCh
 				if len(epKeys) > 0 {
 					extra += "；剧集：" + JoinEpisodeKeys(epKeys)
 				}
-				sendTransferSuccessNotification(sub.SourceType, recTitle, targetDir, total, extra)
+				sendTransferSuccessNotification(sub.SourceType, recTitle, targetDir, total, extra, notifChannel)
 				for _, o := range superseded {
 					o.Status = "superseded"
 					_ = models.SaveTransferRecord(o)
@@ -461,12 +478,18 @@ func processChannelPostsForSub(sub *models.CloudSubscription, ch *models.CloudCh
 					recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.FullURL(), targetDir, sub.ID, "去重跳过：该影片/剧集已收录")
 					continue
 				}
+				// 影片级转存前分享标题复核（聚合帖防误转，与洗版分支同语义）
+				if len(kws) > 0 && !shareTitleMatchesKeywords(ctx, link.URL, link.Pwd, kws) {
+					skipped++
+					recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.FullURL(), targetDir, sub.ID, "跳过：分享标题与订阅影片不匹配（聚合帖防误转）")
+					continue
+				}
 				title, total, err := saveShareByLink(ctx, link.URL, link.Pwd, sub.SourceType, targetDir)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
 					failedIDs = append(failedIDs, p.PostID)
 					recordMonitorFailed("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.FullURL(), targetDir, sub.ID, err)
-					sendTransferFailedNotification(sub.SourceType, transferNotifTitle(sub, p.Text), targetDir, err.Error())
+					sendTransferFailedNotification(sub.SourceType, transferNotifTitle(sub, p.Text), targetDir, err.Error(), notifChannel)
 					continue
 				}
 				transferred++
@@ -491,7 +514,7 @@ func processChannelPostsForSub(sub *models.CloudSubscription, ch *models.CloudCh
 				if len(epKeys) > 0 {
 					extra = "剧集：" + JoinEpisodeKeys(epKeys)
 				}
-				sendTransferSuccessNotification(sub.SourceType, recTitle, targetDir, total, extra)
+				sendTransferSuccessNotification(sub.SourceType, recTitle, targetDir, total, extra, notifChannel)
 				helpers.AppLogger.Infof("TG 频道订阅 #%d：命中帖 %s，已转存「%s」共 %d 项到 %s（目标 %s）", sub.ID, p.PostID, title, total, sub.SourceType, targetDir)
 			} else if models.HasLinkRecord(link.URL) {
 				skipped++
@@ -510,7 +533,7 @@ func processChannelPostsForSub(sub *models.CloudSubscription, ch *models.CloudCh
 					errs = append(errs, fmt.Sprintf("帖%s(%s)转存失败：%v", p.PostID, link.URL, err))
 					failedIDs = append(failedIDs, p.PostID)
 					recordMonitorFailed("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.FullURL(), targetDir, sub.ID, err)
-					sendTransferFailedNotification(sub.SourceType, transferNotifTitle(sub, p.Text), targetDir, err.Error())
+					sendTransferFailedNotification(sub.SourceType, transferNotifTitle(sub, p.Text), targetDir, err.Error(), notifChannel)
 					continue
 				}
 				transferred++
@@ -530,7 +553,7 @@ func processChannelPostsForSub(sub *models.CloudSubscription, ch *models.CloudCh
 					LinkURL:        link.URL,
 					TargetDir:      targetDir,
 				})
-				sendTransferSuccessNotification(sub.SourceType, recTitle, targetDir, total, "")
+				sendTransferSuccessNotification(sub.SourceType, recTitle, targetDir, total, "", notifChannel)
 				helpers.AppLogger.Infof("TG 频道订阅 #%d：命中帖 %s，已转存「%s」共 %d 项到 %s（目标 %s）", sub.ID, p.PostID, title, total, sub.SourceType, targetDir)
 			}
 		}

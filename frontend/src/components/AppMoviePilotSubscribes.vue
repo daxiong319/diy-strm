@@ -44,39 +44,61 @@
             <el-button size="small" type="primary" :loading="r._subscribing" @click="quickSubscribe(r)">订阅</el-button>
           </div>
         </div>
-        <el-table :data="subscribes" v-loading="subscribesLoading" empty-text="暂无订阅" style="width: 100%">
-          <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="year" label="年份" width="80" />
-          <el-table-column label="类型" width="80">
-            <template #default="scope">
-              <el-tag :type="scope.row.type === 'tv' ? 'success' : 'warning'">
-                {{ scope.row.type === 'tv' ? '剧集' : '电影' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="促销优先级" width="120">
-            <template #default="scope">
-              <span v-if="promotionTiersText(scope.row)" class="promotion-tiers">{{ promotionTiersText(scope.row) }}</span>
-              <span v-else class="muted-text">按全局阶梯</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="100">
-            <template #default="scope">
-              <el-tag :type="getStateTag(scope.row.state)">{{ getStateText(scope.row.state) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="240" fixed="right">
-            <template #default="scope">
-              <el-button size="small" type="primary" :loading="scope.row._searching" @click="searchSubscribe(scope.row)"
-                >搜索</el-button
-              >
-              <el-button size="small" type="warning" @click="toggleSubscribeState(scope.row)">
-                {{ scope.row.state === 'R' ? '暂停' : '恢复' }}
-              </el-button>
-              <el-button size="small" type="danger" @click="deleteSubscribe(scope.row)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+        <div v-loading="subscribesLoading" class="mp-sub-grid">
+          <div v-for="row in subscribes" :key="row.id" class="mp-sub-card">
+            <div class="mp-sub-poster-wrap">
+              <el-image v-if="row.poster" :src="row.poster" fit="cover" class="mp-sub-poster" lazy>
+                <template #error>
+                  <div class="mp-sub-fallback"><el-icon :size="24"><Film /></el-icon></div>
+                </template>
+              </el-image>
+              <div v-else class="mp-sub-fallback"><el-icon :size="24"><Film /></el-icon></div>
+              <span class="mp-sub-badge mp-sub-badge-type">
+                <el-icon :size="10"><template v-if="row.type === 'tv'"><VideoPlay /></template><template v-else><Film /></template></el-icon>
+                {{ row.type === 'tv' ? '剧集' : '电影' }}
+              </span>
+              <span v-if="promotionTiersText(row)" class="mp-sub-badge mp-sub-badge-promo" :title="`促销优先级：${promotionTiersText(row)}`">
+                {{ promotionTiersText(row) }}
+              </span>
+            </div>
+            <div class="mp-sub-info">
+              <div class="mp-sub-title-row">
+                <p class="mp-sub-title" :title="row.name">{{ row.name || `TMDB ${row.tmdbid}` }}</p>
+                <el-tag size="small" :type="getStateTag(row.state)" effect="dark" disable-transitions>
+                  {{ getStateText(row.state) }}
+                </el-tag>
+              </div>
+              <div class="mp-sub-meta">
+                <p class="mp-sub-line">
+                  <template v-if="row.type === 'tv'">
+                    {{ row.season ? `第 ${row.season} 季` : '全季' }}
+                    <template v-if="row.total_episode"> · 缺 {{ row.lack_episode ?? 0 }} / {{ row.total_episode }} 集</template>
+                  </template>
+                  <template v-else>{{ row.year || '' }}</template>
+                </p>
+                <p class="mp-sub-line muted" v-if="row.save_path" :title="row.save_path">{{ row.save_path }}</p>
+              </div>
+              <div class="mp-sub-actions">
+                <el-tooltip content="搜索资源" placement="top">
+                  <el-button circle size="small" class="mp-act mp-act-primary" :loading="row._searching" @click="searchSubscribe(row)">
+                    <el-icon><Search /></el-icon>
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip :content="row.state === 'R' ? '暂停订阅' : '恢复订阅'" placement="top">
+                  <el-button circle size="small" class="mp-act mp-act-warning" @click="toggleSubscribeState(row)">
+                    <el-icon><VideoPause v-if="row.state === 'R'" /><VideoPlay v-else /></el-icon>
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip content="删除订阅" placement="top">
+                  <el-button circle size="small" class="mp-act mp-act-danger" @click="deleteSubscribe(row)">
+                    <el-icon><Delete /></el-icon>
+                  </el-button>
+                </el-tooltip>
+              </div>
+            </div>
+          </div>
+          <div v-if="!subscribesLoading && subscribes.length === 0" class="mp-sub-empty">暂无订阅</div>
+        </div>
       </el-tab-pane>
 
       <el-tab-pane label="下载任务" name="downloads">
@@ -247,7 +269,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search } from '@element-plus/icons-vue'
+import { Delete, Film, Plus, Search, VideoPause, VideoPlay } from '@element-plus/icons-vue'
 import { SERVER_URL } from '@/const'
 import { useHttpClient } from '@/http/client'
 
@@ -725,3 +747,123 @@ onMounted(() => {
   white-space: nowrap;
 }
 </style>
+
+/* ---- MP 订阅卡片网格（对齐影巢订阅卡片） ---- */
+.mp-sub-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (min-width: 640px) {
+  .mp-sub-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (min-width: 768px) {
+  .mp-sub-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
+@media (min-width: 1024px) {
+  .mp-sub-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+}
+@media (min-width: 1280px) {
+  .mp-sub-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+}
+.mp-sub-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 32px 0;
+  color: var(--text-muted);
+}
+.mp-sub-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.mp-sub-card:hover {
+  border-color: var(--brand-strong);
+  box-shadow: var(--shadow-soft);
+}
+.mp-sub-poster-wrap {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  background: var(--surface-muted);
+}
+.mp-sub-poster,
+.mp-sub-fallback {
+  width: 100%;
+  height: 100%;
+}
+.mp-sub-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: linear-gradient(160deg, var(--surface-muted), var(--border-soft));
+}
+.mp-sub-badge {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  line-height: 1.3;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  white-space: nowrap;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mp-sub-badge-type { top: 8px; left: 8px; }
+.mp-sub-badge-promo {
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  max-width: none;
+  justify-content: center;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 22%, rgba(0, 0, 0, 0.6));
+}
+.mp-sub-info {
+  padding: 6px 8px;
+}
+.mp-sub-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mp-sub-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mp-sub-meta {
+  margin-top: 2px;
+}
+.mp-sub-line {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mp-sub-line.muted {
+  opacity: 0.8;
+}
+.mp-sub-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.mp-act.mp-act-primary { color: var(--brand); }
+.mp-act.mp-act-warning { color: var(--warning); }
+.mp-act.mp-act-danger { color: var(--danger); }

@@ -827,7 +827,7 @@ func Migrate() {
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 71 {
-		// 整理历史（来源/状态/时间/媒体信息，对齐 tgto123 的 organize_history_records）
+		// 整理历史（来源/状态/时间/媒体信息，对齐 参考实现的 organize_history_records）
 		if err := db.Db.AutoMigrate(OrganizeHistoryRecord{}); err != nil {
 			helpers.AppLogger.Errorf("迁移整理历史表失败：%v", err)
 			return
@@ -836,7 +836,7 @@ func Migrate() {
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 72 {
-		// 监控历史（TG 频道/影巢/机器人转存记录，对齐 tgto123 的 messages 表）
+		// 监控历史（TG 频道/影巢/机器人转存记录，对齐 参考实现的 messages 表）
 		if err := db.Db.AutoMigrate(MonitorTransferRecord{}); err != nil {
 			helpers.AppLogger.Errorf("迁移监控历史表失败：%v", err)
 			return
@@ -860,7 +860,7 @@ func Migrate() {
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 75 {
-		// 影巢四通道 + mediavault 引擎复刻：订阅状态/复查时间列、账号 NanShare SDK 账号列、订阅失败惩罚表
+		// 影巢四通道 + 成熟方案 引擎复刻：订阅状态/复查时间列、账号 NanShare SDK 账号列、订阅失败惩罚表
 		if err := db.Db.AutoMigrate(CloudSubscription{}, HiveOAuthAccount{}, HiveSlugAttempt{}); err != nil {
 			helpers.AppLogger.Errorf("迁移影巢四通道字段失败：%v", err)
 			return
@@ -882,7 +882,7 @@ func Migrate() {
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 76 {
-		// mediavault 订阅对齐：CloudSubscription 补媒体库字段（海报/评分/简介/正则/规格/渠道/存储等）+ 订阅日志表
+		// 成熟方案订阅对齐：CloudSubscription 补媒体库字段（海报/评分/简介/正则/规格/渠道/存储等）+ 订阅日志表
 		if err := db.Db.AutoMigrate(CloudSubscription{}, SubscriptionLog{}); err != nil {
 			helpers.AppLogger.Errorf("迁移订阅媒体库字段失败：%v", err)
 			return
@@ -895,11 +895,11 @@ func Migrate() {
 				helpers.AppLogger.Errorf("回填订阅搜索关键词失败：%v", err)
 			}
 		}
-		helpers.AppLogger.Info("mediavault 对齐：订阅媒体库字段与日志表已就绪")
+		helpers.AppLogger.Info("成熟方案 对齐：订阅媒体库字段与日志表已就绪")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 77 {
-		// Emby 302 独立反代播放端口（tgto123 形态）：emby_config 补 proxy_port 列（0=关闭）
+		// Emby 302 独立反代播放端口（独立端口形态）：emby_config 补 proxy_port 列（0=关闭）
 		if err := db.Db.AutoMigrate(&EmbyConfig{}); err != nil {
 			helpers.AppLogger.Errorf("迁移 Emby 302 反代端口字段失败：%v", err)
 			return

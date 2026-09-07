@@ -153,7 +153,7 @@ func GetPan139UrlByFileId(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: err.Error(), Data: nil})
 		return
 	}
-	// 定位账号（参考 LitePan：STRM URL 携带 account 直接定位，不依赖文件记录表）：
+	// 定位账号（参考 参考 UI 实现：STRM URL 携带 account 直接定位，不依赖文件记录表）：
 	// 优先 account（账号 ID）-> 其次 userid -> 最后按文件记录反查账号
 	var account *models.Account
 	if accID := strings.TrimSpace(c.Query("account")); accID != "" {

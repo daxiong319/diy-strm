@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// 待洗版条目状态（借鉴 mediavault media_upgrade_records.upgrade_status）
+// 待洗版条目状态（借鉴成熟方案 media_upgrade_records.upgrade_status）
 const (
 	WashStatusPending   = "pending"   // 待洗版（扫描发现不达标）
 	WashStatusAbandoned = "abandoned" // 已放弃（用户手动放弃，重新扫描保留）

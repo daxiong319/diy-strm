@@ -21,7 +21,7 @@ import (
 // hiveWatchMinInterval 影巢订阅引擎最小轮询间隔（分钟）
 const hiveWatchMinInterval = 5 * time.Minute
 
-// 已完结 TV 订阅的 TMDB 复查参数（借鉴 mediavault _maybe_reactivate_completed_tv）
+// 已完结 TV 订阅的 TMDB 复查参数（借鉴成熟方案 _maybe_reactivate_completed_tv）
 // 完结宽限期改为从影巢设置读取（tv_completion_grace_days，默认 7 天）
 const hiveTVRecheckMinInterval = 24 * time.Hour // 复查最小间隔
 
@@ -78,7 +78,7 @@ func runAllHiveSubscriptions() {
 			continue
 		}
 		if sub.Status == "paused" {
-			continue // 已暂停：跳过定时检索（借鉴 mediavault paused 态）
+			continue // 已暂停：跳过定时检索（借鉴成熟方案 paused 态）
 		}
 		active++
 		ran++
@@ -97,7 +97,7 @@ func runAllHiveSubscriptions() {
 
 // reactivateFinishedTVSubscriptions 已完结 TV 订阅的 TMDB 复查与自动复活：
 // 完结超过宽限期（tv_completion_grace_days，默认 7 天）且距上次复查超过 24h 时刷新 TMDB 总集数快照，
-// 总集数增长（有新季/新集）则自动复活订阅（借鉴 mediavault「TMDB total grew → 重新激活」）
+// 总集数增长（有新季/新集）则自动复活订阅（借鉴 成熟方案「TMDB total grew → 重新激活」）
 func reactivateFinishedTVSubscriptions() {
 	graceDays := models.GetHiveTVCompletionGraceDays()
 	if graceDays <= 0 {
@@ -136,7 +136,7 @@ func reactivateFinishedTVSubscriptions() {
 
 // RunHiveSubscriptionOnce 对单条影巢订阅执行一轮：查资源 → 规格筛选 → 解锁 → 转存
 // 返回结果摘要与是否成功。
-// 资源查询与详情/解锁调用均走四通道负载均衡（symedia/tgtodrive/nanshare/官方直连），
+// 资源查询与详情/解锁调用均走四通道负载均衡（symedia/直连通道/nanshare/官方直连），
 // 通道级故障（限流/授权失效/5xx）自动逐个降级尝试。
 func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 	mainAcc, err := models.GetHiveMainAccount()
@@ -180,13 +180,13 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			return fmt.Sprintf("订阅 #%d（影巢 %s %d）解析资源列表失败：%v", sub.ID, sub.MediaType, sub.TMDBID, err), false
 		}
 	}
-	// 过滤无效资源（失效链接）+ 订阅自定义规则（清晰度/特效字幕/包含/排除，对齐 mediavault）
+	// 过滤无效资源（失效链接）+ 订阅自定义规则（清晰度/特效字幕/包含/排除，对齐 成熟方案）
 	filteredInvalid := 0
 	filteredOfficial := 0
 	filteredPublisher := 0
 	filteredAttempt := 0
 	filteredSpec := 0
-	// 借鉴 mediavault：官组过滤 + 发布者白名单 + 失败历史降权（attempt 轮转）
+	// 借鉴 成熟方案：官组过滤 + 发布者白名单 + 失败历史降权（attempt 轮转）
 	officialOnly := models.GetHiveOnlyOfficial()
 	whitePublishers := models.GetHivePublisherWhitelist()
 	maxAttempts := models.GetHiveSlugMaxAttempts()
@@ -259,14 +259,15 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 	unsupported := 0
 	transferred := 0
 	var errs []string
-	// 执行强度（借鉴 mediavault 三档预设 + 转存间隔抖动）
+	// 执行强度（借鉴成熟方案 三档预设 + 转存间隔抖动）
 	throttle := models.GetHiveTransferThrottle()
 
 	for i := range candidates {
 		res := &candidates[i]
 		spec := hiveResourceSpec(res)
 		hiveMsgID := res.Slug
-		// 单轮转存上限（借鉴 mediavault subscription_transfer_max_per_run）
+		notifChannel := fmt.Sprintf("影巢订阅 #%d · 资源 %s", sub.ID, res.Slug)
+		// 单轮转存上限（借鉴成熟方案 subscription_transfer_max_per_run）
 		if transferred >= throttle.MaxTransfersPerRun {
 			helpers.AppLogger.Infof("影巢订阅 #%d：本轮转存已达上限 %d，剩余候选下轮处理", sub.ID, throttle.MaxTransfersPerRun)
 			break
@@ -356,7 +357,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "网盘类型与订阅目标不一致，跳过", meta)
 			continue
 		}
-		// 解锁积分上限（0=不限，对应 tgto123 的 HDHIVE_MAX_POINTS）
+		// 解锁积分上限（0=不限，对应 参考实现的 HDHIVE_MAX_POINTS）
 		if maxPts := models.GetHiveMaxPoints(); maxPts > 0 && res.UnlockPoints > maxPts {
 			skipped++ // 解锁积分超过上限
 			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Sprintf("解锁积分 %d 超过上限 %d，跳过", res.UnlockPoints, maxPts), meta)
@@ -445,7 +446,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			}
 			transferDir = d
 		}
-		// 转存节流（借鉴 mediavault：转存最小间隔 + 随机抖动，避免固定频率触发风控）
+		// 转存节流（借鉴 成熟方案：转存最小间隔 + 随机抖动，避免固定频率触发风控）
 		if terr := awaitHiveTransferSlot(ctx, throttle); terr != nil {
 			helpers.AppLogger.Warnf("影巢订阅 #%d：转存节流中断：%v", sub.ID, terr)
 			break
@@ -463,7 +464,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 				SubscriptionID: sub.ID, Title: failTitle, Action: "transfer",
 				Status: "failed", Message: "转存失败：" + terr.Error(), ShareLink: linkURL,
 			})
-			sendTransferFailedNotification(sub.SourceType, failTitle, transferDir, terr.Error())
+			sendTransferFailedNotification(sub.SourceType, failTitle, transferDir, terr.Error(), notifChannel)
 			continue
 		}
 		transferred++
@@ -503,7 +504,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		if hasEpKeys {
 			extra = "剧集：" + JoinEpisodeKeys(epKeys)
 		}
-		sendTransferSuccessNotification(sub.SourceType, recTitle, transferDir, total, extra)
+		sendTransferSuccessNotification(sub.SourceType, recTitle, transferDir, total, extra, notifChannel)
 		if old != nil {
 			old.Status = "superseded"
 			_ = models.SaveTransferRecord(old)
@@ -559,7 +560,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 }
 
 // ---------------------------------------------------------------------------
-// 转存节流（借鉴 mediavault subscription_transfer_min_interval + jitter）：
+// 转存节流（借鉴成熟方案 subscription_transfer_min_interval + jitter）：
 // 跨订阅/跨轮共享的转存时间闸，两次转存之间至少间隔 MinInterval + rand(0, Jitter)
 // ---------------------------------------------------------------------------
 
@@ -656,7 +657,7 @@ func hiveMonitorMeta(sub *models.CloudSubscription, epKeys []string) MonitorMedi
 	}
 }
 
-// hiveResourceMatchesFilters 订阅自定义筛选（对齐 mediavault 订阅规则字段）：
+// hiveResourceMatchesFilters 订阅自定义筛选（对齐成熟方案 订阅规则字段）：
 // 清晰度（video_resolution 精确匹配，忽略大小写）/ 特效字幕（标题+字幕类型+语言+备注包含）/
 // 包含正则 / 排除正则（对资源标题生效）。字段为空表示不限制。
 func hiveResourceMatchesFilters(res *hdhive.Resource, sub *models.CloudSubscription) bool {

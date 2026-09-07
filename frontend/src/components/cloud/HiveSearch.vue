@@ -338,7 +338,7 @@ const HIST_KEY = 'hdhive_search_history'
 const MAX_HISTORY = 20
 
 // ---------------------------------------------------------------------------
-// 基础状态（对齐 mediavault CF：a/s/u/f/m/g/v/b/w/E/O/A/M/P/I/R/B/H/ee/te/le）
+// 基础状态（对齐成熟方案 CF：a/s/u/f/m/g/v/b/w/E/O/A/M/P/I/R/B/H/ee/te/le）
 // ---------------------------------------------------------------------------
 const kw = ref(typeof route.query.keyword === 'string' ? route.query.keyword : '')
 const history = ref<string[]>(safeHistory())
@@ -476,7 +476,7 @@ const pickCandidate = (e: any) => {
   })
 }
 
-// 构造搜索关键词（对齐 mediavault aF：tv 多季 → 「第 N 季」中文数字）
+// 构造搜索关键词（对齐成熟方案 aF：tv 多季 → 「第 N 季」中文数字）
 const cnNums = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二', '十三', '十四', '十五', '十六', '十七', '十八', '十九', '二十', '二十一', '二十二', '二十三', '二十四', '二十五', '二十六', '二十七', '二十八', '二十九', '三十']
 const buildKeywords = (e: any) => {
   const title = e.title || ''
@@ -488,7 +488,7 @@ const buildKeywords = (e: any) => {
 }
 
 // ---------------------------------------------------------------------------
-// SSE 流式搜索（对齐 mediavault be：init/progress/result/done 帧）
+// SSE 流式搜索（对齐成熟方案 be：init/progress/result/done 帧）
 // ---------------------------------------------------------------------------
 const runSearch = async (keyword: string, extra: Record<string, any>) => {
   searching.value = true

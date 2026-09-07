@@ -1,4 +1,4 @@
-// Package hdhive —— 官方直连通道客户端（hdhive.com OpenAPI，mediavault 同款接入）。
+// Package hdhive —— 官方直连通道客户端（hdhive.com OpenAPI，成熟方案 同款接入）。
 //
 // 认证模型（官方文档 _hdhive_docs/docs/open/authentication.md）：
 //   - 应用认证：X-API-Key: <app secret>（所有 /api/open/* 业务接口必带）
@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-// 官方直连常量（应用凭证来自 mediavault 镜像 .so 字符串，可用环境变量覆盖）
+// 官方直连常量（应用凭证来自 成熟方案 镜像 .so 字符串，可用环境变量覆盖）
 const (
 	DefaultOfficialBaseURL = "https://hdhive.com"
 	officialRequestTimeout = 20 * time.Second

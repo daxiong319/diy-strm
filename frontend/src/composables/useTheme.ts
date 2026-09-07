@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 /**
  * 主题与皮肤切换。
  * - 主题：data-theme="light" | "dark"，跟随系统偏好
- * - 皮肤：data-skin="brutal"（野兽派）| "mv"（mediavault 深青色调色板）| 空（默认）
+ * - 皮肤：data-skin="brutal"（野兽派）| "mv"（成熟方案 深青色调色板）| 空（默认）
  *   皮肤循环：默认 → brutal → mv → 默认
  * 选择持久化到 localStorage。
  */
@@ -19,7 +19,7 @@ const storedTheme = localStorage.getItem(STORAGE_KEY_THEME) as ThemeMode | null
 const storedSkin = localStorage.getItem(STORAGE_KEY_SKIN) as SkinMode | null
 
 const theme = ref<ThemeMode>(storedTheme ?? (systemDark ? 'dark' : 'light'))
-// 未记录过皮肤偏好时默认 mediavault 风格（前端按 mediavault 复刻）
+// 未记录过皮肤偏好时默认 成熟方案 风格（前端按 成熟方案 复刻）
 const skin = ref<SkinMode>(storedSkin ?? 'mv')
 
 const applyTheme = () => {

@@ -31,7 +31,7 @@ func HiveChannelsAPI(c *gin.Context) {
 		case models.HiveChannelOfficial:
 			acc = models.FindOrCreateHiveOfficialAccount("官方直连渠道")
 		default:
-			// tgtodrive：主账号即该通道账号（历史默认通道）
+			// 直连通道：主账号即该通道账号（历史默认通道）
 			if a, err := models.GetHiveMainAccount(); err == nil {
 				acc = a
 			}

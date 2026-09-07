@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// 整理历史状态（与 tgto123 organize_history_records 对齐）
+// 整理历史状态（与 参考实现 organize_history_records 对齐）
 const (
 	OrganizeStatusSuccess = "success" // 整理成功
 	OrganizeStatusFailed  = "failed"  // 整理失败
@@ -39,7 +39,7 @@ func SourceDisplayName(st SourceType) string {
 }
 
 // OrganizeHistoryRecord 整理历史记录（每次整理动作一条）。
-// 结构与 tgto123 的 organize_history_records 对齐：来源/状态/时间/路径/媒体信息/消息。
+// 结构与 参考实现的 organize_history_records 对齐：来源/状态/时间/路径/媒体信息/消息。
 type OrganizeHistoryRecord struct {
 	ID                 uint      `gorm:"primaryKey;index:idx_oh_source_id,priority:2" json:"id"`
 	Source             string    `gorm:"size:32;not null;index:idx_oh_source_id,priority:1;index:idx_oh_source_status_file,priority:1" json:"source"` // 来源（123云盘/光鸭云盘/115网盘/...）

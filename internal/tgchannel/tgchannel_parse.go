@@ -126,7 +126,7 @@ func ParseChannelPage(ctx context.Context, channel string) ([]ChannelPost, error
 }
 
 // ParseChannelPageRange 抓取 t.me/s/{channel} 公开预览页并按 ?before= 向后翻页回看历史。
-// 复刻 tgto123 网页通道语义：
+// 复刻参考实现 网页通道语义：
 //   - stopID==""：只抓最新一页即返回（首启/预览走此路径，避免一上来就深翻历史）。
 //   - stopID!=""：逐页新→旧扫描，遇到 PostID <= stopID（游标边界）即截断停止；
 //     整页都新于 stopID 时用本页最旧 PostID 拼 ?before= 抓下一页，直到命中边界 /
@@ -451,7 +451,7 @@ func parseMessageDiv(n *html.Node) (ChannelPost, bool) {
 		linkText = strings.Join(hrefs, "\n") + "\n" + text
 	}
 	// 资源帖常把 123FSLink 暗号加密成 [ENCRYPTED_LINK_START]..[END] 嵌在按钮/正文，
-	// 先按 tgto123 同款 AES 解密替换回明文，再提取网盘链接。
+	// 先按 同款 AES 解密替换回明文，再提取网盘链接。
 	linkText = DecryptEncryptedLinks(linkText)
 	post.Links = ExtractShareLinks(linkText)
 	return post, true

@@ -19,11 +19,11 @@ import (
 	"diy-strm/internal/tgchannel"
 )
 
-// hiveRefreshingCount 正在后台执行的订阅搜索数（列表接口 refreshing_counts 字段，mediavault 对齐）
+// hiveRefreshingCount 正在后台执行的订阅搜索数（列表接口 refreshing_counts 字段，成熟方案 对齐）
 var hiveRefreshingCount atomic.Int64
 
 // ---------------------------------------------------------------------------
-// 订阅 API 扩展（mediavault /subscription 对齐）
+// 订阅 API 扩展（成熟方案 /subscription 对齐）
 // ---------------------------------------------------------------------------
 
 // submitSubscriptionRun 提交一条订阅的后台执行（防重入 + 刷新计数）。返回是否提交成功。
@@ -200,7 +200,7 @@ func SubscriptionLogsAPI(c *gin.Context) {
 }
 
 // SubscriptionDetailAPI 订阅详情（GET /cloud/subscriptions/detail/:id?media_type=movie|tv）
-// TMDB 详情 + 主创（credits），布局对齐 mediavault 详情弹窗
+// TMDB 详情 + 主创（credits），布局对齐成熟方案 详情弹窗
 func SubscriptionDetailAPI(c *gin.Context) {
 	id := strToUint(c.Param("id"))
 	if id == 0 {
@@ -299,10 +299,10 @@ func SubscriptionDetailAPI(c *gin.Context) {
 }
 
 // ---------------------------------------------------------------------------
-// 手动资源搜索（SSE 流式，mediavault /resource-search/search/stream 对齐）
+// 手动资源搜索（SSE 流式，参考搜索实现 /resource-search/search/stream 对齐）
 // ---------------------------------------------------------------------------
 
-// 中文数字（mediavault iF：关键词多写法构造用）
+// 中文数字（成熟方案 iF：关键词多写法构造用）
 var hiveCNNumerals = []string{"一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十", "二十一", "二十二", "二十三", "二十四", "二十五", "二十六", "二十七", "二十八", "二十九", "三十"}
 
 func hiveCNNum(n int) string {
@@ -312,7 +312,7 @@ func hiveCNNum(n int) string {
 	return strconv.Itoa(n)
 }
 
-// buildHiveSearchKeywords 构造多写法搜索关键词（对齐 mediavault aF）
+// buildHiveSearchKeywords 构造多写法搜索关键词（对齐成熟方案 aF）
 // movie / tv 第 1 季 → 原词；tv + 指定季 → 「标题 第N季 / 标题 S0N / 标题」
 func buildHiveSearchKeywords(title, mediaType string, season int) []string {
 	title = strings.TrimSpace(title)
@@ -520,7 +520,7 @@ func parsePansouMergedLinks(raw json.RawMessage) []pansouMergedLink {
 
 // hiveManualSearchPansou 盘搜引擎：自部署 pansou 服务（https://github.com/fish2018/pansou）
 // 已配置账号时先 POST /api/auth/login 取 JWT（Authorization: Bearer），再 POST /api/search 聚合搜索（res=merge）。
-// 条目对齐 mediavault 盘搜结果：{title, search_source, date, share_link, share_code, magnets[], ed2k[]}
+// 条目对齐成熟方案 盘搜结果：{title, search_source, date, share_link, share_code, magnets[], ed2k[]}
 func hiveManualSearchPansou(ctx context.Context, c *gin.Context, keywords []string) {
 	writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "pansou", Status: "searching"})
 	base := strings.TrimRight(models.GetHivePansouBaseURL(), "/")
@@ -704,7 +704,7 @@ func hiveManualSearchTelegram(ctx context.Context, c *gin.Context, keywords []st
 }
 
 // ---------------------------------------------------------------------------
-// 影巢解锁与手动转存（mediavault hdhive/unlock + 转存操作对齐）
+// 影巢解锁与手动转存（成熟方案 hdhive/unlock + 转存操作对齐）
 // ---------------------------------------------------------------------------
 
 // HiveUnlockAPI 解锁影巢资源（POST /cloud/hive/unlock {slug}）
