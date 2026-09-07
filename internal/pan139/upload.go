@@ -99,6 +99,11 @@ func (c *Client) UploadFile(ctx context.Context, parentFileID, name string, size
 		uploadPartInfos = append(uploadPartInfos, urlResp.Data.PartInfos...)
 	}
 
+	// 补齐后的分片地址数必须与本地分片数一致，否则 complete 会静默截断文件（缺片无告警）
+	if len(uploadPartInfos) != len(partInfos) {
+		return "", "", false, fmt.Errorf("中国移动云盘分片上传地址不完整：本地 %d 片，服务端仅返回 %d 片", len(partInfos), len(uploadPartInfos))
+	}
+
 	// 逐片上传（139 返回的分片 URL 可能乱序，必须按 partNumber 升序 PUT，
 	// 否则服务端哈希链断裂报 InvalidPartOrder）
 	sort.Slice(uploadPartInfos, func(i, j int) bool {

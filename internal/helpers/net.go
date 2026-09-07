@@ -154,22 +154,20 @@ func DownloadFile(targetUrl string, filePath string, userAgent string) (err erro
 	req.Header.Set("User-Agent", userAgent)
 
 	// 创建传输对象并配置代理
-	transport := &http.Transport{}
-
-	// // 设置代理
-	// proxyURL := "http://127.0.0.1:10808"
-	// proxy, perr := url.Parse(proxyURL)
-	// if perr != nil {
-	// 	AppLogger.Warnf("[下载] 解析代理 URL 失败：%v", perr)
-	// } else {
-	// 	transport.Proxy = http.ProxyURL(proxy)
-	// 	AppLogger.Infof("[下载] 使用代理：%s", proxyURL)
-	// }
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+	}
 
 	// 发送请求 - 配置客户端支持重定向
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   300 * time.Second,
+		// 不设整体 Timeout：大文件下载（GB 级媒体）会超时中断；用连接+响应头超时兜底挂死
+		Timeout: 0,
 		// 自定义重定向策略，确保正确传递请求头
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -233,17 +231,29 @@ func DownloadFile(targetUrl string, filePath string, userAgent string) (err erro
 	}
 	defer resp.Body.Close()
 
-	// 读取响应内容
-	content, err := io.ReadAll(resp.Body)
+	// 流式写临时文件再 rename：原 io.ReadAll 全量入内存，GB 级媒体文件会 OOM
+	tmpPath := filePath + ".downloading"
+	_ = os.Remove(tmpPath)
+	out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 	if err != nil {
-		AppLogger.Errorf("[下载] 读取 %s 的 HTTP 响应失败：%v", targetUrl, err)
-		return fmt.Errorf("读取 %s 的 HTTP 响应失败：%v", targetUrl, err)
+		AppLogger.Errorf("[下载] 创建临时文件 %s 失败：%v", tmpPath, err)
+		return fmt.Errorf("创建临时文件 %s 失败：%v", tmpPath, err)
 	}
-	// folder := filepath.Dir(filePath)
-	// os.MkdirAll(folder, 0777)
-	err = WriteFileWithPerm(filePath, content, 0777)
-	if err != nil {
-		AppLogger.Errorf("[下载] 写入 %s 失败：%v", filePath, err)
+	if _, err = io.Copy(out, resp.Body); err != nil {
+		out.Close()
+		_ = os.Remove(tmpPath)
+		AppLogger.Errorf("[下载] 流式写入 %s 失败：%v", tmpPath, err)
+		return fmt.Errorf("下载 %s 失败：%v", targetUrl, err)
+	}
+	if err = out.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		AppLogger.Errorf("[下载] 关闭 %s 失败：%v", tmpPath, err)
+		return fmt.Errorf("下载 %s 失败：%v", targetUrl, err)
+	}
+	_ = resp.Body.Close()
+	if err = os.Rename(tmpPath, filePath); err != nil {
+		_ = os.Remove(tmpPath)
+		AppLogger.Errorf("[下载] 改名 %s -> %s 失败：%v", tmpPath, filePath, err)
 		return fmt.Errorf("写入 %s 失败：%v", filePath, err)
 	}
 	// 检查目标文件是否存在

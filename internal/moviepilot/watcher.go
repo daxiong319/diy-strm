@@ -484,6 +484,8 @@ func checkDownloadHistory() error {
 
 	processed := 0
 	maxID := base
+	var minCreatedID int64
+	stoppedEarly := false
 	for _, h := range histories {
 		// MP 历史接口按 id 降序返回（最新在前），遇到已处理过的记录即可停止
 		if h.ID <= base {
@@ -539,19 +541,35 @@ func checkDownloadHistory() error {
 				continue
 			}
 			helpers.AppLogger.Errorf("MoviePilot 为历史下载 %s（%s）创建上传任务失败：%v", h.Title, h.DownloadHash, err)
-		} else {
-			processed++
+			// 真实错误（瞬时 DB/网络故障等）同样不推进游标，1 小时节流重试，
+			// 否则一次故障即把该历史永久甩在游标之外
+			historyMu.Lock()
+			historyAttempts[h.DownloadHash] = time.Now()
+			historyMu.Unlock()
+			continue
+		}
+		processed++
+		if minCreatedID == 0 || h.ID < minCreatedID {
+			minCreatedID = h.ID
 		}
 		if h.ID > maxID {
 			maxID = h.ID
 		}
 		if processed >= 20 {
+			stoppedEarly = true
 			break
 		}
 	}
+	// 提前停止（本轮新建满 20 个任务）时游标只推进到本轮最早的新建记录：
+	// 若推进到最新 ID，未扫到的更老记录（ID 介于旧游标与最新之间）下一轮会被 base 拦截永久漏处理；
+	// 已建任务的记录下轮靠 hash 查重幂等跳过，代价可忽略
+	cursorTarget := maxID
+	if stoppedEarly && minCreatedID > 0 && minCreatedID < maxID {
+		cursorTarget = minCreatedID
+	}
 	historyMu.Lock()
-	if maxID > lastHistoryID {
-		lastHistoryID = maxID
+	if cursorTarget > lastHistoryID {
+		lastHistoryID = cursorTarget
 	}
 	historyMu.Unlock()
 	if processed > 0 {
@@ -678,6 +696,15 @@ func pathExists(p string) bool {
 
 // runUploadTask 执行上传任务：创建文件级上传任务走系统统一上传队列
 func runUploadTask(task *models.MoviePilotUploadTask) {
+	// 任务可能在内存队列中排队期间被用户取消：重读 DB 状态，已取消/失败的任务不再执行
+	// （否则 Uploading 会覆盖 canceled，"取消"对已入队任务无效）
+	if fresh := models.GetMoviePilotUploadTask(task.ID); fresh != nil {
+		if fresh.Status != models.MoviePilotUploadPending && fresh.Status != models.MoviePilotUploadUploading {
+			helpers.AppLogger.Infof("MoviePilot 上传任务 #%d 状态已是 %s，跳过执行", task.ID, fresh.Status)
+			return
+		}
+		task = fresh
+	}
 	cfg := models.LoadMoviePilotConfig()
 	var account models.Account
 	if err := db.Db.First(&account, cfg.UploadAccountId).Error; err != nil {
@@ -843,6 +870,13 @@ func waitMoviePilotBatchFinalize(task *models.MoviePilotUploadTask, account *mod
 	task.UploadedBytes = uploadedBytes
 	task.TotalFiles = int(totalFiles)
 	task.UploadedFiles = int(uploadedFiles)
+
+	// 收敛循环可能因超时/补传扫描失败退出，此时批次仍有未终态（pending/uploading）任务：
+	// 只统计 failed/cancelled 会把「还在传/卡住」误判为成功（假成功），必须先校验
+	if !moviePilotDbTasksFinished(task.ID) {
+		failUploadTask(task, fmt.Errorf("批次收敛超时，仍有 %d 个文件任务未完成（共 %d 个）", int64(totalFiles)-uploadedFiles, totalFiles))
+		return
+	}
 
 	if failedCount > 0 {
 		if int64(totalFiles) > 0 && failedCount >= int64(totalFiles) {

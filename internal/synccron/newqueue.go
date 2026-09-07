@@ -327,28 +327,35 @@ func (q *NewSyncQueuePerType) executeStrmSync(task *NewSyncTask) {
 	startPayload := map[string]any{
 		"task_id": task.ID,
 	}
-	if q.strmSync != nil && q.strmSync.Sync != nil {
-		startPayload["sync_id"] = q.strmSync.Sync.ID
-		startPayload["sync_path_id"] = q.strmSync.Sync.SyncPathId
-		startPayload["log_path"] = models.SyncLogRelativePath(q.strmSync.Sync.ID)
+	q.mutex.RLock()
+	strm := q.strmSync
+	if strm != nil && strm.Sync != nil {
+		startPayload["sync_id"] = strm.Sync.ID
+		startPayload["sync_path_id"] = strm.Sync.SyncPathId
+		startPayload["log_path"] = models.SyncLogRelativePath(strm.Sync.ID)
 	}
-	realtime.BroadcastEvent(realtime.EventStrmSyncTaskStart, startPayload)
+	q.mutex.RUnlock()
 
 	defer func() {
+		q.mutex.Lock()
 		q.strmSync = nil
+		q.mutex.Unlock()
 	}()
-	if startErr := q.strmSync.Start(); startErr == nil {
-		logInfo("STRM 同步任务执行成功：ID=%d，视频 %d 个，新增 STRM %d，新增元数据 %d，新增上传 %d", task.ID, q.strmSync.TotalFile, q.strmSync.NewStrm, q.strmSync.NewMeta, q.strmSync.NewUpload)
+	if startErr := strm.Start(); startErr == nil {
+		logInfo("STRM 同步任务执行成功：ID=%d，视频 %d 个，新增 STRM %d，新增元数据 %d，新增上传 %d", task.ID, strm.TotalFile, strm.NewStrm, strm.NewMeta, strm.NewUpload)
 		// 触发 STRM 同步任务完成事件
 		completePayload := map[string]any{
 			"task_id": task.ID,
 			"success": true,
 		}
-		if q.strmSync != nil && q.strmSync.Sync != nil {
-			completePayload["sync_id"] = q.strmSync.Sync.ID
-			completePayload["sync_path_id"] = q.strmSync.Sync.SyncPathId
-			completePayload["log_path"] = models.SyncLogRelativePath(q.strmSync.Sync.ID)
+		q.mutex.RLock()
+		strmC := q.strmSync
+		if strmC != nil && strmC.Sync != nil {
+			completePayload["sync_id"] = strmC.Sync.ID
+			completePayload["sync_path_id"] = strmC.Sync.SyncPathId
+			completePayload["log_path"] = models.SyncLogRelativePath(strmC.Sync.ID)
 		}
+		q.mutex.RUnlock()
 		realtime.BroadcastEvent(realtime.EventStrmSyncTaskComplete, completePayload)
 	} else {
 		logError("STRM 同步任务执行失败：ID=%d，错误=%v", task.ID, startErr)
@@ -358,11 +365,14 @@ func (q *NewSyncQueuePerType) executeStrmSync(task *NewSyncTask) {
 			"success": false,
 			"error":   startErr.Error(),
 		}
-		if q.strmSync != nil && q.strmSync.Sync != nil {
-			completePayload["sync_id"] = q.strmSync.Sync.ID
-			completePayload["sync_path_id"] = q.strmSync.Sync.SyncPathId
-			completePayload["log_path"] = models.SyncLogRelativePath(q.strmSync.Sync.ID)
+		q.mutex.RLock()
+		strmC := q.strmSync
+		if strmC != nil && strmC.Sync != nil {
+			completePayload["sync_id"] = strmC.Sync.ID
+			completePayload["sync_path_id"] = strmC.Sync.SyncPathId
+			completePayload["log_path"] = models.SyncLogRelativePath(strmC.Sync.ID)
 		}
+		q.mutex.RUnlock()
 		realtime.BroadcastEvent(realtime.EventStrmSyncTaskComplete, completePayload)
 	}
 }
@@ -387,16 +397,22 @@ func (q *NewSyncQueuePerType) executeScrape(task *NewSyncTask) {
 		"path_name": scrapePath.SourcePath,
 	})
 
+	q.mutex.Lock()
 	q.scrapeInstance = scrape.NewScrape(scrapePath)
 	if q.scrapeInstance == nil {
+		q.mutex.Unlock()
 		logError("创建刮削任务失败")
 		return
 	}
+	scrapeInst := q.scrapeInstance
+	q.mutex.Unlock()
 	defer func() {
+		q.mutex.Lock()
 		q.scrapeInstance = nil
+		q.mutex.Unlock()
 	}()
 
-	if success := q.scrapeInstance.Start(); success {
+	if success := scrapeInst.Start(); success {
 		logInfo("刮削任务执行成功：ID=%d", task.ID)
 		// 触发刮削任务完成事件
 		realtime.BroadcastEvent(realtime.EventScraperTaskComplete, map[string]any{
@@ -428,15 +444,15 @@ func (q *NewSyncQueuePerType) CancelTask(id uint, taskType SyncTaskType) error {
 	}
 
 	if q.currentTask != nil && q.currentTask.Key() == key {
+		// 只停实例、不清 currentTask（由执行协程收尾统一清理）：
+		// 提前置 nil 会让 AddTask 查重认为同任务不在执行而重复入队并发执行
 		if taskType == SyncTaskTypeStrm && q.strmSync != nil {
 			q.strmSync.Stop()
-			q.strmSync = nil
 			logInfo("STRM 同步任务已取消：ID=%d", id)
 		} else if taskType == SyncTaskTypeScrape && q.scrapeInstance != nil {
 			q.scrapeInstance.Stop()
 			logInfo("刮削任务已取消：ID=%d", id)
 		}
-		q.currentTask = nil
 		return nil
 	}
 
@@ -524,8 +540,11 @@ func (q *NewSyncQueuePerType) GetStatus() map[string]interface{} {
 }
 
 func (q *NewSyncQueuePerType) Stop() {
+	// lifecycle 锁串行化 Stop 与 AddTask 的入队路径，防 close 后向已关闭 channel 发送 panic
+	q.processorStartMu.Lock()
 	q.cancelFunc()
 	close(q.taskChan)
+	q.processorStartMu.Unlock()
 	q.mutex.Lock()
 	q.status = QueueStatusStopped
 	q.waitingQueue = make(map[string]*NewSyncTask)

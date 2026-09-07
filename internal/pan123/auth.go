@@ -201,7 +201,12 @@ do:
 	}
 	if resp.Code != 0 {
 		if !isRetry && resp.Code == 401 {
-			log.Printf("pan123 401 raw url=%s status=%d body=%s", url, res.StatusCode(), string(body))
+			// 401 响应体可能带敏感上下文，日志只保留前 256 字节足够定位
+			bodySnip := string(body)
+			if len(bodySnip) > 256 {
+				bodySnip = bodySnip[:256] + "..."
+			}
+			log.Printf("pan123 401 raw url=%s status=%d body=%s", url, res.StatusCode(), bodySnip)
 			if err := c.Login(ctx); err != nil {
 				return nil, err
 			}

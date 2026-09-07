@@ -170,8 +170,10 @@ func organizeOneFile(ctx context.Context, account *models.Account, e organizeEnt
 	}
 
 	// 洗版：目标目录已有同集/同名（忽略扩展名与质量后缀）旧视频时，
-	// 新文件质量更优 → 删除旧文件后放入；持平或更差 → 保留旧文件、
+	// 新文件质量更优 → 放入后删除旧文件；持平或更差 → 保留旧文件、
 	// 删除新文件（同质量绝不堆积副本，139 的同名自动改名不会触发）。
+	var washTargets []int
+	var washOldEntries []organizeEntry
 	if oldEntries, lErr := listNetDirByID(ctx, account, targetDirID); lErr == nil && len(oldEntries) > 0 {
 		targets := findWashTargets(newName, newQ, oldEntries)
 		if len(targets) > 0 {
@@ -202,15 +204,10 @@ func organizeOneFile(ctx context.Context, account *models.Account, e organizeEnt
 				recordSkipped(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "同集旧版本质量不低于新版本，删除新文件（保留库内版本）", "", extra)
 				return relDir, nil
 			}
-			// 新文件更优：删除所有匹配的旧版本
-			for _, idx := range targets {
-				old := &oldEntries[idx]
-				if err := deleteNetdiskFileInternal(account, old.ID, old.ParentID); err != nil {
-					helpers.AppLogger.Warnf("MoviePilot 洗版删除旧版本失败：%s：%v", old.Name, err)
-				} else {
-					helpers.AppLogger.Infof("MoviePilot 洗版：新版本质量更优，删除旧版本 %s", old.Name)
-				}
-			}
+			// 新文件更优：记录待删旧版本，先移入新文件、成功后再删
+			// （先删后移的话，移动失败会导致旧版本已删、新文件滞留待整理目录，库内缺集）
+			washTargets = targets
+			washOldEntries = oldEntries
 		}
 	}
 
@@ -221,6 +218,16 @@ func organizeOneFile(ctx context.Context, account *models.Account, e organizeEnt
 	if err := renameNetdiskFileInternal(account, e.ID, e.ParentID, targetDirID, newName); err != nil {
 		recordFailed(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "重命名失败："+err.Error(), extra)
 		return "", fmt.Errorf("重命名 %s 失败：%v", e.Name, err)
+	}
+	// 新文件已就位，此时删除所有被替换的旧版本（删除失败仅告警：最坏结果是双份共存，可再次整理收敛；
+	// 不会出现缺集——旧版本仍在库内）
+	for _, idx := range washTargets {
+		old := &washOldEntries[idx]
+		if err := deleteNetdiskFileInternal(account, old.ID, old.ParentID); err != nil {
+			helpers.AppLogger.Warnf("MoviePilot 洗版删除旧版本失败：%s：%v", old.Name, err)
+		} else {
+			helpers.AppLogger.Infof("MoviePilot 洗版：新版本已就位，删除旧版本 %s", old.Name)
+		}
 	}
 	recordSuccess(account, e, sourcePath, relDir+"/"+newName, media.Category, officialTitle, year, media.Season, media.Episode, tmdbID, newName, "整理成功", extra)
 	return relDir, nil

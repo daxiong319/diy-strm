@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"diy-strm/internal/db"
+	"diy-strm/internal/helpers"
 	"diy-strm/internal/models"
 )
 
@@ -131,6 +132,22 @@ func WashTargetScore(target string) int {
 		return 3*10000 + 5*1000
 	}
 	return 0
+}
+
+// washTargetReached 旧版本规格是否已达洗版目标（达标则不再升级）。
+// target 为空 = 无限制（视为未达标，允许继续升级）；非法值告警并按未达标处理，
+// 防止拼写错误导致 WashTargetScore 得 0 → Score()>=0 恒真 → 洗版静默失效。
+func washTargetReached(target string, oldScore int) bool {
+	t := strings.TrimSpace(strings.ToLower(target))
+	if t == "" {
+		return false
+	}
+	threshold := WashTargetScore(t)
+	if threshold <= 0 {
+		helpers.AppLogger.Warnf("洗版目标 %q 无法识别（支持 1080p/4k/4k_remux），按未达标处理", target)
+		return false
+	}
+	return oldScore >= threshold
 }
 
 // deleteOldFilesByTitle 在目标目录下按旧版本标题匹配并删除网盘文件

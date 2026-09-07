@@ -276,6 +276,9 @@ func (c *Client) GetFileDetail(ctx context.Context, fileId string, dlink int32) 
 	if err != nil {
 		return nil, err
 	}
+	if fileDetail == nil || len(fileDetail.List) == 0 {
+		return nil, fmt.Errorf("文件详情响应为空（文件可能不存在或已删除）")
+	}
 	return fileDetail.List[0], nil
 }
 

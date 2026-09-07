@@ -657,7 +657,8 @@ func (sp *ScrapePath) ParseCronDescription(cronExpr string) string {
 		return ""
 	}
 
-	parts := strings.Split(cronExpr, " ")
+	// Fields 按连续空白切分，双空格/制表符与 cron.ParseStandard 行为一致（否则描述误判"无效"）
+	parts := strings.Fields(cronExpr)
 	if len(parts) != 5 {
 		return "无效的 Cron 表达式"
 	}

@@ -14,6 +14,8 @@ var (
 	reSeasonEp = regexp.MustCompile(`(?i)S(\d{1,2})\s*E(\d{1,3})(?:\s*[-–—~]\s*E?(\d{1,3}))?`)
 	reBareEp   = regexp.MustCompile(`(?i)(?:^|[^A-Za-z])E(\d{1,3})\b`)
 	reCnEp     = regexp.MustCompile(`第(\d{1,3})集`)
+	// 中文季号（第2季），帖只写「第2季第5集」时避免把 S02E05 归到错误季造成跨季撞键
+	reCnSeason = regexp.MustCompile(`第(\d{1,2})季`)
 )
 
 // ParseEpisodeKeys 解析帖子文本中的剧集标识列表（按季+集规范化，如 S01E13）。
@@ -26,6 +28,15 @@ func ParseEpisodeKeys(text string, fallbackSeason int) []string {
 			return
 		}
 		addKey(fmt.Sprintf("E%02d", ep), seen)
+	}
+
+	// 帖内显式中文季号：无 SxxEyy 前缀条目的季号来源优先级 = 中文季号 > fallbackSeason，
+	// 防止全季订阅下 S02 的「第2季第5集」被归到 S01 撞键
+	cnSeason := 0
+	if m := reCnSeason.FindStringSubmatch(text); m != nil {
+		if v, err := strconv.Atoi(m[1]); err == nil && v > 0 && v <= 99 {
+			cnSeason = v
+		}
 	}
 
 	// SxxEyy / SxxEyy-Ezz（含区间展开）
@@ -44,16 +55,21 @@ func ParseEpisodeKeys(text string, fallbackSeason int) []string {
 		}
 	}
 
-	// 剔除已带季号的片段后，处理独立 Eyy / 第 N 集（归属 fallbackSeason）
+	// 剔除已带季号的片段后，处理独立 Eyy / 第 N 集
+	// （季号来源：中文季号 > fallbackSeason；都未知时仍发裸 E 键保持历史兼容，带季号时必须入键防跨季碰撞）
 	stripped := reSeasonEp.ReplaceAllString(text, " ")
+	season := fallbackSeason
+	if season <= 0 {
+		season = cnSeason
+	}
 	for _, m := range reBareEp.FindAllStringSubmatch(stripped, -1) {
 		if e, err := strconv.Atoi(m[1]); err == nil {
-			add(fallbackSeason, e)
+			add(season, e)
 		}
 	}
 	for _, m := range reCnEp.FindAllStringSubmatch(stripped, -1) {
 		if e, err := strconv.Atoi(m[1]); err == nil {
-			add(fallbackSeason, e)
+			add(season, e)
 		}
 	}
 	return keysOf(seen)

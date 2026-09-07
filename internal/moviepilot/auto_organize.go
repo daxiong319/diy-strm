@@ -281,6 +281,8 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 		return fmt.Errorf("%w：媒体信息不完整", errMediaUnrecognized)
 	}
 	newQ := ParseQualityFromName(entry.Name)
+	// 洗版延后处置：旧文件删除/归档动作在新文件成功移入后执行（wash_apply 先删后移的缺集窗口修复）
+	var deferredWash washDecision
 
 	// 入库前置过滤（P2-1/P2-3）
 	// 屏蔽词：命中垃圾词表的资源（广告/特典/PV 类）不整理，源文件保留原位
@@ -346,12 +348,13 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 		if lErr != nil {
 			helpers.AppLogger.Warnf("洗版比较：列出目标目录失败（账号 %d）：%s：%v", cfg.AccountID, relDir, lErr)
 		} else if len(oldEntries) > 0 {
-			decision := washCompareAndApply(ctx, account, cfg, entry, media, officialTitle, year, tmdbID, relDir, newName, newQ, oldEntries)
-			for _, t := range decision.treatments {
+			washDecision := washCompareAndApply(ctx, account, cfg, entry, media, officialTitle, year, tmdbID, relDir, newName, newQ, oldEntries)
+			deferredWash = washDecision
+			for _, t := range washDecision.treatments {
 				result.Details = append(result.Details, t)
 			}
-			if !decision.proceed {
-				msg := decision.skipMessage
+			if !washDecision.proceed {
+				msg := washDecision.skipMessage
 				if msg == "" {
 					msg = "新版本质量不高于现版本，跳过"
 				}
@@ -371,6 +374,8 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 		recordFailed(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "重命名失败："+err.Error(), extra)
 		return fmt.Errorf("重命名 %s 失败：%v", entry.Name, err)
 	}
+	// 新文件已就位：执行延后的旧文件处置（delete/archive），避免先删后移的缺集窗口
+	applyDeferredWashLosers(ctx, account, cfg, deferredWash)
 	result.Organized++
 	found := false
 	for _, d := range result.SuccessDirs {

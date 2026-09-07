@@ -15,6 +15,18 @@ type washDecision struct {
 	proceed     bool     // 是否继续放置新文件到目标目录
 	skipMessage string   // proceed=false 时的原因（供调用方写入明细）
 	treatments  []string // 处置摘要（供调用方写入明细）
+	// 旧文件处置延后执行：删除/归档在新文件成功移入后由调用方调 applyDeferredWashLosers，
+	// 避免「先删旧、移动失败」导致库内缺集
+	pendingLosers []washLoserOp
+	pendingLogs   []*models.WashLog
+}
+
+// washLoserOp 一条延后执行的旧文件处置动作
+type washLoserOp struct {
+	entry  organizeEntry
+	action string // delete / archive
+	log    *models.WashLog
+	tm     time.Time
 }
 
 // splitWordList 拆分逗号/换行分隔的词表（清洗空白与空项）
@@ -70,6 +82,11 @@ func washCompareAndApply(ctx context.Context, account *models.Account, cfg *mode
 	rules := ParseWashRules(cfg.WashRulesJSON)
 	groupPrio := splitGroupPriority(cfg.GroupPriority)
 	targets := findWashTargets(newName, newQ, entries)
+	decision := washDecision{proceed: true}
+	loserTreated := cfg.LoserSourceAction
+	if loserTreated == "" {
+		loserTreated = "keep"
+	}
 
 	if len(targets) == 0 {
 		// 未匹配到同名/同集旧文件：直接放置（多版本共存或新增集数，均不动旧文件）
@@ -91,77 +108,78 @@ func washCompareAndApply(ctx context.Context, account *models.Account, cfg *mode
 		return washHandleNewLoser(ctx, account, cfg, newEntry, media, officialTitle, year, tmdbID, relDir)
 	}
 
-	// 新文件更优：处置匹配到的旧文件（落败方）
-	treated := 0
-	treatmentLogs := make(map[string]int) // 处置类型计数（none/delete/archive）
-	loserTreated := cfg.LoserSourceAction
-	if loserTreated == "" {
-		loserTreated = "keep"
-	}
-	var dbLogs []*models.WashLog
+	// 新文件更优：不立即处置旧文件（落败方），生成延后动作清单，
+	// 调用方在新文件成功移入目标目录后执行 applyDeferredWashLosers。
+	// （原先「先删旧后移新」：移动失败时旧文件已删，库内缺集）
+	treated := len(targets)
+	treatmentCounts := make(map[string]int) // 配置动作计数（delete/archive/keep，按配置而非执行结果）
 	for _, idx := range targets {
 		old := &entries[idx]
 		oldQ := ParseQualityFromName(old.Name)
-		treated++
-		action := loserTreated
-		switch loserTreated {
+		msg := fmt.Sprintf("新版本质量更优，旧文件待新文件就位后%s", washLoserActionDesc(loserTreated, loserTreated))
+		treatmentCounts[loserTreated]++
+		decision.pendingLosers = append(decision.pendingLosers, washLoserOp{
+			entry:  *old,
+			action: loserTreated,
+			log: &models.WashLog{
+				AccountID:    cfg.AccountID,
+				Action:       "wash_replace",
+				TargetPath:   relDir,
+				Title:        officialTitle,
+				MediaType:    media.Category,
+				SeasonNum:    media.Season,
+				EpisodeNum:   media.Episode,
+				TMDBID:       tmdbID,
+				OldName:      old.Name,
+				OldQuality:   oldQ.Summary(),
+				NewName:      newName,
+				NewQuality:   newQ.Summary(),
+				LoserTreated: loserTreated,
+				Message:      msg,
+				EventTime:    time.Now(),
+			},
+		})
+	}
+	decision.treatments = append(decision.treatments, fmt.Sprintf("洗版替换：匹配到 %d 个旧版本（%s）", treated, func() string {
+		summaries := make([]string, 0, len(treatmentCounts))
+		for k, v := range treatmentCounts {
+			summaries = append(summaries, fmt.Sprintf("%s×%d", k, v))
+		}
+		return strings.Join(summaries, "，")
+	}()))
+	return decision
+}
+
+// applyDeferredWashLosers 新文件成功移入后执行延后的旧文件处置（delete/archive）并落日志。
+// 单个处置失败不影响其它：最坏结果是双份共存（可再次整理收敛），不会缺集。
+func applyDeferredWashLosers(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, decision washDecision) {
+	for _, op := range decision.pendingLosers {
+		actual := op.action
+		switch op.action {
 		case "delete":
-			if err := deleteNetdiskFileInternal(account, old.ID, old.ParentID); err != nil {
-				helpers.AppLogger.Warnf("洗版删除旧文件失败（账号 %d）：%s：%v", cfg.AccountID, old.Name, err)
-				action = "delete_failed"
-			} else {
-				treatmentLogs["delete"]++
+			if err := deleteNetdiskFileInternal(account, op.entry.ID, op.entry.ParentID); err != nil {
+				helpers.AppLogger.Warnf("洗版删除旧文件失败（账号 %d）：%s：%v", cfg.AccountID, op.entry.Name, err)
+				actual = "delete_failed"
 			}
 		case "archive":
 			targetID, err := washArchiveDirID(ctx, account, cfg)
 			if err != nil || targetID == "" || targetID == "0" {
 				helpers.AppLogger.Warnf("洗版归档旧文件失败（账号 %d）：归档目录不可用：%v", cfg.AccountID, err)
-				action = "archive_failed_keep"
+				actual = "archive_failed_keep"
 			} else {
-				if err := moveNetdiskFileInternal(account, old.ID, old.ParentID, targetID); err != nil {
-					helpers.AppLogger.Warnf("洗版归档旧文件失败（账号 %d）：%s：%v", cfg.AccountID, old.Name, err)
-					action = "archive_failed_keep"
-				} else {
-					treatmentLogs["archive"]++
+				if err := moveNetdiskFileInternal(account, op.entry.ID, op.entry.ParentID, targetID); err != nil {
+					helpers.AppLogger.Warnf("洗版归档旧文件失败（账号 %d）：%s：%v", cfg.AccountID, op.entry.Name, err)
+					actual = "archive_failed_keep"
 				}
 			}
-		default: // keep
-			treatmentLogs["keep"]++
+		default: // keep：无需动作
 		}
-		msg := fmt.Sprintf("新版本质量更优，旧文件%s", washLoserActionDesc(loserTreated, action))
-		dbLogs = append(dbLogs, &models.WashLog{
-			AccountID:   cfg.AccountID,
-			Action:      "wash_replace",
-			TargetPath:  relDir,
-			Title:       officialTitle,
-			MediaType:   media.Category,
-			SeasonNum:   media.Season,
-			EpisodeNum:  media.Episode,
-			TMDBID:      tmdbID,
-			OldName:     old.Name,
-			OldQuality:  oldQ.Summary(),
-			NewName:     newName,
-			NewQuality:  newQ.Summary(),
-			LoserTreated: action,
-			Message:     msg,
-			EventTime:   time.Now(),
-		})
-	}
-	for _, l := range dbLogs {
-		_ = models.AddWashLog(l)
-	}
-
-	summaries := make([]string, 0, len(treatmentLogs))
-	for k, v := range treatmentLogs {
-		summaries = append(summaries, fmt.Sprintf("%s×%d", k, v))
-	}
-	if treated > 0 {
-		return washDecision{
-			proceed:    true,
-			treatments: []string{fmt.Sprintf("洗版替换：匹配到 %d 个旧版本（%s）", treated, strings.Join(summaries, "，"))},
+		if op.log != nil {
+			op.log.LoserTreated = actual
+			op.log.Message = fmt.Sprintf("新版本质量更优，旧文件%s", washLoserActionDesc(op.action, actual))
+			_ = models.AddWashLog(op.log)
 		}
 	}
-	return washDecision{proceed: true}
 }
 
 // washHandleNewLoser 新文件落败时的处置（默认 keep：留待整理目录，改由用户决定）

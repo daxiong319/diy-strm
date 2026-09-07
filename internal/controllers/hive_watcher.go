@@ -298,7 +298,8 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		}
 		if old != nil {
 			oldSpec := recordToSpec(old)
-			if oldSpec.Score() >= WashTargetScore(sub.WashTarget) {
+			// 无洗版目标（wash_target 为空 = 无限制）或目标非法时不算已达标
+			if washTargetReached(sub.WashTarget, oldSpec.Score()) {
 				skipped++ // 已达标
 				recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "洗版跳过：现有版本已达标", meta)
 				continue

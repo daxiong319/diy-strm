@@ -1,4 +1,4 @@
-﻿package models
+package models
 
 import (
 	"context"
@@ -507,9 +507,11 @@ func (task *DbUploadTask) prepare115UploadSession(info upload115LocalFileInfo) (
 				return nil, fmt.Errorf("保存废弃上传会话失败：%w", saveErr)
 			}
 			task.ResumeState = UploadResumeStateSessionExpiredRestarted
-			_ = db.Db.Model(task).Updates(map[string]any{
+			if err := db.Db.Model(task).Updates(map[string]any{
 				"resume_state": task.ResumeState,
-			}).Error
+			}).Error; err != nil {
+				helpers.AppLogger.Warnf("回写 115 上传任务 %d 状态失败：%v", task.ID, err)
+			}
 			return nil, fmt.Errorf("本地文件已变化，不能复用断点续传 session：%w", validateErr)
 		}
 		if session.ResumeState == UploadResumeStateSessionExpiredRestarted &&
@@ -519,12 +521,14 @@ func (task *DbUploadTask) prepare115UploadSession(info upload115LocalFileInfo) (
 			task.UploadedBytes = 0
 			task.RapidWaitAttempts = session.RapidWaitAttempts
 			task.RapidWaitUntil = session.RapidWaitUntil
-			_ = db.Db.Model(task).Updates(map[string]any{
+			if err := db.Db.Model(task).Updates(map[string]any{
 				"resume_state":        task.ResumeState,
 				"uploaded_bytes":      task.UploadedBytes,
 				"rapid_wait_attempts": task.RapidWaitAttempts,
 				"rapid_wait_until":    task.RapidWaitUntil,
-			}).Error
+			}).Error; err != nil {
+				helpers.AppLogger.Warnf("回写 115 上传任务 %d 状态失败：%v", task.ID, err)
+			}
 			return session, nil
 		}
 		session.ResumeState = UploadResumeStateResumedSession
@@ -536,12 +540,14 @@ func (task *DbUploadTask) prepare115UploadSession(info upload115LocalFileInfo) (
 		task.UploadedBytes = session.UploadedBytes
 		task.RapidWaitAttempts = session.RapidWaitAttempts
 		task.RapidWaitUntil = session.RapidWaitUntil
-		_ = db.Db.Model(task).Updates(map[string]any{
+		if err := db.Db.Model(task).Updates(map[string]any{
 			"resume_state":        task.ResumeState,
 			"uploaded_bytes":      task.UploadedBytes,
 			"rapid_wait_attempts": task.RapidWaitAttempts,
 			"rapid_wait_until":    task.RapidWaitUntil,
-		}).Error
+		}).Error; err != nil {
+			helpers.AppLogger.Warnf("回写 115 上传任务 %d 状态失败：%v", task.ID, err)
+		}
 		return session, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -569,12 +575,14 @@ func (task *DbUploadTask) prepare115UploadSession(info upload115LocalFileInfo) (
 	}
 	task.ResumeState = session.ResumeState
 	task.UploadedBytes = 0
-	_ = db.Db.Model(task).Updates(map[string]any{
+	if err := db.Db.Model(task).Updates(map[string]any{
 		"resume_state":   task.ResumeState,
 		"uploaded_bytes": task.UploadedBytes,
 		"file_size":      info.FileSize,
 		"file_name":      info.FileName,
-	}).Error
+	}).Error; err != nil {
+		helpers.AppLogger.Warnf("回写 115 上传任务 %d 状态失败：%v", task.ID, err)
+	}
 	return session, nil
 }
 
@@ -691,14 +699,16 @@ func (task *DbUploadTask) publish115UploadPhase(session *UploadSession, phase st
 		task.TotalParts = session.TotalParts
 		task.UploadedParts = session.UploadedParts
 	}
-	_ = db.Db.Model(task).Updates(map[string]any{
+	if err := db.Db.Model(task).Updates(map[string]any{
 		"resume_state":        task.ResumeState,
 		"uploaded_bytes":      task.UploadedBytes,
 		"rapid_wait_attempts": task.RapidWaitAttempts,
 		"rapid_wait_until":    task.RapidWaitUntil,
 		"file_size":           task.FileSize,
 		"file_name":           task.FileName,
-	}).Error
+	}).Error; err != nil {
+		helpers.AppLogger.Warnf("回写 115 上传任务 %d 状态失败：%v", task.ID, err)
+	}
 	publishUploadQueueChanged(task, "progress")
 }
 

@@ -42,29 +42,114 @@ func StartChannelWatcher(ctx context.Context) {
 	helpers.AppLogger.Infof("TG 频道订阅引擎已启动，轮询间隔 %v", channelWatchInterval)
 }
 
-// runAllSubscriptions 执行全部启用中的订阅
+// runAllSubscriptions 执行全部启用中的订阅（P0-3 一扫多配）。
+// 原实现每订阅各自抓取同一频道页面（N 条订阅 = N 次重复抓取），且频道游标是共享的——
+// 先跑的订阅推进 ch.LastPostID 后，后跑的订阅以新游标为界，会吃掉同窗口内只匹配自己关键词的新帖。
+// 现改为：同网盘增量订阅共享一次频道抓取 → 分发给全部订阅匹配 → 游标按各订阅见到的最小新游标推进一次。
 func runAllSubscriptions() {
 	subs, err := models.ListCloudSubscriptions("")
 	if err != nil {
 		helpers.AppLogger.Errorf("TG 频道订阅：读取订阅列表失败：%v", err)
 		return
 	}
-	active := 0
+	typeGroups := map[string][]*models.CloudSubscription{}
+	total := 0
 	for i := range subs {
 		if !subs[i].Enabled {
 			continue
 		}
-		active++
-		msg, ok := RunSubscriptionOnce(&subs[i])
+		total++
+		typeGroups[subs[i].SourceType] = append(typeGroups[subs[i].SourceType], &subs[i])
+	}
+	if total == 0 {
+		helpers.AppLogger.Infof("TG 频道订阅：本轮无启用中的订阅")
+		return
+	}
+	for sourceType, group := range typeGroups {
+		// 回溯订阅：独立按 ?before= 深翻历史（不推进游标），走单订阅完整路径
+		var incremental []*models.CloudSubscription
+		for _, sub := range group {
+			if sub.Backfill {
+				msg, ok := RunSubscriptionOnce(sub)
+				if ok {
+					helpers.AppLogger.Infof("TG 频道订阅：%s", msg)
+				} else {
+					helpers.AppLogger.Errorf("TG 频道订阅：%s", msg)
+				}
+			} else {
+				incremental = append(incremental, sub)
+			}
+		}
+		if len(incremental) == 0 {
+			continue
+		}
+		channels, err := models.ListEnabledCloudChannels(sourceType)
+		if err != nil {
+			helpers.AppLogger.Errorf("TG 频道订阅（%s）：读取频道列表失败：%v", sourceType, err)
+			continue
+		}
+		if len(channels) == 0 {
+			helpers.AppLogger.Infof("TG 频道订阅（%s）：没有启用中的资源频道，请先「订阅频道」添加", sourceType)
+			continue
+		}
+		for i := range incremental {
+			refreshSubscriptionTotalEpisodes(incremental[i])
+		}
+		for ci := range channels {
+			runChannelBatchForSubs(incremental, &channels[ci])
+		}
+		// 订阅级收尾（运行时间/旧游标兼容/自动完结）
+		for _, sub := range incremental {
+			finalizeSubscriptionRun(sub)
+		}
+	}
+}
+
+// runChannelBatchForSubs 单频道 × 多订阅批量处理：抓取一次，分发全部增量订阅，游标推进一次。
+// 游标取各订阅见到的最小新游标（转存失败帖会回退该订阅的游标），保证失败帖不会被共享游标越过。
+func runChannelBatchForSubs(subs []*models.CloudSubscription, ch *models.CloudChannel) {
+	channel := ch.ChannelName()
+	stopID := strings.TrimSpace(ch.LastPostID)
+	// 抓取 + 多订阅转存共用一个预算（单订阅路径为 3 分钟，多订阅串行转存放宽）
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	posts, pages, err := tgchannel.ParseChannelPageRange(ctx, channel, stopID, 100)
+	if err != nil {
+		helpers.AppLogger.Errorf("TG 频道订阅：频道 %s 抓取失败：%v", channel, err)
+		return
+	}
+	if len(posts) == 0 {
+		ch.LastRunAt = time.Now()
+		_ = models.SaveCloudChannel(ch)
+		helpers.AppLogger.Infof("TG 频道订阅：频道 %s 无新帖（翻 %d 页，分发给 %d 条订阅）", channel, pages, len(subs))
+		return
+	}
+
+	batchCursor := ""
+	allOK := true
+	for _, sub := range subs {
+		msg, newMaxID, ok := processChannelPostsForSub(sub, ch, ctx, posts, pages, stopID)
 		if ok {
 			helpers.AppLogger.Infof("TG 频道订阅：%s", msg)
 		} else {
 			helpers.AppLogger.Errorf("TG 频道订阅：%s", msg)
+			allOK = false
+		}
+		if newMaxID != "" && (batchCursor == "" || postIDGreater(batchCursor, newMaxID)) {
+			batchCursor = newMaxID
 		}
 	}
-	if active == 0 {
-		helpers.AppLogger.Infof("TG 频道订阅：本轮无启用中的订阅")
+	if batchCursor != "" && postIDGreater(batchCursor, ch.LastPostID) {
+		ch.LastPostID = batchCursor
 	}
+	ch.LastRunAt = time.Now()
+	if err := models.SaveCloudChannel(ch); err != nil {
+		helpers.AppLogger.Errorf("TG 频道订阅：频道 %s 游标保存失败：%v", channel, err)
+		return
+	}
+	helpers.AppLogger.Infof("TG 频道订阅：频道 %s 本轮分发给 %d 条订阅完成（翻 %d 页，游标推进至 %s%s）",
+		channel, len(subs), pages, batchCursor, map[bool]string{true: "", false: "，部分订阅存在失败"}[allOK])
 }
 
 // RunSubscriptionOnce 对单条订阅执行一轮：遍历该网盘全部启用频道 → 增量 → 关键词匹配 → 转存
@@ -87,14 +172,30 @@ func RunSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			allOK = false
 		}
 	}
-	// 游标已推进到频道表；订阅记录运行时间
+	finished := finalizeSubscriptionRun(sub)
+
+	summary := fmt.Sprintf("订阅 #%d（%s）：%s", sub.ID, sub.SourceType, strings.Join(parts, "；"))
+	if finished {
+		summary += "；已自动完结（影片已收录完毕，订阅已停用）"
+	}
+	if !allOK {
+		return summary, false
+	}
+	return summary, true
+}
+
+// finalizeSubscriptionRun 订阅级收尾：记录运行时间、旧游标兼容初始化、自动完结判定与停用。
+// 从 RunSubscriptionOnce 拆出，批量模式（runAllSubscriptions）同样使用。
+func finalizeSubscriptionRun(sub *models.CloudSubscription) bool {
 	now := time.Now()
 	sub.LastRunAt = now
 	if sub.LastPostID == "" {
-		// 兼容迁移前旧订阅：以本次频道最大游标初始化
-		for i := range channels {
-			if postIDGreater(channels[i].LastPostID, sub.LastPostID) {
-				sub.LastPostID = channels[i].LastPostID
+		// 兼容迁移前旧订阅：以该网盘频道最大游标初始化
+		if channels, err := models.ListEnabledCloudChannels(sub.SourceType); err == nil {
+			for i := range channels {
+				if postIDGreater(channels[i].LastPostID, sub.LastPostID) {
+					sub.LastPostID = channels[i].LastPostID
+				}
 			}
 		}
 	}
@@ -126,15 +227,7 @@ func RunSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		sub.LastRunAt = now
 		_ = models.SaveCloudSubscription(sub)
 	}
-
-	summary := fmt.Sprintf("订阅 #%d（%s）：%s", sub.ID, sub.SourceType, strings.Join(parts, "；"))
-	if finished {
-		summary += "；已自动完结（影片已收录完毕，订阅已停用）"
-	}
-	if !allOK {
-		return summary, false
-	}
-	return summary, true
+	return finished
 }
 
 // runChannelSubscriptionOnce 单订阅 × 单频道执行一轮抓取与转存
@@ -174,6 +267,27 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 		return fmt.Sprintf("频道 %s 无新帖（翻 %d 页）", channel, pages), true
 	}
 
+	newMaxID, msg, ok := processChannelPostsForSub(sub, ch, ctx, posts, pages, stopID)
+	if sub.Backfill {
+		// 回溯搜索不推进频道游标（核心函数已返回空游标）
+		return msg, ok
+	}
+	if newMaxID != "" && postIDGreater(newMaxID, ch.LastPostID) {
+		ch.LastPostID = newMaxID
+	}
+	ch.LastRunAt = time.Now()
+	if err := models.SaveCloudChannel(ch); err != nil {
+		return fmt.Sprintf("频道 %s 游标保存失败：%v", channel, err), false
+	}
+	return msg, ok
+}
+
+// processChannelPostsForSub 单订阅处理已抓取的频道帖子（增量匹配/转存/游标计算）。
+// 批量模式（runChannelBatchForSubs）与单订阅模式共用；不写频道游标，
+// 返回本订阅应推进到的新游标（newMaxID；空串表示游标不动，如回溯/无新帖）。
+func processChannelPostsForSub(sub *models.CloudSubscription, ch *models.CloudChannel, ctx context.Context, posts []tgchannel.ChannelPost, pages int, stopID string) (newMaxID string, summary string, ok bool) {
+	channel := ch.ChannelName()
+
 	lastID := stopID
 	if sub.Backfill {
 		// 回溯搜索：忽略频道游标，从历史帖全文匹配（用于补收发布在游标之前的老资源）；
@@ -186,7 +300,7 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 		targetDir = "/"
 	}
 
-	newMaxID := lastID
+	newMaxID = lastID
 	hits := 0
 	transferred := 0
 	linkFound := 0
@@ -239,13 +353,13 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 			// 洗版模式（影片级订阅 + 洗版开关）：同片更高规格资源自动替换转存
 			if sub.MediaType != "" && sub.Wash && sub.TMDBID > 0 {
 				var old *models.CloudTransferRecord
+				var superseded []*models.CloudTransferRecord
 				newSpec := ParseMediaSpec(p.Text)
 				epKeys := ParseEpisodeKeys(p.Text, sub.Season)
 				if len(epKeys) > 0 {
 					// 按集判断：任一集缺失或可升级即转存；全部集已达洗版目标则跳过
 					worth := false
 					var upgrade []*models.CloudTransferRecord
-					washTargetScore := WashTargetScore(sub.WashTarget)
 					for _, ek := range epKeys {
 						o := models.LatestEpisodeRecord(sub.ID, sub.TMDBID, sub.Season, ek)
 						if o == nil {
@@ -253,8 +367,8 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 							continue
 						}
 						oldSpec := recordToSpec(o)
-						// 无洗版目标（wash_target 为空 = 无限制）时不算已达标，仍可继续升级
-						if sub.WashTarget != "" && oldSpec.Score() >= washTargetScore {
+						// 无洗版目标（wash_target 为空 = 无限制）或目标非法时不算已达标，仍可继续升级
+						if washTargetReached(sub.WashTarget, oldSpec.Score()) {
 							continue // 该集已达标，不再升级
 						}
 						if newSpec.BetterThan(oldSpec) {
@@ -268,14 +382,14 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 							"洗版跳过：全部集已达标或新资源规格不优于现有版本")
 						continue
 					}
-					if len(upgrade) > 0 {
-						old = upgrade[0]
-					}
+					// 多集升级：全部旧记录都要标记 superseded，否则其余集旧记录残留为生效版本
+					superseded = upgrade
 				} else {
 					old = models.LatestSubscriptionRecord(sub.ID, sub.TMDBID, sub.Season)
 					if old != nil {
 						oldSpec := recordToSpec(old)
-						if oldSpec.Score() >= WashTargetScore(sub.WashTarget) {
+						// 无洗版目标（wash_target 为空 = 无限制）或目标非法时不算已达标（原空目标恒跳过 bug）
+						if washTargetReached(sub.WashTarget, oldSpec.Score()) {
 							skipped++
 							recordMonitorSkipped("channel", sub.SourceType, channel, p.PostID, msgURLFor(p.PostID), link.FullURL(), targetDir, sub.ID, "洗版跳过：现有版本已达标")
 							continue
@@ -323,14 +437,16 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 					extra += "；剧集：" + JoinEpisodeKeys(epKeys)
 				}
 				sendTransferSuccessNotification(sub.SourceType, recTitle, targetDir, total, extra)
-				if old != nil {
-					old.Status = "superseded"
-					_ = models.SaveTransferRecord(old)
-					if sub.ReplaceOld {
-						if n, derr := deleteOldFilesByTitle(ctx, sub.SourceType, targetDir, old.Title); derr != nil {
+				for _, o := range superseded {
+					o.Status = "superseded"
+					_ = models.SaveTransferRecord(o)
+				}
+				if sub.ReplaceOld && len(superseded) > 0 {
+					for _, o := range superseded {
+						if n, derr := deleteOldFilesByTitle(ctx, sub.SourceType, targetDir, o.Title); derr != nil {
 							errs = append(errs, fmt.Sprintf("帖%s旧版本清理失败：%v", p.PostID, derr))
 						} else if n > 0 {
-							helpers.AppLogger.Infof("TG 频道订阅 #%d：洗版成功，已删除 %d 个旧版本文件（%s）", sub.ID, n, old.Title)
+							helpers.AppLogger.Infof("TG 频道订阅 #%d：洗版成功，已删除 %d 个旧版本文件（%s）", sub.ID, n, o.Title)
 						}
 					}
 				}
@@ -430,31 +546,21 @@ func runChannelSubscriptionOnce(sub *models.CloudSubscription, ch *models.CloudC
 	if sub.Backfill {
 		// 回溯搜索不推进频道游标：历史帖可能还有其它订阅等待增量命中，
 		// 且本次处理过的帖子已由转存记录去重，重复执行安全
-		ch.LastRunAt = time.Now()
-		if err := models.SaveCloudChannel(ch); err != nil {
-			return fmt.Sprintf("频道 %s 状态保存失败：%v", channel, err), false
-		}
-		summary := fmt.Sprintf("频道 %s：翻 %d 页，命中 %d 帖，链接 %d 个，转存成功 %d 次，跳过 %d 次（回溯模式，未推进游标）",
+		summary = fmt.Sprintf("频道 %s：翻 %d 页，命中 %d 帖，链接 %d 个，转存成功 %d 次，跳过 %d 次（回溯模式，未推进游标）",
 			channel, pages, hits, linkFound, transferred, skipped)
 		if len(errs) > 0 {
 			summary += "；失败：" + strings.Join(errs, "；")
-			return summary, false
+			return "", summary, false
 		}
-		return summary, true
+		return "", summary, true
 	}
-	ch.LastPostID = newMaxID
-	ch.LastRunAt = time.Now()
-	if err := models.SaveCloudChannel(ch); err != nil {
-		return fmt.Sprintf("频道 %s 游标保存失败：%v", channel, err), false
-	}
-
-	summary := fmt.Sprintf("频道 %s：翻 %d 页，命中 %d 帖，链接 %d 个，转存成功 %d 次，跳过 %d 次，游标推进至 %s",
+	summary = fmt.Sprintf("频道 %s：翻 %d 页，命中 %d 帖，链接 %d 个，转存成功 %d 次，跳过 %d 次，游标推进至 %s",
 		channel, pages, hits, linkFound, transferred, skipped, newMaxID)
 	if len(errs) > 0 {
 		summary += "；失败：" + strings.Join(errs, "；")
-		return summary, false
+		return newMaxID, summary, false
 	}
-	return summary, true
+	return newMaxID, summary, true
 }
 
 // PreviewChannel 抓取频道最近帖用于前端预览

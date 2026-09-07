@@ -130,6 +130,10 @@ func (d *BaiduPanDriver) DetailByFileId(ctx context.Context, fileId string) (*Sy
 	if err != nil {
 		return nil, err
 	}
+	// FileExists 找不到文件时返回 (nil, nil)（文件可能已被删除/移动），直接解引用会 panic
+	if resp == nil {
+		return nil, fmt.Errorf("百度云盘文件不存在：fileId=%s", fileId)
+	}
 	parentId := filepath.ToSlash(filepath.Dir(fileId))
 	// 生成 SyncFileCache
 	fileItem := &SyncFileCache{

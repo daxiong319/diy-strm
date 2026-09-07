@@ -343,8 +343,22 @@ func (task *DbUploadTask) Fail(err error) {
 		helpers.AppLogger.Warnf("[上传] 标记为失败失败：%s", err.Error())
 		return
 	}
+	task.cleanupCrossTransferTempFile()
 	clearUploadProgressThrottle(task.ID)
 	publishUploadQueueChanged(task, "status_changed")
+}
+
+// cleanupCrossTransferTempFile 跨盘中转临时文件只在成功收尾清理的话，失败/取消路径会永久残留
+// GB 级大文件（系统临时目录），终态时统一兜底清理
+func (task *DbUploadTask) cleanupCrossTransferTempFile() {
+	if task.Source != UploadSourceCrossTransfer || task.LocalFullPath == "" {
+		return
+	}
+	if helpers.PathExists(task.LocalFullPath) {
+		if err := os.Remove(task.LocalFullPath); err != nil {
+			helpers.AppLogger.Warnf("[上传] 清理跨盘秒传临时文件失败：%s，%v", task.LocalFullPath, err)
+		}
+	}
 }
 
 func (task *DbUploadTask) Cancel() {
@@ -356,6 +370,7 @@ func (task *DbUploadTask) Cancel() {
 		helpers.AppLogger.Warnf("[上传] 标记为已取消失败：%s", err.Error())
 		return
 	}
+	task.cleanupCrossTransferTempFile()
 	clearUploadProgressThrottle(task.ID)
 	publishUploadQueueChanged(task, "status_changed")
 }
@@ -372,6 +387,7 @@ func (task *DbUploadTask) cancelWithError(err error) {
 		helpers.AppLogger.Warnf("[上传] 标记为已取消失败：%s", saveErr.Error())
 		return
 	}
+	task.cleanupCrossTransferTempFile()
 	clearUploadProgressThrottle(task.ID)
 	publishUploadQueueChanged(task, "status_changed")
 }
@@ -846,8 +862,17 @@ func (task *DbUploadTask) Upload123File() bool {
 		task.Fail(fmt.Errorf("123 云盘上传文件 %s 失败：%v", task.FileName, err))
 		return false
 	}
-	// 记录上传结果
-	fileId := fmt.Sprintf("%d", resp.Data.FileId)
+	// 记录上传结果。data.FileId 可能为 0（真实 ID 在 data.Info.FileId，见 pan123/types.go 注释），
+	// 两者都拿不到说明上传响应异常，不能把 "0" 当成完成 ID 落库（后续 STRM/整理都依赖该 ID）
+	fileID := resp.Data.FileId
+	if fileID == 0 && resp.Data.Info != nil {
+		fileID = resp.Data.Info.FileId
+	}
+	if fileID == 0 {
+		task.Fail(fmt.Errorf("123 云盘上传完成但响应未返回有效文件 ID（fileId=0）"))
+		return false
+	}
+	fileId := fmt.Sprintf("%d", fileID)
 	task.CompletedRemoteFileId = fileId
 	task.CompletedPickCode = fileId // 123 云盘的 PickCode 即文件 ID
 	if resp.Data.Reuse {

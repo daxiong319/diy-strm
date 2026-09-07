@@ -179,12 +179,16 @@ func (c *Client) CreateDir(ctx context.Context, parentID, dirName string) (strin
 
 // waitTaskDone 轮询异步任务状态直到完成
 // status：2=成功，-1/3=失败
+// 高峰期服务端处理移动/重命名/删除可能明显慢于 9 秒，固定 300ms×30 次会误判超时
+// （真实任务其实稍后完成），改为指数退避（300ms 起、单次上限 5s、总窗口约 10 分钟）。
 func (c *Client) waitTaskDone(ctx context.Context, taskID string) error {
 	const (
-		maxTry   = 30
-		interval = 300 * time.Millisecond
+		maxInterval = 5 * time.Second
+		deadline    = 10 * time.Minute
 	)
-	for i := 0; i < maxTry; i++ {
+	start := time.Now()
+	interval := 300 * time.Millisecond
+	for {
 		var out TaskStatusResp
 		if err := c.Request(ctx, APIGetTaskStatus, map[string]interface{}{
 			"taskId": taskID,
@@ -200,7 +204,7 @@ func (c *Client) waitTaskDone(ctx context.Context, taskID string) error {
 		case -1, 3:
 			return fmt.Errorf("光鸭云盘任务 %s 失败：status=%d", taskID, out.Data.Status)
 		}
-		if i == maxTry-1 {
+		if time.Since(start) >= deadline {
 			break
 		}
 		select {
@@ -208,8 +212,12 @@ func (c *Client) waitTaskDone(ctx context.Context, taskID string) error {
 			return ctx.Err()
 		case <-time.After(interval):
 		}
+		interval *= 2
+		if interval > maxInterval {
+			interval = maxInterval
+		}
 	}
-	return fmt.Errorf("光鸭云盘任务 %s 超时", taskID)
+	return fmt.Errorf("光鸭云盘任务 %s 超时（已等待 %s）", taskID, time.Since(start).Round(time.Second))
 }
 
 // Rename 重命名文件或目录
