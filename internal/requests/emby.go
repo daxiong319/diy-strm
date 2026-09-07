@@ -22,6 +22,7 @@ type UpdateEmbyConfigRequest struct {
 	EnableDailyFirstFullSync *int   `json:"enable_daily_first_full_sync"`
 	EnablePlaybackOverview   int    `json:"enable_playback_overview"`
 	EnablePlaybackProgress   int    `json:"enable_playback_progress"`
+	ProxyPort                *int   `json:"proxy_port"` // 302 独立反代端口：nil=不修改，0=关闭，1-65535=启用
 }
 
 // Validate 校验 Emby 配置请求。
@@ -54,6 +55,14 @@ func (r UpdateEmbyConfigRequest) Validate() error {
 	}
 	if r.SelectedLibraries != "" && !json.Valid([]byte(r.SelectedLibraries)) {
 		return validation.New("selected_libraries", "必须是有效的 JSON 字符串")
+	}
+	if r.ProxyPort != nil {
+		// 0=关闭；启用时须在 1024-65535（避免与系统保留端口冲突）
+		if *r.ProxyPort != 0 {
+			if err := validation.RangeInt("proxy_port", *r.ProxyPort, 1024, 65535); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

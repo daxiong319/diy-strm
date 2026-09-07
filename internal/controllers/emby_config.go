@@ -12,6 +12,10 @@ import (
 	"gorm.io/gorm"
 )
 
+// Emby302ProxyReloader Emby 302 独立反代端口热重载钩子（由 main.go 注册，避免 controllers→emby302 反向依赖）。
+// Emby 配置保存后调用：按最新 proxy_port 停旧实例/启新实例。
+var Emby302ProxyReloader func()
+
 // GetEmbyConfig 获取 Emby 配置。
 // @Summary 获取 Emby 配置
 // @Description 获取 Emby 媒体服务器的配置信息
@@ -112,6 +116,10 @@ func UpdateEmbyConfig(c *gin.Context) {
 	}
 	config.EnablePlaybackOverview = req.EnablePlaybackOverview
 	config.EnablePlaybackProgress = req.EnablePlaybackProgress
+	// 302 独立反代播放端口：nil=本次未修改（保留原值）
+	if req.ProxyPort != nil {
+		config.ProxyPort = *req.ProxyPort
+	}
 	// if req.DeleteNetdiskLibrary != nil {
 	// 	config.DeleteNetdiskLibrary = strings.Join(req.DeleteNetdiskLibrary, ",")
 	// }
@@ -133,6 +141,11 @@ func UpdateEmbyConfig(c *gin.Context) {
 	if oldSyncEnabled != config.SyncEnabled || oldSyncCron != config.SyncCron {
 		// 同步状态改变，需要重新加载 Cron
 		synccron.InitCron()
+	}
+
+	if Emby302ProxyReloader != nil {
+		// 独立反代端口热重载：按最新 proxy_port 停旧启新（后台执行，不阻塞响应）
+		go Emby302ProxyReloader()
 	}
 
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "Emby 配置已更新"})

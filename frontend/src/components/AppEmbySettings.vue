@@ -48,6 +48,27 @@
             </div>
           </el-form-item>
 
+          <el-form-item label="302 独立反代端口" prop="proxy_port">
+            <el-input-number
+              v-model="embyData.proxy_port"
+              :min="0"
+              :max="65535"
+              :step="1"
+              :disabled="embyLoading"
+              controls-position="right"
+              placeholder="0"
+              style="width: 180px"
+            />
+            <div class="form-help">
+              <el-icon><InfoFilled /></el-icon>
+              <span
+                >0 = 关闭（默认，仅 12333 单端口兜底模式）。配置后（建议 8095，需在 docker-compose
+                映射该端口）将另起 tgto123 同款独立播放端口：浏览器/播放器把服务器地址填成
+                http://服务器IP:该端口，打开即 Emby 本体，播放直链 302 到网盘，不与管理页混用
+              </span>
+            </div>
+          </el-form-item>
+
           <el-form-item label="Emby API Key" prop="emby_api_key">
             <el-input
               v-model="embyData.emby_api_key"
@@ -822,6 +843,7 @@ const embyData = reactive({
   enable_daily_first_full_sync: 1,
   enable_playback_overview: 0,
   enable_playback_progress: 0,
+  proxy_port: 0,
 })
 
 interface EmbyLibraryOption {
@@ -901,6 +923,7 @@ const loadEmbyConfig = async () => {
         embyData.enable_daily_first_full_sync = config.enable_daily_first_full_sync ?? 1
         embyData.enable_playback_overview = config.enable_playback_overview ?? 0
         embyData.enable_playback_progress = config.enable_playback_progress ?? 0
+        embyData.proxy_port = config.proxy_port ?? 0
 
         // 解析选中的媒体库 ID 列表
         try {
@@ -973,6 +996,7 @@ const saveEmbyConfig = async () => {
         enable_daily_first_full_sync: embyData.enable_daily_first_full_sync,
         enable_playback_overview: embyData.enable_playback_overview,
         enable_playback_progress: embyData.enable_playback_progress,
+        proxy_port: embyData.proxy_port ?? 0,
       },
       {
         headers: {

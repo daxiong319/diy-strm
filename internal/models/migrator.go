@@ -20,7 +20,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 77
+var MaxVersionCode = 78
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -896,6 +896,15 @@ func Migrate() {
 			}
 		}
 		helpers.AppLogger.Info("mediavault 对齐：订阅媒体库字段与日志表已就绪")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 77 {
+		// Emby 302 独立反代播放端口（tgto123 形态）：emby_config 补 proxy_port 列（0=关闭）
+		if err := db.Db.AutoMigrate(&EmbyConfig{}); err != nil {
+			helpers.AppLogger.Errorf("迁移 Emby 302 反代端口字段失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("Emby 302：独立反代端口字段已就绪")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)

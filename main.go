@@ -13,7 +13,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -47,6 +49,10 @@ var TMDB_API_KEY = ""
 var SC_API_KEY = ""
 var OAuthRelayEncryptionKey = ""
 var Update bool = false
+
+// emby302Standalone 独立 302 反代播放端口服务实例（tgto123 形态，nil=未启用）
+var emby302Standalone *web.StandaloneServer
+var emby302StandaloneMu sync.Mutex
 
 // emby302Enabled 表示是否已加载 Emby 302 配置
 // 启用时将 Emby 反代路由以兜底方式挂载到管理页同一个端口上
@@ -464,6 +470,44 @@ func startEmby302() {
 	config.C.VideoPreview.Containers = []string{"strm"}
 	emby302Enabled = true
 	helpers.AppLogger.Infof("Emby 302 已加载: %s", config.C.Emby.Host)
+
+	// tgto123 形态独立反代播放端口：配置了 proxy_port（>0）时另起专用端口，
+	// 根路径即 Emby 本体，避免与管理页共占 12333 根路径；未配置时保持 12333 单端口兜底
+	if models.GlobalEmbyConfig.ProxyPort > 0 {
+		startEmby302Standalone(strconv.Itoa(models.GlobalEmbyConfig.ProxyPort))
+	}
+	// 注册配置保存后的热重载钩子（controllers 不能反向 import emby302，经回调解耦）
+	controllers.Emby302ProxyReloader = func() {
+		emby302StandaloneMu.Lock()
+		defer emby302StandaloneMu.Unlock()
+		port := ""
+		if cfg, err := models.GetEmbyConfigFromDB(); err == nil && cfg != nil && cfg.ProxyPort > 0 {
+			port = strconv.Itoa(cfg.ProxyPort)
+		}
+		srv, err := web.RestartStandalone(emby302Standalone, port)
+		if err != nil {
+			helpers.AppLogger.Errorf("%v", err)
+			emby302Standalone = nil
+			return
+		}
+		emby302Standalone = srv
+		if port == "" || port == "0" {
+			helpers.AppLogger.Infof("Emby 302 独立反代端口已关闭，仅保留 12333 单端口兜底")
+		}
+	}
+}
+
+// startEmby302Standalone 启动独立 302 反代端口（幂等：先停旧实例）
+func startEmby302Standalone(port string) {
+	emby302StandaloneMu.Lock()
+	defer emby302StandaloneMu.Unlock()
+	srv, err := web.RestartStandalone(emby302Standalone, port)
+	if err != nil {
+		helpers.AppLogger.Errorf("%v", err)
+		emby302Standalone = nil
+		return
+	}
+	emby302Standalone = srv
 }
 
 func initLogger() {
