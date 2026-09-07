@@ -20,7 +20,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 80
+var MaxVersionCode = 81
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -36,6 +36,7 @@ var AllTables = []any{
 	CloudSetting{}, CloudSubscription{}, CloudTransferRecord{}, CloudChannel{},
 	HiveSlugAttempt{},
 	MonitorTransferRecord{},
+	Pan139DirCache{},
 }
 
 func (*Migrator) TableName() string {
@@ -930,6 +931,15 @@ func Migrate() {
 			return
 		}
 		helpers.AppLogger.Info("移动云盘：QPS 与遍历并发设置字段已就绪（默认 QPS=5，worker=6）")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 80 {
+		// 移动云盘（139）目录列表持久缓存（折中版）：目录指纹快照表
+		if err := db.Db.AutoMigrate(&Pan139DirCache{}); err != nil {
+			helpers.AppLogger.Errorf("迁移移动云盘目录缓存表失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("移动云盘：目录指纹缓存表已就绪")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)
