@@ -30,6 +30,10 @@ type AutoOrganizeConfig struct {
 	// Overwrite 同一部影片（同一 TMDB）目标目录已存在时是否覆盖（洗版），
 	// true=删除旧文件重新整理；false=跳过并在报告中提示。
 	Overwrite bool `gorm:"default:true" json:"overwrite"`
+	// StrmLocalDir 整理成功后联动生成 STRM 的本地输出目录（如 /media）。
+	// 为空=不联动（仅整理）；配置后每个整理成功目录自动触发一次 STRM 同步任务
+	//（与 MP 订阅上传链路的联动语义一致）。
+	StrmLocalDir string `gorm:"size:255" json:"strm_local_dir"`
 
 	// ---- 洗版策略（v2，借鉴成熟方案 MediaUpgradeConfig / symedia 覆盖规则）----
 	// WashCompare 更优才覆盖：仅当新文件质量综合评分高于被替换旧文件时才执行覆盖

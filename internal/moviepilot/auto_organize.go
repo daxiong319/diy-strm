@@ -642,6 +642,27 @@ func finishAutoOrganizeResult(cfg *models.AutoOrganizeConfig, result *AutoOrgani
 	if result.Organized+result.Unrecognized+result.MovedToFailed+result.Failed > 0 {
 		sendAutoOrganizeNotify(cfg, result)
 	}
+	// 整理成功目录联动 STRM 同步（与 MP 订阅上传链路同语义）：配置了 STRM 输出目录才触发
+	if result.Organized > 0 && strings.TrimSpace(cfg.StrmLocalDir) != "" {
+		triggerStrmSyncAfterAutoOrganize(cfg, result)
+	}
+}
+
+// triggerStrmSyncAfterAutoOrganize 对本轮整理成功的目录逐个触发手动 STRM 同步任务
+func triggerStrmSyncAfterAutoOrganize(cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult) {
+	account, err := models.GetAccountById(cfg.AccountID)
+	if err != nil || account == nil {
+		helpers.AppLogger.Warnf("STRM 联动：账号 %d 加载失败，跳过：%v", cfg.AccountID, err)
+		return
+	}
+	organizedRoot := strings.Trim(cfg.OrganizedRoot, "/")
+	if organizedRoot == "" {
+		organizedRoot = organizeRootPath(strings.Trim(cfg.PendingDir, "/"))
+	}
+	for _, dir := range result.SuccessDirs {
+		sourcePath := strings.TrimRight(organizedRoot, "/") + "/" + dir
+		TriggerStrmSyncForDir(account, sourcePath, cfg.StrmLocalDir)
+	}
 }
 
 func sendAutoOrganizeNotify(cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult) {

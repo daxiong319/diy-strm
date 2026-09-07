@@ -20,7 +20,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 78
+var MaxVersionCode = 79
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -905,6 +905,15 @@ func Migrate() {
 			return
 		}
 		helpers.AppLogger.Info("Emby 302：独立反代端口字段已就绪")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 78 {
+		// 云盘自动整理 STRM 联动：auto_organize_configs 补 strm_local_dir 列（空=不联动）
+		if err := db.Db.AutoMigrate(&AutoOrganizeConfig{}); err != nil {
+			helpers.AppLogger.Errorf("迁移自动整理 STRM 联动字段失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("自动整理：STRM 联动输出目录字段已就绪")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)

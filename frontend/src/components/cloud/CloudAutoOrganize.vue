@@ -210,6 +210,18 @@
           </div>
 
           <div class="mv-field">
+            <div class="mv-field-label">STRM 联动输出目录</div>
+            <div style="display: flex; gap: 8px">
+              <el-input v-model="formOf(account.id).strm_local_dir" placeholder="留空=整理后不联动生成 STRM" class="mv-text" />
+              <el-button @click="openPicker(account.id, 'strm_local_dir')">选择</el-button>
+            </div>
+            <p class="mv-field-desc">
+              配置后（如 /media）：每轮整理成功的目录会自动触发一次 STRM 同步任务，新片源即时生成 STRM
+              无需等定时轮询；需与「STRM 同步目录」中该网盘的已整理目录配合使用。
+            </p>
+          </div>
+
+          <div class="mv-field">
             <div class="mv-field-label">覆盖策略</div>
             <el-select :model-value="overwriteMode(account.id)" class="mv-select" @change="(v: string) => applyOverwriteMode(account.id, v)">
               <el-option label="跳过不覆盖（保留已有版本）" value="skip" />
@@ -477,6 +489,7 @@ interface AutoOrganizeConfig {
   pending_dir: string
   organized_root: string
   failed_dir: string
+  strm_local_dir: string
   category_config: string
   overwrite: boolean
   wash_compare: boolean
@@ -588,6 +601,8 @@ const pickerLabel = computed(() => {
       return '已整理根目录'
     case 'failed_dir':
       return '失败目录'
+    case 'strm_local_dir':
+      return 'STRM 联动输出目录'
     default:
       return ''
   }
@@ -622,6 +637,7 @@ const formOf = (accountId: number): AutoOrganizeConfig => {
       pending_dir: '',
       organized_root: '',
       failed_dir: '',
+      strm_local_dir: '',
       category_config: defaultCategoryYaml,
       overwrite: true,
       wash_compare: true,
@@ -731,6 +747,7 @@ const loadData = async () => {
         pending_dir: c.pending_dir || '',
         organized_root: c.organized_root || '',
         failed_dir: c.failed_dir || '',
+        strm_local_dir: c.strm_local_dir || '',
         category_config: c.category_config || defaultCategoryYaml,
         overwrite: c.overwrite,
         wash_compare: c.wash_compare ?? true,
@@ -799,6 +816,7 @@ const saveConfig = async (accountId: number) => {
       pending_dir: f.pending_dir.trim(),
       organized_root: f.organized_root.trim(),
       failed_dir: f.failed_dir.trim(),
+      strm_local_dir: (f.strm_local_dir || '').trim(),
       category_config: f.category_config,
       overwrite: f.overwrite,
       wash_compare: f.wash_compare,
@@ -1069,7 +1087,7 @@ const clearLogs = async () => {
 }
 
 // ---- 目录选择器 ----
-const openPicker = (accountId: number, field: 'pending_dir' | 'organized_root' | 'failed_dir') => {
+const openPicker = (accountId: number, field: 'pending_dir' | 'organized_root' | 'failed_dir' | 'strm_local_dir') => {
   pickerAccountId.value = accountId
   pickerField.value = field
   pickerDir.value = null
