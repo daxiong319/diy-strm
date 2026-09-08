@@ -124,11 +124,37 @@ var genericAggregateNames = map[string]bool{
 	"合集": true, "收藏": true, "其他": true, "其它": true, "未分类": true, "待整理": true,
 }
 
-// isGenericAggregateDirName 判断目录名是否为通用分类容器名（调用方先 stripTmdbTag）
+// aggregateCategoryKeywords 分类关键词：目录名含这些词且不带年份时视为分类容器
+// （覆盖 国产剧集/日韩剧集/欧美剧集/国产动漫/日番动漫/动画电影 等任意二级分类名，无需穷举）
+var aggregateCategoryKeywords = []string{
+	"剧集", "电视剧", "连续剧", "短剧", "动漫", "动画", "番剧", "电影", "综艺", "纪录片",
+}
+
+// autoYearInNameRe 匹配目录名中的 4 位年份（真实剧名目录通常带年份，如 花开锦绣 (2026)）
+var autoYearInNameRe = regexp.MustCompile(`(?:19|20)\d{2}`)
+
+// isGenericAggregateDirName 判断目录名是否为通用分类容器名（调用方先 stripTmdbTag）：
+//  1. 精确命中通用名（剧集/动漫/电影/其他/合集 等）；
+//  2. 或含分类关键词且不带年份（国产剧集/日韩剧集/国产动漫 等二级分类名）。
+//     真实剧名目录普遍带年份，不会被误判。
 func isGenericAggregateDirName(name string) bool {
 	n := strings.ToLower(strings.TrimSpace(name))
 	n = strings.Trim(n, " _-.　")
-	return genericAggregateNames[n]
+	if n == "" {
+		return false
+	}
+	if genericAggregateNames[n] {
+		return true
+	}
+	if autoYearInNameRe.MatchString(n) {
+		return false
+	}
+	for _, kw := range aggregateCategoryKeywords {
+		if strings.Contains(n, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // processAutoOrganizeDir 整理一个顶层目录资源（转存分享树根目录）。
