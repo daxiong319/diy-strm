@@ -1341,7 +1341,7 @@ onMounted(load)
   display: flex;
   justify-content: flex-end;
 }
-</style>
+
 
 /* ---- 订阅卡片网格（对齐影巢订阅卡片） ---- */
 .cs-grid {
@@ -1474,3 +1474,4 @@ onMounted(load)
 .cs-act.cs-act-warning { color: var(--warning); }
 .cs-act.cs-act-danger { color: var(--danger); }
 .cs-act.cs-act-info { color: var(--text-muted); }
+</style>

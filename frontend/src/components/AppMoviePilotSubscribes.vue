@@ -752,7 +752,7 @@ onMounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-</style>
+
 
 /* ---- MP 订阅卡片网格（对齐影巢订阅卡片） ---- */
 .mp-sub-grid {
@@ -885,3 +885,4 @@ onMounted(() => {
   gap: 12px;
   width: 100%;
 }
+</style>
