@@ -475,31 +475,159 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 	}
 	newName = resolveNameConflict(ctx, account, targetDirID, newName)
 
+	// 成功收尾（移动+重命名成功后共用）：延后洗版处置、计数、明细、记录
+	finishSuccess := func() {
+		applyDeferredWashLosers(ctx, account, cfg, deferredWash)
+		result.Organized++
+		found := false
+		for _, d := range result.SuccessDirs {
+			if d == relDir {
+				found = true
+				break
+			}
+		}
+		if !found {
+			result.SuccessDirs = append(result.SuccessDirs, relDir)
+		}
+		result.Details = append(result.Details, fmt.Sprintf("✓ %s → %s/%s", entry.Name, relDir, newName))
+		helpers.AppLogger.Infof("自动整理成功：%s → %s/%s", entry.Name, relDir, newName)
+		recordSuccess(account, *entry, sourcePath, relDir+"/"+newName, media.Category, officialTitle, year, media.Season, media.Episode, tmdbID, newName, "整理成功", extra)
+	}
+
 	if err := moveNetdiskFileInternal(account, entry.ID, entry.ParentID, targetDirID); err != nil {
 		recordFailed(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "移动失败："+err.Error(), extra)
 		return fmt.Errorf("移动 %s 失败：%v", entry.Name, err)
 	}
 	if err := renameNetdiskFileInternal(account, entry.ID, entry.ParentID, targetDirID, newName); err != nil {
+		// 同名冲突（123 列表一致性延迟导致前置比较/改名未察觉）：
+		// 按用户规则比较目标目录已有文件与片源质量——更优则覆盖重试，更差/持平移入失败目录
+		if strings.Contains(err.Error(), "重名文件") {
+			switch handleRenameDuplicate(ctx, account, cfg, result, entry, targetDirID, newName, newQ, media, officialTitle, year, tmdbID, relDir, sourcePath, extra) {
+			case "success":
+				finishSuccess()
+				return nil
+			case "skip":
+				return nil
+			}
+		}
 		recordFailed(account, *entry, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "重命名失败："+err.Error(), extra)
 		return fmt.Errorf("重命名 %s 失败：%v", entry.Name, err)
 	}
-	// 新文件已就位：执行延后的旧文件处置（delete/archive），避免先删后移的缺集窗口
-	applyDeferredWashLosers(ctx, account, cfg, deferredWash)
-	result.Organized++
-	found := false
-	for _, d := range result.SuccessDirs {
-		if d == relDir {
-			found = true
+	finishSuccess()
+	return nil
+}
+
+// handleRenameDuplicate 重命名遇「当前目录有重名文件」时的质量比较处置。
+// 此时源文件已移入目标目录（原名单独占位）。流程：
+//  1. 重新列出目标目录（123 列表有一致性延迟，重试 3 次），按「同名/同集（忽略扩展名与质量后缀）」
+//     匹配旧文件（排除源文件自身）；
+//  2. 新文件质量更优 → 删除旧文件并重试重命名，返回 "success"；
+//  3. 质量不高于现版本 → 源文件移入失败目录，返回 "skip"；
+//  4. 无法匹配/删除失败/重试仍失败 → 返回 "failed"（调用方按原失败逻辑处理）。
+func handleRenameDuplicate(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, entry *organizeEntry, targetDirID, newName string, newQ *FileQuality, media *IdentifyResult, officialTitle string, year int, tmdbID int64, relDir, sourcePath string, extra map[string]any) string {
+	if account == nil || cfg == nil || entry == nil || newQ == nil || media == nil {
+		return "failed"
+	}
+	var targets []organizeEntry
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return "failed"
+			case <-time.After(time.Duration(attempt) * time.Second):
+			}
+		}
+		entries, lErr := listNetDirByID(ctx, account, targetDirID)
+		if lErr != nil {
+			helpers.AppLogger.Warnf("同名冲突比较：列出目标目录失败（账号 %d）：%s：%v", cfg.AccountID, relDir, lErr)
+			continue
+		}
+		targets = targets[:0]
+		for _, i := range findWashTargets(newName, newQ, entries) {
+			if entries[i].ID == entry.ID {
+				continue // 排除源文件自身
+			}
+			targets = append(targets, entries[i])
+		}
+		if len(targets) > 0 {
 			break
 		}
 	}
-	if !found {
-		result.SuccessDirs = append(result.SuccessDirs, relDir)
+	if len(targets) == 0 {
+		return "failed"
 	}
-	result.Details = append(result.Details, fmt.Sprintf("✓ %s → %s/%s", entry.Name, relDir, newName))
-	helpers.AppLogger.Infof("自动整理成功：%s → %s/%s", entry.Name, relDir, newName)
-	recordSuccess(account, *entry, sourcePath, relDir+"/"+newName, media.Category, officialTitle, year, media.Season, media.Episode, tmdbID, newName, "整理成功", extra)
-	return nil
+	rules := ParseWashRules(cfg.WashRulesJSON)
+	groupPrio := splitGroupPriority(cfg.GroupPriority)
+	newBetter := true
+	for i := range targets {
+		oldQ := ParseQualityFromName(targets[i].Name)
+		if CompareQuality(newQ, oldQ, groupPrio, rules) <= 0 {
+			newBetter = false
+			break
+		}
+	}
+	if !newBetter {
+		// 质量不高于现版本：源文件（已位于目标目录）移入失败目录
+		src := *entry
+		src.ParentID = targetDirID
+		moveEntryToFailedDir(ctx, account, cfg, &src, result, "目标已存在同名/同集文件且质量不高于现有版本")
+		recordSkipped(account, src, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "同名冲突：新版本质量不高于现有版本，已移入失败目录", "", extra)
+		_ = models.AddWashLog(&models.WashLog{
+			AccountID:  cfg.AccountID,
+			Action:     "rename_duplicate_skip",
+			TargetPath: relDir,
+			Title:      officialTitle,
+			MediaType:  media.Category,
+			SeasonNum:  media.Season,
+			EpisodeNum: media.Episode,
+			TMDBID:     tmdbID,
+			NewName:    entry.Name,
+			NewQuality: newQ.Summary(),
+			Message:    fmt.Sprintf("目标已存在同名/同集文件（%s）且质量不高于现有版本，源文件移入失败目录", targets[0].Name),
+			EventTime:  time.Now(),
+		})
+		return "skip"
+	}
+	// 新文件更优：删除旧文件后重试重命名
+	for i := range targets {
+		oldQ := ParseQualityFromName(targets[i].Name)
+		if err := deleteNetdiskFileInternal(account, targets[i].ID, targets[i].ParentID); err != nil {
+			helpers.AppLogger.Warnf("同名冲突覆盖：删除旧文件失败（账号 %d）：%s：%v", cfg.AccountID, targets[i].Name, err)
+			return "failed"
+		}
+		_ = models.AddWashLog(&models.WashLog{
+			AccountID:    cfg.AccountID,
+			Action:       "wash_replace",
+			TargetPath:   relDir,
+			Title:        officialTitle,
+			MediaType:    media.Category,
+			SeasonNum:    media.Season,
+			EpisodeNum:   media.Episode,
+			TMDBID:       tmdbID,
+			OldName:      targets[i].Name,
+			OldQuality:   oldQ.Summary(),
+			NewName:      newName,
+			NewQuality:   newQ.Summary(),
+			LoserTreated: "delete",
+			Message:      "重命名同名冲突且新版本质量更优，已删除旧文件",
+			EventTime:    time.Now(),
+		})
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return "failed"
+			case <-time.After(2 * time.Second):
+			}
+		}
+		if err := renameNetdiskFileInternal(account, entry.ID, entry.ParentID, targetDirID, newName); err == nil {
+			helpers.AppLogger.Infof("同名冲突覆盖成功：%s（删除旧版本 %d 个后重命名）", newName, len(targets))
+			return "success"
+		}
+	}
+	helpers.AppLogger.Warnf("同名冲突覆盖：重试重命名仍失败（账号 %d）：%s", cfg.AccountID, newName)
+	return "failed"
 }
 
 // buildAutoMedia 由文件名 + 目录级信息组装媒体信息。

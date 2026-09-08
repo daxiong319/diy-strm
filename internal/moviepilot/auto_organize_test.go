@@ -1,10 +1,12 @@
 package moviepilot
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"diy-strm/internal/mediaparse"
+	"diy-strm/internal/models"
 )
 
 func TestExtractQualityTags(t *testing.T) {
@@ -247,5 +249,21 @@ func TestTryOrganizeAggregateChildrenRejectsNonGeneric(t *testing.T) {
 	dir2 := &organizeEntry{ID: "1", ParentID: "0", Name: "剧集 {tmdbid-287496}"}
 	if got := tryOrganizeAggregateChildren(nil, nil, nil, result, dir2, "", nil, nil, nil, 0); got {
 		t.Fatal("带 TMDB 标记的通用名不应触发聚合兜底")
+	}
+}
+
+func TestHandleRenameDuplicateRejectsOnNoTargets(t *testing.T) {
+	// 网络不可达（nil account）→ 列目录失败 3 次 → 返回 failed，调用方按原失败逻辑处理
+	cfg := &models.AutoOrganizeConfig{AccountID: 1}
+	entry := &organizeEntry{ID: "src1", ParentID: "p1", Name: "师兄啊师兄.2023.S02E22.2160p.WEB-DL.mp4"}
+	result := &AutoOrganizeResult{}
+	got := handleRenameDuplicate(context.Background(), nil, cfg, result, entry, "dir1",
+		"师兄啊师兄 (2023) {tmdb=218642} - S02E22.mp4",
+		ParseQualityFromName(entry.Name),
+		&IdentifyResult{Category: "tv", Title: "师兄啊师兄", Season: 2, Episode: 22},
+		"师兄啊师兄", 2023, 218642, "国产动漫/师兄啊师兄 (2023) {tmdb=218642}/Season 02",
+		"/媒体库/待整理/x.mp4", map[string]any{})
+	if got != "failed" {
+		t.Fatalf("handleRenameDuplicate 无网络时应返回 failed，实际 %q", got)
 	}
 }
