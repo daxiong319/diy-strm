@@ -89,7 +89,7 @@ func RunAutoOrganize(ctx context.Context, cfg *models.AutoOrganizeConfig) *AutoO
 			break
 		}
 		if e.IsDir {
-			processAutoOrganizeDir(ctx, account, cfg, result, &e, organizedRoot, &rules, dirCache, &aiBudget)
+			processAutoOrganizeDir(ctx, account, cfg, result, &e, organizedRoot, &rules, dirCache, &aiBudget, 0)
 		} else {
 			if !mediaparse.IsVideoExt(e.Name) {
 				result.NonMedia++
@@ -111,9 +111,30 @@ func RunAutoOrganize(ctx context.Context, cfg *models.AutoOrganizeConfig) *AutoO
 	return result
 }
 
+// maxAggregateDescendDepth 聚合容器兜底的最大递归深度（防异常分享出现 剧集/剧集/剧集… 病理嵌套）
+const maxAggregateDescendDepth = 5
+
+// genericAggregateNames 云盘分享中常见的「分类容器」目录名：
+// 这类目录本身不是影视资源，只是多个资源（通常每个子目录一部剧集/电影）的聚合。
+// 目录级识别失败且目录名为通用名时，读取内容逐个子资源独立识别，而不是整目录进失败目录。
+var genericAggregateNames = map[string]bool{
+	"剧集": true, "电视剧": true, "电视剧集": true, "连续剧": true, "短剧": true,
+	"动漫": true, "动画": true, "动画片": true, "番剧": true, "日番": true,
+	"电影": true, "影片": true, "综艺": true, "综艺节目": true, "纪录片": true,
+	"合集": true, "收藏": true, "其他": true, "其它": true, "未分类": true, "待整理": true,
+}
+
+// isGenericAggregateDirName 判断目录名是否为通用分类容器名（调用方先 stripTmdbTag）
+func isGenericAggregateDirName(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	n = strings.Trim(n, " _-.　")
+	return genericAggregateNames[n]
+}
+
 // processAutoOrganizeDir 整理一个顶层目录资源（转存分享树根目录）。
-// 收集目录内视频文件逐个整理；整理结束后空目录删除、有残留则整体移入失败目录。
-func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, dir *organizeEntry, organizedRoot string, rules *categoryRules, dirCache map[string]string, aiBudget *int) {
+// 目录名识别优先（保持既有机制）；目录级识别失败且目录名为通用分类容器名时，
+// 兜底读取目录内容逐个子资源独立识别。depth 为聚合容器兜底递归深度。
+func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, dir *organizeEntry, organizedRoot string, rules *categoryRules, dirCache map[string]string, aiBudget *int, depth int) {
 	// 目录名解析（标题/年份优先从目录名取，季集优先从文件名取）；
 	// 先剥离目录名中内嵌的 TMDB 标记（{tmdbid-xxx}），避免污染标题搜索
 	cleanDirName := stripTmdbTag(dir.Name)
@@ -146,6 +167,12 @@ func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *m
 	}
 	if len(videos) == 0 {
 		result.NonMedia++
+		// 无视频也可能因为是聚合容器（子内容暂未下载完/全是图片字幕）：
+		// 通用容器名时尝试逐子资源兜底，成功则照常收尾，否则跳过
+		if tryOrganizeAggregateChildren(ctx, account, cfg, result, dir, organizedRoot, rules, dirCache, aiBudget, depth) {
+			finalizeAutoOrganizeDir(ctx, account, cfg, result, dir)
+			return
+		}
 		result.Details = append(result.Details, fmt.Sprintf("目录 %s 内无视频文件，跳过", dir.Name))
 		return
 	}
@@ -165,6 +192,13 @@ func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *m
 		if err := organizeAutoVideoFile(ctx, account, cfg, result, v, dirCtx, organizedRoot, rules, dirCache, aiBudget); err != nil {
 			if errors.Is(err, errMediaUnrecognized) {
 				result.Unrecognized++
+				// 兜底：目录名为通用分类容器（剧集/动漫/电影等）且无 TMDB 标记时，
+				// 目录名不是真实标题，读取目录内容逐个子资源独立识别（子目录按自身剧名识别，
+				// 直挂视频按文件名识别）；单个子资源失败单独进失败目录，不再拖垮整个目录。
+				if tryOrganizeAggregateChildren(ctx, account, cfg, result, dir, organizedRoot, rules, dirCache, aiBudget, depth) {
+					finalizeAutoOrganizeDir(ctx, account, cfg, result, dir)
+					return
+				}
 				moveEntryToFailedDir(ctx, account, cfg, dir, result, fmt.Sprintf("目录 %s 内文件识别失败：%v", dir.Name, err))
 				return
 			}
@@ -174,7 +208,56 @@ func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *m
 		}
 	}
 
-	// 收尾：源目录已空则删除；有残留则整体移入失败目录（不丢数据）
+	finalizeAutoOrganizeDir(ctx, account, cfg, result, dir)
+}
+
+// tryOrganizeAggregateChildren 聚合容器兜底：目录级识别失败且目录名为通用分类容器时，
+// 读取目录内容逐个子资源独立整理。
+//   - 子目录：按其自身目录名识别（processAutoOrganizeDir 递归，内部仍可再次兜底）；
+//   - 直挂视频：按文件名识别（dirCtx 传 nil），失败的单个文件移入失败目录；
+//   - 非视频文件：计入 NonMedia，留在原地。
+//
+// 返回 true 表示已按聚合容器模式处理（调用方随后 finalize 收尾）；false 表示目录名
+// 不是通用分类容器（调用方维持原逻辑整目录移入失败目录）。
+func tryOrganizeAggregateChildren(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, dir *organizeEntry, organizedRoot string, rules *categoryRules, dirCache map[string]string, aiBudget *int, depth int) bool {
+	if !isGenericAggregateDirName(stripTmdbTag(dir.Name)) || extractTmdbIDFromName(dir.Name) != 0 {
+		return false
+	}
+	entries, err := listNetDirByID(ctx, account, dir.ID)
+	if err != nil {
+		result.Failed++
+		result.Details = append(result.Details, fmt.Sprintf("扫描聚合容器 %s 失败：%v", dir.Name, err))
+		return true
+	}
+	for i := range entries {
+		e := &entries[i]
+		if ctx.Err() != nil {
+			result.Details = append(result.Details, "上下文取消，本轮中断")
+			break
+		}
+		switch {
+		case e.IsDir:
+			processAutoOrganizeDir(ctx, account, cfg, result, e, organizedRoot, rules, dirCache, aiBudget, depth+1)
+		case mediaparse.IsVideoExt(e.Name):
+			if err := organizeAutoVideoFile(ctx, account, cfg, result, e, nil, organizedRoot, rules, dirCache, aiBudget); err != nil {
+				if errors.Is(err, errMediaUnrecognized) {
+					result.Unrecognized++
+					moveEntryToFailedDir(ctx, account, cfg, e, result, fmt.Sprintf("识别失败：%v", err))
+				} else {
+					result.Failed++
+					result.FailedNames = append(result.FailedNames, e.Name)
+					result.Details = append(result.Details, fmt.Sprintf("整理失败 %s：%v", e.Name, err))
+				}
+			}
+		default:
+			result.NonMedia++
+		}
+	}
+	return true
+}
+
+// finalizeAutoOrganizeDir 整理收尾：源目录已空则删除；有残留则整体移入失败目录（不丢数据）。
+func finalizeAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, dir *organizeEntry) {
 	leftovers, err := listNetDirByID(ctx, account, dir.ID)
 	if err != nil {
 		result.Details = append(result.Details, fmt.Sprintf("整理后复查目录 %s 失败：%v", dir.Name, err))

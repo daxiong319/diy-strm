@@ -207,3 +207,37 @@ func TestBuildAutoMediaWithFileTmdbTag(t *testing.T) {
 		t.Errorf("TmdbId = %d, want 287496", media.TmdbId)
 	}
 }
+
+func TestIsGenericAggregateDirName(t *testing.T) {
+	cases := map[string]bool{
+		"剧集":      true,
+		"动漫":      true,
+		"电影":      true,
+		" 剧集 ":     true,
+		"电视剧":     true,
+		"未分类":     true,
+		"花开锦绣":    false,
+		"斗破苍穹年番":  false,
+		"花开锦绣 (2026) {tmdbid-287496}": false, // 调用方已先 stripTmdbTag，此处模拟剥离后
+		"":         false,
+	}
+	for name, want := range cases {
+		if got := isGenericAggregateDirName(name); got != want {
+			t.Errorf("isGenericAggregateDirName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestTryOrganizeAggregateChildrenRejectsNonGeneric(t *testing.T) {
+	// 非通用目录名直接返回 false（不做兜底，维持整目录进失败目录的原逻辑）
+	dir := &organizeEntry{ID: "1", ParentID: "0", Name: "花开锦绣 (2026)"}
+	result := &AutoOrganizeResult{}
+	if got := tryOrganizeAggregateChildren(nil, nil, nil, result, dir, "", nil, nil, nil, 0); got {
+		t.Fatal("非通用目录名不应触发聚合兜底")
+	}
+	// 带 TMDB 标记的通用名也不兜底（目录级 TMDB ID 优先，按资源处理）
+	dir2 := &organizeEntry{ID: "1", ParentID: "0", Name: "剧集 {tmdbid-287496}"}
+	if got := tryOrganizeAggregateChildren(nil, nil, nil, result, dir2, "", nil, nil, nil, 0); got {
+		t.Fatal("带 TMDB 标记的通用名不应触发聚合兜底")
+	}
+}
