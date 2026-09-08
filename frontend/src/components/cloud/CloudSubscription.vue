@@ -1084,8 +1084,6 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 14px;
-  max-width: 1300px;
-  margin: 0 auto;
   width: 100%;
 }
 .cloud-card {

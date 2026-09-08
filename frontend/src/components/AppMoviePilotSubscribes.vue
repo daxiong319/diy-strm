@@ -162,6 +162,12 @@
         <el-table :data="uploadTasks" v-loading="uploadTasksLoading" empty-text="暂无上传任务" style="width: 100%">
           <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
           <el-table-column prop="remote_path" label="云盘目标目录" min-width="180" show-overflow-tooltip />
+          <el-table-column label="集数" min-width="140" show-overflow-tooltip>
+            <template #default="scope">
+              <span v-if="scope.row.episodes">{{ scope.row.episodes }}</span>
+              <span v-else class="mp-upload-no-ep">-</span>
+            </template>
+          </el-table-column>
           <el-table-column label="状态" width="100">
             <template #default="scope">
               <el-tag :type="getUploadStatusTag(scope.row.status)">{{ getUploadStatusText(scope.row.status) }}</el-tag>
@@ -867,3 +873,15 @@ onMounted(() => {
 .mp-act.mp-act-primary { color: var(--brand); }
 .mp-act.mp-act-warning { color: var(--warning); }
 .mp-act.mp-act-danger { color: var(--danger); }
+
+.mp-upload-no-ep {
+  color: var(--text-muted);
+}
+
+.moviepilot-subscribes-container {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}

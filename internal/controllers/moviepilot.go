@@ -2,8 +2,10 @@
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -379,7 +381,93 @@ func ListMoviePilotUploadTasks(c *gin.Context) {
 	}
 	status := c.DefaultQuery("status", "")
 	tasks, total := models.ListMoviePilotUploadTasks(page, pageSize, status)
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "获取上传任务成功", Data: map[string]any{"list": tasks, "total": total}})
+	// 聚合每批次已上传文件的集数摘要（db_upload_tasks 按 movie_pilot_task_id 关联），
+	// 供上传任务列表显示具体集数（如 S01E01-E03、S01E05）
+	episodesByTask := map[uint]string{}
+	if len(tasks) > 0 {
+		ids := make([]uint, 0, len(tasks))
+		for i := range tasks {
+			ids = append(ids, tasks[i].ID)
+		}
+		var rows []struct {
+			MoviePilotTaskId uint
+			FileName         string
+		}
+		if err := db.Db.Model(&models.DbUploadTask{}).
+			Select("movie_pilot_task_id, file_name").
+			Where("movie_pilot_task_id IN ?", ids).
+			Order("id ASC").Find(&rows).Error; err == nil {
+			keysByTask := map[uint][]string{}
+			for _, r := range rows {
+				if r.MoviePilotTaskId == 0 || r.FileName == "" {
+					continue
+				}
+				keysByTask[r.MoviePilotTaskId] = append(keysByTask[r.MoviePilotTaskId], ParseEpisodeKeys(r.FileName, 0)...)
+			}
+			for tid, keys := range keysByTask {
+				episodesByTask[tid] = summarizeEpisodeKeys(keys)
+			}
+		}
+	}
+	list := make([]gin.H, 0, len(tasks))
+	for i := range tasks {
+		raw, mErr := json.Marshal(tasks[i])
+		if mErr != nil {
+			continue
+		}
+		var item gin.H
+		if err := json.Unmarshal(raw, &item); err != nil {
+			continue
+		}
+		item["episodes"] = episodesByTask[tasks[i].ID]
+		list = append(list, item)
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "获取上传任务成功", Data: map[string]any{"list": list, "total": total}})
+}
+
+// summarizeEpisodeKeys 集号键去重排序并压缩连续段：S01E01,S01E02,S01E03,S01E05 → S01E01-E03、S01E05
+func summarizeEpisodeKeys(keys []string) string {
+	type se struct{ s, e int }
+	parsed := make([]se, 0, len(keys))
+	seen := map[se]bool{}
+	for _, k := range keys {
+		m := reSeasonEp.FindStringSubmatch(strings.ToUpper(k))
+		if m == nil {
+			continue
+		}
+		s, _ := strconv.Atoi(m[1])
+		e, _ := strconv.Atoi(m[2])
+		v := se{s, e}
+		if e <= 0 || seen[v] {
+			continue
+		}
+		seen[v] = true
+		parsed = append(parsed, v)
+	}
+	if len(parsed) == 0 {
+		return ""
+	}
+	sort.Slice(parsed, func(i, j int) bool {
+		if parsed[i].s != parsed[j].s {
+			return parsed[i].s < parsed[j].s
+		}
+		return parsed[i].e < parsed[j].e
+	})
+	parts := make([]string, 0, len(parsed))
+	for i := 0; i < len(parsed); {
+		j := i
+		for j+1 < len(parsed) && parsed[j+1].s == parsed[i].s && parsed[j+1].e == parsed[j].e+1 {
+			j++
+		}
+		start := fmt.Sprintf("S%02dE%02d", parsed[i].s, parsed[i].e)
+		if j == i {
+			parts = append(parts, start)
+		} else {
+			parts = append(parts, fmt.Sprintf("%s-E%02d", start, parsed[j].e))
+		}
+		i = j + 1
+	}
+	return strings.Join(parts, "、")
 }
 
 // RetryMoviePilotUploadTask 重试上传任务
