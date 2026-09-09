@@ -11,6 +11,7 @@ import (
 	"diy-strm/internal/guanying"
 	"diy-strm/internal/hdhive"
 	"diy-strm/internal/models"
+	"diy-strm/internal/seedhub"
 
 	"github.com/gin-gonic/gin"
 )
@@ -58,12 +59,12 @@ type resourceItem struct {
 
 // resourceEpisode 季集信息（对齐 tgto123 卡片 SxxExx 渲染）
 type resourceEpisode struct {
-	SeasonNum      *int `json:"season_num"`
-	EpisodeNum     *int `json:"episode_num"`
-	EndEpisodeNum  *int `json:"end_episode_num"`
+	SeasonNum       *int `json:"season_num"`
+	EpisodeNum      *int `json:"episode_num"`
+	EndEpisodeNum   *int `json:"end_episode_num"`
 	TotalEpisodeNum *int `json:"total_episode_num"`
-	IsComplete     bool `json:"is_complete"`
-	IsUpdated      bool `json:"is_updated"`
+	IsComplete      bool `json:"is_complete"`
+	IsUpdated       bool `json:"is_updated"`
 }
 
 // providerLabel 把网盘类型映射为展示名（对齐 tgto123：guangyapan→光鸭 等）
@@ -179,9 +180,9 @@ func SearchMediaResourcesAPI(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, APIResponse[gin.H]{
-		Code: Success,
+		Code:    Success,
 		Message: "",
-		Data: gin.H{"items": items, "errors": errs},
+		Data:    gin.H{"items": items, "errors": errs},
 	})
 }
 
@@ -225,7 +226,7 @@ func searchResourceBySource(ctx context.Context, source, mediaType string, tmdbI
 	case "guanying":
 		return searchGuanyingResources(ctx, mediaType, tmdbID, title)
 	case "seedhub":
-		return nil, fmt.Errorf("SeedHub 未配置")
+		return searchSeedhubResources(ctx, mediaType, tmdbID, title)
 	default:
 		return nil, fmt.Errorf("未知资源来源：%s", source)
 	}
@@ -330,4 +331,37 @@ func CopyRe0ResourceLinkAPI(c *gin.Context) {
 	base := hdhive.DefaultOfficialBaseURL
 	link := fmt.Sprintf("%s/resource/%s", strings.TrimRight(base, "/"), slug)
 	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Data: gin.H{"link": link, "copied_at": time.Now().Format(time.RFC3339)}})
+}
+
+// searchSeedhubResources SeedHub 源检索（未配置返回标准化不可用错误）
+func searchSeedhubResources(ctx context.Context, mediaType string, tmdbID int64, title string) ([]resourceItem, error) {
+	cfg, ok := seedhub.GetConfig()
+	if !ok {
+		return nil, fmt.Errorf("SeedHub 未配置：请先在发现-基础配置中填写 API 地址与令牌")
+	}
+	rawItems, err := seedhub.SearchResources(ctx, cfg, title, mediaType, tmdbID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]resourceItem, 0, len(rawItems))
+	for _, raw := range rawItems {
+		item := resourceItem{
+			ItemKey:       raw.ItemKey,
+			Source:        "seedhub",
+			Provider:      raw.LinkType,
+			ProviderLabel: resourceProviderLabel(raw.LinkType),
+			Title:         raw.Title,
+			Slug:          raw.Slug,
+			ShareURL:      raw.ShareURL,
+			LinkType:      raw.LinkType,
+			Size:          raw.Size,
+			Remark:        raw.Remark,
+			IsUnlocked:    true, // SeedHub 分享无积分语义
+		}
+		if raw.IsOffline {
+			item.SupportedTargets = offlineSupportedTargets(raw.LinkType)
+		}
+		items = append(items, item)
+	}
+	return items, nil
 }

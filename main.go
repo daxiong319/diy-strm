@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"diy-strm/emby302/config"
+	"diy-strm/emby302/proxyrules"
 	emby302https "diy-strm/emby302/util/https"
 	"diy-strm/emby302/web"
 	"diy-strm/internal/backup"
@@ -202,6 +203,9 @@ func (app *App) StartDatabase(migrateMode bool) error {
 		ensureDiscoveryTables()
 		if err := models.EnsureEmbyPlaybackRecordTable(); err != nil {
 			helpers.AppLogger.Errorf("创建播放记录表失败：%v", err)
+		}
+		if err := models.EnsureEmby302ProxyRuleTable(); err != nil {
+			helpers.AppLogger.Errorf("创建反代规则表失败：%v", err)
 		}
 		if err := models.ResetStaleEmbySyncRunOnStartup(); err != nil {
 			return err
@@ -505,6 +509,9 @@ func startEmby302() {
 	if models.GlobalEmbyConfig.ProxyPort > 0 {
 		startEmby302Standalone(strconv.Itoa(models.GlobalEmbyConfig.ProxyPort))
 	}
+	// 多规则反代：启动时重建全部启用规则；注入保存回调
+	proxyrules.ReloadProxyRules()
+	controllers.ReloadEmbyProxyRulesFn = proxyrules.ReloadProxyRules
 	// 注册配置保存后的热重载钩子（controllers 不能反向 import emby302，经回调解耦）
 	controllers.Emby302ProxyReloader = func() {
 		emby302StandaloneMu.Lock()
@@ -976,11 +983,28 @@ func setRouter(r *gin.Engine) {
 		api.POST("/danmu/config", controllers.SaveDanmuConfigAPI) // 保存弹幕配置
 		// 播放记录（emby302 反代落库）
 		api.GET("/emby302/playback-records", controllers.GetPlaybackRecordsAPI)
+		// Emby 虚拟库/榜单合集
+		api.GET("/emby302/virtual-library", controllers.GetVLibrarySettingsAPI)   // 设置读取
+		api.POST("/emby302/virtual-library", controllers.SaveVLibrarySettingsAPI) // 设置保存
+		api.POST("/emby302/virtual-library/sync", controllers.SyncVLibraryAPI)    // 同步榜单合集
+		// 多规则反代（emby/飞牛影视/飞牛音乐）
+		api.GET("/emby302/proxy-rules", controllers.GetProxyRulesAPI)
+		api.POST("/emby302/proxy-rules/save", controllers.SaveProxyRuleAPI)
+		api.POST("/emby302/proxy-rules/toggle", controllers.ToggleProxyRuleAPI)
+		api.POST("/emby302/proxy-rules/delete", controllers.DeleteProxyRuleAPI)
 		// 光鸭 GCID 秒传导出/导入（对齐 tgto123 gcid-export 语义）
 		api.POST("/guangya/gcid-export", controllers.ExportGcidAPI)                     // 扫描目录→JSON→通知渠道
 		api.POST("/guangya/gcid-import", controllers.ImportGcidAPI)                     // JSON→秒传入目标目录
 		api.GET("/guangya/gcid-jobs/:id", controllers.GcidJobStatusAPI)                 // 任务状态
 		api.GET("/guangya/gcid-export/download/:id", controllers.DownloadGcidExportAPI) // 下载 JSON
+		// SeedHub 资源源配置
+		api.GET("/seedhub/config", controllers.GetSeedhubConfigAPI)   // SeedHub 配置
+		api.POST("/seedhub/config", controllers.SaveSeedhubConfigAPI) // 保存 SeedHub 配置
+		// 频道白名单可视化（visual-filter，对齐 tgto123 形状）
+		api.GET("/visual-filter/config", controllers.GetVisualFilterConfigAPI)         // 场景配置
+		api.GET("/visual-filter/scenes", controllers.GetAllVisualFilterScenesAPI)      // 全场景
+		api.POST("/visual-filter/config", controllers.SaveVisualFilterConfigAPI)       // 保存规则
+		api.GET("/visual-filter/tmdb/search", controllers.VisualFilterPosterLookupAPI) // 海报补全
 		// AI 识别配置只读映射（本体在刮削设置）
 		api.GET("/ai-media-parser/config", controllers.GetAiMediaParserConfigAPI)        // AI 识别配置视图
 		api.POST("/ai-media-parser/cache/clear", controllers.ClearAiMediaParserCacheAPI) // 兼容端点

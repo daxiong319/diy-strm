@@ -1170,12 +1170,92 @@ const onWindowResize = () => {
   setupInfinite()
 }
 
+
+// ------------------------- 频道白名单可视化筛选 -------------------------
+interface VfRule {
+  id: string
+  media_name: string
+  media_type: string
+  tmdb_id?: number
+  title?: string
+  poster_url?: string
+  enabled: boolean
+  created_at?: string
+}
+const vfScene = ref('123')
+const vfSceneLabels = ref<Record<string, string>>({ '123': '123 频道订阅白名单', guangya: '光鸭频道订阅白名单', '139': '移动云盘频道订阅白名单' })
+const vfRules = ref<VfRule[]>([])
+const vfParseMode = ref('advanced')
+const vfSaving = ref(false)
+const vfLoaded = ref('')
+
+const loadVfConfig = async (scene: string) => {
+  if (vfLoaded.value === scene) return
+  try {
+    const response = await http.get(`${SERVER_URL}/visual-filter/config`, { params: { scene } })
+    const data = response?.data?.data
+    if (data?.current) {
+      vfRules.value = data.current.rules || []
+      vfParseMode.value = data.current.parse_mode || 'advanced'
+      if (data.scene_labels) vfSceneLabels.value = data.scene_labels
+      vfLoaded.value = scene
+    }
+  } catch { /* 静默 */ }
+}
+
+const vfAddRule = () => {
+  vfRules.value.push({ id: '', media_name: '', media_type: '', enabled: true })
+}
+
+const vfLookupPoster = async (rule: VfRule) => {
+  const keyword = (rule.media_name || '').trim()
+  if (!keyword) return
+  try {
+    const type = rule.media_type === 'movie' || rule.media_type === 'tv' ? rule.media_type : 'multi'
+    const response = await http.get(`${SERVER_URL}/visual-filter/tmdb/search`, { params: { query: keyword, type } })
+    const data = response?.data?.data
+    const results = data?.results || []
+    if (!results.length) return
+    const match = results.find((r: { title: string }) => r.title === keyword) || results[0]
+    rule.tmdb_id = match.id
+    rule.title = match.title
+    rule.poster_url = match.poster_path ? `${(data.image_base_url || 'https://image.tmdb.org/t/p').replace(/\/$/, '')}/w185${match.poster_path}` : ''
+    if (!rule.media_type && match.media_type) rule.media_type = match.media_type
+  } catch { /* 海报补全失败静默 */ }
+}
+
+const vfSave = async () => {
+  vfSaving.value = true
+  try {
+    const rules = vfRules.value.filter((r) => (r.media_name || '').trim())
+    const response = await http.post(`${SERVER_URL}/visual-filter/config`, {
+      scene: vfScene.value,
+      parse_mode: vfParseMode.value,
+      rules,
+    })
+    if (response?.data?.code === 200) {
+      if (response.data.data?.rules) vfRules.value = response.data.data.rules
+      ElMessage.success('白名单规则已保存')
+    } else {
+      ElMessage.error(response?.data?.message || '保存失败')
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '保存失败')
+  } finally { vfSaving.value = false }
+}
+
+watch(vfScene, (scene) => {
+  vfLoaded.value = ''
+  loadVfConfig(scene)
+})
+
 onMounted(async () => {
   loadMeta()
   loadSubscribed()
   loadFavorites()
   load()
   loadGuanyingStatus()
+  loadVfConfig(vfScene.value)
   await nextTick()
   computeColumns()
   setupInfinite()
@@ -1994,6 +2074,35 @@ onBeforeUnmount(() => {
                     <button type="button" class="md-btn is-primary" :disabled="guanyingLogging" @click="verifyGuanyingCaptcha">确认</button>
                     <button type="button" class="md-btn" :disabled="guanyingLogging" @click="undoCaptchaPoint">撤销一点</button>
                   </div>
+                </div>
+              </div>
+              <div class="md-guanying-auth">
+                <div class="md-guanying-auth-status">频道白名单可视化筛选（规则卡片与正则双向同步，TMDB 海报补全）</div>
+                <div class="md-guanying-auth-actions">
+                  <select v-model="vfScene" class="md-input" style="width: 200px">
+                    <option v-for="(label, scene) in vfSceneLabels" :key="scene" :value="scene">{{ label }}</option>
+                  </select>
+                  <button type="button" class="md-btn" @click="vfAddRule">加规则</button>
+                  <button type="button" class="md-btn is-primary" :loading="vfSaving" :disabled="vfSaving" @click="vfSave">保存白名单</button>
+                </div>
+                <div class="vf-rules">
+                  <div v-for="(rule, idx) in vfRules" :key="rule.id || idx" class="vf-rule-card" :class="{ 'is-disabled': !rule.enabled }">
+                    <img v-if="rule.poster_url" :src="rule.poster_url" class="vf-rule-poster" />
+                    <div class="vf-rule-main">
+                      <input v-model="rule.media_name" class="md-input" placeholder="关键词/片名" @change="vfLookupPoster(rule)" />
+                      <div class="vf-rule-meta">
+                        <select v-model="rule.media_type" class="md-input vf-type" @change="vfLookupPoster(rule)">
+                          <option value="">通用</option>
+                          <option value="movie">电影</option>
+                          <option value="tv">剧集</option>
+                        </select>
+                        <label class="vf-enabled"><input v-model="rule.enabled" type="checkbox" />启用</label>
+                        <span v-if="rule.title" class="vf-title">{{ rule.title }}</span>
+                      </div>
+                    </div>
+                    <button type="button" class="md-btn" @click="vfRules.splice(idx, 1)">删除</button>
+                  </div>
+                  <p v-if="!vfRules.length" class="vf-empty">暂无规则；「加规则」逐条添加关键词，保存后以 | 连接写回白名单正则。</p>
                 </div>
               </div>
             </div>
@@ -4160,5 +4269,69 @@ onBeforeUnmount(() => {
 .md-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* 白名单可视化筛选规则卡 */
+.vf-rules {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vf-rule-card {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 10px;
+}
+
+.vf-rule-card.is-disabled {
+  opacity: 0.55;
+}
+
+.vf-rule-poster {
+  width: 40px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.vf-rule-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vf-rule-meta {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 12.5px;
+}
+
+.vf-type {
+  width: 90px;
+}
+
+.vf-enabled {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vf-title {
+  color: #2da7ea;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vf-empty {
+  font-size: 12.5px;
+  color: var(--md-text-secondary, #94a3b8);
 }
 </style>

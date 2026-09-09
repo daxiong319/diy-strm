@@ -110,10 +110,14 @@ func runGcidExportJob(job *gcidJob, client *guangyapan.Client, folderID, folderN
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	items, err := gcid.ScanDirForExport(ctx, client, folderID, folderName, 2000)
+	gcidJobsMu.Lock()
 	job.Total = len(items)
+	gcidJobsMu.Unlock()
 	if err != nil && len(items) == 0 {
+		gcidJobsMu.Lock()
 		job.Status = "failed"
 		job.Message = "扫描失败：" + err.Error()
+		gcidJobsMu.Unlock()
 		return
 	}
 	doc := gcid.GcidExportDoc{
@@ -134,9 +138,11 @@ func runGcidExportJob(job *gcidJob, client *guangyapan.Client, folderID, folderN
 		job.Message = "写入秒传 JSON 失败：" + err.Error()
 		return
 	}
+	gcidJobsMu.Lock()
 	job.File = filePath
 	job.Status = "success"
 	job.Message = fmt.Sprintf("扫描完成：%d 个文件；JSON 已生成（%s）", len(items), fileName)
+	gcidJobsMu.Unlock()
 	gcid.SaveExportHistory(folderName, len(items), fileName)
 	sendGcidNotify(fmt.Sprintf("✅ 光鸭 GCID 秒传 JSON 已生成\n目录：%s\n文件数：%d\n文件：%s", folderName, len(items), fileName))
 }
@@ -188,19 +194,24 @@ func runGcidImportJob(job *gcidJob, client *guangyapan.Client, folderID string, 
 		}
 		one := gcid.GcidExportDoc{Items: []gcid.GcidItem{item}}
 		okN, failN, failMsgs := gcid.ImportFromDoc(ctx, client, &one, folderID)
+		gcidJobsMu.Lock()
 		job.Done += okN
 		job.Failed += failN
+		gcidJobsMu.Unlock()
 		if failN > 0 && len(failedList) < 20 {
 			failedList = append(failedList, failMsgs...)
 		}
 	}
+	gcidJobsMu.Lock()
 	if job.Failed > 0 && job.Done == 0 {
 		job.Status = "failed"
 		job.Message = "全部导入失败：" + joinShort(failedList)
+		gcidJobsMu.Unlock()
 		return
 	}
 	job.Status = "success"
 	job.Message = fmt.Sprintf("导入完成：成功 %d / 失败 %d", job.Done, job.Failed)
+	gcidJobsMu.Unlock()
 	if len(failedList) > 0 {
 		job.Message += "；" + joinShort(failedList)
 	}
@@ -209,26 +220,42 @@ func runGcidImportJob(job *gcidJob, client *guangyapan.Client, folderID string, 
 
 // GcidJobStatusAPI GET /api/guangya/gcid-jobs/:id
 func GcidJobStatusAPI(c *gin.Context) {
-	gcidJobsMu.Lock()
-	job, ok := gcidJobs[c.Param("id")]
-	gcidJobsMu.Unlock()
+	snapshot, ok := gcidJobSnapshot(c.Param("id"))
 	if !ok {
 		c.JSON(http.StatusNotFound, APIResponse[any]{Code: BadRequest, Message: "任务不存在或已过期"})
 		return
 	}
-	c.JSON(http.StatusOK, APIResponse[*gcidJob]{Code: Success, Data: job})
+	// 不回传服务器绝对路径
+	snapshot.File = ""
+	c.JSON(http.StatusOK, APIResponse[*gcidJob]{Code: Success, Data: snapshot})
 }
 
 // DownloadGcidExportAPI GET /api/guangya/gcid-export/download/:id — 下载导出的 JSON
 func DownloadGcidExportAPI(c *gin.Context) {
 	gcidJobsMu.Lock()
 	job, ok := gcidJobs[c.Param("id")]
+	file := ""
+	if ok {
+		file = job.File
+	}
 	gcidJobsMu.Unlock()
-	if !ok || job.File == "" {
+	if !ok || file == "" {
 		c.JSON(http.StatusNotFound, APIResponse[any]{Code: BadRequest, Message: "导出文件不存在"})
 		return
 	}
-	c.FileAttachment(job.File, filepath.Base(job.File))
+	c.FileAttachment(file, filepath.Base(file))
+}
+
+// gcidJobSnapshot 锁内拷贝任务快照（字段读写与后台 goroutine 隔离）
+func gcidJobSnapshot(id string) (*gcidJob, bool) {
+	gcidJobsMu.Lock()
+	defer gcidJobsMu.Unlock()
+	job, ok := gcidJobs[id]
+	if !ok {
+		return nil, false
+	}
+	clone := *job
+	return &clone, true
 }
 
 // parseGcidDoc 兼容两种形态：完整文档对象 / 纯条目数组

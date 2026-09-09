@@ -96,3 +96,11 @@ func RestartStandalone(old *StandaloneServer, port string) (*StandaloneServer, e
 	}
 	return srv, nil
 }
+
+// Port 返回当前监听端口字符串
+func (s *StandaloneServer) Port() string {
+	if s == nil {
+		return ""
+	}
+	return s.port
+}

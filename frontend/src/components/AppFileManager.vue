@@ -175,6 +175,14 @@
                 >
                   小号秒传
                 </el-button>
+                <el-button
+                  v-if="isGuangyaAccount"
+                  size="small"
+                  :disabled="selectedAccountId === null"
+                  @click="openGcidDialog"
+                >
+                  GCID 秒传
+                </el-button>
               </div>
             </div>
 
@@ -383,6 +391,71 @@
           </el-button>
         </span>
       </template>
+    </el-dialog>
+
+    <!-- GCID 秒传导出/导入（光鸭） -->
+    <el-dialog
+      v-model="gcidDialogVisible"
+      title="光鸭 GCID 秒传"
+      width="680px"
+      :close-on-click-modal="false"
+    >
+      <el-tabs v-model="gcidTab">
+        <el-tab-pane label="导出秒传 JSON" name="export">
+          <p class="gcid-tip">扫描当前目录（含子目录），为每个文件生成 GCID 秒传记录并发送到通知渠道（TG 机器人）。</p>
+          <div class="gcid-export-row">
+            <span class="gcid-label">源目录：</span>
+            <code class="gcid-dir">{{ gcidSourceDir || '网盘根目录' }}</code>
+          </div>
+          <el-button type="primary" :loading="gcidJobLoading" @click="startGcidExport">开始扫描导出</el-button>
+          <div v-if="gcidJob" class="gcid-job">
+            <el-alert
+              :title="gcidJobTitle"
+              :type="gcidJobStatusType"
+              :closable="false"
+              show-icon
+            />
+            <el-progress
+              v-if="gcidJob.status === 'running'"
+              :percentage="gcidJobPercent"
+              style="margin-top: 10px"
+            />
+            <el-link
+              v-if="gcidJob.status === 'success' && gcidJob.type === 'export'"
+              type="primary"
+              :href="gcidDownloadUrl"
+              target="_blank"
+              style="margin-top: 10px"
+            >下载秒传 JSON</el-link>
+          </div>
+        </el-tab-pane>
+        <el-tab-pane label="导入秒传 JSON" name="import">
+          <p class="gcid-tip">粘贴光鸭秒传 JSON（导出生成的文件内容，支持完整文档或条目数组），逐条 GCID 秒传到当前目录。</p>
+          <el-input
+            v-model="gcidImportText"
+            type="textarea"
+            :rows="8"
+            placeholder='{"version":1,"provider":"guangya","items":[{"file_name":"xxx.mkv","file_size":123,"gcid":"..."}]}'
+          />
+          <div class="gcid-import-actions">
+            <el-button type="primary" :loading="gcidJobLoading" :disabled="!gcidImportText.trim()" @click="startGcidImport">开始导入</el-button>
+            <span class="gcid-target">目标目录：{{ gcidSourceDir || '网盘根目录' }}</span>
+          </div>
+          <div v-if="gcidJob" class="gcid-job">
+            <el-alert
+              :title="gcidJobTitle"
+              :type="gcidJobStatusType"
+              :closable="false"
+              show-icon
+            />
+            <el-progress
+              v-if="gcidJob.status === 'running'"
+              :percentage="gcidJobPercent"
+              style="margin-top: 10px"
+            />
+          </div>
+        </el-tab-pane>
+      </el-tabs>
     </el-dialog>
 
     <el-dialog
@@ -797,6 +870,138 @@ const showShareDialog = ref(false)
 const showBatchRenameDialog = ref(false)
 
 const isPan139Account = computed(() => selectedAccount.value?.source_type === 'pan139')
+const isGuangyaAccount = computed(() => selectedAccount.value?.source_type === 'guangyapan')
+
+// ------------------------- GCID 秒传（光鸭） -------------------------
+const gcidDialogVisible = ref(false)
+const gcidTab = ref<'export' | 'import'>('export')
+const gcidImportText = ref('')
+const gcidJob = ref<GcidJob | null>(null)
+const gcidJobLoading = ref(false)
+let gcidPollTimer: ReturnType<typeof setTimeout> | null = null
+
+interface GcidJob {
+  id: string
+  type: 'export' | 'import'
+  status: 'pending' | 'running' | 'success' | 'failed'
+  message: string
+  total: number
+  done: number
+  failed: number
+}
+
+const gcidSourceDir = computed(() =>
+  pathItems.value.map((p) => p.name).join('/'),
+)
+
+const gcidJobTitle = computed(() => {
+  const job = gcidJob.value
+  if (!job) return ''
+  if (job.status === 'running') return `任务进行中：${job.done}/${job.total || '?'}`
+  return job.message || job.status
+})
+
+const gcidJobStatusType = computed(() => {
+  const status = gcidJob.value?.status
+  if (status === 'success') return 'success'
+  if (status === 'failed') return 'error'
+  return 'info'
+})
+
+const gcidJobPercent = computed(() => {
+  const job = gcidJob.value
+  if (!job || !job.total) return 0
+  return Math.min(100, Math.round(((job.done + job.failed) / job.total) * 100))
+})
+
+const gcidDownloadUrl = computed(() => {
+  const job = gcidJob.value
+  if (!job) return ''
+  return `${SERVER_URL}/guangya/gcid-export/download/${encodeURIComponent(job.id)}`
+})
+
+const openGcidDialog = () => {
+  gcidTab.value = 'export'
+  gcidImportText.value = ''
+  gcidJob.value = null
+  gcidDialogVisible.value = true
+}
+
+const stopGcidPoll = () => {
+  if (gcidPollTimer) {
+    clearTimeout(gcidPollTimer)
+    gcidPollTimer = null
+  }
+}
+
+const pollGcidJob = (jobId: string) => {
+  stopGcidPoll()
+  gcidPollTimer = setTimeout(async () => {
+    try {
+      const response = await http.get(`${SERVER_URL}/guangya/gcid-jobs/${encodeURIComponent(jobId)}`)
+      const data = response?.data?.data
+      if (data) {
+        gcidJob.value = data
+        if (data.status === 'running' || data.status === 'pending') {
+          pollGcidJob(jobId)
+          return
+        }
+      }
+    } catch {
+      // 轮询失败静默，结束
+    }
+    gcidJobLoading.value = false
+  }, 1500)
+}
+
+const startGcidExport = async () => {
+  if (selectedAccountId.value === null) return
+  gcidJobLoading.value = true
+  gcidJob.value = null
+  try {
+    const response = await http.post(`${SERVER_URL}/guangya/gcid-export`, {
+      account_id: selectedAccountId.value,
+      folder_id: getCurrentParentId() || '0',
+      folder_name: gcidSourceDir.value || '根目录',
+    })
+    const jobId = response?.data?.data?.job_id
+    if (jobId) {
+      ElMessage.success(response.data.message || '扫描任务已提交')
+      pollGcidJob(jobId)
+    } else {
+      ElMessage.error(response?.data?.message || '提交失败')
+      gcidJobLoading.value = false
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '提交失败')
+    gcidJobLoading.value = false
+  }
+}
+
+const startGcidImport = async () => {
+  if (selectedAccountId.value === null) return
+  gcidJobLoading.value = true
+  gcidJob.value = null
+  try {
+    const response = await http.post(`${SERVER_URL}/guangya/gcid-import`, {
+      account_id: selectedAccountId.value,
+      folder_id: getCurrentParentId() || '0',
+      json_text: gcidImportText.value,
+    })
+    const jobId = response?.data?.data?.job_id
+    if (jobId) {
+      ElMessage.success(response.data.message || '导入任务已提交')
+      pollGcidJob(jobId)
+    } else {
+      ElMessage.error(response?.data?.message || '提交失败')
+      gcidJobLoading.value = false
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '提交失败')
+    gcidJobLoading.value = false
+  }
+}
+
 // 本地文件伪账号（id=0）：走服务器本地文件系统，仅支持浏览/新建/重命名/移动/删除
 const isLocalAccount = computed(() => selectedAccount.value?.source_type === 'local')
 
@@ -1758,6 +1963,7 @@ onDeactivated(() => {
 onDeactivated(deactivateFileManagerPage)
 
 onUnmounted(() => {
+  stopGcidPoll()
   deactivateFileManagerPage()
   accountListRequestGate.invalidate()
   fileListRequestGate.invalidate()
@@ -2080,5 +2286,48 @@ onUnmounted(() => {
   border: 1px solid #e4e7ed;
   border-radius: 4px;
   padding: 12px;
+}
+
+/* ------------------------- GCID 秒传 ------------------------- */
+.gcid-tip {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin: 0 0 12px;
+}
+
+.gcid-export-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.gcid-label {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.gcid-dir {
+  font-size: 12.5px;
+  background: var(--el-fill-color-light);
+  border-radius: 6px;
+  padding: 2px 8px;
+  overflow-wrap: anywhere;
+}
+
+.gcid-job {
+  margin-top: 14px;
+}
+
+.gcid-import-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.gcid-target {
+  font-size: 12.5px;
+  color: var(--el-text-color-secondary);
 }
 </style>

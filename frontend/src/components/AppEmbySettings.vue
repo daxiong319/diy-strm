@@ -806,6 +806,141 @@
         />
       </div>
     </el-card>
+
+    <!-- 多规则反代（emby/飞牛影视/飞牛音乐） -->
+    <el-card class="settings-card proxy-rules-card" shadow="hover">
+      <template #header>
+        <div class="card-header-wrapper">
+          <div class="card-header-icon server-icon">
+            <el-icon :size="24"><Connection /></el-icon>
+          </div>
+          <div class="card-header-content">
+            <h3 class="card-title">多规则反代</h3>
+            <p class="card-subtitle">每条规则一个独立端口：Emby / 飞牛影视 / 飞牛音乐，复用 302 直链与播放记录链路</p>
+          </div>
+          <el-button style="margin-left: auto" type="primary" size="small" @click="openProxyRuleEditor(null)">新增规则</el-button>
+        </div>
+      </template>
+
+      <el-table :data="proxyRules" v-loading="proxyRulesLoading" size="small" style="width: 100%">
+        <el-table-column prop="name" label="规则名" min-width="120" />
+        <el-table-column prop="proxy_type" label="类型" width="110">
+          <template #default="{ row }">{{ proxyTypeLabel(row.proxy_type) }}</template>
+        </el-table-column>
+        <el-table-column prop="host" label="源地址" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="listen_port" label="端口" width="80" />
+        <el-table-column label="状态" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="170">
+          <template #default="{ row }">
+            <el-button size="small" @click="openProxyRuleEditor(row)">编辑</el-button>
+            <el-button size="small" :type="row.enabled ? 'warning' : 'success'" @click="toggleProxyRule(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
+            <el-button size="small" type="danger" plain @click="deleteProxyRule(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <el-dialog v-model="proxyRuleDialogVisible" :title="proxyRuleForm.id ? '编辑反代规则' : '新增反代规则'" width="560px" append-to-body>
+        <el-form label-width="110px">
+          <el-form-item label="类型">
+            <el-select v-model="proxyRuleForm.proxy_type" style="width: 100%">
+              <el-option label="Emby" value="emby" />
+              <el-option label="飞牛影视" value="feiniu" />
+              <el-option label="飞牛音乐" value="feiniu_music" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="规则名">
+            <el-input v-model="proxyRuleForm.name" placeholder="例如：客厅 Emby" />
+          </el-form-item>
+          <el-form-item label="源服务器地址">
+            <el-input v-model="proxyRuleForm.host" placeholder="http://192.168.1.100:8096" />
+          </el-form-item>
+          <el-form-item v-if="proxyRuleForm.proxy_type === 'emby'" label="API Key">
+            <el-input v-model="proxyRuleForm.api_key" show-password :placeholder="proxyRuleForm.id ? '留空保持原值' : 'Emby API Key'" />
+          </el-form-item>
+          <el-form-item label="监听端口">
+            <el-input-number v-model="proxyRuleForm.listen_port" :min="0" :max="65535" controls-position="right" style="width: 180px" />
+          </el-form-item>
+          <el-form-item label="启用">
+            <el-switch v-model="proxyRuleForm.enabled" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="proxyRuleDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="proxyRuleSaving" @click="saveProxyRule">保存</el-button>
+        </template>
+      </el-dialog>
+    </el-card>
+
+    <!-- Emby 虚拟库 / 榜单合集 -->
+    <el-card class="settings-card vlibrary-card" shadow="hover">
+      <template #header>
+        <div class="card-header-wrapper">
+          <div class="card-header-icon features-icon">
+            <el-icon :size="24"><Film /></el-icon>
+          </div>
+          <div class="card-header-content">
+            <h3 class="card-title">Emby 虚拟库 / 榜单合集</h3>
+            <p class="card-subtitle">把发现页榜单（豆瓣/流媒体/TMDB）同步为 Emby 合集，首页直接展示</p>
+          </div>
+        </div>
+      </template>
+      <el-form-item label="启用虚拟库">
+        <el-switch v-model="vlibraryForm.enabled" />
+      </el-form-item>
+      <el-form-item label="每合集条目上限">
+        <el-input-number v-model="vlibraryForm.max_items" :min="10" :max="200" controls-position="right" style="width: 180px" />
+      </el-form-item>
+      <el-form-item label="同步榜单">
+        <div class="vlibrary-rankings">
+          <el-checkbox-group v-model="vlibraryForm.selectedRankings">
+            <el-checkbox v-for="opt in vlibraryRankingOptions" :key="opt.key" :value="opt.key">{{ opt.label }}</el-checkbox>
+          </el-checkbox-group>
+        </div>
+      </el-form-item>
+      <el-form-item label=" ">
+        <el-button type="primary" :loading="vlibrarySaving" @click="saveVLibrary">保存设置</el-button>
+        <el-button :loading="vlibrarySyncing" @click="syncVLibrary">立即同步合集</el-button>
+      </el-form-item>
+      <div v-if="vlibrarySyncResults.length" class="vlibrary-results">
+        <el-alert
+          v-for="res in vlibrarySyncResults"
+          :key="res.key"
+          :title="res.collection_name ? `${res.collection_name}：已加入 ${res.created} 条` : `${res.provider}/${res.media_type}：${res.error || '未匹配'}`"
+          :type="res.error ? 'warning' : 'success'"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 8px"
+        />
+      </div>
+    </el-card>
+
+    <!-- SeedHub 资源源配置 -->
+    <el-card class="settings-card seedhub-card" shadow="hover">
+      <template #header>
+        <div class="card-header-wrapper">
+          <div class="card-header-icon server-icon">
+            <el-icon :size="24"><Connection /></el-icon>
+          </div>
+          <div class="card-header-content">
+            <h3 class="card-title">SeedHub 资源源</h3>
+            <p class="card-subtitle">发现页详情第三资源源；网盘分享只读展示，磁力/ED2K 可离线</p>
+          </div>
+        </div>
+      </template>
+      <el-form-item label="API 地址">
+        <el-input v-model="seedhubForm.api_url" placeholder="SeedHub 服务根地址" class="limited-width-input" clearable />
+      </el-form-item>
+      <el-form-item label="API 令牌">
+        <el-input v-model="seedhubForm.token" show-password :placeholder="seedhubConfigured ? '已保存（留空保持原值）' : 'SeedHub API Token'" class="limited-width-input" />
+      </el-form-item>
+      <el-form-item label=" ">
+        <el-button type="primary" :loading="seedhubSaving" @click="saveSeedhubConfig">保存 SeedHub 配置</el-button>
+      </el-form-item>
+    </el-card>
   </div>
 </template>
 
@@ -831,7 +966,7 @@ import {
   Calendar,
   Film,
 } from '@element-plus/icons-vue'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { computed, onMounted, ref, reactive, onBeforeUnmount, useTemplateRef } from 'vue'
 import ResponsiveActionBar from '@/components/common/ResponsiveActionBar.vue'
 import { useDeviceType } from '@/composables/useDeviceType'
@@ -1370,9 +1505,194 @@ const providerLabel = (provider: string) => {
   return map[provider] || provider || '-'
 }
 
+
+// ------------------------- 多规则反代 -------------------------
+interface ProxyRule {
+  id: number
+  proxy_type: string
+  name: string
+  host: string
+  listen_port: number
+  enabled: boolean
+  path_mappings: { provider?: string; local_path?: string; cloud_path?: string }[]
+  has_api_key?: boolean
+}
+const proxyRules = ref<ProxyRule[]>([])
+const proxyRulesLoading = ref(false)
+const proxyRuleDialogVisible = ref(false)
+const proxyRuleSaving = ref(false)
+const proxyRuleForm = reactive({
+  id: 0, proxy_type: 'emby', name: '', host: '', api_key: '', listen_port: 0, enabled: true,
+})
+
+const proxyTypeLabel = (type: string) => {
+  const map: Record<string, string> = { emby: 'Emby', feiniu: '飞牛影视', feiniu_music: '飞牛音乐' }
+  return map[type] || type
+}
+
+const loadProxyRules = async () => {
+  proxyRulesLoading.value = true
+  try {
+    const response = await http.get(`${SERVER_URL}/emby302/proxy-rules`)
+    proxyRules.value = response?.data?.data?.rules || []
+  } catch { /* 静默 */ } finally { proxyRulesLoading.value = false }
+}
+
+const openProxyRuleEditor = (rule: ProxyRule | null) => {
+  if (rule) {
+    proxyRuleForm.id = rule.id
+    proxyRuleForm.proxy_type = rule.proxy_type
+    proxyRuleForm.name = rule.name
+    proxyRuleForm.host = rule.host
+    proxyRuleForm.api_key = ''
+    proxyRuleForm.listen_port = rule.listen_port
+    proxyRuleForm.enabled = rule.enabled
+  } else {
+    proxyRuleForm.id = 0
+    proxyRuleForm.proxy_type = 'emby'
+    proxyRuleForm.name = ''
+    proxyRuleForm.host = ''
+    proxyRuleForm.api_key = ''
+    proxyRuleForm.listen_port = 0
+    proxyRuleForm.enabled = true
+  }
+  proxyRuleDialogVisible.value = true
+}
+
+const saveProxyRule = async () => {
+  proxyRuleSaving.value = true
+  try {
+    const response = await http.post(`${SERVER_URL}/emby302/proxy-rules/save`, proxyRuleForm)
+    if (response?.data?.code === 200) {
+      ElMessage.success(response.data.message || '规则已保存')
+      proxyRuleDialogVisible.value = false
+      await loadProxyRules()
+    } else {
+      ElMessage.error(response?.data?.message || '保存失败')
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '保存失败')
+  } finally { proxyRuleSaving.value = false }
+}
+
+const toggleProxyRule = async (rule: ProxyRule) => {
+  try {
+    await http.post(`${SERVER_URL}/emby302/proxy-rules/toggle`, { id: rule.id, enabled: !rule.enabled })
+    await loadProxyRules()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '操作失败')
+  }
+}
+
+const deleteProxyRule = async (rule: ProxyRule) => {
+  try {
+    await ElMessageBox.confirm(`确认删除规则「${rule.name || rule.host}」吗？`, '提示', { type: 'warning' })
+  } catch { return }
+  try {
+    await http.post(`${SERVER_URL}/emby302/proxy-rules/delete`, { id: rule.id })
+    ElMessage.success('规则已删除')
+    await loadProxyRules()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '删除失败')
+  }
+}
+
+// ------------------------- Emby 虚拟库 / 榜单合集 -------------------------
+const vlibraryForm = reactive({
+  enabled: false,
+  max_items: 50,
+  selectedRankings: [] as string[],
+})
+const vlibrarySaving = ref(false)
+const vlibrarySyncing = ref(false)
+const vlibrarySyncResults = ref<{ key: string; provider: string; media_type: string; collection_name?: string; created: number; error?: string }[]>([])
+
+const vlibraryRankingOptions = [
+  { key: 'douban:movie_weekly_best:movie', label: '豆瓣一周口碑电影' },
+  { key: 'douban:tv_weekly_best:tv', label: '豆瓣一周口碑剧集' },
+  { key: 'douban:movie_top250:movie', label: '豆瓣 Top250' },
+  { key: 'tmdb_popular_movie:movie', label: 'TMDB 热门电影' },
+  { key: 'tmdb_popular_tv:tv', label: 'TMDB 热门剧集' },
+]
+
+const loadVLibrary = async () => {
+  try {
+    const response = await http.get(`${SERVER_URL}/emby302/virtual-library`)
+    const data = response?.data?.data
+    if (data) {
+      vlibraryForm.enabled = !!data.enabled
+      vlibraryForm.max_items = Number(data.max_items || 50)
+      vlibraryForm.selectedRankings = (data.rankings || []).map((r: { provider: string; media_type: string }) => `${r.provider}:${r.media_type}`)
+    }
+  } catch { /* 静默 */ }
+}
+
+const saveVLibrary = async () => {
+  vlibrarySaving.value = true
+  try {
+    const rankings = vlibraryForm.selectedRankings.map((key) => {
+      const parts = key.split(':')
+      return { provider: parts[0] + ':' + parts[1], media_type: parts[2] || parts[1] }
+    })
+    const response = await http.post(`${SERVER_URL}/emby302/virtual-library`, {
+      enabled: vlibraryForm.enabled,
+      max_items: vlibraryForm.max_items,
+      rankings,
+    })
+    if (response?.data?.code === 200) ElMessage.success(response.data.message || '已保存')
+    else ElMessage.error(response?.data?.message || '保存失败')
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '保存失败')
+  } finally { vlibrarySaving.value = false }
+}
+
+const syncVLibrary = async () => {
+  vlibrarySyncing.value = true
+  vlibrarySyncResults.value = []
+  try {
+    const response = await http.post(`${SERVER_URL}/emby302/virtual-library/sync`)
+    const data = response?.data?.data
+    vlibrarySyncResults.value = data?.results || []
+    if (response?.data?.code === 200) ElMessage.success(response.data.message || '同步完成')
+    else ElMessage.error(response?.data?.message || '同步失败')
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '同步失败')
+  } finally { vlibrarySyncing.value = false }
+}
+
+// ------------------------- SeedHub 资源源 -------------------------
+const seedhubForm = reactive({ api_url: '', token: '' })
+const seedhubConfigured = ref(false)
+const seedhubSaving = ref(false)
+
+const loadSeedhubConfig = async () => {
+  try {
+    const response = await http.get(`${SERVER_URL}/seedhub/config`)
+    const data = response?.data?.data || {}
+    seedhubForm.api_url = data.api_url || ''
+    seedhubConfigured.value = !!data.configured
+  } catch { /* 静默 */ }
+}
+
+const saveSeedhubConfig = async () => {
+  seedhubSaving.value = true
+  try {
+    const response = await http.post(`${SERVER_URL}/seedhub/config`, seedhubForm)
+    if (response?.data?.code === 200) {
+      seedhubConfigured.value = true
+      ElMessage.success(response.data.message || '已保存')
+    } else ElMessage.error(response?.data?.message || '保存失败')
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '保存失败')
+  } finally { seedhubSaving.value = false }
+}
+
 onMounted(() => {
   loadDanmuConfig()
   loadPlaybackRecords()
+  loadProxyRules()
+  loadVLibrary()
+  loadSeedhubConfig()
   loadEmbyConfig()
   querySyncStatus()
   updateWebhookUrl()
