@@ -115,7 +115,7 @@ func (c *Client) DeleteTorrent(ctx context.Context, hash string, deleteFiles boo
 	if deleteFiles {
 		del = "true"
 	}
-	form := fmt.Sprintf("hashes=%s&delete_files=%s", hash, del)
+	form := fmt.Sprintf("hashes=%s&deleteFiles=%s", hash, del) // qB 4.3.x 必须带 deleteFiles（camelCase），缺失返回 400
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v2/torrents/delete", strings.NewReader(form))
 	if err != nil {
 		return err
