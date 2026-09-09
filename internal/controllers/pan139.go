@@ -211,8 +211,9 @@ func GetPan139UrlByFileId(c *gin.Context) {
 			return
 		}
 		helpers.AppLogger.Infof("从接口中查询到中国移动云盘下载链接：fileId=%s", fileId)
-		// 缓存 50 分钟
-		db.Cache.Set(cacheKey, []byte(cachedUrl), 3000)
+		// 缓存 14 分钟：139 CDN 直链签名 X-Amz-Expires=900（15 分钟），
+		// 缓存超过签名有效期会 302 到过期签名导致播放器报 403/400
+		db.Cache.Set(cacheKey, []byte(cachedUrl), 14*60)
 	} else {
 		helpers.AppLogger.Infof("从缓存中查询到中国移动云盘下载链接：fileId=%s", fileId)
 	}
