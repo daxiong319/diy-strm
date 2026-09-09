@@ -319,8 +319,9 @@ func autoDeleteSeedsViaQb(cfg *models.MoviePilotConfig, retention int) {
 		if tor.Hash == "" {
 			continue
 		}
-		// 只删下载完成（progress=100）且非下载/校验状态的种子；missingFiles 同样可删（文件已丢，纯占记录）
-		if tor.Progress < 100 && tor.State != "missingFiles" {
+		// 只删下载完成的种子；missingFiles 同样可删（文件已丢，纯占记录）。
+		// 注意 qB progress 是 0~1（1=100%），与 MP 的 0~100 不同
+		if tor.Progress < 1 && tor.State != "missingFiles" {
 			continue
 		}
 		task := models.FindMoviePilotUploadTask(tor.Hash)
