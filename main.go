@@ -200,6 +200,9 @@ func (app *App) StartDatabase(migrateMode bool) error {
 		db.Db = db.InitSqlite3(sqliteFile)
 		models.Migrate()
 		ensureDiscoveryTables()
+		if err := models.EnsureEmbyPlaybackRecordTable(); err != nil {
+			helpers.AppLogger.Errorf("创建播放记录表失败：%v", err)
+		}
 		if err := models.ResetStaleEmbySyncRunOnStartup(); err != nil {
 			return err
 		}
@@ -253,6 +256,9 @@ func (app *App) StartDatabase(migrateMode bool) error {
 	}
 	models.Migrate()
 	ensureDiscoveryTables()
+	if err := models.EnsureEmbyPlaybackRecordTable(); err != nil {
+		helpers.AppLogger.Errorf("创建播放记录表失败：%v", err)
+	}
 	if err := models.ResetStaleEmbySyncRunOnStartup(); err != nil {
 		return err
 	}
@@ -958,13 +964,16 @@ func setRouter(r *gin.Engine) {
 		api.POST("/media-discovery/resources/search", controllers.SearchMediaResourcesAPI)   // 关联资源搜索
 		api.POST("/media-discovery/resources/copy-link", controllers.CopyRe0ResourceLinkAPI) // 生成资源链接
 		// 观影（guanying）接入：登录/点选验证码/会话恢复/测试/清除（凭据本机加密保存）
-		api.GET("/media-discovery/guanying/session", controllers.GetGuanyingSessionAPI)      // 会话状态（脱敏）
-		api.POST("/media-discovery/guanying/login", controllers.LoginGuanyingAPI)            // 登录
-		api.POST("/media-discovery/guanying/captcha", controllers.GuanyingCaptchaAPI)        // 拉取验证码
+		api.GET("/media-discovery/guanying/session", controllers.GetGuanyingSessionAPI)            // 会话状态（脱敏）
+		api.POST("/media-discovery/guanying/login", controllers.LoginGuanyingAPI)                  // 登录
+		api.POST("/media-discovery/guanying/captcha", controllers.GuanyingCaptchaAPI)              // 拉取验证码
 		api.POST("/media-discovery/guanying/captcha/verify", controllers.GuanyingCaptchaVerifyAPI) // 校验验证码
-		api.POST("/media-discovery/guanying/relogin", controllers.ReloginGuanyingAPI)        // 凭据自动恢复
-		api.POST("/media-discovery/guanying/test", controllers.TestGuanyingAPI)              // 会话有效性测试
-		api.DELETE("/media-discovery/guanying/session", controllers.ClearGuanyingSessionAPI) // 清除会话与凭据
+		api.POST("/media-discovery/guanying/relogin", controllers.ReloginGuanyingAPI)              // 凭据自动恢复
+		api.POST("/media-discovery/guanying/test", controllers.TestGuanyingAPI)                    // 会话有效性测试
+		api.DELETE("/media-discovery/guanying/session", controllers.ClearGuanyingSessionAPI)       // 清除会话与凭据
+		// 弹幕联动（Misaka Danmaku）：配置 + 302 播放自动导入下一集（钩子在 emby302）
+		api.GET("/danmu/config", controllers.GetDanmuConfigAPI)   // 弹幕配置
+		api.POST("/danmu/config", controllers.SaveDanmuConfigAPI) // 保存弹幕配置
 
 		// 目录整理
 		api.POST("/organize/preview", controllers.OrganizePreview) // 目录整理预览

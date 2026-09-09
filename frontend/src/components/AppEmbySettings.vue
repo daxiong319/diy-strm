@@ -726,6 +726,86 @@
         </template>
       </el-alert>
     </div>
+
+    <!-- 弹幕联动 + 播放记录 -->
+    <el-card class="settings-card danmu-card" shadow="hover">
+      <template #header>
+        <div class="card-header-wrapper">
+          <div class="card-header-icon server-icon">
+            <el-icon :size="24"><Film /></el-icon>
+          </div>
+          <div class="card-header-content">
+            <h3 class="card-title">弹幕联动（Misaka Danmaku）</h3>
+            <p class="card-subtitle">302 播放时自动导入下一集弹幕；播放记录同步落库</p>
+          </div>
+        </div>
+      </template>
+
+      <el-form-item label="弹幕服务地址">
+        <el-input
+          v-model="danmuForm.api_url"
+          placeholder="Misaka Danmaku 服务地址，例如 http://127.0.0.1:9321"
+          class="limited-width-input"
+          clearable
+        />
+        <div class="form-help">
+          <el-icon><InfoFilled /></el-icon>
+          <span>对齐 tgto123 的 DANMAKU_API_URL；留空则关闭弹幕联动</span>
+        </div>
+      </el-form-item>
+      <el-form-item label="弹幕服务密钥">
+        <el-input
+          v-model="danmuForm.api_key"
+          placeholder="Misaka Danmaku 的 Access Token"
+          class="limited-width-input"
+          show-password
+          clearable
+        />
+        <div class="form-help">
+          <el-icon><InfoFilled /></el-icon>
+          <span>对齐 tgto123 的 DANMAKU_API_KEY</span>
+        </div>
+      </el-form-item>
+      <el-form-item label=" ">
+        <el-button type="primary" :loading="danmuSaving" @click="saveDanmuConfig">保存弹幕配置</el-button>
+      </el-form-item>
+    </el-card>
+
+    <el-card class="settings-card playback-records-card" shadow="hover">
+      <template #header>
+        <div class="card-header-wrapper">
+          <div class="card-header-icon features-icon">
+            <el-icon :size="24"><Clock /></el-icon>
+          </div>
+          <div class="card-header-content">
+            <h3 class="card-title">302 播放记录</h3>
+            <p class="card-subtitle">反代播放重定向落库记录（Emby/飞牛客户端经 302 播放即计一次）</p>
+          </div>
+          <el-button style="margin-left: auto" :icon="Refresh" :loading="recordsLoading" @click="loadPlaybackRecords">刷新</el-button>
+        </div>
+      </template>
+
+      <el-table :data="playbackRecords" v-loading="recordsLoading" size="small" style="width: 100%">
+        <el-table-column prop="playback_at" label="播放时间" width="170">
+          <template #default="{ row }">{{ formatRecordTime(row.playback_at) }}</template>
+        </el-table-column>
+        <el-table-column prop="item_name" label="媒体文件" min-width="260" show-overflow-tooltip />
+        <el-table-column prop="provider" label="网盘" width="90">
+          <template #default="{ row }">{{ providerLabel(row.provider) }}</template>
+        </el-table-column>
+        <el-table-column prop="client" label="播放端" width="140" show-overflow-tooltip />
+        <el-table-column prop="user_id" label="用户 ID" width="120" show-overflow-tooltip />
+      </el-table>
+      <div style="display: flex; justify-content: flex-end; margin-top: 12px">
+        <el-pagination
+          layout="prev, pager, next, total"
+          :total="recordsTotal"
+          :page-size="recordsPageSize"
+          :current-page="recordsPage"
+          @current-change="onRecordsPageChange"
+        />
+      </div>
+    </el-card>
   </div>
 </template>
 
@@ -749,6 +829,7 @@ import {
   Clock,
   FolderOpened,
   Calendar,
+  Film,
 } from '@element-plus/icons-vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { computed, onMounted, ref, reactive, onBeforeUnmount, useTemplateRef } from 'vue'
@@ -1196,7 +1277,102 @@ const formatSyncAbsoluteTime = (timestamp: number | null | undefined) => {
   return formatted === '-' ? '' : formatted
 }
 
+// ------------------------- 弹幕联动（Misaka Danmaku） -------------------------
+const danmuForm = reactive({ api_url: '', api_key: '' })
+const danmuSaving = ref(false)
+
+const loadDanmuConfig = async () => {
+  try {
+    const response = await http.get(`${SERVER_URL}/danmu/config`)
+    const data = response?.data?.data || {}
+    danmuForm.api_url = data.api_url || ''
+    danmuForm.api_key = data.api_key || ''
+  } catch {
+    // 配置读取失败静默（可能是旧版本后端）
+  }
+}
+
+const saveDanmuConfig = async () => {
+  danmuSaving.value = true
+  try {
+    const response = await http.post(`${SERVER_URL}/danmu/config`, {
+      api_url: danmuForm.api_url.trim(),
+      api_key: danmuForm.api_key.trim(),
+    })
+    if (response?.data?.code === 200) {
+      ElMessage.success(response.data.message || '弹幕配置已保存')
+    } else {
+      ElMessage.error(response?.data?.message || '保存失败')
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '保存失败')
+  } finally {
+    danmuSaving.value = false
+  }
+}
+
+// ------------------------- 302 播放记录 -------------------------
+interface PlaybackRecord {
+  id: number
+  rule_id: string
+  user_id: string
+  client: string
+  device_id: string
+  item_name: string
+  strm_path: string
+  provider: string
+  playback_at: string
+}
+const playbackRecords = ref<PlaybackRecord[]>([])
+const recordsLoading = ref(false)
+const recordsTotal = ref(0)
+const recordsPage = ref(1)
+const recordsPageSize = 30
+
+const loadPlaybackRecords = async (page = recordsPage.value) => {
+  recordsLoading.value = true
+  try {
+    const response = await http.get(`${SERVER_URL}/emby302/playback-records`, {
+      params: { page, page_size: recordsPageSize },
+    })
+    const data = response?.data?.data || {}
+    playbackRecords.value = data.items || []
+    recordsTotal.value = Number(data.total || 0)
+    recordsPage.value = page
+  } catch {
+    // 记录查询失败静默
+  } finally {
+    recordsLoading.value = false
+  }
+}
+
+const onRecordsPageChange = (page: number) => {
+  loadPlaybackRecords(page)
+}
+
+const formatRecordTime = (value: string) => {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+const providerLabel = (provider: string) => {
+  const map: Record<string, string> = {
+    '115': '115',
+    '123': '123',
+    guangya: '光鸭',
+    baidu: '百度',
+    '139': '移动云盘',
+    openlist: 'OpenList',
+  }
+  return map[provider] || provider || '-'
+}
+
 onMounted(() => {
+  loadDanmuConfig()
+  loadPlaybackRecords()
   loadEmbyConfig()
   querySyncStatus()
   updateWebhookUrl()

@@ -2,11 +2,14 @@ package emby
 
 import (
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 
 	"diy-strm/emby302/util/logs"
 	"diy-strm/internal/controllers"
+	"diy-strm/internal/danmu"
+	"diy-strm/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
@@ -52,26 +55,31 @@ func redirectByStrmContent(c *gin.Context, strmContent string) bool {
 		}
 		logs.Success("STRM 自家直链 URL: 115 pickcode=%s", q.Get("pickcode"))
 		setStrmQuery(c, q)
+		recordStrmPlayback(c, q, "115")
 		controllers.Get115UrlByPickCode(c)
 		return true
 	case strings.Contains(u.Path, "/pan123/url"):
 		logs.Success("STRM 自家直链 URL: 123 fileId=%s", q.Get("pickcode"))
 		setStrmQuery(c, q)
+		recordStrmPlayback(c, q, "123")
 		controllers.GetPan123UrlByPickCode(c)
 		return true
 	case strings.Contains(u.Path, "/guangyapan/url"):
 		logs.Success("STRM 自家直链 URL: 光鸭 fileId=%s", q.Get("pickcode"))
 		setStrmQuery(c, q)
+		recordStrmPlayback(c, q, "guangya")
 		controllers.GetGuangYaPanUrlByPickCode(c)
 		return true
 	case strings.Contains(u.Path, "/baidupan/url"):
 		logs.Success("STRM 自家直链 URL: 百度 fsId=%s", q.Get("pickcode"))
 		setStrmQuery(c, q)
+		recordStrmPlayback(c, q, "baidu")
 		controllers.GetBaiduPanUrlByPickCode(c)
 		return true
 	case strings.Contains(u.Path, "/pan139/url"):
 		logs.Success("STRM 自家直链 URL: 139 fileId=%s", q.Get("pickcode"))
 		setStrmQuery(c, q)
+		recordStrmPlayback(c, q, "139")
 		controllers.GetPan139UrlByFileId(c)
 		return true
 	}
@@ -146,4 +154,33 @@ func setStrmQuery(c *gin.Context, vals url.Values) {
 	c.Request.URL.RawQuery = cur.Encode()
 	// 清空已解析的表单缓存, 确保 ShouldBind 能读到新参数
 	c.Request.Form = nil
+}
+
+// triggerDanmakuForStrm 弹幕联动：STRM 自家直链 URL 带 path 参数时，
+// 异步触发 Misaka 弹幕服务导入下一集弹幕（路径需含 {tmdb=} 整理标记）。
+func triggerDanmakuForStrm(q url.Values) {
+	if path := q.Get("path"); path != "" {
+		danmu.ImportNextEpisode(path)
+	}
+}
+
+// recordStrmPlayback STRM 播放命中后的旁路动作（异步，不阻塞重定向）：
+// ① 落播放记录（对齐 tgto123 record_playback_redirect）② 触发下一集弹幕导入。
+func recordStrmPlayback(c *gin.Context, q url.Values, provider string) {
+	go func() {
+		path := q.Get("path")
+		record := models.EmbyPlaybackRecord{
+			RuleID:   "1",
+			UserID:   q.Get("UserId"),
+			Client:   q.Get("Client"),
+			DeviceID: q.Get("DeviceId"),
+			StrmPath: path,
+			Provider: provider,
+		}
+		if path != "" {
+			record.ItemName = filepath.Base(path)
+		}
+		models.AddEmbyPlaybackRecord(&record)
+	}()
+	triggerDanmakuForStrm(q)
 }
