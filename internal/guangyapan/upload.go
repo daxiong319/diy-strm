@@ -58,7 +58,7 @@ type getResCenterTokenResp struct {
 }
 
 type checkCanFlashUploadResp struct {
-	Code int `json:"code"`
+	Code int    `json:"code"`
 	Msg  string `json:"msg"`
 	Data struct {
 		CanFlashUpload bool   `json:"canFlashUpload"`
@@ -67,7 +67,7 @@ type checkCanFlashUploadResp struct {
 }
 
 type getInfoByTaskIDResp struct {
-	Code int `json:"code"`
+	Code int    `json:"code"`
 	Msg  string `json:"msg"`
 	Data struct {
 		FileID string `json:"fileId"`
@@ -362,4 +362,39 @@ func (c *Client) UploadFile(ctx context.Context, localPath, parentID string, pro
 	}
 	fileID, err = c.waitFileUploaded(ctx, taskID)
 	return fileID, false, err
+}
+
+// WaitFileUploadedExported 供 gcid 导入包使用的入库等待（waitFileUploaded 导出别名）。
+func (c *Client) WaitFileUploadedExported(ctx context.Context, taskID string) (string, error) {
+	return c.waitFileUploaded(ctx, taskID)
+}
+
+// CalculateGCIDFromReader 从 Reader 流式计算 GCID（大小必须精确传入并读完）。
+func CalculateGCIDFromReader(r io.Reader, size int64) (string, error) {
+	if size <= 0 {
+		return "", errors.New("文件大小必须大于 0")
+	}
+	chunkSize := gcidChunkSize(size)
+	buf := make([]byte, chunkSize)
+	outer := sha1.New()
+	var position int64
+	reader := io.LimitReader(r, size)
+	for position < size {
+		n, err := io.ReadFull(reader, buf)
+		if n > 0 {
+			inner := sha1.Sum(buf[:n])
+			outer.Write(inner[:])
+			position += int64(n)
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("读取流分片失败：%v", err)
+		}
+	}
+	if position != size {
+		return "", fmt.Errorf("流长度不足：期望 %d 实际 %d", size, position)
+	}
+	return strings.ToUpper(hex.EncodeToString(outer.Sum(nil))), nil
 }

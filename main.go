@@ -976,6 +976,11 @@ func setRouter(r *gin.Engine) {
 		api.POST("/danmu/config", controllers.SaveDanmuConfigAPI) // 保存弹幕配置
 		// 播放记录（emby302 反代落库）
 		api.GET("/emby302/playback-records", controllers.GetPlaybackRecordsAPI)
+		// 光鸭 GCID 秒传导出/导入（对齐 tgto123 gcid-export 语义）
+		api.POST("/guangya/gcid-export", controllers.ExportGcidAPI)                     // 扫描目录→JSON→通知渠道
+		api.POST("/guangya/gcid-import", controllers.ImportGcidAPI)                     // JSON→秒传入目标目录
+		api.GET("/guangya/gcid-jobs/:id", controllers.GcidJobStatusAPI)                 // 任务状态
+		api.GET("/guangya/gcid-export/download/:id", controllers.DownloadGcidExportAPI) // 下载 JSON
 		// AI 识别配置只读映射（本体在刮削设置）
 		api.GET("/ai-media-parser/config", controllers.GetAiMediaParserConfigAPI)        // AI 识别配置视图
 		api.POST("/ai-media-parser/cache/clear", controllers.ClearAiMediaParserCacheAPI) // 兼容端点
