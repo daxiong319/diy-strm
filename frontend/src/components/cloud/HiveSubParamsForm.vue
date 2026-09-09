@@ -4,7 +4,7 @@
       <div class="pf-item pf-wide">
         <label class="pf-label">订阅关键词</label>
         <el-input v-model="form.search_keyword" placeholder="留空则使用 TMDB 标题" size="default" clearable />
-        <p class="pf-tip">搜索影巢资源时使用的关键词；留空按 TMDB 标题（剧集自动附加季号写法）搜索。</p>
+        <p class="pf-tip">搜索RE0资源时使用的关键词；留空按 TMDB 标题（剧集自动附加季号写法）搜索。</p>
       </div>
 
       <div class="pf-item">
@@ -14,7 +14,7 @@
           <el-option value="guangyapan" label="光鸭云盘" />
           <el-option value="pan139" label="中国移动云盘" />
         </el-select>
-        <p class="pf-tip">仅影巢上该网盘类型的资源会被转存。</p>
+        <p class="pf-tip">仅RE0上该网盘类型的资源会被转存。</p>
       </div>
 
       <div class="pf-item">
@@ -55,7 +55,7 @@
             @click="toggleSource(opt.value)"
           >{{ opt.label }}</el-tag>
         </div>
-        <p class="pf-tip">不选则使用全局启用渠道（Telegram / 影巢 / 盘搜）。</p>
+        <p class="pf-tip">不选则使用全局启用渠道（Telegram / RE0 / 盘搜）。</p>
       </div>
 
       <div class="pf-item">
@@ -104,7 +104,7 @@
     <CloudDirPicker
       :visible="pickerVisible"
       :source-type="form.source_type"
-      :source-name="'影巢订阅转存'"
+      :source-name="'RE0订阅转存'"
       @update:visible="pickerVisible = $event"
       @select="onDirSelected"
     />
@@ -158,7 +158,7 @@ const effectOptions = ['特效', '双语', '国语']
 // 搜索渠道 chips（对齐成熟方案 SIM 选择器：不选则使用全局启用渠道）
 const sourceOptions = [
   { label: 'Telegram', value: 'telegram' },
-  { label: '影巢', value: 'hdhive' },
+  { label: 'RE0', value: 'hdhive' },
   { label: '盘搜', value: 'pansou' },
 ]
 const selectedSources = computed(() => (form.search_sources || '').split(',').filter(Boolean))

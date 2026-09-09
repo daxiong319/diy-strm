@@ -30,6 +30,7 @@ const (
 	SettingMatchDoubanTMDBEnabled = "match_douban_tmdb"        // 豆瓣条目自动匹配 TMDB
 	SettingEmbyCheckEnabled       = "emby_check_enabled"       // 发现条目联动 Emby 入库检测
 	SettingCacheTTLMinutes        = "cache_ttl_minutes"        // 目录缓存分钟数
+	SettingGuanyingEnabled        = "guanying_enabled"         // 观影资源源开关
 )
 
 // DefaultSettings 默认设置值
@@ -45,6 +46,7 @@ func DefaultSettings() map[string]any {
 		SettingMatchDoubanTMDBEnabled: true,
 		SettingEmbyCheckEnabled:       false,
 		SettingCacheTTLMinutes:        30,
+		SettingGuanyingEnabled:        false,
 	}
 }
 

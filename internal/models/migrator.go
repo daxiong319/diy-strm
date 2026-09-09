@@ -69,9 +69,9 @@ func Migrate() {
 	if err := db.Db.AutoMigrate(&AutoOrganizeConfig{}); err != nil {
 		helpers.AppLogger.Errorf("自动迁移云盘自动整理配置表失败：%v", err)
 	}
-	// 影巢账号表新增签到统计列（幂等，兼容既有库升级）
+	// RE0账号表新增签到统计列（幂等，兼容既有库升级）
 	if err := db.Db.AutoMigrate(&HiveOAuthAccount{}); err != nil {
-		helpers.AppLogger.Errorf("自动迁移影巢账号签到统计列失败：%v", err)
+		helpers.AppLogger.Errorf("自动迁移RE0账号签到统计列失败：%v", err)
 	}
 	// 洗版清单/洗版日志/签到历史表（幂等创建，兼容既有库升级）
 	db.Db.Statement.PrepareStmt = true
@@ -782,9 +782,9 @@ func Migrate() {
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 66 {
-		// 影巢（HDHive）订阅：订阅表新增资源来源字段
+		// RE0（HDHive）订阅：订阅表新增资源来源字段
 		if err := db.Db.AutoMigrate(CloudSubscription{}); err != nil {
-			helpers.AppLogger.Errorf("迁移影巢订阅字段失败：%v", err)
+			helpers.AppLogger.Errorf("迁移RE0订阅字段失败：%v", err)
 			return
 		}
 		helpers.AppLogger.Info("已更新订阅表：资源来源（resource_source）字段")
@@ -819,12 +819,12 @@ func Migrate() {
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 70 {
-		// 影巢 OAuth 授权账号（主账号 + 子账号）
+		// RE0 OAuth 授权账号（主账号 + 子账号）
 		if err := db.Db.AutoMigrate(HiveOAuthAccount{}); err != nil {
-			helpers.AppLogger.Errorf("迁移影巢 OAuth 账号表失败：%v", err)
+			helpers.AppLogger.Errorf("迁移RE0 OAuth 账号表失败：%v", err)
 			return
 		}
-		helpers.AppLogger.Info("已创建影巢 OAuth 账号表（主账号 + 子账号）")
+		helpers.AppLogger.Info("已创建RE0 OAuth 账号表（主账号 + 子账号）")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 71 {
@@ -837,7 +837,7 @@ func Migrate() {
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 72 {
-		// 监控历史（TG 频道/影巢/机器人转存记录，对齐 参考实现的 messages 表）
+		// 监控历史（TG 频道/RE0/机器人转存记录，对齐 参考实现的 messages 表）
 		if err := db.Db.AutoMigrate(MonitorTransferRecord{}); err != nil {
 			helpers.AppLogger.Errorf("迁移监控历史表失败：%v", err)
 			return
@@ -846,12 +846,12 @@ func Migrate() {
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 73 {
-		// 影巢双通道：hive_oauth_accounts 增加 channel/access/refresh token 字段
+		// RE0双通道：hive_oauth_accounts 增加 channel/access/refresh token 字段
 		if err := db.Db.AutoMigrate(HiveOAuthAccount{}); err != nil {
-			helpers.AppLogger.Errorf("迁移影巢账号通道字段失败：%v", err)
+			helpers.AppLogger.Errorf("迁移RE0账号通道字段失败：%v", err)
 			return
 		}
-		helpers.AppLogger.Info("影巢账号表已支持双通道（tgtodrive/official）")
+		helpers.AppLogger.Info("RE0账号表已支持双通道（tgtodrive/official）")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 74 {
@@ -861,9 +861,9 @@ func Migrate() {
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 75 {
-		// 影巢四通道 + 成熟方案 引擎复刻：订阅状态/复查时间列、账号 NanShare SDK 账号列、订阅失败惩罚表
+		// RE0四通道 + 成熟方案 引擎复刻：订阅状态/复查时间列、账号 NanShare SDK 账号列、订阅失败惩罚表
 		if err := db.Db.AutoMigrate(CloudSubscription{}, HiveOAuthAccount{}, HiveSlugAttempt{}); err != nil {
-			helpers.AppLogger.Errorf("迁移影巢四通道字段失败：%v", err)
+			helpers.AppLogger.Errorf("迁移RE0四通道字段失败：%v", err)
 			return
 		}
 		// 存量订阅回填状态：已完结优先 completed，其余 subscribing
@@ -879,7 +879,7 @@ func Migrate() {
 				helpers.AppLogger.Errorf("回填订阅进行中状态失败：%v", err)
 			}
 		}
-		helpers.AppLogger.Info("影巢四通道：订阅状态/复查时间/失败惩罚表已就绪")
+		helpers.AppLogger.Info("RE0四通道：订阅状态/复查时间/失败惩罚表已就绪")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 76 {
@@ -888,7 +888,7 @@ func Migrate() {
 			helpers.AppLogger.Errorf("迁移订阅媒体库字段失败：%v", err)
 			return
 		}
-		// 存量影巢订阅回填：tmdb_title 快照 → search_keyword（留空的订阅搜索用标题）
+		// 存量RE0订阅回填：tmdb_title 快照 → search_keyword（留空的订阅搜索用标题）
 		if db.Db.Migrator().HasColumn(&CloudSubscription{}, "tmdb_title") {
 			if err := db.Db.Model(&CloudSubscription{}).
 				Where("search_keyword = '' AND tmdb_title != ''").

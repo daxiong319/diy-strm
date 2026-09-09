@@ -1,7 +1,7 @@
 # ============================================================================
 # diy-strm 媒体栈一键恢复模板（134.185.85.200，aarch64）
 #
-# 覆盖 diy-strm 全链路依赖：TG 转存(tgto123) → PT 下载(MoviePilot + qBittorrent)
+# 覆盖 diy-strm 全链路依赖：TG 转存(参考实现) → PT 下载(MoviePilot + qBittorrent)
 # → 云盘挂载(alist/openlist/clouddrive2) → diy-strm 上传整理(内置 postgres)
 # → STRM → Emby 播放(302 代理)
 #
@@ -24,7 +24,7 @@ services:
   # ==================== diy-strm（本体，单容器模式）====================
 
   # diy-strm 内置 SQLite（默认）或嵌入式 PostgreSQL，数据全部落在 /app/config 下，
-  # 单容器即可运行（与 tgto123 同类）；无需单独的数据库容器。
+  # 单容器即可运行（与参考实现同类）；无需单独的数据库容器。
   # 如想改用外部 PostgreSQL，取消注释下方 diy-strm-postgres 服务，并在 config.yaml
   # 中设 db.engine: postgres、db.postgresType: external、host: diy-strm-postgres。
   diy-strm:
@@ -214,11 +214,11 @@ services:
       - /media/clouddrive2/Video:/media
     privileged: true # fuse 挂载需要
 
-  # ==================== tgto123（TG 转存机器人，host 网络）====================
+  # ==================== 参考实现（TG 转存机器人，host 网络）====================
 
-  tgto123:
-    image: walkingd/tgto123:latest
-    container_name: tgto123
+  参考实现:
+    image: walkingd/参考实现:latest
+    container_name: 参考实现
     restart: always
     network_mode: host
     environment:
@@ -228,6 +228,6 @@ services:
       - ENV_WEB_PASSPORT=${TGTO_WEB_USER}
       - ENV_WEB_PASSWORD=${TGTO_WEB_PASSWORD}
     volumes:
-      - /media/tgto123/db:/app/db            # 数据库（必须备份）
-      - /media/tgto123/downloads:/app/downloads
+      - /media/参考实现/db:/app/db            # 数据库（必须备份）
+      - /media/参考实现/downloads:/app/downloads
       - /media/qbittorrent/下载:/app/upload

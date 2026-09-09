@@ -3,7 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useHttpClient } from '@/http/client'
 import { SERVER_URL } from '@/const'
 import { CircleCheck } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 // 影视发现：复刻参考实现 media_discovery 分区式布局
 // 四个互斥分区：影视探索（含番剧/收藏子入口）/ 榜单推荐 / 追剧日历 / 基础配置
@@ -42,6 +42,65 @@ interface CalendarDay {
   date: string
   label: string
   items: DiscoverItem[]
+}
+
+// 关联资源（对齐 tgto123 media_discovery 资源卡片字段）
+interface ResourceEpisode {
+  season_num?: number | null
+  episode_num?: number | null
+  end_episode_num?: number | null
+  total_episode_num?: number | null
+  is_complete?: boolean
+  is_updated?: boolean
+}
+
+interface ResourceItem {
+  item_key: string
+  source: string
+  provider: string
+  provider_label: string
+  title: string
+  slug?: string
+  share_url?: string
+  link_type?: string
+  size?: string
+  episode?: ResourceEpisode | null
+  is_unlocked?: boolean
+  points_known?: boolean
+  unlock_points?: number
+  unlocked_users_count?: number
+  remark?: string
+  validate_message?: string
+  is_official?: boolean
+  sharer?: string
+  resource_spec_tags?: string[]
+  subtitle_languages?: string[]
+  supported_targets?: string[]
+  target_provider?: string
+}
+
+interface ResourceSearchResult {
+  items: ResourceItem[]
+  errors: { source: string; code: string; error: string }[]
+}
+
+interface GuanyingSessionStatus {
+  enabled?: boolean
+  configured?: boolean
+  session_saved?: boolean
+  credentials_saved?: boolean
+  account_hint?: string
+  last_error?: string
+}
+
+// 点选式验证码挑战（观影登录）
+interface GuanyingCaptcha {
+  attempt_id: string
+  text?: string
+  image?: string
+  type?: string
+  width?: number
+  height?: number
 }
 
 interface DiscoveryFavorite {
@@ -99,7 +158,7 @@ const errorMessage = ref('')
 
 // ------------------------- 影视探索 -------------------------
 const librarySources = [
-  { key: 'tmdb', label: '影巢片库' },
+  { key: 'tmdb', label: 'RE0片库' },
   { key: 'douban', label: '豆瓣' },
   { key: 'anime', label: '番剧' },
   { key: 'favorites', label: '收藏' },
@@ -273,6 +332,7 @@ const settingsForm = ref<Record<string, any>>({
   match_douban_tmdb: true,
   emby_check_enabled: false,
   cache_ttl_minutes: 30,
+  guanying_enabled: false,
 })
 const savingSettings = ref(false)
 
@@ -724,6 +784,309 @@ const openDetail = (item: DiscoverItem) => {
   if (url) window.open(url, '_blank')
 }
 
+// ------------------------- 详情弹窗 + 关联资源 -------------------------
+const detailVisible = ref(false)
+const detailItem = ref<DiscoverItem | null>(null)
+const detailResources = ref<ResourceItem[]>([])
+const detailResourceErrors = ref<ResourceSearchResult['errors']>([])
+const detailResourceLoading = ref(false)
+const detailResourceFilter = ref('all') // all/115/123/guangya/magnet
+const copiedLink = ref('')
+
+const resourceProviderKey = (item: ResourceItem) => {
+  const p = String(item.provider || '').toLowerCase()
+  if (p.includes('guangya') || p.includes('gy')) return 'guangya'
+  if (p.includes('123')) return '123'
+  if (p.includes('115')) return '115'
+  if (p === 'magnet' || p === 'ed2k') return 'magnet'
+  return 'magnet'
+}
+
+const detailResourceChoices = computed(() => {
+  const counts = new Map<string, number>()
+  for (const item of detailResources.value) {
+    const key = resourceProviderKey(item)
+    counts.set(key, (counts.get(key) || 0) + 1)
+  }
+  const defs: { key: string; label: string }[] = [
+    { key: 'all', label: '全部类型' },
+    { key: '115', label: '115' },
+    { key: '123', label: '123' },
+    { key: 'guangya', label: '光鸭' },
+    { key: 'magnet', label: '磁力 / ED2K' },
+  ]
+  return defs.filter((d) => d.key === 'all' || counts.get(d.key))
+})
+
+const detailResourcesFiltered = computed(() => {
+  if (detailResourceFilter.value === 'all') return detailResources.value
+  return detailResources.value.filter((r) => resourceProviderKey(r) === detailResourceFilter.value)
+})
+
+const detailResourceSummary = computed(() => {
+  const total = detailResources.value.length
+  if (!total) return ''
+  const bySource = new Map<string, number>()
+  for (const r of detailResources.value) {
+    const label = r.source === 're0' ? 'RE0' : r.source === 'guanying' ? '观影' : r.source
+    bySource.set(label, (bySource.get(label) || 0) + 1)
+  }
+  const parts = [...bySource.entries()].map(([k, v]) => `${k} ${v}`)
+  return parts.join(' · ')
+})
+
+const episodeTextOf = (item: ResourceItem) => {
+  const ep = item.episode
+  if (!ep || ep.episode_num == null) return ''
+  const pad = (n: number) => (n >= 100 ? String(Math.trunc(n)) : String(Math.trunc(n)).padStart(2, '0'))
+  const s = pad(ep.season_num == null ? 1 : ep.season_num)
+  let text = `S${s}E${pad(ep.episode_num)}`
+  if (ep.end_episode_num != null) text += `-E${pad(ep.end_episode_num)}`
+  return text
+}
+
+const episodeTagOf = (item: ResourceItem) => {
+  const ep = item.episode
+  if (!ep) return ''
+  const total = Number(ep.total_episode_num || 0)
+  if (ep.episode_num != null) {
+    const base = episodeTextOf(item)
+    return total > 0 ? `${base}${ep.is_complete ? '（全' + total + '集）' : '（共' + total + '集）'}` : base
+  }
+  if (ep.season_num != null) {
+    const base = `第 ${ep.season_num} 季`
+    return total > 0 ? `${base} ${ep.is_complete ? '全' : '共'}${total}集` : base
+  }
+  return ''
+}
+
+const pointTextOf = (item: ResourceItem) => {
+  const offline = item.link_type === 'magnet' || item.link_type === 'ed2k'
+  if (offline) return item.supported_targets?.length ? '可离线到 ' + item.supported_targets.map((p) => (p === 'guangya' ? '光鸭' : p)).join(' / ') : '离线资源'
+  if (item.source === 'guanying') return '观影分享'
+  if (item.is_unlocked) return '已解锁'
+  if (item.points_known) return `${item.unlock_points} 积分`
+  return '积分未知'
+}
+
+const unlockedCountOf = (item: ResourceItem) =>
+  item.unlocked_users_count != null && Number(item.unlocked_users_count) > 0
+
+const specTagsOf = (item: ResourceItem) => item.resource_spec_tags || []
+
+const openDetailWithResources = (item: DiscoverItem) => {
+  detailItem.value = item
+  detailResources.value = []
+  detailResourceErrors.value = []
+  detailResourceFilter.value = 'all'
+  copiedLink.value = ''
+  detailVisible.value = true
+  loadDetailResources(item)
+}
+
+const loadDetailResources = async (item: DiscoverItem) => {
+  if (!item.tmdb_id && !item.title) return
+  detailResourceLoading.value = true
+  const sources = ['re0', 'guanying']
+  try {
+    const responses = await Promise.allSettled(
+      sources.map((source) =>
+        http.post(`${SERVER_URL}/media-discovery/resources/search`, {
+          title: item.title,
+          aliases: item.original_title ? [item.original_title] : [],
+          tmdb_id: item.tmdb_id || null,
+          media_type: item.media_type === 'tv' ? 'tv' : 'movie',
+          year: item.year ? String(item.year) : '',
+          sources: [source],
+        })
+      )
+    )
+    const items: ResourceItem[] = []
+    const errors: ResourceSearchResult['errors'] = []
+    responses.forEach((res, idx) => {
+      if (res.status === 'fulfilled') {
+        const data = res.value.data?.data || {}
+        items.push(...(data.items || []))
+        errors.push(...(data.errors || []))
+      } else {
+        const msg = (res.reason?.response?.data?.message as string) || res.reason?.message || '请求失败'
+        errors.push({ source: sources[idx], code: 'REQUEST_FAILED', error: msg })
+      }
+    })
+    // 按 item_key 去重
+    const seen = new Set<string>()
+    detailResources.value = items.filter((r) => (seen.has(r.item_key) ? false : (seen.add(r.item_key), true)))
+    detailResourceErrors.value = errors
+  } finally {
+    detailResourceLoading.value = false
+  }
+}
+
+const copyResourceLink = async (item: ResourceItem) => {
+  try {
+    if (item.source === 're0' && item.slug) {
+      const response = await http.post(`${SERVER_URL}/media-discovery/resources/copy-link`, {
+        source: 're0', provider: item.provider, slug: item.slug,
+      })
+      const link = response.data?.data?.link || ''
+      if (link) await writeClipboard(link)
+      return
+    }
+    if (item.share_url) await writeClipboard(item.share_url)
+  } catch (error) {
+    ElMessage.error('复制链接失败')
+  }
+}
+
+const writeClipboard = async (text: string) => {
+  try {
+    await navigator.clipboard.writeText(text)
+    copiedLink.value = text
+    ElMessage.success('链接已复制')
+  } catch {
+    ElMessage.warning('浏览器拒绝了剪贴板访问')
+  }
+}
+
+// ------------------------- 观影设置与登录 -------------------------
+const guanyingStatus = ref<GuanyingSessionStatus>({})
+const guanyingUsername = ref('')
+const guanyingPassword = ref('')
+const guanyingLogging = ref(false)
+const guanyingCaptchaState = ref<GuanyingCaptcha | null>(null)
+const guanyingCaptchaPoints = ref<{ x: number; y: number }[]>([])
+const guanyingCaptchaImg = ref('')
+
+const loadGuanyingStatus = async () => {
+  try {
+    const response = await http.get(`${SERVER_URL}/media-discovery/guanying/session`)
+    guanyingStatus.value = response.data?.data || {}
+  } catch {
+    guanyingStatus.value = {}
+  }
+}
+
+const guanyingLogin = async () => {
+  const username = guanyingUsername.value.trim()
+  const password = guanyingPassword.value
+  if (!username || !password) {
+    ElMessage.warning('请输入观影账号和密码')
+    return
+  }
+  guanyingLogging.value = true
+  try {
+    const response = await http.post(`${SERVER_URL}/media-discovery/guanying/login`, {
+      username,
+      password,
+      attempt_id: guanyingCaptchaState.value?.attempt_id,
+    })
+    const data = response.data?.data || {}
+    if (data.captcha_required) {
+      await loadGuanyingCaptcha(data.attempt_id || data.captcha?.attempt_id)
+      ElMessage.info('请按顺序点击验证码文字')
+      return
+    }
+    ElMessage.success(response.data?.message || '观影登录成功，登录态已安全保存')
+    resetGuanyingLogin()
+    await loadGuanyingStatus()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '观影登录失败')
+  } finally {
+    guanyingLogging.value = false
+  }
+}
+
+const loadGuanyingCaptcha = async (attemptId: string) => {
+  try {
+    const response = await http.post(`${SERVER_URL}/media-discovery/guanying/captcha`, { attempt_id: attemptId })
+    const data = response.data?.data || {}
+    guanyingCaptchaState.value = { attempt_id: data.attempt_id || attemptId, ...data }
+    guanyingCaptchaImg.value = data.image || ''
+    guanyingCaptchaPoints.value = []
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '观影验证码获取失败')
+  }
+}
+
+const onCaptchaClick = (event: MouseEvent) => {
+  const target = event.currentTarget as HTMLElement
+  const rect = target.getBoundingClientRect()
+  guanyingCaptchaPoints.value.push({
+    x: Math.round(event.clientX - rect.left),
+    y: Math.round(event.clientY - rect.top),
+  })
+}
+
+const undoCaptchaPoint = () => {
+  guanyingCaptchaPoints.value.pop()
+}
+
+const verifyGuanyingCaptcha = async () => {
+  if (!guanyingCaptchaState.value) return
+  const chars = (guanyingCaptchaState.value.text || '').length
+  if (guanyingCaptchaPoints.value.length !== chars) {
+    ElMessage.warning(`请按顺序点击 ${chars} 个文字（已点 ${guanyingCaptchaPoints.value.length} 个）`)
+    return
+  }
+  guanyingLogging.value = true
+  try {
+    await http.post(`${SERVER_URL}/media-discovery/guanying/captcha/verify`, {
+      attempt_id: guanyingCaptchaState.value.attempt_id,
+      points: guanyingCaptchaPoints.value,
+    })
+    await guanyingLogin()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '验证码校验失败')
+    if (guanyingCaptchaState.value) await loadGuanyingCaptcha(guanyingCaptchaState.value.attempt_id)
+  } finally {
+    guanyingLogging.value = false
+  }
+}
+
+const guanyingRelogin = async () => {
+  guanyingLogging.value = true
+  try {
+    const response = await http.post(`${SERVER_URL}/media-discovery/guanying/relogin`, {})
+    const data = response.data?.data || {}
+    if (data.captcha_required) {
+      await loadGuanyingCaptcha(data.attempt_id || data.captcha?.attempt_id)
+      ElMessage.info('会话已失效，请完成验证码恢复登录')
+      return
+    }
+    ElMessage.success(response.data?.message || '观影登录已恢复')
+    resetGuanyingLogin()
+    await loadGuanyingStatus()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '观影恢复失败')
+  } finally {
+    guanyingLogging.value = false
+  }
+}
+
+const clearGuanyingSession = async () => {
+  try {
+    await ElMessageBox.confirm('确认清除已保存的观影会话与自动恢复账号密码吗？', '提示', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    await http.delete(`${SERVER_URL}/media-discovery/guanying/session`)
+    ElMessage.success('观影登录信息已清除')
+    resetGuanyingLogin()
+    await loadGuanyingStatus()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '清除失败')
+  }
+}
+
+const resetGuanyingLogin = () => {
+  guanyingUsername.value = ''
+  guanyingPassword.value = ''
+  guanyingCaptchaState.value = null
+  guanyingCaptchaImg.value = ''
+  guanyingCaptchaPoints.value = []
+}
+
 const airTimeOf = (item: DiscoverItem) => (item.air_date && item.air_date.length > 10 ? item.air_date.slice(11, 16) : '')
 
 const epLabelOf = (item: DiscoverItem) => {
@@ -812,6 +1175,7 @@ onMounted(async () => {
   loadSubscribed()
   loadFavorites()
   load()
+  loadGuanyingStatus()
   await nextTick()
   computeColumns()
   setupInfinite()
@@ -846,7 +1210,7 @@ onBeforeUnmount(() => {
         <div class="md-hero-aurora"></div>
         <div class="md-hero-eyebrow">🎞️ LIBRARY · 影视探索</div>
         <h2>探索片库</h2>
-        <p>按偏好探索影巢片库、豆瓣片单与番剧放送，收藏心仪作品并联动 MoviePilot 订阅下载。</p>
+        <p>按偏好探索RE0片库、豆瓣片单与番剧放送，收藏心仪作品并联动 MoviePilot 订阅下载。</p>
       </div>
 
       <!-- 工具栏：来源 Tab + 搜索 -->
@@ -1051,7 +1415,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="md-library-grid md-library-display-grid" :style="gridStyle">
               <article v-for="item in wd.items" :key="wd.date + item.entity_key" class="md-library-tile">
-                <div class="md-library-tile-poster" @click="openDetail(item)">
+                <div class="md-library-tile-poster" @click="openDetailWithResources(item)">
                   <img v-if="posterUrl(item)" :src="posterUrl(item)" loading="lazy" alt="" />
                   <div v-else class="md-library-tile-placeholder">◉</div>
                   <span class="md-library-tile-kind">动漫</span>
@@ -1078,7 +1442,7 @@ onBeforeUnmount(() => {
         <div v-else v-loading="animeSearching" class="md-section-block">
           <div class="md-library-grid md-library-display-grid" :style="gridStyle">
             <article v-for="item in animeItems" :key="item.entity_key" class="md-library-tile">
-              <div class="md-library-tile-poster" @click="openDetail(item)">
+              <div class="md-library-tile-poster" @click="openDetailWithResources(item)">
                 <img v-if="posterUrl(item)" :src="posterUrl(item)" loading="lazy" alt="" />
                 <div v-else class="md-library-tile-placeholder">◉</div>
                 <span class="md-library-tile-kind">动漫</span>
@@ -1108,7 +1472,7 @@ onBeforeUnmount(() => {
         <div class="md-section-block">
           <div class="md-library-grid md-library-display-grid" :style="gridStyle">
             <article v-for="fav in favoriteItems" :key="fav.id" class="md-library-tile">
-              <div class="md-library-tile-poster" @click="openDetail(fav as any)">
+              <div class="md-library-tile-poster" @click="openDetailWithResources(fav as any)">
                 <img v-if="fav.poster" :src="fav.poster" loading="lazy" alt="" />
                 <div v-else class="md-library-tile-placeholder">◉</div>
                 <span class="md-library-tile-kind">{{ kindOf(fav as any) }}</span>
@@ -1132,7 +1496,7 @@ onBeforeUnmount(() => {
         <div v-loading="loading" class="md-section-block">
           <div ref="gridEl" class="md-library-grid md-library-display-grid" :style="gridStyle">
             <article v-for="item in items" :key="(item.entity_key || '') + item.source + item.tmdb_id + item.douban_id + item.title" class="md-library-tile">
-              <div class="md-library-tile-poster" @click="openDetail(item)">
+              <div class="md-library-tile-poster" @click="openDetailWithResources(item)">
                 <img v-if="posterUrl(item)" :src="posterUrl(item)" loading="lazy" alt="" />
                 <div v-else class="md-library-tile-placeholder">◉</div>
                 <span v-if="!searchMode && item.rank" class="md-library-tile-rank">{{ item.rank }}</span>
@@ -1205,7 +1569,7 @@ onBeforeUnmount(() => {
             RANKINGS · 榜单推荐
           </div>
           <h2>流媒体榜单</h2>
-          <p>影巢流媒体榜聚合 Netflix、Disney+、Prime Video 等平台 Top 10，也支持 TMDB 分类榜与豆瓣片单。</p>
+          <p>RE0流媒体榜聚合 Netflix、Disney+、Prime Video 等平台 Top 10，也支持 TMDB 分类榜与豆瓣片单。</p>
         </div>
         <div class="md-ranking-hero-side">
           <strong>{{ rankingTotal }}</strong>
@@ -1228,7 +1592,7 @@ onBeforeUnmount(() => {
             @click="rankingProvider = 'hdhive'; loadRankings()"
           >
             <span class="md-streaming-tab-icon hive">影</span>
-            <span class="md-streaming-tab-label">影巢流媒体榜</span>
+            <span class="md-streaming-tab-label">RE0流媒体榜</span>
           </button>
           <button
             v-for="p in meta.providers"
@@ -1267,7 +1631,7 @@ onBeforeUnmount(() => {
               class="md-select"
               @change="rankingMediaType = rankingProvider.startsWith('hdhive') ? '' : 'movie'; loadRankings()"
             >
-              <optgroup label="影巢流媒体榜">
+              <optgroup label="RE0流媒体榜">
                 <option value="hdhive">默认平台（按设置）</option>
               </optgroup>
               <optgroup label="TMDB 分类榜">
@@ -1286,7 +1650,7 @@ onBeforeUnmount(() => {
       <div v-loading="loading" class="md-ranking-results-shell">
         <div class="md-calendar-head">
           <div>
-            <span class="md-kicker">{{ rankingProvider.startsWith('hdhive') ? '影巢 · ' + rankingProviderLabel : rankingProviderLabel }}</span>
+            <span class="md-kicker">{{ rankingProvider.startsWith('hdhive') ? 'RE0 · ' + rankingProviderLabel : rankingProviderLabel }}</span>
             <h3>{{ rankingProviderLabel }}</h3>
           </div>
           <span class="md-head-note">{{ rankingMediaType === '' ? '电影 + 剧集' : rankingKindLabel(rankingMediaType) }} · {{ rankingRegion }} · Top {{ Math.max(rankingTotal, 1) }}</span>
@@ -1303,7 +1667,7 @@ onBeforeUnmount(() => {
             :style="{ '--md-ranking-columns': group.items.length, '--md-ranking-row-max-width': 'none' }"
           >
             <article v-for="(item, idx) in group.items" :key="group.kind + idx + item.title" class="md-ranking-tile">
-              <div class="md-ranking-tile-poster" @click="openDetail(item)">
+              <div class="md-ranking-tile-poster" @click="openDetailWithResources(item)">
                 <img v-if="posterUrl(item)" :src="posterUrl(item)" loading="lazy" alt="" />
                 <div v-else class="md-library-tile-placeholder">◉</div>
                 <span class="md-rank">{{ idx + 1 }}</span>
@@ -1326,7 +1690,7 @@ onBeforeUnmount(() => {
       <div v-if="spotlightItem" class="md-calendar-spotlight">
         <div class="md-calendar-spotlight-backdrop" :style="spotlightItem.poster ? { backgroundImage: `url(${spotlightItem.poster})` } : {}"></div>
         <div class="md-calendar-spotlight-main">
-          <span class="md-calendar-spotlight-kicker">影巢 · 未来播出</span>
+          <span class="md-calendar-spotlight-kicker">RE0 · 未来播出</span>
           <time v-if="airTimeOf(spotlightItem) || spotlightItem.air_date">{{ spotlightItem.air_date ? spotlightItem.air_date.replace('T', ' ').slice(0, 16) : '' }}</time>
           <h2>{{ spotlightItem.title }}</h2>
           <p>{{ spotlightItem.overview || (spotlightItem.episode_title ? spotlightItem.episode_title : spotlightItem.title) }}</p>
@@ -1411,7 +1775,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="md-calendar-card-grid">
             <article v-for="ep in selectedDay.items" :key="selectedDay.date + (ep.entity_key || '') + ep.episode_title" class="md-calendar-card">
-              <div class="md-calendar-card-poster" @click="openDetail(ep)">
+              <div class="md-calendar-card-poster" @click="openDetailWithResources(ep)">
                 <img v-if="posterUrl(ep)" :src="posterUrl(ep)" loading="lazy" alt="" />
                 <div v-else class="md-library-tile-placeholder">◉</div>
                 <span class="md-library-tile-kind">{{ kindOf(ep) }}</span>
@@ -1597,11 +1961,123 @@ onBeforeUnmount(() => {
                   </label>
                 </div>
               </div>
+              <div class="md-field md-field-row">
+                <span class="md-field-label">观影资源源</span>
+                <div class="md-field-control">
+                  <label class="md-switch">
+                    <input v-model="settingsForm.guanying_enabled" type="checkbox" />
+                    <span class="md-switch-track"></span>
+                  </label>
+                </div>
+              </div>
+              <div class="md-guanying-auth">
+                <div class="md-guanying-auth-status">
+                  <template v-if="guanyingStatus.session_saved">
+                    已登录（账号 {{ guanyingStatus.account_hint || '—' }}）
+                  </template>
+                  <template v-else>未登录。登录后可在影视详情中检索观影的 115、123、光鸭与磁力资源；凭据在本机加密保存，会话失效可一键恢复。</template>
+                </div>
+                <div class="md-guanying-auth-actions">
+                  <input v-model="guanyingUsername" class="md-input" placeholder="观影账号" autocomplete="username" />
+                  <input v-model="guanyingPassword" class="md-input" type="password" placeholder="观影密码" autocomplete="current-password" />
+                  <button type="button" class="md-btn is-primary" :disabled="guanyingLogging" @click="guanyingLogin">登录</button>
+                  <button v-if="guanyingStatus.credentials_saved" type="button" class="md-btn" :disabled="guanyingLogging" @click="guanyingRelogin">恢复会话</button>
+                  <button v-if="guanyingStatus.session_saved" type="button" class="md-btn" :disabled="guanyingLogging" @click="clearGuanyingSession">清除</button>
+                </div>
+                <div v-if="guanyingCaptchaState" class="md-guanying-captcha">
+                  <p class="md-guanying-captcha-hint">按顺序点击文字：{{ guanyingCaptchaState.text }}（已点 {{ guanyingCaptchaPoints.length }} 个）</p>
+                  <div class="md-guanying-captcha-box" :style="{ width: (guanyingCaptchaState.width || 350) + 'px', height: (guanyingCaptchaState.height || 200) + 'px' }" @click="onCaptchaClick">
+                    <img v-if="guanyingCaptchaImg" :src="guanyingCaptchaImg" alt="观影验证码" />
+                    <span v-for="(p, idx) in guanyingCaptchaPoints" :key="idx" class="md-guanying-captcha-point" :style="{ left: p.x - 9 + 'px', top: p.y - 9 + 'px' }">{{ idx + 1 }}</span>
+                  </div>
+                  <div class="md-guanying-captcha-actions">
+                    <button type="button" class="md-btn is-primary" :disabled="guanyingLogging" @click="verifyGuanyingCaptcha">确认</button>
+                    <button type="button" class="md-btn" :disabled="guanyingLogging" @click="undoCaptchaPoint">撤销一点</button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </form>
     </section>
+
+    <!-- 影片详情 + 关联资源 -->
+    <el-dialog v-model="detailVisible" :title="detailItem?.title || '影片详情'" width="720px" append-to-body class="md-detail-dialog">
+      <div v-if="detailItem" class="md-detail-head">
+        <img v-if="detailItem.poster" :src="detailItem.poster" class="md-detail-poster" :alt="detailItem.title" />
+        <div class="md-detail-meta">
+          <p class="md-detail-line">
+            <span class="md-badge">{{ kindOf(detailItem) }}</span>
+            <span v-if="detailItem.year" class="md-badge">{{ detailItem.year }}</span>
+            <span v-if="detailItem.vote_avg > 0" class="md-badge is-score">★ {{ detailItem.vote_avg.toFixed(1) }}</span>
+            <span v-if="detailItem.in_emby" class="md-badge is-emby">已入库</span>
+          </p>
+          <p v-if="detailItem.original_title && detailItem.original_title !== detailItem.title" class="md-detail-sub">{{ detailItem.original_title }}</p>
+          <p v-if="detailItem.overview" class="md-detail-overview">{{ detailItem.overview }}</p>
+          <div class="md-detail-links">
+            <button type="button" class="md-btn" @click="openDetail(detailItem)">查看源站</button>
+          </div>
+        </div>
+      </div>
+      <div class="md-resource-panel">
+        <div class="md-resource-panel-head">
+          <h4>关联资源</h4>
+          <span v-if="detailResourceSummary" class="md-resource-summary">{{ detailResourceSummary }}</span>
+          <button type="button" class="md-btn is-small" :disabled="detailResourceLoading" @click="detailItem && loadDetailResources(detailItem)">
+            {{ detailResourceLoading ? '匹配中…' : '重新匹配' }}
+          </button>
+        </div>
+        <div class="md-resource-filters">
+          <button
+            v-for="choice in detailResourceChoices"
+            :key="choice.key"
+            type="button"
+            class="md-chip"
+            :class="{ 'is-active': detailResourceFilter === choice.key }"
+            @click="detailResourceFilter = choice.key"
+          >{{ choice.label }}</button>
+        </div>
+        <p v-for="(err, idx) in detailResourceErrors" :key="idx" class="md-resource-error">
+          {{ err.source === 're0' ? 'RE0' : err.source === 'guanying' ? '观影' : err.source }}：{{ err.error }}
+        </p>
+        <div v-if="detailResourceLoading" class="md-resource-empty">资源匹配中…</div>
+        <div v-else-if="!detailResourcesFiltered.length" class="md-resource-empty">
+          {{ detailResources.length ? '当前筛选下暂无资源' : '该作品当前没有可用候选；稍后重新打开或点击重新匹配。' }}
+        </div>
+        <div v-else class="md-resource-list">
+          <article v-for="item in detailResourcesFiltered" :key="item.item_key" class="md-resource-card" :class="{ 'is-offline': item.link_type === 'magnet' || item.link_type === 'ed2k' }">
+            <div class="md-resource-main">
+              <div class="md-resource-title-row">
+                <h5 class="md-resource-title" :title="item.title">{{ item.title }}</h5>
+                <span v-if="item.is_official" class="md-resource-official">官组</span>
+                <span v-if="item.sharer" class="md-resource-publisher">发布者：{{ item.sharer }}</span>
+              </div>
+              <div class="md-resource-meta">
+                <span class="md-badge is-source">{{ item.source === 're0' ? 'RE0' : item.source === 'guanying' ? '观影' : item.source }}</span>
+                <span class="md-badge">{{ item.provider_label }}</span>
+                <span class="md-badge" :class="{ 'is-unlocked': item.is_unlocked }">{{ pointTextOf(item) }}</span>
+                <span v-if="item.size" class="md-badge is-size">{{ item.size }}</span>
+                <span v-if="unlockedCountOf(item)" class="md-badge">已解锁 {{ item.unlocked_users_count }} 人</span>
+              </div>
+              <div v-if="episodeTagOf(item)" class="md-resource-tagline"><span class="md-tag-label">季集</span>{{ episodeTagOf(item) }}</div>
+              <div v-if="specTagsOf(item).length" class="md-resource-tagline">
+                <span class="md-tag-label">规格</span>
+                <span v-for="tag in specTagsOf(item)" :key="tag" class="md-badge is-spec">{{ tag }}</span>
+              </div>
+              <div v-if="item.subtitle_languages?.length" class="md-resource-tagline">
+                <span class="md-tag-label">字幕</span>{{ item.subtitle_languages.join(' / ') }}
+              </div>
+              <div v-if="item.remark" class="md-resource-note">{{ item.remark }}</div>
+              <div v-if="item.validate_message" class="md-resource-note is-warn">{{ item.validate_message }}</div>
+            </div>
+            <div class="md-resource-actions">
+              <button type="button" class="md-btn is-small" @click="copyResourceLink(item)">复制链接</button>
+            </div>
+          </article>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -3348,5 +3824,341 @@ onBeforeUnmount(() => {
     padding: 0 12px;
     font-size: 12.5px;
   }
+}
+
+/* ========================= 详情弹窗 + 关联资源 ========================= */
+.md-detail-head {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.md-detail-poster {
+  width: 120px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+
+.md-detail-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.md-detail-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 0 0 8px;
+}
+
+.md-detail-sub {
+  color: var(--md-text-secondary, #94a3b8);
+  font-size: 13px;
+  margin: 0 0 6px;
+}
+
+.md-detail-overview {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--md-text-secondary, #94a3b8);
+  margin: 0 0 10px;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.md-detail-links {
+  display: flex;
+  gap: 8px;
+}
+
+.md-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.16);
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.md-badge.is-score {
+  background: rgba(245, 158, 11, 0.18);
+  color: #f59e0b;
+}
+
+.md-badge.is-emby {
+  background: rgba(34, 197, 94, 0.18);
+  color: #22c55e;
+}
+
+.md-badge.is-source {
+  background: rgba(45, 167, 234, 0.18);
+  color: #2da7ea;
+}
+
+.md-badge.is-unlocked {
+  background: rgba(34, 197, 94, 0.16);
+  color: #22c55e;
+}
+
+.md-badge.is-size {
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.md-badge.is-spec {
+  background: rgba(139, 92, 246, 0.14);
+}
+
+/* 观影授权块 */
+.md-guanying-auth {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 12px;
+}
+
+.md-guanying-auth-status {
+  font-size: 13px;
+  color: var(--md-text-secondary, #94a3b8);
+  margin-bottom: 10px;
+}
+
+.md-guanying-auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.md-guanying-auth-actions .md-input {
+  width: 180px;
+}
+
+.md-guanying-captcha {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(148, 163, 184, 0.3);
+}
+
+.md-guanying-captcha-hint {
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+
+.md-guanying-captcha-box {
+  position: relative;
+  cursor: pointer;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.md-guanying-captcha-box img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.md-guanying-captcha-point {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(45, 167, 234, 0.85);
+  color: #fff;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.md-guanying-captcha-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* 资源面板 */
+.md-resource-panel {
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  padding-top: 14px;
+}
+
+.md-resource-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.md-resource-panel-head h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.md-resource-summary {
+  font-size: 12.5px;
+  color: var(--md-text-secondary, #94a3b8);
+}
+
+.md-resource-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.md-chip {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.md-chip.is-active {
+  background: rgba(45, 167, 234, 0.16);
+  border-color: rgba(45, 167, 234, 0.6);
+  color: #2da7ea;
+}
+
+.md-resource-error {
+  font-size: 12.5px;
+  color: #f59e0b;
+  margin: 4px 0;
+}
+
+.md-resource-empty {
+  padding: 28px 0;
+  text-align: center;
+  color: var(--md-text-secondary, #94a3b8);
+  font-size: 13px;
+}
+
+.md-resource-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.md-resource-card {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 12px;
+  align-items: flex-start;
+}
+
+.md-resource-card.is-offline {
+  border-style: dashed;
+}
+
+.md-resource-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.md-resource-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.md-resource-title {
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.md-resource-official {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.18);
+  color: #f59e0b;
+  font-size: 11px;
+}
+
+.md-resource-publisher {
+  font-size: 12px;
+  color: var(--md-text-secondary, #94a3b8);
+}
+
+.md-resource-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.md-resource-tagline {
+  font-size: 12.5px;
+  color: var(--md-text-secondary, #94a3b8);
+  margin-bottom: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.md-tag-label {
+  color: rgba(148, 163, 184, 0.8);
+  flex-shrink: 0;
+}
+
+.md-resource-note {
+  font-size: 12px;
+  color: var(--md-text-secondary, #94a3b8);
+  overflow-wrap: anywhere;
+}
+
+.md-resource-note.is-warn {
+  color: #f59e0b;
+}
+
+.md-resource-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* 通用按钮（对齐页面已有 md-btn 若无则补） */
+.md-btn {
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.md-btn.is-primary {
+  background: #2da7ea;
+  border-color: #2da7ea;
+  color: #fff;
+}
+
+.md-btn.is-small {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.md-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

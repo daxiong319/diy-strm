@@ -357,7 +357,7 @@ func InitCron() {
 	})
 
 	GlobalCron.AddFunc("0 * * * *", func() {
-		// 影巢（HDHive）OAuth 每日签到：每小时触发一次，
+		// RE0（HDHive）OAuth 每日签到：每小时触发一次，
 		// 由处理方按设置（启用开关 / 签到时间 / 签到模式，与 参考实现的 HDHIVE_CHECKIN_* 一致）决定是否执行
 		helpers.Publish(helpers.HiveDailyCheckinEvent, nil)
 	})

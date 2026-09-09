@@ -18,7 +18,7 @@
       </div>
       <div class="mv-sec-body">
         <p class="mv-note" style="margin-bottom: 12px">
-          资源查询优先走主渠道；主渠道超时或故障时自动切换备用渠道。授权前请先到 hdhive.com 注册影巢账号。
+          资源查询优先走主渠道；主渠道超时或故障时自动切换备用渠道。授权前请先到 hdhive.com 注册RE0账号。
         </p>
 
         <div v-if="mainLoading" class="loading-box">
@@ -233,7 +233,7 @@
       </div>
       <div class="mv-sec-body">
         <p class="mv-note" style="margin-bottom: 12px">
-          开启后每天在指定时段内为影巢账号随机签到取积分（随机分钟落在选定时段前 30 分钟内）；失败自动重试，同一天只签到一次。
+          开启后每天在指定时段内为RE0账号随机签到取积分（随机分钟落在选定时段前 30 分钟内）；失败自动重试，同一天只签到一次。
         </p>
 
         <div class="checkin-config-row">
@@ -275,7 +275,7 @@
         </div>
 
         <p class="mv-note" style="margin-top: 8px">
-          更精确的随机签到窗口（HH:MM ~ HH:MM，自定义跨度）请在「影巢设置 → 签到与限额」中配置；此处保存后将沿用小时级策略。
+          更精确的随机签到窗口（HH:MM ~ HH:MM，自定义跨度）请在「RE0设置 → 签到与限额」中配置；此处保存后将沿用小时级策略。
         </p>
 
         <div class="checkin-config-save">

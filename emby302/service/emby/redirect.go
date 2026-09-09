@@ -113,7 +113,7 @@ func Redirect2OpenlistLink(c *gin.Context) {
 	}
 
 	// 4 尝试直接解析 STRM 内容获取直链
-	// 支持 tgto123 指针格式 (play115:// 等) 与 diy-strm 自家直链 URL,
+	// 支持 参考实现 指针格式 (play115:// 等) 与 diy-strm 自家直链 URL,
 	// 直接调用网盘直链接口, 避免内部二次 HTTP 请求
 	if handled := redirectByStrmContent(c, strmUrl); handled {
 		return

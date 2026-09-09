@@ -286,7 +286,7 @@ MoviePilot 上传任务完成后自动对上传根目录执行同规则整理（
 
 整理成功后按成功目标目录逐个触发手动 STRM 同步（ID=0，按路径定位）；`strm_local_dir` 未配置时跳过 STRM 生成。
 
-#### 洗版（同集去重，学习 tgto123/symedia/mediavault）
+#### 洗版（同集去重，学习 参考实现/symedia/成熟方案）
 
 MP 整理路径复用云盘自动整理的质量比较引擎（`internal/moviepilot/wash_quality.go`）：移动前列出目标目录，存在「同集/同名」旧视频（`findWashTargets`，忽略扩展名与质量后缀，兼容 139 同名冲突的时间戳后缀副本）时逐个比较（`CompareQuality`，默认规则 分辨率→编码→来源→声道→位深→制作组）：
 

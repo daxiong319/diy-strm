@@ -9,14 +9,14 @@ import (
 )
 
 // MonitorTransferRecord 监控历史转存记录（对齐 参考实现的 messages 表）
-// 记录 TG 频道订阅 / 影巢订阅 / TG 机器人三类监控入口的每一次转存尝试（成功/失败/跳过），
+// 记录 TG 频道订阅 / RE0订阅 / TG 机器人三类监控入口的每一次转存尝试（成功/失败/跳过），
 // 与 CloudTransferRecord 的分工：后者只记成功转存、用于订阅去重与完结判定；本表为全量审计展示。
 type MonitorTransferRecord struct {
 	ID             uint      `gorm:"primaryKey" json:"id"`
 	SourceType     string    `gorm:"size:32;index:idx_mtr_source_time" json:"source_type"` // 目标网盘：123 / guangyapan / pan139
-	Entry          string    `gorm:"size:16;index" json:"entry"`                           // 监控入口：channel=TG频道订阅 / hive=影巢订阅 / bot=TG机器人
-	Channel        string    `gorm:"size:128" json:"channel"`                              // 频道名（影巢为空、机器人为 TG机器人）
-	MessageID      string    `gorm:"size:64" json:"message_id"`                            // 帖子 ID / 影巢资源 slug
+	Entry          string    `gorm:"size:16;index" json:"entry"`                           // 监控入口：channel=TG频道订阅 / hive=RE0订阅 / bot=TG机器人
+	Channel        string    `gorm:"size:128" json:"channel"`                              // 频道名（RE0为空、机器人为 TG机器人）
+	MessageID      string    `gorm:"size:64" json:"message_id"`                            // 帖子 ID / RE0资源 slug
 	MessageURL     string    `gorm:"size:512" json:"message_url"`                          // 消息链接（https://t.me/频道/帖子ID）
 	TargetURL      string    `gorm:"size:512" json:"target_url"`                           // 网盘分享链接
 	TransferStatus string    `gorm:"size:32;index" json:"transfer_status"`                 // 转存成功 / 转存失败 / 已跳过 / 洗版替换
@@ -27,7 +27,7 @@ type MonitorTransferRecord struct {
 	TargetDir      string    `gorm:"size:512" json:"target_dir"`                           // 转存目标目录
 	SubscriptionID uint      `gorm:"index" json:"subscription_id"`                         // 关联订阅 ID（机器人入口为 0）
 	// 影片关联信息：用于监控历史直接展示「监控的是哪部影片/剧集」
-	TMDBID    int64  `gorm:"index" json:"tmdb_id"`      // 关联 TMDB ID（影巢订阅 / TG 影视订阅可关联，无则 0）
+	TMDBID    int64  `gorm:"index" json:"tmdb_id"`      // 关联 TMDB ID（RE0订阅 / TG 影视订阅可关联，无则 0）
 	MediaType string `gorm:"size:16" json:"media_type"` // movie / tv
 	Season    string `gorm:"size:16" json:"season"`     // 季（tv），如 1
 	Episode   string `gorm:"size:32" json:"episode"`    // 集（tv），如 S01E02

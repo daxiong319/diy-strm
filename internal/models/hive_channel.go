@@ -15,7 +15,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 影巢四通道：中转通道 / 直连通道 / nanshare 中转 / 官方直连。
+// RE0四通道：中转通道 / 直连通道 / nanshare 中转 / 官方直连。
 // 上层查询与调用统一走通道抽象，按优先级调度，通道故障时逐个降级尝试。
 // ---------------------------------------------------------------------------
 
@@ -265,7 +265,7 @@ func classifyHiveChannelError(resp *hdhive.OAuthAPIResponse, err error) (time.Du
 func HiveQueryResourcesWithFailover(ctx context.Context, mediaType, tmdbID string) (*HiveQueryResult, error) {
 	accs := ListHiveAccountsForQuery()
 	if len(accs) == 0 {
-		return nil, errors.New("没有启用中的影巢授权账号")
+		return nil, errors.New("没有启用中的RE0授权账号")
 	}
 	var lastErr error
 	tried := map[string]bool{}
@@ -293,7 +293,7 @@ func HiveQueryResourcesWithFailover(ctx context.Context, mediaType, tmdbID strin
 			} else {
 				lastErr = fmt.Errorf("通道 %s 响应异常（HTTP %d）：%s", channelLabel(channel), resp.StatusCode, hiveFeedErrMsg(resp))
 			}
-			helpers.AppLogger.Warnf("影巢通道 %s 查询失败，切换下一通道（冷却 %s）：%v", channelLabel(channel), cd, lastErr)
+			helpers.AppLogger.Warnf("RE0通道 %s 查询失败，切换下一通道（冷却 %s）：%v", channelLabel(channel), cd, lastErr)
 			continue
 		}
 		hiveChannelSucceeded(channel)
@@ -326,7 +326,7 @@ func HiveCallWithFailover(ctx context.Context, preferred string, call func(hdhiv
 			} else {
 				lastErr = fmt.Errorf("通道 %s 响应异常（HTTP %d）：%s", channelLabel(ch), resp.StatusCode, hiveFeedErrMsg(resp))
 			}
-			helpers.AppLogger.Warnf("影巢通道 %s 调用失败，降级下一通道（冷却 %s）：%v", channelLabel(ch), cd, lastErr)
+			helpers.AppLogger.Warnf("RE0通道 %s 调用失败，降级下一通道（冷却 %s）：%v", channelLabel(ch), cd, lastErr)
 			continue
 		}
 		hiveChannelSucceeded(ch)

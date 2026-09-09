@@ -189,7 +189,7 @@
           </div>
         </div>
 
-        <!-- 影巢结果 -->
+        <!-- RE0结果 -->
         <div v-for="e in shownHiveResults" :key="`hdhive-${e.slug}`" class="hs-card hs-card-hive">
           <div class="hs-hive-head">
             <div class="hs-hive-avatar">
@@ -198,8 +198,8 @@
             </div>
             <div class="hs-hive-info">
               <div class="hs-hive-user-row">
-                <span class="hs-hive-name">{{ e.user?.nickname?.trim() || '影巢资源' }}</span>
-                <el-tag size="small" type="info" effect="plain" disable-transitions class="hs-tag-hive">影巢</el-tag>
+                <span class="hs-hive-name">{{ e.user?.nickname?.trim() || 'RE0资源' }}</span>
+                <el-tag size="small" type="info" effect="plain" disable-transitions class="hs-tag-hive">RE0</el-tag>
                 <el-tag v-if="e.is_official" size="small" type="warning" effect="plain" disable-transitions class="hs-tag-official">官组</el-tag>
                 <el-tag v-if="e.unlock_points" size="small" type="warning" effect="dark" disable-transitions>{{ e.unlock_points }} 积分</el-tag>
               </div>
@@ -635,7 +635,7 @@ const isMagnetLike = (u: string) => /^magnet:/.test(u) || /^ed2k:/.test(u)
 const tabs = computed(() => {
   const t = [{ key: 'all', label: '全部', count: totalResults.value }]
   if (enabled.value.telegram) t.push({ key: 'telegram', label: 'Telegram', count: tgResults.value.length })
-  if (enabled.value.hdhive) t.push({ key: 'hdhive', label: '影巢', count: hiveResults.value.length })
+  if (enabled.value.hdhive) t.push({ key: 'hdhive', label: 'RE0', count: hiveResults.value.length })
   if (enabled.value.pansou) t.push({ key: 'pansou', label: '盘搜', count: pansouResults.value.length })
   return t
 })

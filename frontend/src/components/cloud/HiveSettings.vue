@@ -17,11 +17,11 @@
       </div>
     </section>
 
-    <!-- 区块：影巢搜索 -->
+    <!-- 区块：RE0搜索 -->
     <section class="mv-sec">
       <div class="mv-sec-head">
-        <h3 class="mv-sec-title">影巢搜索</h3>
-        <p class="mv-sec-desc">搜索影巢站内资源并转存；需先完成 OAuth 授权</p>
+        <h3 class="mv-sec-title">RE0搜索</h3>
+        <p class="mv-sec-desc">搜索RE0站内资源并转存；需先完成 OAuth 授权</p>
       </div>
       <div class="mv-sec-body">
         <!-- OAuth 授权卡 -->
@@ -35,17 +35,17 @@
               <p v-if="authUser" class="mv-oauth-sub">
                 <template v-if="authUser.points !== undefined">积分 {{ fmtPoints(authUser.points) }}</template>
                 <template v-else-if="auth?.authorized">已授权</template>
-                <template v-else>完成授权后即可使用影巢搜索</template>
+                <template v-else>完成授权后即可使用RE0搜索</template>
               </p>
               <p v-else class="mv-oauth-sub">
                 <template v-if="waiting">正在检测授权状态…</template>
-                <template v-else>完成授权后即可使用影巢搜索</template>
+                <template v-else>完成授权后即可使用RE0搜索</template>
               </p>
             </div>
           </div>
           <div class="mv-oauth-actions">
             <el-button v-if="!auth?.authorized && !waiting" size="small" type="primary" :loading="authing" @click="authorizeHive">
-              授权影巢
+              授权RE0
             </el-button>
             <el-button v-if="auth?.authorized && !waiting" size="small" :loading="checking" @click="checkStatus">
               检测状态
@@ -54,14 +54,14 @@
           </div>
         </div>
 
-        <!-- 影巢搜索字段 -->
+        <!-- RE0搜索字段 -->
         <div class="mv-fields">
           <div class="mv-field">
             <div class="mv-field-label">
-              <span>启用影巢搜索</span>
+              <span>启用RE0搜索</span>
               <el-switch v-model="form.hive_enabled" />
             </div>
-            <p class="mv-field-desc">开启后订阅搜索与手动搜索可使用影巢渠道。</p>
+            <p class="mv-field-desc">开启后订阅搜索与手动搜索可使用RE0渠道。</p>
           </div>
           <div class="mv-field">
             <div class="mv-field-label">
@@ -166,7 +166,7 @@
               <el-input-number v-model="form.poll_interval" :min="5" :max="1440" controls-position="right" class="mv-num" />
               <span class="mv-unit">分钟</span>
             </div>
-            <p class="mv-field-desc">引擎按此间隔查询所有影巢订阅的新资源。</p>
+            <p class="mv-field-desc">引擎按此间隔查询所有RE0订阅的新资源。</p>
           </div>
           <div class="mv-field">
             <div class="mv-field-label">
@@ -278,7 +278,7 @@
     <section class="mv-sec">
       <div class="mv-sec-head">
         <h3 class="mv-sec-title">签到与限额</h3>
-        <p class="mv-sec-desc">影巢每日签到（主/子账号）随机时间窗口、refresh token 到期提醒、每日解锁积分限额</p>
+        <p class="mv-sec-desc">RE0每日签到（主/子账号）随机时间窗口、refresh token 到期提醒、每日解锁积分限额</p>
       </div>
       <div class="mv-sec-body">
         <div class="mv-fields">
@@ -360,7 +360,7 @@
               <el-input-number v-model="form.unlock_daily_limit" :min="0" :max="1000" controls-position="right" class="mv-num" />
               <span class="mv-unit">积分</span>
             </div>
-            <p class="mv-field-desc">每天所有影巢解锁消耗积分累计达到该值后停止当日解锁；0 表示不限额。</p>
+            <p class="mv-field-desc">每天所有RE0解锁消耗积分累计达到该值后停止当日解锁；0 表示不限额。</p>
           </div>
         </div>
       </div>
@@ -370,7 +370,7 @@
     <section class="mv-sec">
       <div class="mv-sec-head">
         <h3 class="mv-sec-title">订阅默认参数模板</h3>
-        <p class="mv-sec-desc">新建影巢订阅时预填的默认参数（JSON）；也可在订阅页单独修改每条订阅</p>
+        <p class="mv-sec-desc">新建RE0订阅时预填的默认参数（JSON）；也可在订阅页单独修改每条订阅</p>
       </div>
       <div class="mv-sec-body">
         <div class="mv-fields">
@@ -443,8 +443,8 @@
           <el-table-column label="操作" min-width="230">
             <template #default="{ row }">
               <template v-if="!row.account?.authorized">
-                <!-- 直连通道 与上方「影巢搜索」授权卡为同一账号，不再重复授权入口 -->
-                <span v-if="row.channel === 'tgtodrive'" class="chan-key">见上方「影巢搜索」卡片授权</span>
+                <!-- 直连通道 与上方「RE0搜索」授权卡为同一账号，不再重复授权入口 -->
+                <span v-if="row.channel === 'tgtodrive'" class="chan-key">见上方「RE0搜索」卡片授权</span>
                 <el-button
                   v-else
                   type="primary"
@@ -762,7 +762,7 @@ const startWait = () => {
         auth.value = resp.data.data
         if (resp.data.data?.account?.authorized) {
           stopWait()
-          ElMessage.success('影巢授权成功')
+          ElMessage.success('RE0授权成功')
         }
       }
     } catch {
@@ -798,7 +798,7 @@ const authorizeHive = async () => {
       ElMessage.warning('浏览器拦截了弹出窗口，请允许弹窗后重试')
       return
     }
-    ElMessage.info('已打开影巢授权页，完成授权后将自动检测状态')
+    ElMessage.info('已打开RE0授权页，完成授权后将自动检测状态')
     startWait()
   } catch (e: any) {
     ElMessage.error('获取授权地址失败：' + (e?.message || ''))

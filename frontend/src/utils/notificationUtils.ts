@@ -159,8 +159,8 @@ export function getEventTypeDescription(type: EventType): string {
     playback_start: '用户开始播放内容时发送通知',
     playback_pause: '用户暂停播放时发送通知',
     playback_stop: '用户停止播放时发送通知',
-    transfer_success: 'TG 频道/影巢资源转存成功时发送通知',
-    transfer_failed: 'TG 频道/影巢资源转存失败时发送通知',
+    transfer_success: 'TG 频道/RE0资源转存成功时发送通知',
+    transfer_failed: 'TG 频道/RE0资源转存失败时发送通知',
     account_auth_invalid: '网盘账号授权失效或恢复时发送通知',
   }
   return descMap[type] || ''

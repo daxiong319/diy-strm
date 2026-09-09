@@ -13,7 +13,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 追剧日历（对应参考实现 calendar：影巢 feed 按天分组，Asia/Shanghai 时区）
+// 追剧日历（对应参考实现 calendar：RE0 feed 按天分组，Asia/Shanghai 时区）
 // ---------------------------------------------------------------------------
 
 // CalendarDay 单日条目
@@ -74,7 +74,7 @@ func minLen(s string, n int) int {
 	return n
 }
 
-// FeedEpisodePayload 影巢 calendar feed 响应结构（data 字段）
+// FeedEpisodePayload RE0 calendar feed 响应结构（data 字段）
 type FeedEpisodePayload struct {
 	Episodes []struct {
 		ID            int64  `json:"id"`
@@ -123,7 +123,7 @@ func Calendar(ctx context.Context, days, kind string, force bool) ([]CalendarDay
 	return days2, nil
 }
 
-// fetchCalendarEpisodes 拉取影巢日历 feed；通道不可用时回退 TMDB airing_today 兜底
+// fetchCalendarEpisodes 拉取RE0日历 feed；通道不可用时回退 TMDB airing_today 兜底
 func fetchCalendarEpisodes(ctx context.Context, days int) ([]Item, error) {
 	resp, err := feedExecute(ctx, func(fc hdhive.FeedClient) (*hdhive.OAuthAPIResponse, error) {
 		return fc.GetCalendar(ctx, days)
@@ -163,7 +163,7 @@ func fetchCalendarEpisodes(ctx context.Context, days int) ([]Item, error) {
 			return items, nil
 		}
 	}
-	// 影巢通道不可用 → 回退 TMDB（本周播出 + 今日播出）
+	// RE0通道不可用 → 回退 TMDB（本周播出 + 今日播出）
 	return tmdbAiringFallback(days)
 }
 
@@ -189,7 +189,7 @@ func tmdbAiringFallback(days int) ([]Item, error) {
 		}
 	}
 	if len(items) == 0 {
-		return nil, fmt.Errorf("追剧日历数据源不可用（影巢通道未授权且 TMDB 播出表无数据）")
+		return nil, fmt.Errorf("追剧日历数据源不可用（RE0通道未授权且 TMDB 播出表无数据）")
 	}
 	_ = days
 	return items, nil

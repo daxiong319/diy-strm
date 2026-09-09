@@ -40,7 +40,7 @@ docker run -d \
 ```
 
 ```bash
-# 方式二：config/.env 配置（仿 tgto123 风格，纯 .env 驱动）
+# 方式二：config/.env 配置（仿 标准，纯 .env 驱动）
 # 复制 .env.example 为 config/.env 后修改，启动时自动生成 config.yaml（可选，纯 .env 驱动）
 cp .env.example config/.env
 docker run -d \

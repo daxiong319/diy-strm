@@ -57,7 +57,7 @@ func submitSubscriptionRun(sub *models.CloudSubscription) bool {
 }
 
 // RunAllSubscriptionsSearchAPI 一键补全搜索（POST /cloud/subscriptions/run-search）
-// 后台依次执行全部启用中的影巢订阅；接口立即返回「订阅搜索已触发，后台执行中」
+// 后台依次执行全部启用中的RE0订阅；接口立即返回「订阅搜索已触发，后台执行中」
 func RunAllSubscriptionsSearchAPI(c *gin.Context) {
 	subs, err := models.ListSubscriptionsByResourceSource("hdhive")
 	if err != nil {
@@ -374,7 +374,7 @@ func HiveManualSearchAPI(c *gin.Context) {
 	pansouOn := models.GetHivePansouEnabled() && models.GetHivePansouBaseURL() != ""
 
 	engines := []string{}
-	labels := map[string]string{"hdhive": "影巢", "telegram": "Telegram", "pansou": "盘搜"}
+	labels := map[string]string{"hdhive": "RE0", "telegram": "Telegram", "pansou": "盘搜"}
 	requested := map[string]bool{}
 	for _, e := range req.Engines {
 		requested[e] = true
@@ -439,7 +439,7 @@ func HiveManualSearchAPI(c *gin.Context) {
 	}}})
 }
 
-// hiveManualSearchHDHive 影巢引擎：按 TMDB 资源查询（四通道负载均衡）
+// hiveManualSearchHDHive RE0引擎：按 TMDB 资源查询（四通道负载均衡）
 func hiveManualSearchHDHive(ctx context.Context, c *gin.Context, mediaType string, tmdbID int64) {
 	writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "hdhive", Status: "searching"})
 	if tmdbID <= 0 {
@@ -704,10 +704,10 @@ func hiveManualSearchTelegram(ctx context.Context, c *gin.Context, keywords []st
 }
 
 // ---------------------------------------------------------------------------
-// 影巢解锁与手动转存（成熟方案 hdhive/unlock + 转存操作对齐）
+// RE0解锁与手动转存（成熟方案 hdhive/unlock + 转存操作对齐）
 // ---------------------------------------------------------------------------
 
-// HiveUnlockAPI 解锁影巢资源（POST /cloud/hive/unlock {slug}）
+// HiveUnlockAPI 解锁RE0资源（POST /cloud/hive/unlock {slug}）
 // 走四通道负载均衡；返回 {url, full_url, pan_type, title, access_code}
 func HiveUnlockAPI(c *gin.Context) {
 	var req struct {
@@ -738,7 +738,7 @@ func HiveUnlockAPI(c *gin.Context) {
 		if msg == "" {
 			msg = "解锁失败"
 		}
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "影巢接口返回：" + msg, Data: nil})
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "RE0接口返回：" + msg, Data: nil})
 		return
 	}
 	var unlock hdhive.UnlockResult

@@ -36,7 +36,7 @@ func InitRouter(r *gin.Engine) {
 	r.NoRoute(handlers...)
 }
 
-// StandaloneServer tgto123 形态的独立 Emby 302 反代服务：
+// StandaloneServer 独立端口形态的独立 Emby 302 反代服务：
 // 与管理页完全隔离的专用端口，根路径即 Emby 本体（浏览器/播放器打开该端口看到的就是 Emby），
 // 302 直链、STRM 指针、反代回源等行为与合并端口模式一致。
 type StandaloneServer struct {

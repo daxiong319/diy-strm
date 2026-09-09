@@ -220,7 +220,7 @@ func CountWashItems(accountID uint, status string) int64 {
 }
 
 // ---------------------------------------------------------------------------
-// 影巢签到历史（S3，借鉴 symedia checkin_success.json 记录）
+// RE0签到历史（S3，借鉴 symedia checkin_success.json 记录）
 // ---------------------------------------------------------------------------
 
 // HiveCheckinRecord 签到历史记录（主/子账号统一，每条签到动作一行）

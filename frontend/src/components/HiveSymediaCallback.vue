@@ -3,12 +3,12 @@
     <el-card shadow="never" class="callback-card">
       <div v-if="processing" class="callback-status">
         <el-icon class="is-loading"><Loading /></el-icon>
-        <p>正在完成影巢授权…</p>
+        <p>正在完成RE0授权…</p>
       </div>
       <div v-else-if="done" class="callback-status success">
         <el-icon color="var(--el-color-success)"><CircleCheckFilled /></el-icon>
         <p>{{ message }}</p>
-        <p class="hint">可关闭本窗口并返回影巢设置页</p>
+        <p class="hint">可关闭本窗口并返回RE0设置页</p>
       </div>
       <div v-else class="callback-status error">
         <el-icon color="var(--el-color-danger)"><CircleCloseFilled /></el-icon>

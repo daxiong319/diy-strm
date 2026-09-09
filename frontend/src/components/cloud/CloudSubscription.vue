@@ -1343,7 +1343,7 @@ onMounted(load)
 }
 
 
-/* ---- 订阅卡片网格（对齐影巢订阅卡片） ---- */
+/* ---- 订阅卡片网格（对齐RE0订阅卡片） ---- */
 .cs-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

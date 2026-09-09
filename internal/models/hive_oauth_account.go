@@ -17,7 +17,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// HiveOAuthAccount 影巢 OAuth 授权账号（主账号 + 子账号统一存储）
+// HiveOAuthAccount RE0 OAuth 授权账号（主账号 + 子账号统一存储）
 // 参考 参考实现 hdhive_sub_accounts 模块，diy-strm 使用数据库存储。
 type HiveOAuthAccount struct {
 	ID                uint       `gorm:"primaryKey" json:"id"`

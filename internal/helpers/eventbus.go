@@ -21,7 +21,7 @@ const (
 	StrmSyncCompleteEvent EventType = "strm_sync_complete"
 	// 下载任务状态变化事件
 	DownloadTaskStatusChangedEvent EventType = "download_task_status_changed"
-	// 影巢每日签到定时事件，当定时任务触发时，通知执行影巢 OAuth 签到
+	// RE0每日签到定时事件，当定时任务触发时，通知执行RE0 OAuth 签到
 	HiveDailyCheckinEvent EventType = "hive_daily_checkin"
 )
 

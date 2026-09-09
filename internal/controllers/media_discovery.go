@@ -20,11 +20,11 @@ import (
 // ---------------------------------------------------------------------------
 
 func init() {
-	// 注入影巢 Feed 双通道 failover 执行器（中转主渠道 → 直连通道 备用渠道）
+	// 注入RE0 Feed 双通道 failover 执行器（中转主渠道 → 直连通道 备用渠道）
 	discovery.FeedExecFn = func(ctx context.Context, call func(fc hdhive.FeedClient) (*hdhive.OAuthAPIResponse, error)) (*hdhive.OAuthAPIResponse, error) {
 		accs := models.ListHiveAccountsForQuery()
 		if len(accs) == 0 {
-			return nil, errors.New("没有启用中的影巢授权账号，请先在影巢设置中完成 OAuth 授权")
+			return nil, errors.New("没有启用中的RE0授权账号，请先在RE0设置中完成 OAuth 授权")
 		}
 		var lastErr error
 		tried := map[string]bool{}
@@ -134,7 +134,7 @@ func GetMediaExploreDouban(c *gin.Context) {
 
 // GetMediaRankings 榜单推荐
 // @Summary 榜单推荐三源聚合
-// @Description provider: hdhive（影巢流媒体榜）/ hdhive:netflix（指定平台）/ tmdb:popular 等（TMDB 分类）/ douban:movie_hot_gaia 等（豆瓣片单）
+// @Description provider: hdhive（RE0流媒体榜）/ hdhive:netflix（指定平台）/ tmdb:popular 等（TMDB 分类）/ douban:movie_hot_gaia 等（豆瓣片单）
 // @Param provider query string false "榜单来源，默认 hdhive"
 // @Param region query string false "地区（仅流媒体榜）"
 // @Param media_type query string false "movie/tv（仅流媒体/TMDB 榜）"
@@ -154,7 +154,7 @@ func GetMediaRankings(c *gin.Context) {
 }
 
 // GetMediaCalendar 追剧日历
-// @Summary 追剧日历（影巢 feed 按天分组，TMDB 兜底）
+// @Summary 追剧日历（RE0 feed 按天分组，TMDB 兜底）
 // @Param days query integer false "天数 1-30，默认取设置值"
 // @Param kind query string false "all/tv/movie/upcoming/on-air/airing-today"
 // @Success 200 {object} APIResponse[[]discovery.CalendarDay]

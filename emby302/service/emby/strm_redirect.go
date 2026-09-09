@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// strmPointerPattern 匹配 tgto123 风格的 STRM 指针前缀
+// strmPointerPattern 匹配 标准的 STRM 指针前缀
 //
 // 支持的形态:
 //
@@ -23,7 +23,7 @@ var strmPointerPattern = regexp.MustCompile(`(?:^|/)(play115share|play115|playgy
 
 // redirectByStrmContent 根据 STRM 内容直接解析并重定向到网盘直链
 //
-// 支持 tgto123 风格指针 (play115:// / playgy:// / play123://)
+// 支持 标准指针 (play115:// / playgy:// / play123://)
 // 以及 diy-strm 自家直链 URL (/115/url /pan123/url /guangyapan/url /baidupan/url /pan139/url)
 //
 // 返回 false 表示内容不识别, 由调用方走原有回源/内部请求流程
@@ -33,7 +33,7 @@ func redirectByStrmContent(c *gin.Context, strmContent string) bool {
 		return false
 	}
 
-	// 1. tgto123 风格指针
+	// 1. 标准指针
 	if kind, payload, ok := parseStrmPointer(content); ok {
 		return redirectStrmPointer(c, kind, payload)
 	}
@@ -78,7 +78,7 @@ func redirectByStrmContent(c *gin.Context, strmContent string) bool {
 	return false
 }
 
-// parseStrmPointer 识别 tgto123 风格的 STRM 指针
+// parseStrmPointer 识别 标准的 STRM 指针
 func parseStrmPointer(content string) (kind, payload string, ok bool) {
 	m := strmPointerPattern.FindStringSubmatch(content)
 	if m == nil {
@@ -87,7 +87,7 @@ func parseStrmPointer(content string) (kind, payload string, ok bool) {
 	return m[1], strings.TrimLeft(content[len(m[0]):], "/:? "), true
 }
 
-// redirectStrmPointer 处理 tgto123 风格 STRM 指针
+// redirectStrmPointer 处理 标准 STRM 指针
 func redirectStrmPointer(c *gin.Context, kind, payload string) bool {
 	// 分离 query 参数, 如 play115://pickcode?xxx=1
 	var q url.Values

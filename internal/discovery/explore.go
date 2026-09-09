@@ -16,7 +16,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 统一条目结构（前端渲染用，兼容 TMDB/豆瓣/番剧/影巢 feed 四类来源）
+// 统一条目结构（前端渲染用，兼容 TMDB/豆瓣/番剧/RE0 feed 四类来源）
 // ---------------------------------------------------------------------------
 
 // Item 发现页统一条目
@@ -35,7 +35,7 @@ type Item struct {
 	ReleaseDate   string   `json:"release_date,omitempty"`
 	Year          int      `json:"year,omitempty"`
 	Rank          int      `json:"rank,omitempty"`           // 榜单名次
-	Providers     []string `json:"providers,omitempty"`      // 流媒体平台（影巢榜单条目）
+	Providers     []string `json:"providers,omitempty"`      // 流媒体平台（RE0榜单条目）
 	Genres        []string `json:"genres,omitempty"`         // 番剧类型标签
 	AirDate       string   `json:"air_date,omitempty"`       // 日历播出时间（完整时间戳）
 	EpisodeTitle  string   `json:"episode_title,omitempty"`  // 日历集标题
@@ -106,15 +106,15 @@ func InvalidateDiscoveryCache() {
 	globalCache.entries = map[string]cacheEntry{}
 }
 
-// FeedExecFn 影巢 Feed 调用执行器（由 controller 层注入双通道 failover 逻辑）：
+// FeedExecFn RE0 Feed 调用执行器（由 controller 层注入双通道 failover 逻辑）：
 // call 收到一个可用通道的 FeedClient 并执行具体接口调用；
 // 未注入或无可用通道时返回错误
 var FeedExecFn func(ctx context.Context, call func(fc hdhive.FeedClient) (*hdhive.OAuthAPIResponse, error)) (*hdhive.OAuthAPIResponse, error)
 
-// feedExecute 执行一次影巢 Feed 调用（自动主备切换）
+// feedExecute 执行一次RE0 Feed 调用（自动主备切换）
 func feedExecute(ctx context.Context, call func(fc hdhive.FeedClient) (*hdhive.OAuthAPIResponse, error)) (*hdhive.OAuthAPIResponse, error) {
 	if FeedExecFn == nil {
-		return nil, fmt.Errorf("影巢 feed 通道未初始化，请先完成 OAuth 授权")
+		return nil, fmt.Errorf("RE0 feed 通道未初始化，请先完成 OAuth 授权")
 	}
 	return FeedExecFn(ctx, call)
 }
@@ -327,7 +327,7 @@ func estimatePages(total int) int {
 
 // ---------------------------------------------------------------------------
 // 榜单推荐（对应参考实现 rankings：
-// 影巢流媒体榜 streaming-top / TMDB 分类榜 / 豆瓣片单 三源聚合）
+// RE0流媒体榜 streaming-top / TMDB 分类榜 / 豆瓣片单 三源聚合）
 // ---------------------------------------------------------------------------
 
 // STREAMING_PROVIDERS 流媒体平台表（key → 显示名），与 HDHive feed 对齐
@@ -395,7 +395,7 @@ func Rankings(ctx context.Context, provider, region, mediaType string, page int,
 	}
 }
 
-// FeedItemPayload 影巢 streaming-top feed 响应结构（data 字段）
+// FeedItemPayload RE0 streaming-top feed 响应结构（data 字段）
 type FeedItemPayload struct {
 	Items []struct {
 		ID          string `json:"id"`
@@ -416,7 +416,7 @@ type FeedItemPayload struct {
 	} `json:"available_regions"`
 }
 
-// hdhiveStreamingTop 影巢流媒体榜（走 OAuth 双通道 feed）
+// hdhiveStreamingTop RE0流媒体榜（走 OAuth 双通道 feed）
 func hdhiveStreamingTop(ctx context.Context, provider, region, mediaType string, force bool) (*PageResult, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "" || provider == "all" {
@@ -439,16 +439,16 @@ func hdhiveStreamingTop(ctx context.Context, provider, region, mediaType string,
 		return fc.GetStreamingTop(ctx, provider, region, mediaType)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("获取影巢流媒体榜失败：%v", err)
+		return nil, fmt.Errorf("获取RE0流媒体榜失败：%v", err)
 	}
 	if !resp.Success && len(resp.Data) == 0 {
 		msg := firstNonEmptyStr(resp.Message, resp.Description, "上游接口无数据")
-		return nil, fmt.Errorf("获取影巢流媒体榜失败：%s", msg)
+		return nil, fmt.Errorf("获取RE0流媒体榜失败：%s", msg)
 	}
 	var payload FeedItemPayload
 	if len(resp.Data) > 0 {
 		if err := json.Unmarshal(resp.Data, &payload); err != nil {
-			return nil, fmt.Errorf("解析影巢流媒体榜失败：%v", err)
+			return nil, fmt.Errorf("解析RE0流媒体榜失败：%v", err)
 		}
 	}
 	items := make([]Item, 0, len(payload.Items))

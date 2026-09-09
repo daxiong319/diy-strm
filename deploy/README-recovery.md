@@ -1,7 +1,7 @@
 # 媒体栈恢复指南（重装服务器后快速拉起）
 
 服务器 `134.185.85.200`（aarch64/ARM64）。本模板覆盖 diy-strm 全链路：
-**TG 转存（tgto123）→ PT 下载（MoviePilot v2 + qBittorrent）→ 云盘（alist/openlist/clouddrive2）→ diy-strm 上传整理（外置 postgres）→ STRM → Emby 播放（302 代理）**。
+**TG 转存（参考实现）→ PT 下载（MoviePilot v2 + qBittorrent）→ 云盘（alist/openlist/clouddrive2）→ diy-strm 上传整理（外置 postgres）→ STRM → Emby 播放（302 代理）**。
 
 ## 一、重装前：必须备份的目录（数据全在 bind mount 里）
 
@@ -18,7 +18,7 @@ tar -czf /tmp/media-stack-backup.tar.gz \
   /media/alist/data \                       # Alist 配置与数据库
   /opt/1panel/apps/openlist/openlist/data \ # OpenList 配置
   /media/clouddrive2/Config \               # CloudDrive2 配置
-  /media/tgto123/db                         # tgto123 数据库
+  /media/参考实现/db                         # 参考实现 数据库
 ```
 
 > 若使用外部 PostgreSQL 模式，额外备份 `/home/diy-strm/postgres`（diy-strm 数据库）。
@@ -60,7 +60,7 @@ diy-strm 支持三种数据库模式（`config.yaml` 的 `db.engine`，环境变
    - 下载根目录：MP 侧 `/downloads`；本地视图根 `/downloads`（与容器挂载一致）
    - 上传账号/STRM 输出目录等均从恢复的 postgres/配置自动带出
 5. **Emby**：`http://IP:8099`，媒体库路径 `/media`（容器内=宿主 `/media/QMediaSync/strm`）；diy-strm 的 Emby 302 代理地址 `http://IP:8099`
-6. **tgto123**：host 网络，Web 端口见其配置；bot token 从 env 注入
+6. **参考实现**：host 网络，Web 端口见其配置；bot token 从 env 注入
 
 ## 四、路径对照表（容器内 ↔ 宿主机）
 
@@ -77,7 +77,7 @@ diy-strm 支持三种数据库模式（`config.yaml` 的 `db.engine`，环境变
 
 - 现服务器各容器分散在多个 compose 项目（`/media`、`/media/embytest`、`/media/alist`、1Panel 等）且网络不同（media_default/embytest_default/alist_default）。本模板**统一到 `media-net` 网络**，diy-strm 与 MoviePilot 可用容器名互通（如 MP 地址填 `http://moviepilot:3000`）。
 - MP 的 postgres/redis 服务名保持 `postgresql`/`redis`，与 MP 官方 compose 环境变量一致。
-- qBittorrent/clouddrive2/tgto123 保持 host 网络（与现状一致，qB 的下载器回连、CloudNAS fuse 挂载、tgto123 bot 都依赖）。
+- qBittorrent/clouddrive2/参考实现 保持 host 网络（与现状一致，qB 的下载器回连、CloudNAS fuse 挂载、参考实现 bot 都依赖）。
 - openlist 原由 1Panel 管理；不用 1Panel 时把数据目录改到 `/media/openlist/data` 并恢复备份，存储配置需在 Web 里重新验证。
 - Emby 用 `amilys/embyserver_arm64v8:4.8.10.0`（服务器是 ARM64，此为增强版带解码）；x86 服务器换成 `amilys/embyserver:4.8.10.0`。
 - 独立工具（komari 监控、new-api、sub2api、rose、audiobookshelf、CLIProxyAPI、frps、1Panel 等）与媒体链路无关，不在本模板内，按需从各自 compose（`/home/docker/...`、`/opt/1panel/...`）单独恢复。

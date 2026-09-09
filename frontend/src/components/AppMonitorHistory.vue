@@ -4,7 +4,7 @@
       <div>
         <h2 class="hide-on-mobile">监控历史</h2>
         <p class="queue-description">
-          TG 频道订阅 / 影巢订阅 / TG 机器人监控转存记录（成功 / 失败 / 跳过全量审计）。可按网盘来源、状态筛选与结果搜索。
+          TG 频道订阅 / RE0订阅 / TG 机器人监控转存记录（成功 / 失败 / 跳过全量审计）。可按网盘来源、状态筛选与结果搜索。
         </p>
       </div>
       <div class="header-actions">

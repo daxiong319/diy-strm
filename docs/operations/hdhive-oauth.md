@@ -9,7 +9,7 @@ diy-strm 内置影巢（HDHive）资源订阅能力，支持两种接入方式�
 
 ## OAuth 授权
 
-diy-strm 的 OAuth 授权走 **TgtoDrive 影巢代理服务**（`https://hdhive-open.tgtodrive.top`，与 tgto123 同款通道），无需自行申请 API Key：
+diy-strm 的 OAuth 授权走 **TgtoDrive 影巢代理服务**（`https://hdhive-open.tgtodrive.top`，与 同款通道），无需自行申请 API Key：
 
 1. 打开「影巢」菜单 →「授权签到」页面。
 2. 点击「前往授权」（子账号点击行内「授权」），浏览器将打开影巢授权页。
@@ -52,7 +52,7 @@ diy-strm 的 OAuth 授权走 **TgtoDrive 影巢代理服务**（`https://hdhive-
 ## 技术实现
 
 - 签名算法：`HMAC-SHA256`，canonical 串为 7 行（method、规范路径、规范查询串、install_id、时间戳、nonce、body SHA-256），请求头 `X-Install-Id` / `X-Timestamp` / `X-Nonce` / `X-Signature`。
-- 共享密钥：内置默认密钥（来自 tgto123 兼容通道），可通过环境变量 `HDHIVE_APP_SHARED_SECRET` 覆盖。
+- 共享密钥：内置默认密钥（来自参考实现 兼容通道），可通过环境变量 `HDHIVE_APP_SHARED_SECRET` 覆盖。
 - 接口地址：默认 `https://hdhive-open.tgtodrive.top`，可通过环境变量 `HDHIVE_USER_SERVER_BASE_URL` 覆盖。
 - 授权 URL：`GET /auth/start?install_id=...&ts=...&nonce=...&sig=...`（带签名）。
 

@@ -645,7 +645,7 @@ func retryTransferOnRateLimit(ctx context.Context, fn func() (string, int, error
 				idx = len(transferRetryBackoffs) - 1
 			}
 			backoff := transferRetryBackoffs[idx]
-			helpers.AppLogger.Warnf("影巢转存触发网盘频率限制，%s 后第 %d 次重试：%v", backoff, attempt, lastErr)
+			helpers.AppLogger.Warnf("RE0转存触发网盘频率限制，%s 后第 %d 次重试：%v", backoff, attempt, lastErr)
 			select {
 			case <-ctx.Done():
 				return "", 0, ctx.Err()

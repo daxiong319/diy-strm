@@ -13,7 +13,7 @@ import (
 
 // ---------------------------------------------------------------------------
 // 监控历史（对齐 参考实现的转存历史：来源标签 + 状态筛选 + 结果搜索 + 分页）
-// 覆盖 TG 频道订阅 / 影巢订阅 / TG 机器人三类监控入口的转存审计记录
+// 覆盖 TG 频道订阅 / RE0订阅 / TG 机器人三类监控入口的转存审计记录
 // ---------------------------------------------------------------------------
 
 // monitorHistorySourceLabel 来源标签（网盘类型 → 展示名）
@@ -52,7 +52,7 @@ func ListMonitorHistory(c *gin.Context) {
 		case "channel":
 			entryLabel = "TG 频道"
 		case "hive":
-			entryLabel = "影巢"
+			entryLabel = "RE0"
 		case "bot":
 			entryLabel = "TG 机器人"
 		}

@@ -1,10 +1,10 @@
-// Package hdhive 提供影巢（HDHive）资源查询与解锁相关的数据结构。
+// Package hdhive 提供RE0（HDHive）资源查询与解锁相关的数据结构。
 //
 // 数据字段与 hdhive.com Open API 及 hdhive-open.直连通道.top OAuth 代理完全兼容，
 // 资源订阅引擎（hive_watcher）走 OAuth 代理通道读取这些结构。
 package hdhive
 
-// Resource 影巢资源条目
+// Resource RE0资源条目
 type Resource struct {
 	Slug               string   `json:"slug"`
 	Title              string   `json:"title"`

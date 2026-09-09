@@ -50,7 +50,7 @@ var SC_API_KEY = ""
 var OAuthRelayEncryptionKey = ""
 var Update bool = false
 
-// emby302Standalone 独立 302 反代播放端口服务实例（tgto123 形态，nil=未启用）
+// emby302Standalone 独立 302 反代播放端口服务实例（独立端口形态，nil=未启用）
 var emby302Standalone *web.StandaloneServer
 var emby302StandaloneMu sync.Mutex
 
@@ -268,6 +268,29 @@ func ensureDiscoveryTables() {
 	helpers.AppLogger.Info("影视发现表已就绪（设置/收藏/目录缓存）")
 }
 
+// registerRe0AliasRoutes 注册 /api/re0/* 与 /api/re0_proxy/* 别名路由。
+// tgto123 新版把RE0（HDHive）更名为 RE0，但业务后端协议不变；
+// 这里把新前缀映射到既有 /cloud/hive/* 处理器，旧路由保持兼容。
+func registerRe0AliasRoutes(api *gin.RouterGroup) {
+	// 对齐 tgto123 的 /api/re0/* 形状（授权状态/子账号/签到配置）
+	api.GET("/re0/status", controllers.HiveOAuthStatusAPI)
+	api.POST("/re0/refresh", controllers.HiveOAuthRefreshAPI)
+	api.GET("/re0/authorize", controllers.HiveOAuthAuthURLAPI)
+	api.POST("/re0/authorize", controllers.HiveOAuthAuthURLAPI)
+	api.GET("/re0/subaccounts", controllers.HiveSubAccountsAPI)
+	api.POST("/re0/subaccounts", controllers.HiveSubAccountAddAPI)
+	api.PUT("/re0/subaccounts/:id", controllers.HiveSubAccountUpdateAPI)
+	api.DELETE("/re0/subaccounts/:id", controllers.HiveSubAccountDeleteAPI)
+	api.POST("/re0/subaccounts/:id/authorize", controllers.HiveSubAccountAuthURLAPI)
+	api.POST("/re0/subaccounts/:id/refresh", controllers.HiveSubAccountRefreshAPI)
+	api.POST("/re0/subaccounts/:id/checkin", controllers.HiveSubAccountCheckinAPI)
+	api.GET("/re0/checkin/config", controllers.HiveCheckinRecordsAPI)
+	api.POST("/re0/checkin", controllers.HiveCheckinAPI)
+	api.POST("/re0/checkin-all", controllers.HiveCheckinAllAPI)
+	api.GET("/re0/checkin/records", controllers.HiveCheckinRecordsAPI)
+	api.DELETE("/re0/checkin/records", controllers.HiveCheckinRecordsDeleteAPI)
+}
+
 func configureInitialAdminSetup() error {
 	hasUser, err := models.HasAnyUser()
 	if err != nil {
@@ -471,7 +494,7 @@ func startEmby302() {
 	emby302Enabled = true
 	helpers.AppLogger.Infof("Emby 302 已加载: %s", config.C.Emby.Host)
 
-	// tgto123 形态独立反代播放端口：配置了 proxy_port（>0）时另起专用端口，
+	// 独立端口形态独立反代播放端口：配置了 proxy_port（>0）时另起专用端口，
 	// 根路径即 Emby 本体，避免与管理页共占 12333 根路径；未配置时保持 12333 单端口兜底
 	if models.GlobalEmbyConfig.ProxyPort > 0 {
 		startEmby302Standalone(strconv.Itoa(models.GlobalEmbyConfig.ProxyPort))
@@ -541,7 +564,7 @@ func initOthers() {
 	models.InitNotificationManager()                           // 初始化通知管理器
 	controllers.StartListenTelegramBot()                       // 初始化 Telegram Bot 监听
 	controllers.StartChannelWatcher(context.Background())      // 启动 TG 频道订阅引擎
-	controllers.StartHiveWatcher(context.Background())         // 启动影巢（HDHive）订阅引擎
+	controllers.StartHiveWatcher(context.Background())         // 启动RE0（HDHive）订阅引擎
 	moviepilot.StartMoviePilotWatcher()                        // 启动 MoviePilot 订阅下载检测
 	controllers.StartAutoOrganizeWatcher(context.Background()) // 启动云盘自动整理监控
 	models.GetEmbyConfig()                                     // 加载 Emby 配置
@@ -593,7 +616,7 @@ func initOthers() {
 		backup.Backup("定时", "定时备份")
 	})
 	helpers.Subscribe(helpers.HiveDailyCheckinEvent, func(event helpers.Event) {
-		// 影巢（HDHive）OAuth 每日签到：主账号 + 启用中的子账号
+		// RE0（HDHive）OAuth 每日签到：主账号 + 启用中的子账号
 		controllers.RunHiveDailyCheckins()
 		// S2：refresh token 到期巡检（与签到同一小时事件驱动）
 		controllers.CheckHiveRefreshReminders()
@@ -916,7 +939,7 @@ func setRouter(r *gin.Engine) {
 		api.GET("/discover/douban", controllers.GetDiscoverDouban)         // 获取豆瓣榜单/片单
 		api.POST("/discover/emby-check", controllers.GetDiscoverEmbyCheck) // 检测影片是否已入库 Emby
 
-		// 影视发现（复刻 tgto123 media_discovery）
+		// 影视发现（复刻参考实现 media_discovery）
 		api.GET("/media-discovery/meta", controllers.GetMediaDiscoveryMeta)             // 发现页元数据（筛选器选项）
 		api.GET("/media-discovery/explore", controllers.GetMediaExplore)                // 影视探索（TMDB 多条件筛选）
 		api.GET("/media-discovery/explore/douban", controllers.GetMediaExploreDouban)   // 影视探索（豆瓣 tag）
@@ -931,6 +954,17 @@ func setRouter(r *gin.Engine) {
 		api.DELETE("/media-discovery/favorites/:id", controllers.DeleteMediaFavorite)   // 删除收藏
 		api.GET("/media-discovery/settings", controllers.GetMediaDiscoverySettings)     // 发现页设置
 		api.POST("/media-discovery/settings", controllers.UpdateMediaDiscoverySettings) // 更新发现页设置
+		// 关联资源聚合搜索（对齐 tgto123 新版：re0/guanying/seedhub 多源 + 离线/转存/复制）
+		api.POST("/media-discovery/resources/search", controllers.SearchMediaResourcesAPI)   // 关联资源搜索
+		api.POST("/media-discovery/resources/copy-link", controllers.CopyRe0ResourceLinkAPI) // 生成资源链接
+		// 观影（guanying）接入：登录/点选验证码/会话恢复/测试/清除（凭据本机加密保存）
+		api.GET("/media-discovery/guanying/session", controllers.GetGuanyingSessionAPI)      // 会话状态（脱敏）
+		api.POST("/media-discovery/guanying/login", controllers.LoginGuanyingAPI)            // 登录
+		api.POST("/media-discovery/guanying/captcha", controllers.GuanyingCaptchaAPI)        // 拉取验证码
+		api.POST("/media-discovery/guanying/captcha/verify", controllers.GuanyingCaptchaVerifyAPI) // 校验验证码
+		api.POST("/media-discovery/guanying/relogin", controllers.ReloginGuanyingAPI)        // 凭据自动恢复
+		api.POST("/media-discovery/guanying/test", controllers.TestGuanyingAPI)              // 会话有效性测试
+		api.DELETE("/media-discovery/guanying/session", controllers.ClearGuanyingSessionAPI) // 清除会话与凭据
 
 		// 目录整理
 		api.POST("/organize/preview", controllers.OrganizePreview) // 目录整理预览
@@ -984,11 +1018,11 @@ func setRouter(r *gin.Engine) {
 		api.POST("/cloud/subscriptions/batch/resume", controllers.BatchSubscriptionResumeAPI)       // 批量恢复
 		api.POST("/cloud/subscriptions/batch/delete", controllers.BatchSubscriptionDeleteAPI)       // 批量删除
 
-		// 影巢（HDHive）订阅
-		api.GET("/cloud/hive/settings", controllers.GetHiveSettingsAPI)  // 影巢设置
-		api.POST("/cloud/hive/settings", controllers.SetHiveSettingsAPI) // 保存影巢设置
+		// RE0（HDHive）订阅
+		api.GET("/cloud/hive/settings", controllers.GetHiveSettingsAPI)  // RE0设置
+		api.POST("/cloud/hive/settings", controllers.SetHiveSettingsAPI) // 保存RE0设置
 
-		// 影巢（HDHive）OAuth 授权与签到
+		// RE0（HDHive）OAuth 授权与签到
 		api.GET("/cloud/hive/oauth/status", controllers.HiveOAuthStatusAPI)                // OAuth 授权状态
 		api.POST("/cloud/hive/oauth/refresh", controllers.HiveOAuthRefreshAPI)             // 刷新授权状态
 		api.POST("/cloud/hive/oauth/auth-url", controllers.HiveOAuthAuthURLAPI)            // 生成授权 URL
@@ -997,12 +1031,12 @@ func setRouter(r *gin.Engine) {
 		api.GET("/cloud/hive/checkin/records", controllers.HiveCheckinRecordsAPI)          // 签到历史（S3）
 		api.DELETE("/cloud/hive/checkin/records", controllers.HiveCheckinRecordsDeleteAPI) // 删除签到历史（S3）
 
-		// 影巢手动搜索（SSE 流式）/ 解锁 / 手动转存
+		// RE0手动搜索（SSE 流式）/ 解锁 / 手动转存
 		api.POST("/cloud/hive/search/stream", controllers.HiveManualSearchAPI) // 手动资源搜索（SSE：init/progress/result/done）
 		api.POST("/cloud/hive/unlock", controllers.HiveUnlockAPI)              // 解锁资源
 		api.POST("/cloud/hive/transfer", controllers.HiveManualTransferAPI)    // 手动转存分享链接
 
-		// 影巢 symedia 主渠道（hdhive.symedia.top，与 tgtodrive 备用渠道互为备份）
+		// RE0 symedia 主渠道（hdhive.symedia.top，与 tgtodrive 备用渠道互为备份）
 		api.GET("/cloud/hive/symedia/status", controllers.HiveSymediaStatusAPI)      // 主渠道状态 + 授权 URL
 		api.POST("/cloud/hive/symedia/start", controllers.HiveSymediaStartAPI)       // 发起授权
 		api.POST("/cloud/hive/symedia/callback", controllers.HiveSymediaCallbackAPI) // 授权回调落库
@@ -1022,7 +1056,7 @@ func setRouter(r *gin.Engine) {
 
 		api.POST("/cloud/subscriptions/pause", controllers.SetCloudSubscriptionPausedAPI) // 订阅暂停/恢复
 
-		// 影巢子账号管理
+		// RE0子账号管理
 		api.GET("/cloud/hive/sub-accounts", controllers.HiveSubAccountsAPI)                     // 子账号列表
 		api.POST("/cloud/hive/sub-accounts", controllers.HiveSubAccountAddAPI)                  // 新增子账号
 		api.PUT("/cloud/hive/sub-accounts/:id", controllers.HiveSubAccountUpdateAPI)            // 更新子账号
@@ -1030,6 +1064,9 @@ func setRouter(r *gin.Engine) {
 		api.POST("/cloud/hive/sub-accounts/:id/auth-url", controllers.HiveSubAccountAuthURLAPI) // 子账号授权 URL
 		api.POST("/cloud/hive/sub-accounts/:id/refresh", controllers.HiveSubAccountRefreshAPI)  // 刷新子账号状态
 		api.POST("/cloud/hive/sub-accounts/:id/checkin", controllers.HiveSubAccountCheckinAPI)  // 子账号签到
+
+		// RE0 别名（对齐 tgto123 新版命名：RE0/HDHive 更名 RE0，业务后端不变）
+		registerRe0AliasRoutes(api)
 
 		api.GET("/upload/queue", controllers.UploadList)                                             // 获取上传队列列表
 		api.POST("/upload/queue/clear-pending", controllers.ClearPendingUploadTasks)                 // 清除上传队列中未开始的任务
@@ -1059,7 +1096,7 @@ func setRouter(r *gin.Engine) {
 		api.PUT("/backup/config", controllers.UpdateBackupConfig)        // 更新备份配置
 		api.GET("/backup/status", controllers.GetBackupStatus)           // 获取备份状态
 
-		// 整理历史（对齐 tgto123 的整理历史功能）
+		// 整理历史（对齐 参考实现的整理历史功能）
 		api.GET("/organize-history", controllers.ListOrganizeHistory)                   // 整理历史列表
 		api.GET("/organize-history/detail", controllers.GetOrganizeHistoryDetail)       // 整理历史详情
 		api.POST("/organize-history/delete", controllers.DeleteOrganizeHistory)         // 删除整理历史记录（单条/批量）
@@ -1069,7 +1106,7 @@ func setRouter(r *gin.Engine) {
 		api.GET("/organize-history/task-status", controllers.OrganizeHistoryTaskStatus) // 重整理任务状态（轮询）
 		api.POST("/organize-history/recognize-test", controllers.RecognizeTestOrganize) // 识别测试
 
-		// 监控历史（对齐 tgto123 的转存历史：TG 频道/影巢/机器人转存记录）
+		// 监控历史（对齐 参考实现的转存历史：TG 频道/RE0/机器人转存记录）
 		api.GET("/monitor-history", controllers.ListMonitorHistory)           // 监控历史列表（来源/状态/关键词/分页）
 		api.POST("/monitor-history/delete", controllers.DeleteMonitorHistory) // 删除监控历史记录（单条/批量）
 		api.POST("/monitor-history/clear", controllers.ClearMonitorHistory)   // 按来源/日期清理监控历史

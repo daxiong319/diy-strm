@@ -13,7 +13,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 影巢 中转主渠道：授权启动 / 回调落库 / 状态刷新 / 签到 / 连通性测试
+// RE0 中转主渠道：授权启动 / 回调落库 / 状态刷新 / 签到 / 连通性测试
 // （hdhive.symedia.top 中转，与 tgtodrive 备用渠道互为备份，symedia 优先调度）
 // ---------------------------------------------------------------------------
 
@@ -103,7 +103,7 @@ func HiveSymediaDirectCallback(c *gin.Context) {
 	}
 	msg := saveSymediaCallback(c, userID, proxyUserKey, refreshSec)
 	status := "授权成功"
-	extra := "您现在可以关闭此窗口，返回影巢设置页刷新授权状态。"
+	extra := "您现在可以关闭此窗口，返回RE0设置页刷新授权状态。"
 	if msg != "" {
 		status = "授权已保存，部分信息等待刷新"
 		extra = msg
@@ -116,7 +116,7 @@ func HiveSymediaDirectCallback(c *gin.Context) {
 .card{background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.1);padding:40px;text-align:center;max-width:420px}
 h3{color:#67c23a;margin:0 0 12px}.hint{color:#909399;font-size:13px;margin-top:8px}
 </style></head>
-<body><div class="card"><h3>%s</h3><p>影巢主渠道（Symedia）已收到授权密钥。</p><p class="hint">%s</p></div></body></html>`, status, extra)
+<body><div class="card"><h3>%s</h3><p>RE0主渠道（Symedia）已收到授权密钥。</p><p class="hint">%s</p></div></body></html>`, status, extra)
 }
 
 // saveSymediaCallback 保存 symedia 回调参数到账号，返回非空字符串表示需要额外提示

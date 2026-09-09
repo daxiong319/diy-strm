@@ -9,14 +9,14 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 影巢候选资源失败历史（借鉴成熟方案 的 attempt 轮转与确定性失败惩罚）：
+// RE0候选资源失败历史（借鉴成熟方案 的 attempt 轮转与确定性失败惩罚）：
 //   - 失败的 slug 记录尝试次数与最后错误，下一轮降权（排后）
 //   - 命中确定性失败标记（分享失效/违规/删除等）→ 拉长惩罚期
 //   - 尝试次数达上限的 slug 跳过，避免反复撞同一批问题资源浪费配额
 //   - 成功后清除记录
 // ---------------------------------------------------------------------------
 
-// HiveSlugAttempt 影巢资源 slug 失败历史
+// HiveSlugAttempt RE0资源 slug 失败历史
 type HiveSlugAttempt struct {
 	ID             uint       `gorm:"primaryKey" json:"id"`
 	Slug           string     `gorm:"size:64;uniqueIndex:idx_hive_slug_attempt" json:"slug"`
@@ -113,7 +113,7 @@ func RecordHiveSlugFailure(slug string, tmdbID int64, errText string) {
 	until := now.Add(penalty)
 	a.PenalizedUntil = &until
 	if err := db.Db.Save(a).Error; err != nil {
-		helpers.AppLogger.Errorf("保存影巢资源失败历史失败：%v", err)
+		helpers.AppLogger.Errorf("保存RE0资源失败历史失败：%v", err)
 	}
 }
 

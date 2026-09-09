@@ -1,6 +1,6 @@
 // Package hdhive —— 中转通道通道客户端。
 //
-// hdhive.symedia.top 是影巢（HDHive）OpenAPI 的中转服务域名
+// hdhive.symedia.top 是RE0（HDHive）OpenAPI 的中转服务域名
 // （协议经镜像脱壳 + 黑盒验证完全还原）：
 //   - 共享密钥 HMAC proof 握手建立会话（POST /api/v1/auth/session）
 //   - HKDF-SHA256 派生会话密钥（注意 Extract 阶段 hmac key=salt、msg=secret）

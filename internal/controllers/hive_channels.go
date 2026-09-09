@@ -14,7 +14,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 影巢四通道管理：通道列表 / nanshare 授权 / 官方直连授权
+// RE0四通道管理：通道列表 / nanshare 授权 / 官方直连授权
 // ---------------------------------------------------------------------------
 
 // HiveChannelsAPI GET /cloud/hive/channels
@@ -103,7 +103,7 @@ func nanShareAuthURL(ctx context.Context, acc *models.HiveOAuthAccount, c *gin.C
 	if origin == "" {
 		origin = "http://" + c.Request.Host
 	}
-	returnURL := strings.TrimRight(origin, "/") + "/cloud/hive" // 回跳影巢设置页
+	returnURL := strings.TrimRight(origin, "/") + "/cloud/hive" // 回跳RE0设置页
 	return client.OAuthStart(ctx, acc.Label, returnURL)
 }
 
@@ -217,7 +217,7 @@ func HiveOfficialCallback(c *gin.Context) {
 		_ = ok
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusOK, `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>官方通道授权 - QMediaSync</title></head><body style="font-family:sans-serif;text-align:center;padding-top:20vh"><h3 style="color:#67c23a">授权成功</h3><p>官方直连通道（hdhive.com OpenAPI）已授权。</p><p style="color:#909399;font-size:13px">您现在可以关闭此窗口，返回影巢设置页刷新授权状态。</p></body></html>`)
+	c.String(http.StatusOK, `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>官方通道授权 - QMediaSync</title></head><body style="font-family:sans-serif;text-align:center;padding-top:20vh"><h3 style="color:#67c23a">授权成功</h3><p>官方直连通道（hdhive.com OpenAPI）已授权。</p><p style="color:#909399;font-size:13px">您现在可以关闭此窗口，返回RE0设置页刷新授权状态。</p></body></html>`)
 }
 
 // HiveOfficialRefreshAPI POST /cloud/hive/official/refresh 刷新授权状态（Token 过期自动刷新）

@@ -66,7 +66,7 @@ func hiveTokenStatusFor(ctx context.Context, acc *models.HiveOAuthAccount, clien
 	return &hdhive.OAuthAPIResponse{Success: true, HasAccessToken: &hasTok, ExpiresInSeconds: &expIn}, nil
 }
 
-// HiveOAuthStatusAPI 获取影巢 OAuth 授权状态（GET /cloud/hive/oauth/status）
+// HiveOAuthStatusAPI 获取RE0 OAuth 授权状态（GET /cloud/hive/oauth/status）
 // 返回主账号状态 + 授权 URL（未授权时）
 func HiveOAuthStatusAPI(c *gin.Context) {
 	acc, err := models.GetHiveMainAccount()
@@ -165,7 +165,7 @@ func HiveOAuthStatusByAccount(ctx context.Context, acc *models.HiveOAuthAccount)
 		return acc.Public(), authorized, "保存账号信息失败：" + err.Error()
 	}
 	if !authorized {
-		return acc.Public(), false, "暂未检测到影巢 OAuth 授权结果，请完成授权后刷新状态"
+		return acc.Public(), false, "暂未检测到RE0 OAuth 授权结果，请完成授权后刷新状态"
 	}
 	return acc.Public(), true, ""
 }
@@ -315,7 +315,7 @@ func RunHiveCheckinWithTrigger(ctx context.Context, acc *models.HiveOAuthAccount
 		now := time.Now()
 		acc.LastCheckinAt = &now
 		acc.LastCheckinOK = false
-		acc.LastCheckinMsg = "未授权，请在影巢设置中完成 OAuth 授权"
+		acc.LastCheckinMsg = "未授权，请在RE0设置中完成 OAuth 授权"
 		acc.LastCheckinMode = string(mode)
 		_ = models.SaveHiveAccount(acc)
 		writeHiveCheckinRecord(acc, mode, trigger, false, acc.LastCheckinMsg, nil, nil, 0)
@@ -663,7 +663,7 @@ func HiveSubAccountCheckinAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: msg, Data: gin.H{"success": true, "account_id": acc.ID}})
 }
 
-// RunHiveDailyCheckins 影巢每日签到调度入口（每小时事件触发 + 启动补排）。
+// RunHiveDailyCheckins RE0每日签到调度入口（每小时事件触发 + 启动补排）。
 // S1 随机签到窗口：从设置读签到窗口（start/end "HH:MM"，未配置时回落 daily_checkin_hour 整点小时，
 // 保持旧行为兼容），每天在窗口内由 sha256(账号:日期) 选出一个稳定分钟，到点精确执行，重启不漂移。
 // S4 补签/重试：进程错过窗口（重启/离线）到点立即补签（trigger=catchup）；
@@ -752,14 +752,14 @@ func execScheduledCheckin(accountID uint, mode hdhive.CheckinMode, trigger, toda
 		return // 已成功签到，不再重复
 	}
 	if !acc.Authorized {
-		helpers.AppLogger.Warnf("影巢定时签到：%s 未授权，跳过定时签到", acc.Label)
+		helpers.AppLogger.Warnf("RE0定时签到：%s 未授权，跳过定时签到", acc.Label)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	ok, msg := RunHiveCheckinWithTrigger(ctx, acc, mode, trigger)
 	cancel()
 	if ok {
-		helpers.AppLogger.Infof("影巢定时签到（%s）：%s 签到成功（%s）", trigger, acc.Label, msg)
+		helpers.AppLogger.Infof("RE0定时签到（%s）：%s 签到成功（%s）", trigger, acc.Label, msg)
 		return
 	}
 	// 失败：按 +5/+15/+45 分钟阶梯重试，最多 3 次
@@ -770,7 +770,7 @@ func execScheduledCheckin(accountID uint, mode hdhive.CheckinMode, trigger, toda
 	}
 	if attempts >= 3 {
 		hiveCheckinRetries.Delete(retryKey)
-		helpers.AppLogger.Errorf("影巢定时签到：%s 重试 %d 次仍失败，放弃：%s", acc.Label, attempts, msg)
+		helpers.AppLogger.Errorf("RE0定时签到：%s 重试 %d 次仍失败，放弃：%s", acc.Label, attempts, msg)
 		return
 	}
 	delays := []time.Duration{5 * time.Minute, 15 * time.Minute, 45 * time.Minute}
@@ -779,7 +779,7 @@ func execScheduledCheckin(accountID uint, mode hdhive.CheckinMode, trigger, toda
 	time.AfterFunc(delay, func() {
 		execScheduledCheckin(accountID, mode, "retry", today)
 	})
-	helpers.AppLogger.Warnf("影巢定时签到：%s 签到失败，%s 后第 %d 次重试：%s", acc.Label, delay, attempts+1, msg)
+	helpers.AppLogger.Warnf("RE0定时签到：%s 签到失败，%s 后第 %d 次重试：%s", acc.Label, delay, attempts+1, msg)
 }
 
 // CheckHiveRefreshReminders 巡检 refresh token 到期时间（S2）：
@@ -808,17 +808,17 @@ func CheckHiveRefreshReminders() {
 		var state string
 		switch {
 		case daysLeft < 0:
-			state = "已过期，请尽快在影巢设置中重新授权，否则自动签到/解锁将失效"
+			state = "已过期，请尽快在RE0设置中重新授权，否则自动签到/解锁将失效"
 		case daysLeft == 0:
 			state = "今天到期，请尽快重新授权，否则自动签到/解锁将失效"
 		default:
 			state = fmt.Sprintf("剩余 %d 天，请尽快重新授权", daysLeft)
 		}
-		title := "⏰ 影巢 Refresh Token 即将到期"
+		title := "⏰ RE0 Refresh Token 即将到期"
 		content := fmt.Sprintf("账号：%s（%s）\n%s\n到期时间：%s",
 			acc.Label, hiveChannelLabel(acc.Channel), state, acc.RefreshExpiresAt.Format("2006-01-02 15:04"))
 		sendHiveNotification(title, content)
-		helpers.AppLogger.Infof("影巢 refresh token 到期提醒（账号 %d）：%s", acc.ID, state)
+		helpers.AppLogger.Infof("RE0 refresh token 到期提醒（账号 %d）：%s", acc.ID, state)
 	}
 	mainAcc, _ := models.GetHiveMainAccount()
 	check(mainAcc)
@@ -832,7 +832,7 @@ func CheckHiveRefreshReminders() {
 func hiveChannelLabel(ch string) string {
 	switch ch {
 	case "symedia":
-		return "影巢中转"
+		return "RE0中转"
 	case "nanshare":
 		return "NanShare 中转"
 	case "tgtodrive":
@@ -842,7 +842,7 @@ func hiveChannelLabel(ch string) string {
 	}
 }
 
-// sendHiveNotification 影巢系统通知（复用全局通知管理器）
+// sendHiveNotification RE0系统通知（复用全局通知管理器）
 func sendHiveNotification(title, content string) {
 	notif := &models.Notification{
 		Type:      models.SystemAlert,
@@ -855,7 +855,7 @@ func sendHiveNotification(title, content string) {
 	defer cancel()
 	if notificationmanager.GlobalEnhancedNotificationManager != nil {
 		if err := notificationmanager.GlobalEnhancedNotificationManager.SendNotification(ctx, notif); err != nil {
-			helpers.AppLogger.Warnf("发送影巢提醒通知失败：%v", err)
+			helpers.AppLogger.Warnf("发送RE0提醒通知失败：%v", err)
 		}
 	}
 }

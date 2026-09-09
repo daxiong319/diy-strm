@@ -8,7 +8,7 @@ import (
 )
 
 // 回归：逐帖留痕写入层防重 —— 同 (订阅, 消息链接) 的跳过/失败只审计一次，
-// 防止回溯搜索每轮重放历史帖把监控历史刷屏（影巢/机器人入口行为不变）。
+// 防止回溯搜索每轮重放历史帖把监控历史刷屏（RE0/机器人入口行为不变）。
 func TestMonitorRecordWriteDedup(t *testing.T) {
 	setupControllerTestDB(t, &models.MonitorTransferRecord{})
 

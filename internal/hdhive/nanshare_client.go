@@ -1,6 +1,6 @@
 // Package hdhive —— NanShare 中转通道客户端。
 //
-// hdhive.nanl.top 是 NanShare 提供的影巢（HDHive）OpenAPI 中转服务
+// hdhive.nanl.top 是 NanShare 提供的RE0（HDHive）OpenAPI 中转服务
 // （协议经镜像脱壳完全还原，解密产物 _ns_out/core/hdhive_open_client.py）：
 //   - 全部业务请求为 POST + 紧凑 JSON
 //   - 请求签名：sign_text = "POST\n{path}\n{project_id}\n{timestamp}\n{nonce}\n{sha256(body)}"

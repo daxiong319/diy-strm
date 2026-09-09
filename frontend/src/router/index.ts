@@ -425,7 +425,7 @@ const routes = [
     name: 'hive-symedia-callback',
     component: HiveSymediaCallback,
     meta: {
-      title: '影巢授权回调',
+      title: 'RE0授权回调',
       requiresAuth: false,
       showInMenu: false,
     },
@@ -891,7 +891,7 @@ const routes = [
     name: 'cloud-hdhive',
     redirect: '/cloud-hdhive/subscriptions',
     meta: {
-      title: '影巢订阅',
+      title: 'RE0订阅',
       requiresAuth: true,
       icon: 'Link',
       showInMenu: true,
@@ -926,7 +926,7 @@ const routes = [
     name: 'cloud-hdhive-settings',
     component: AppHiveSettings,
     meta: {
-      title: '影巢设置',
+      title: 'RE0设置',
       requiresAuth: true,
       parent: 'cloud-hdhive',
       icon: 'Setting',

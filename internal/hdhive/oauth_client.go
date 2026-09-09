@@ -1,4 +1,4 @@
-// Package hdhive 提供影巢（HDHive）Open API 与 OAuth 签名客户端。
+// Package hdhive 提供RE0（HDHive）Open API 与 OAuth 签名客户端。
 //
 // 本文件实现 OAuth 签名认证客户端（install_id + HMAC-SHA256），
 // 参考 参考实现的 hdhive_user_client 模块实现。
@@ -26,7 +26,7 @@ import (
 )
 
 // OAuth 默认常量
-// 注意：base URL 为 TgtoDrive 提供的影巢代理服务（同款）。
+// 注意：base URL 为 TgtoDrive 提供的RE0代理服务（同款）。
 // 签名密钥来自该代理服务，而非 hdhive.com 官方 Open API（官方走 X-API-Key）。
 const (
 	DefaultOAuthBaseURL = "https://hdhive-open.tgtodrive.top"
@@ -282,7 +282,7 @@ func (c *OAuthClient) requestJSON(ctx context.Context, method, path string, payl
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("请求影巢 OAuth 失败：%v", err)
+		return nil, fmt.Errorf("请求RE0 OAuth 失败：%v", err)
 	}
 	defer resp.Body.Close()
 
@@ -293,7 +293,7 @@ func (c *OAuthClient) requestJSON(ctx context.Context, method, path string, payl
 
 	var out OAuthAPIResponse
 	if err := json.Unmarshal(bodyText, &out); err != nil {
-		return nil, fmt.Errorf("解析影巢 OAuth 响应失败：%v", err)
+		return nil, fmt.Errorf("解析RE0 OAuth 响应失败：%v", err)
 	}
 	out.StatusCode = resp.StatusCode
 	return &out, nil
@@ -354,7 +354,7 @@ func (c *OAuthClient) Ping(ctx context.Context) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf("影巢 OAuth Ping 失败：%s", resp.Message)
+		return fmt.Errorf("RE0 OAuth Ping 失败：%s", resp.Message)
 	}
 	return nil
 }

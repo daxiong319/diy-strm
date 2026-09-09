@@ -18,26 +18,26 @@ import (
 	"diy-strm/internal/models"
 )
 
-// hiveWatchMinInterval 影巢订阅引擎最小轮询间隔（分钟）
+// hiveWatchMinInterval RE0订阅引擎最小轮询间隔（分钟）
 const hiveWatchMinInterval = 5 * time.Minute
 
 // 已完结 TV 订阅的 TMDB 复查参数（借鉴成熟方案 _maybe_reactivate_completed_tv）
-// 完结宽限期改为从影巢设置读取（tv_completion_grace_days，默认 7 天）
+// 完结宽限期改为从RE0设置读取（tv_completion_grace_days，默认 7 天）
 const hiveTVRecheckMinInterval = 24 * time.Hour // 复查最小间隔
 
-// StartHiveWatcher 启动影巢（HDHive）订阅引擎（后台 goroutine 常驻轮询）
+// StartHiveWatcher 启动RE0（HDHive）订阅引擎（后台 goroutine 常驻轮询）
 func StartHiveWatcher(ctx context.Context) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				helpers.AppLogger.Errorf("影巢订阅引擎 panic：%v", r)
+				helpers.AppLogger.Errorf("RE0订阅引擎 panic：%v", r)
 			}
 		}()
 		time.Sleep(15 * time.Second) // 避开服务启动高峰
 		if models.GetHiveEnabled() && models.GetHiveTimedSearchEnabled() {
 			runAllHiveSubscriptions()
 		} else {
-			helpers.AppLogger.Infof("影巢订阅引擎：定时搜索未启用（影巢搜索=%v，定时搜索=%v），仅保留手动触发", models.GetHiveEnabled(), models.GetHiveTimedSearchEnabled())
+			helpers.AppLogger.Infof("RE0订阅引擎：定时搜索未启用（RE0搜索=%v，定时搜索=%v），仅保留手动触发", models.GetHiveEnabled(), models.GetHiveTimedSearchEnabled())
 		}
 		for {
 			interval := time.Duration(models.GetHivePollInterval()) * time.Minute
@@ -46,7 +46,7 @@ func StartHiveWatcher(ctx context.Context) {
 			}
 			select {
 			case <-ctx.Done():
-				helpers.AppLogger.Infof("影巢订阅引擎已停止")
+				helpers.AppLogger.Infof("RE0订阅引擎已停止")
 				return
 			case <-time.After(interval):
 				if models.GetHiveEnabled() && models.GetHiveTimedSearchEnabled() {
@@ -55,14 +55,14 @@ func StartHiveWatcher(ctx context.Context) {
 			}
 		}
 	}()
-	helpers.AppLogger.Infof("影巢订阅引擎已启动，轮询间隔 %d 分钟（可在影巢设置中修改）", models.GetHivePollInterval())
+	helpers.AppLogger.Infof("RE0订阅引擎已启动，轮询间隔 %d 分钟（可在RE0设置中修改）", models.GetHivePollInterval())
 }
 
-// runAllHiveSubscriptions 执行全部启用中的影巢订阅（按批量上限 run_batch_size 截断，0=不限）
+// runAllHiveSubscriptions 执行全部启用中的RE0订阅（按批量上限 run_batch_size 截断，0=不限）
 func runAllHiveSubscriptions() {
 	subs, err := models.ListSubscriptionsByResourceSource("hdhive")
 	if err != nil {
-		helpers.AppLogger.Errorf("影巢订阅：读取订阅列表失败：%v", err)
+		helpers.AppLogger.Errorf("RE0订阅：读取订阅列表失败：%v", err)
 		return
 	}
 	batch := models.GetHiveRunBatchSize()
@@ -70,7 +70,7 @@ func runAllHiveSubscriptions() {
 	ran := 0
 	for i := range subs {
 		if batch > 0 && ran >= batch {
-			helpers.AppLogger.Infof("影巢订阅：本轮已达到批量上限 %d，剩余订阅下轮处理", batch)
+			helpers.AppLogger.Infof("RE0订阅：本轮已达到批量上限 %d，剩余订阅下轮处理", batch)
 			break
 		}
 		sub := &subs[i]
@@ -84,13 +84,13 @@ func runAllHiveSubscriptions() {
 		ran++
 		msg, ok := RunHiveSubscriptionOnce(sub)
 		if ok {
-			helpers.AppLogger.Infof("影巢订阅：%s", msg)
+			helpers.AppLogger.Infof("RE0订阅：%s", msg)
 		} else {
-			helpers.AppLogger.Errorf("影巢订阅：%s", msg)
+			helpers.AppLogger.Errorf("RE0订阅：%s", msg)
 		}
 	}
 	if active == 0 {
-		helpers.AppLogger.Infof("影巢订阅：本轮无启用中的订阅")
+		helpers.AppLogger.Infof("RE0订阅：本轮无启用中的订阅")
 	}
 	reactivateFinishedTVSubscriptions()
 }
@@ -129,12 +129,12 @@ func reactivateFinishedTVSubscriptions() {
 			sub.Enabled = true
 			sub.Status = "subscribing"
 			_ = models.SaveCloudSubscription(sub)
-			helpers.AppLogger.Infof("影巢订阅 #%d（%s）：TMDB 总集数 %d → %d，已自动复活订阅", sub.ID, sub.TMDBTitle, oldTotal, sub.TotalEpisodes)
+			helpers.AppLogger.Infof("RE0订阅 #%d（%s）：TMDB 总集数 %d → %d，已自动复活订阅", sub.ID, sub.TMDBTitle, oldTotal, sub.TotalEpisodes)
 		}
 	}
 }
 
-// RunHiveSubscriptionOnce 对单条影巢订阅执行一轮：查资源 → 规格筛选 → 解锁 → 转存
+// RunHiveSubscriptionOnce 对单条RE0订阅执行一轮：查资源 → 规格筛选 → 解锁 → 转存
 // 返回结果摘要与是否成功。
 // 资源查询与详情/解锁调用均走四通道负载均衡（symedia/直连通道/nanshare/官方直连），
 // 通道级故障（限流/授权失效/5xx）自动逐个降级尝试。
@@ -143,13 +143,13 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 	if err != nil {
 		sub.LastRunAt = time.Now()
 		_ = models.SaveCloudSubscription(sub)
-		return fmt.Sprintf("订阅 #%d（影巢）获取主账号失败：%v", sub.ID, err), false
+		return fmt.Sprintf("订阅 #%d（RE0）获取主账号失败：%v", sub.ID, err), false
 	}
 	if !mainAcc.Authorized && !models.HasAuthorizedHiveChannelAccount() {
-		return fmt.Sprintf("订阅 #%d（影巢）主账号未授权，请先在影巢设置中完成 OAuth 授权（任一通道）", sub.ID), false
+		return fmt.Sprintf("订阅 #%d（RE0）主账号未授权，请先在RE0设置中完成 OAuth 授权（任一通道）", sub.ID), false
 	}
 	if sub.TMDBID <= 0 || (sub.MediaType != "movie" && sub.MediaType != "tv") {
-		return fmt.Sprintf("订阅 #%d（影巢）缺少影片信息（TMDB ID/类型），跳过", sub.ID), false
+		return fmt.Sprintf("订阅 #%d（RE0）缺少影片信息（TMDB ID/类型），跳过", sub.ID), false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -158,9 +158,9 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 	query, qerr := models.HiveQueryResourcesWithFailover(ctx, sub.MediaType, strconv.FormatInt(sub.TMDBID, 10))
 	if qerr != nil {
 		if !mainAcc.Authorized {
-			return fmt.Sprintf("订阅 #%d（影巢）主账号未授权且无可用通道，请先在影巢设置中完成 OAuth 授权（%v）", sub.ID, qerr), false
+			return fmt.Sprintf("订阅 #%d（RE0）主账号未授权且无可用通道，请先在RE0设置中完成 OAuth 授权（%v）", sub.ID, qerr), false
 		}
-		return fmt.Sprintf("订阅 #%d（影巢 %s %d）查询资源失败：%v", sub.ID, sub.MediaType, sub.TMDBID, qerr), false
+		return fmt.Sprintf("订阅 #%d（RE0 %s %d）查询资源失败：%v", sub.ID, sub.MediaType, sub.TMDBID, qerr), false
 	}
 	preferredChannel := query.Channel
 	resourcesResp := query.Resp
@@ -172,12 +172,12 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		if msg == "" {
 			msg = "请求失败"
 		}
-		return fmt.Sprintf("订阅 #%d（影巢 %s %d）查询资源失败：%s", sub.ID, sub.MediaType, sub.TMDBID, msg), false
+		return fmt.Sprintf("订阅 #%d（RE0 %s %d）查询资源失败：%s", sub.ID, sub.MediaType, sub.TMDBID, msg), false
 	}
 	var resources []hdhive.Resource
 	if len(resourcesResp.Data) > 0 && string(resourcesResp.Data) != "null" {
 		if err := json.Unmarshal(resourcesResp.Data, &resources); err != nil {
-			return fmt.Sprintf("订阅 #%d（影巢 %s %d）解析资源列表失败：%v", sub.ID, sub.MediaType, sub.TMDBID, err), false
+			return fmt.Sprintf("订阅 #%d（RE0 %s %d）解析资源列表失败：%v", sub.ID, sub.MediaType, sub.TMDBID, err), false
 		}
 	}
 	// 过滤无效资源（失效链接）+ 订阅自定义规则（清晰度/特效字幕/包含/排除，对齐 成熟方案）
@@ -217,7 +217,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		if a := models.GetHiveSlugAttempt(r.Slug); a != nil {
 			if ok, reason := models.HiveSlugUsable(a, maxAttempts); !ok {
 				filteredAttempt++
-				helpers.AppLogger.Debugf("影巢订阅 #%d：资源 %s 跳过（%s）", sub.ID, r.Slug, reason)
+				helpers.AppLogger.Debugf("RE0订阅 #%d：资源 %s 跳过（%s）", sub.ID, r.Slug, reason)
 				continue
 			}
 		}
@@ -246,7 +246,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			SubscriptionID: sub.ID, Title: sub.TMDBTitle, Action: "search",
 			Status: "success", Message: logMsg,
 		})
-		msg := fmt.Sprintf("订阅 #%d（影巢 %s %s）：%s", sub.ID, sub.MediaType, sub.TMDBTitle, logMsg)
+		msg := fmt.Sprintf("订阅 #%d（RE0 %s %s）：%s", sub.ID, sub.MediaType, sub.TMDBTitle, logMsg)
 		helpers.AppLogger.Infof("%s", msg)
 		return msg, true
 	}
@@ -266,10 +266,10 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		res := &candidates[i]
 		spec := hiveResourceSpec(res)
 		hiveMsgID := res.Slug
-		notifChannel := fmt.Sprintf("影巢订阅 #%d · 资源 %s", sub.ID, res.Slug)
+		notifChannel := fmt.Sprintf("RE0订阅 #%d · 资源 %s", sub.ID, res.Slug)
 		// 单轮转存上限（借鉴成熟方案 subscription_transfer_max_per_run）
 		if transferred >= throttle.MaxTransfersPerRun {
-			helpers.AppLogger.Infof("影巢订阅 #%d：本轮转存已达上限 %d，剩余候选下轮处理", sub.ID, throttle.MaxTransfersPerRun)
+			helpers.AppLogger.Infof("RE0订阅 #%d：本轮转存已达上限 %d，剩余候选下轮处理", sub.ID, throttle.MaxTransfersPerRun)
 			break
 		}
 
@@ -349,7 +349,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		if panType == "" {
 			unsupported++
 			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Sprintf("网盘类型 %q 暂不支持，跳过", detail.PanType), meta)
-			helpers.AppLogger.Debugf("影巢订阅 #%d：资源 %s 网盘类型 %q 暂不支持，跳过", sub.ID, res.Slug, detail.PanType)
+			helpers.AppLogger.Debugf("RE0订阅 #%d：资源 %s 网盘类型 %q 暂不支持，跳过", sub.ID, res.Slug, detail.PanType)
 			continue
 		}
 		if panType != sub.SourceType {
@@ -365,7 +365,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		}
 		// 全局每日自动解锁次数上限（U2，0=不限；达标后本轮不再解锁转存）
 		if limit := models.GetHiveUnlockDailyLimit(); limit > 0 && hiveUnlockDailyCountNow() >= limit {
-			helpers.AppLogger.Infof("影巢订阅 #%d：今日自动解锁已达上限 %d，剩余候选下轮处理", sub.ID, limit)
+			helpers.AppLogger.Infof("RE0订阅 #%d：今日自动解锁已达上限 %d，剩余候选下轮处理", sub.ID, limit)
 			break
 		}
 		// 解锁（先取解锁节流许可，再走通道降级调用）
@@ -448,7 +448,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		}
 		// 转存节流（借鉴 成熟方案：转存最小间隔 + 随机抖动，避免固定频率触发风控）
 		if terr := awaitHiveTransferSlot(ctx, throttle); terr != nil {
-			helpers.AppLogger.Warnf("影巢订阅 #%d：转存节流中断：%v", sub.ID, terr)
+			helpers.AppLogger.Warnf("RE0订阅 #%d：转存节流中断：%v", sub.ID, terr)
 			break
 		}
 		title, total, terr := saveShareByLink(ctx, linkURL, unlock.AccessCode, panType, transferDir)
@@ -513,14 +513,14 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 				if n, derr := deleteOldFilesByTitle(ctx, panType, transferDir, old.Title); derr != nil {
 					errs = append(errs, fmt.Sprintf("旧版本清理失败：%v", derr))
 				} else if n > 0 {
-					helpers.AppLogger.Infof("影巢订阅 #%d：洗版成功，已删除 %d 个旧版本文件（%s）", sub.ID, n, old.Title)
+					helpers.AppLogger.Infof("RE0订阅 #%d：洗版成功，已删除 %d 个旧版本文件（%s）", sub.ID, n, old.Title)
 				}
 			}
 		}
 		sub.LastPostID = res.Slug
 		sub.LastRunAt = time.Now()
 		_ = models.SaveCloudSubscription(sub)
-		summary := fmt.Sprintf("订阅 #%d（影巢 %s %s → %s）命中资源「%s」规格分 %d，已解锁并转存 %d 项到 %s",
+		summary := fmt.Sprintf("订阅 #%d（RE0 %s %s → %s）命中资源「%s」规格分 %d，已解锁并转存 %d 项到 %s",
 			sub.ID, sub.MediaType, sub.TMDBTitle, panType, shortHiveTitle(res.Title), spec.Score(), total, transferDir)
 		_ = models.CreateSubscriptionLog(&models.SubscriptionLog{
 			SubscriptionID: sub.ID, Title: sub.TMDBTitle, Action: "search",
@@ -538,7 +538,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 
 	sub.LastRunAt = time.Now()
 	_ = models.SaveCloudSubscription(sub)
-	summary := fmt.Sprintf("订阅 #%d（影巢 %s %s → %s）：候选资源 %d 个，无新收录（去重/不达标跳过 %d 个，网盘不支持 %d 个）",
+	summary := fmt.Sprintf("订阅 #%d（RE0 %s %s → %s）：候选资源 %d 个，无新收录（去重/不达标跳过 %d 个，网盘不支持 %d 个）",
 		sub.ID, sub.MediaType, sub.TMDBTitle, sub.SourceType, len(candidates), skipped, unsupported)
 	if filteredInvalid > 0 || filteredOfficial > 0 || filteredPublisher > 0 || filteredAttempt > 0 || filteredSpec > 0 {
 		summary += fmt.Sprintf("；候选过滤：失效 %d / 非官组 %d / 非白名单发布者 %d / 订阅规则 %d / 失败历史 %d",
@@ -578,7 +578,7 @@ func awaitHiveTransferSlot(ctx context.Context, th models.HiveTransferThrottle) 
 		}
 		wait := th.MinInterval + jitter - time.Since(hiveLastTransferAt)
 		if wait > 0 {
-			helpers.AppLogger.Infof("影巢订阅：转存节流，等待 %s 后继续（预设 %s）", wait.Truncate(time.Second), th.Preset)
+			helpers.AppLogger.Infof("RE0订阅：转存节流，等待 %s 后继续（预设 %s）", wait.Truncate(time.Second), th.Preset)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -604,7 +604,7 @@ func hivePublisherAllowed(whitelist []string, publisher string) bool {
 	return false
 }
 
-// hiveResourceSpec 将影巢资源映射为媒体规格（复用文本规格解析）
+// hiveResourceSpec 将RE0资源映射为媒体规格（复用文本规格解析）
 func hiveResourceSpec(res *hdhive.Resource) MediaSpec {
 	var b strings.Builder
 	b.WriteString(res.Title)
@@ -623,7 +623,7 @@ func hiveResourceSpec(res *hdhive.Resource) MediaSpec {
 	return ParseMediaSpec(b.String())
 }
 
-// hivePanTypeToSourceType 影巢网盘类型 → diy-strm 网盘类型（不支持返回空串）
+// hivePanTypeToSourceType RE0网盘类型 → diy-strm 网盘类型（不支持返回空串）
 func hivePanTypeToSourceType(panType string) string {
 	switch strings.ToLower(strings.TrimSpace(panType)) {
 	case "123", "123pan", "123云盘", "123pan.com":
@@ -647,7 +647,7 @@ func shortHiveTitle(title string) string {
 	return title
 }
 
-// hiveMonitorMeta 构造影巢订阅监控历史的影片关联元信息（tmdb_id/类型/季集/影片名）
+// hiveMonitorMeta 构造RE0订阅监控历史的影片关联元信息（tmdb_id/类型/季集/影片名）
 func hiveMonitorMeta(sub *models.CloudSubscription, epKeys []string) MonitorMediaMeta {
 	return MonitorMediaMeta{
 		TMDBID:    sub.TMDBID,

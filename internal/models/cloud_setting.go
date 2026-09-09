@@ -28,7 +28,7 @@ const (
 	CloudSettingKeySaveDir = "save_dir" // 值：{"path":"/影视/待整理"}
 )
 
-// 影巢（HDHive）配置 key（source_type = "hdhive"）
+// RE0（HDHive）配置 key（source_type = "hdhive"）
 const (
 	CloudSettingKeyHiveInterval            = "poll_interval"         // 值：轮询间隔分钟数（默认 15）
 	CloudSettingKeyHiveCheckinEnabled      = "daily_checkin_enabled" // 值："true"/"false" 主账号每日自动签到
@@ -46,7 +46,7 @@ const (
 	CloudSettingKeyHiveTransferJitter      = "transfer_jitter"       // 值：转存间隔随机抖动秒数（custom 模式用，默认 15）
 	CloudSettingKeyHiveSlugMaxAttempts     = "slug_max_attempts"     // 值：单个资源 slug 最大尝试次数（默认 3）
 	// ---- 成熟方案 search&subscription 设置对齐（v77）----
-	CloudSettingKeyHiveEnabled          = "hive_enabled"                // 值："true"/"false" 影巢搜索启用（手动搜索 hdhive 引擎，默认 true）
+	CloudSettingKeyHiveEnabled          = "hive_enabled"                // 值："true"/"false" RE0搜索启用（手动搜索 hdhive 引擎，默认 true）
 	CloudSettingKeyHiveTimedSearch      = "timed_search_enabled"        // 值："true"/"false" 定时订阅搜索（默认 true）
 	CloudSettingKeyHiveSearchTransfer   = "search_transfer"             // 值："true"/"false" 搜到资源即自动转存（默认 true）
 	CloudSettingKeyHiveAutoUnlock       = "auto_unlock"                 // 值："true"/"false" 自动积分解锁（默认 true）
@@ -257,12 +257,12 @@ func DeleteCloudChannel(id uint) error {
 	return db.Db.Delete(&CloudChannel{}, id).Error
 }
 
-// CloudSubscription 资源订阅规则（TG 频道订阅 / 影巢订阅共用）
+// CloudSubscription 资源订阅规则（TG 频道订阅 / RE0订阅共用）
 type CloudSubscription struct {
 	ID             uint       `gorm:"primaryKey" json:"id"`
 	SourceType     string     `gorm:"size:32;index" json:"source_type"`     // 目标网盘：123 / guangyapan / pan139
-	ResourceSource string     `gorm:"size:16;index" json:"resource_source"` // 资源来源：空=TG 频道 / hdhive=影巢
-	Channel        string     `gorm:"size:128;index" json:"channel"`        // 频道 @名（不带 @）或 URL（影巢订阅为空）
+	ResourceSource string     `gorm:"size:16;index" json:"resource_source"` // 资源来源：空=TG 频道 / hdhive=RE0
+	Channel        string     `gorm:"size:128;index" json:"channel"`        // 频道 @名（不带 @）或 URL（RE0订阅为空）
 	Keywords       string     `gorm:"type:text" json:"keywords"`            // JSON 数组
 	TargetDir      string     `gorm:"size:512" json:"target_dir"`           // 网盘内目标目录
 	MediaType      string     `gorm:"size:16" json:"media_type"`            // 选片类型：movie / tv / 空=通用订阅
@@ -278,7 +278,7 @@ type CloudSubscription struct {
 	OldCount       int64      `gorm:"-" json:"old_count"`         // 待清理旧版本数（只读，由接口填充）
 	Enabled        bool       `gorm:"default:true" json:"enabled"`
 	Status         string     `gorm:"size:16;default:subscribing" json:"status"` // 订阅状态：subscribing（进行中）/ completed（已完结）/ paused（已暂停，跳过定时检索；借鉴成熟方案 三态状态机）
-	LastPostID     string     `gorm:"size:64" json:"last_post_id"`               // 增量游标（频道帖 ID；影巢订阅为已处理资源 slug）
+	LastPostID     string     `gorm:"size:64" json:"last_post_id"`               // 增量游标（频道帖 ID；RE0订阅为已处理资源 slug）
 	FinishedAt     *time.Time `json:"finished_at"`                               // 自动完结时间
 	LastRecheckAt  *time.Time `json:"last_recheck_at"`                           // 已完结 TV 订阅的上次 TMDB 复查时间（宽限复活用）
 	// ---- 成熟方案 对齐字段（v77）----
@@ -379,7 +379,7 @@ func ListCloudSubscriptions(sourceType string) ([]CloudSubscription, error) {
 	return list, nil
 }
 
-// ListSubscriptionsByResourceSource 按资源来源查询订阅（空=TG 频道 / hdhive=影巢）
+// ListSubscriptionsByResourceSource 按资源来源查询订阅（空=TG 频道 / hdhive=RE0）
 func ListSubscriptionsByResourceSource(resourceSource string) ([]CloudSubscription, error) {
 	var list []CloudSubscription
 	if err := db.Db.Where("resource_source = ?", resourceSource).Order("id asc").Find(&list).Error; err != nil {
@@ -388,7 +388,7 @@ func ListSubscriptionsByResourceSource(resourceSource string) ([]CloudSubscripti
 	return list, nil
 }
 
-// GetHivePollInterval 影巢轮询间隔（分钟，默认 15）
+// GetHivePollInterval RE0轮询间隔（分钟，默认 15）
 func GetHivePollInterval() int {
 	v, err := GetCloudSetting("hdhive", CloudSettingKeyHiveInterval)
 	if err != nil || v == "" {
@@ -404,7 +404,7 @@ func GetHivePollInterval() int {
 	return n
 }
 
-// hiveSettingBool 影巢布尔值设置读取（带默认值）
+// hiveSettingBool RE0布尔值设置读取（带默认值）
 func hiveSettingBool(key string, def bool) bool {
 	v, err := GetCloudSetting("hdhive", key)
 	if err != nil || v == "" {
@@ -413,7 +413,7 @@ func hiveSettingBool(key string, def bool) bool {
 	return strings.TrimSpace(v) == "true"
 }
 
-// hiveSettingInt 影巢整数设置读取（带默认值及范围限制）
+// hiveSettingInt RE0整数设置读取（带默认值及范围限制）
 func hiveSettingInt(key string, def, min, max int) int {
 	v, err := GetCloudSetting("hdhive", key)
 	if err != nil || v == "" {
@@ -432,7 +432,7 @@ func hiveSettingInt(key string, def, min, max int) int {
 	return n
 }
 
-// hiveSettingStr 影巢字符串设置读取（带默认值）
+// hiveSettingStr RE0字符串设置读取（带默认值）
 func hiveSettingStr(key, def string) string {
 	v, err := GetCloudSetting("hdhive", key)
 	if err != nil || v == "" {
@@ -478,7 +478,7 @@ func GetHiveMaxPoints() int {
 
 // ---- 成熟方案 设置读取（v77）----
 
-// GetHiveEnabled 影巢搜索启用（手动搜索 hdhive 引擎，默认 true）
+// GetHiveEnabled RE0搜索启用（手动搜索 hdhive 引擎，默认 true）
 func GetHiveEnabled() bool {
 	return hiveSettingBool(CloudSettingKeyHiveEnabled, true)
 }
@@ -596,7 +596,7 @@ func SaveHiveSubscriptionDefaults(mediaType, jsonStr string) error {
 	return SetCloudSetting("hdhive", key, strings.TrimSpace(jsonStr))
 }
 
-// ListHiveSubscriptionsFiltered 影巢订阅列表（成熟方案 对齐：media_type 筛选 + status=completed 历史过滤）
+// ListHiveSubscriptionsFiltered RE0订阅列表（成熟方案 对齐：media_type 筛选 + status=completed 历史过滤）
 // statusFilter 传 "completed" 只返回已完成；otherwise 传空返回非 completed（进行中+已暂停）
 func ListHiveSubscriptionsFiltered(mediaType, statusFilter string) ([]CloudSubscription, int64, error) {
 	var list []CloudSubscription

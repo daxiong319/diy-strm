@@ -69,7 +69,7 @@ func ListCloudSubscriptionsAPI(c *gin.Context) {
 		subs, err = models.ListSubscriptionsByResourceSource(resourceSource)
 	} else {
 		subs, err = models.ListCloudSubscriptions(sourceType)
-		// 频道订阅页只展示 TG 频道订阅，影巢订阅（资源来源 hdhive）由影巢页面单独管理
+		// 频道订阅页只展示 TG 频道订阅，RE0订阅（资源来源 hdhive）由RE0页面单独管理
 		if err == nil {
 			filtered := subs[:0]
 			for _, s := range subs {
@@ -123,7 +123,7 @@ func ListCloudSubscriptionsAPI(c *gin.Context) {
 }
 
 // CreateCloudSubscriptionAPI 新增订阅（POST {source_type, channel, keywords, target_dir, enabled}）
-// 影巢订阅（resource_source=hdhive）无需频道名，需提供 TMDB 选片信息
+// RE0订阅（resource_source=hdhive）无需频道名，需提供 TMDB 选片信息
 func CreateCloudSubscriptionAPI(c *gin.Context) {
 	var raw map[string]json.RawMessage
 	if err := c.ShouldBindJSON(&raw); err != nil {
@@ -152,9 +152,9 @@ func CreateCloudSubscriptionAPI(c *gin.Context) {
 		req.ResourceSource = "" // 空 = TG 频道订阅（在所有已添加频道中搜索）
 		req.Channel = ""
 	} else {
-		// 影巢订阅：必须按 TMDB 影片订阅
+		// RE0订阅：必须按 TMDB 影片订阅
 		if req.TMDBID <= 0 || (req.MediaType != "movie" && req.MediaType != "tv") {
-			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "影巢订阅必须选择影片（电影或剧集）", Data: nil})
+			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "RE0订阅必须选择影片（电影或剧集）", Data: nil})
 			return
 		}
 		req.Channel = ""
@@ -365,7 +365,7 @@ func RunSubscriptionAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "已提交执行，稍后刷新列表可查看最近执行时间", Data: nil})
 }
 
-// GetHiveSettingsAPI 获取影巢设置（GET /cloud/hive/settings）
+// GetHiveSettingsAPI 获取RE0设置（GET /cloud/hive/settings）
 // 与参考实现一致：自动签到（主/子账号的开关/时间/模式）、订阅引擎轮询间隔、解锁积分上限。
 func GetHiveSettingsAPI(c *gin.Context) {
 	throttle := models.GetHiveTransferThrottle()
@@ -388,7 +388,7 @@ func GetHiveSettingsAPI(c *gin.Context) {
 		"transfer_min_interval": int(models.GetHiveTransferThrottle().MinInterval.Seconds()),
 		"transfer_jitter":       int(models.GetHiveTransferThrottle().Jitter.Seconds()),
 		"slug_max_attempts":     models.GetHiveSlugMaxAttempts(),
-		// 影巢搜索与订阅引擎（对齐成熟方案 resource_search）
+		// RE0搜索与订阅引擎（对齐成熟方案 resource_search）
 		"hive_enabled":                models.GetHiveEnabled(),
 		"timed_search_enabled":        models.GetHiveTimedSearchEnabled(),
 		"search_transfer":             models.GetHiveSearchTransfer(),
@@ -418,7 +418,7 @@ func GetHiveSettingsAPI(c *gin.Context) {
 	}})
 }
 
-// SetHiveSettingsAPI 保存影巢设置（POST /cloud/hive/settings）
+// SetHiveSettingsAPI 保存RE0设置（POST /cloud/hive/settings）
 // 整型字段用指针：未提交的字段保持原值，避免部分更新被默认值覆盖。
 func SetHiveSettingsAPI(c *gin.Context) {
 	var req struct {
@@ -438,7 +438,7 @@ func SetHiveSettingsAPI(c *gin.Context) {
 		TransferMinInterval *int   `json:"transfer_min_interval"`
 		TransferJitter      *int   `json:"transfer_jitter"`
 		SlugMaxAttempts     *int   `json:"slug_max_attempts"`
-		// 影巢搜索与订阅引擎（对齐成熟方案 resource_search）
+		// RE0搜索与订阅引擎（对齐成熟方案 resource_search）
 		HiveEnabled        *bool  `json:"hive_enabled"`
 		TimedSearchEnabled *bool  `json:"timed_search_enabled"`
 		SearchTransfer     *bool  `json:"search_transfer"`
@@ -562,10 +562,10 @@ func SetHiveSettingsAPI(c *gin.Context) {
 			return
 		}
 	}
-	// 影巢搜索与订阅引擎（对齐成熟方案 resource_search）
+	// RE0搜索与订阅引擎（对齐成熟方案 resource_search）
 	if req.HiveEnabled != nil {
 		if err := models.SetCloudSetting("hdhive", models.CloudSettingKeyHiveEnabled, strconv.FormatBool(*req.HiveEnabled)); err != nil {
-			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存影巢搜索开关失败：" + err.Error(), Data: nil})
+			c.JSON(http.StatusInternalServerError, APIResponse[any]{Code: BadRequest, Message: "保存RE0搜索开关失败：" + err.Error(), Data: nil})
 			return
 		}
 	}
@@ -683,7 +683,7 @@ func SetHiveSettingsAPI(c *gin.Context) {
 			return
 		}
 	}
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "影巢设置已保存", Data: nil})
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "RE0设置已保存", Data: nil})
 }
 
 // SetCloudSubscriptionPausedAPI 订阅暂停/恢复（POST /cloud/subscriptions/pause {id, paused}）
