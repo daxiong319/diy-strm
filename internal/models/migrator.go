@@ -37,6 +37,7 @@ var AllTables = []any{
 	HiveSlugAttempt{},
 	MonitorTransferRecord{},
 	Pan139DirCache{},
+	Emby302ProxyRule{},
 }
 
 func (*Migrator) TableName() string {
@@ -82,6 +83,11 @@ func Migrate() {
 	db.Db.Statement.PrepareStmt = true
 	if err := db.Db.AutoMigrate(&CloudSubscription{}); err != nil {
 		helpers.AppLogger.Errorf("自动迁移订阅表新字段失败：%v", err)
+	}
+	// Emby 多规则反代表（幂等创建/补列，兼容既有库升级）
+	db.Db.Statement.PrepareStmt = true
+	if err := EnsureEmby302ProxyRuleTable(); err != nil {
+		helpers.AppLogger.Errorf("自动迁移 Emby 反代规则表失败：%v", err)
 	}
 	db.Db.Statement.PrepareStmt = true
 	if migrator.VersionCode == 1 {

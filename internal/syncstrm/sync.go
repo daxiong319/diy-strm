@@ -455,6 +455,19 @@ func (s *SyncStrm) Start() error {
 	s.Sync.Total = int(s.TotalFile)
 	s.PublishProgress(true)
 	s.Sync.Complete(s.Account.SourceType)
+	// 提交 Emby 媒体库刷新任务（含临时同步：MP 整理/上传链路触发的同步也需通知 Emby 入库）
+	go func() {
+		if shouldRequestEmbyLibraryRefresh(s.NewMeta, s.NewStrm) {
+			s.Sync.Logger.Info("有新的元数据文件或 STRM 文件，提交 Emby 媒体库刷新任务")
+			targets := s.drainEmbyRefreshTargets()
+			if len(targets) == 0 {
+				targets = []models.EmbyRefreshTarget{{TargetType: models.EmbyRefreshTargetTypeLibrary}}
+			}
+			if err := models.RequestEmbyRefreshTargets(s.SyncPathId, targets); err != nil {
+				s.Sync.Logger.Errorf("提交 Emby 媒体库刷新任务失败：%v", err)
+			}
+		}
+	}()
 	// 如果有 sync_path_id，则更新最后同步时间
 	if !s.TmpSyncPath {
 		// 有 syncPathId 时，将 IsFullSync 改为 false
@@ -462,32 +475,19 @@ func (s *SyncStrm) Start() error {
 			db.Db.Model(&models.SyncPath{}).Where("id = ?", s.SyncPathId).Update("is_full_sync", false)
 		}
 		db.Db.Model(&models.SyncPath{}).Where("id = ?", s.SyncPathId).Update("last_sync_at", s.Sync.FinishAt)
-		// 提交 Emby 媒体库刷新任务，由协调器等待相关下载任务完成
-		go func() {
-			if shouldRequestEmbyLibraryRefresh(s.NewMeta, s.NewStrm) {
-				s.Sync.Logger.Info("有新的元数据文件或 STRM 文件，提交 Emby 媒体库刷新任务")
-				targets := s.drainEmbyRefreshTargets()
-				if len(targets) == 0 {
-					targets = []models.EmbyRefreshTarget{{TargetType: models.EmbyRefreshTargetTypeLibrary}}
-				}
-				if err := models.RequestEmbyRefreshTargets(s.SyncPathId, targets); err != nil {
-					s.Sync.Logger.Errorf("提交 Emby 媒体库刷新任务失败：%v", err)
-				}
-			}
-			if s.NewStrm > 0 {
-				s.Sync.Logger.Info("准备触发关联的刮削任务")
-				syncPath := models.GetSyncPathById(s.SyncPathId)
-				scrapePathIds := syncPath.GetScrapePathIds()
-				if len(scrapePathIds) > 0 {
-					// 发送异步消息，防止循环引用
-					helpers.Publish(helpers.StrmSyncCompleteEvent, scrapePathIds)
-				} else {
-					s.Sync.Logger.Info("关联的刮削目录为空，跳过触发刮削任务")
-				}
+		if s.NewStrm > 0 {
+			s.Sync.Logger.Info("准备触发关联的刮削任务")
+			syncPath := models.GetSyncPathById(s.SyncPathId)
+			scrapePathIds := syncPath.GetScrapePathIds()
+			if len(scrapePathIds) > 0 {
+				// 发送异步消息，防止循环引用
+				helpers.Publish(helpers.StrmSyncCompleteEvent, scrapePathIds)
 			} else {
-				s.Sync.Logger.Info("没有新的 STRM 生成，跳过关联的刮削任务")
+				s.Sync.Logger.Info("关联的刮削目录为空，跳过触发刮削任务")
 			}
-		}()
+		} else {
+			s.Sync.Logger.Info("没有新的 STRM 生成，跳过关联的刮削任务")
+		}
 		// 处理差异
 		go func() {
 			s.Sync.Logger.Info("115 路径和文件同步完成，开始处理 SyncFile 表和同步缓存的数据差异")
