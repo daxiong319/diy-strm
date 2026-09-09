@@ -317,7 +317,13 @@ func autoDeleteSeeds(cfg *models.MoviePilotConfig) {
 		}
 		started := seedStartedAt(client, ctx, t.Hash)
 		if started.IsZero() {
-			continue
+			// MP 下载历史翻页查不到（老种子早已被新记录挤出前列）：
+			// 回退用上传任务完成时刻做种起点——上传成功必然晚于下载完成开始做种，
+			// 以此估算做种时长只会偏保守（晚删），不会早删。
+			if task.UpdatedAt.IsZero() {
+				continue
+			}
+			started = task.UpdatedAt
 		}
 		seeded := time.Since(started)
 		if seeded < time.Duration(retention)*time.Hour {
