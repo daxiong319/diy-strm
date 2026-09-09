@@ -974,6 +974,11 @@ func setRouter(r *gin.Engine) {
 		// 弹幕联动（Misaka Danmaku）：配置 + 302 播放自动导入下一集（钩子在 emby302）
 		api.GET("/danmu/config", controllers.GetDanmuConfigAPI)   // 弹幕配置
 		api.POST("/danmu/config", controllers.SaveDanmuConfigAPI) // 保存弹幕配置
+		// 播放记录（emby302 反代落库）
+		api.GET("/emby302/playback-records", controllers.GetPlaybackRecordsAPI)
+		// AI 识别配置只读映射（本体在刮削设置）
+		api.GET("/ai-media-parser/config", controllers.GetAiMediaParserConfigAPI)        // AI 识别配置视图
+		api.POST("/ai-media-parser/cache/clear", controllers.ClearAiMediaParserCacheAPI) // 兼容端点
 
 		// 目录整理
 		api.POST("/organize/preview", controllers.OrganizePreview) // 目录整理预览
