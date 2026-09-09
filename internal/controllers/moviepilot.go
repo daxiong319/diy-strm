@@ -1,4 +1,4 @@
-﻿package controllers
+package controllers
 
 import (
 	"context"
@@ -65,10 +65,29 @@ func UpdateMoviePilotConfig(c *gin.Context) {
 		PromotionOrder:         req.PromotionOrder,
 		PromotionPatienceHours: req.PromotionPatienceHours,
 		SeedRetentionHours:     req.SeedRetentionHours,
+		QbittorrentURL:         req.QbittorrentURL,
+		QbittorrentUser:        req.QbittorrentUser,
+		QbittorrentPass:        req.QbittorrentPass,
 	})
 	if !ok {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "更新 MoviePilot 配置失败", Data: nil})
 		return
+	}
+	// qB WebUI 密码留空 = 保持原值（前端脱敏约定）
+	if strings.TrimSpace(req.QbittorrentPass) == "" && req.QbittorrentURL != "" {
+		existing := models.LoadMoviePilotConfig()
+		if existing.QbittorrentPass != "" {
+			cfg.QbittorrentPass = existing.QbittorrentPass
+			models.UpdateMoviePilotConfig(&models.MoviePilotConfig{
+				Enabled: cfg.Enabled, BaseUrl: cfg.BaseUrl, ApiToken: cfg.ApiToken,
+				DownloadRoot: cfg.DownloadRoot, LocalViewRoot: cfg.LocalViewRoot,
+				UploadAccountId: cfg.UploadAccountId, UploadRoot: cfg.UploadRoot, UploadRootId: cfg.UploadRootId,
+				StrmLocalDir: cfg.StrmLocalDir, PollInterval: cfg.PollInterval, NotifyEnabled: cfg.NotifyEnabled,
+				CategoryConfig: cfg.CategoryConfig, PromotionOrder: cfg.PromotionOrder,
+				PromotionPatienceHours: cfg.PromotionPatienceHours, SeedRetentionHours: cfg.SeedRetentionHours,
+				QbittorrentURL: cfg.QbittorrentURL, QbittorrentUser: cfg.QbittorrentUser, QbittorrentPass: existing.QbittorrentPass,
+			})
+		}
 	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "MoviePilot 配置已更新", Data: cfg})
 }
@@ -265,16 +284,16 @@ func ListMoviePilotDownloads(c *gin.Context) {
 	}
 
 	type downloadRow struct {
-		Hash          string `json:"hash"`
-		Title         string `json:"title"`
-		Name          string `json:"name"`
-		SeasonEpisode string `json:"season_episode"`
-		State         string `json:"state"`
+		Hash          string  `json:"hash"`
+		Title         string  `json:"title"`
+		Name          string  `json:"name"`
+		SeasonEpisode string  `json:"season_episode"`
+		State         string  `json:"state"`
 		Progress      float64 `json:"progress"`
-		SavePath      string `json:"save_path"`
-		Date          string `json:"date"`
-		UploadStatus  string `json:"upload_status"`
-		SeedTime      string `json:"seed_time"` // 做种时长（下载完成至今），如 25h3m
+		SavePath      string  `json:"save_path"`
+		Date          string  `json:"date"`
+		UploadStatus  string  `json:"upload_status"`
+		SeedTime      string  `json:"seed_time"` // 做种时长（下载完成至今），如 25h3m
 	}
 	// 做种起点：下载器列表不返回完成时间，用下载历史 date（hash 匹配）近似；
 	// 一次查询全量构建映射，避免逐条请求
@@ -613,14 +632,14 @@ func IdentifyMoviePilotFailedFile(c *gin.Context) {
 	}
 	candidates := searchTmdbCandidatesForFailed(ctx, parsed.Title, parsed.Year, parsed.Category)
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "识别完成", Data: map[string]any{
-		"category":    parsed.Category,
-		"title":       parsed.Title,
-		"year":        parsed.Year,
-		"season":      parsed.Season,
-		"episode":     parsed.Episode,
-		"tmdb_id":     parsed.TmdbId,
-		"source":      source,
-		"candidates":  candidates,
+		"category":   parsed.Category,
+		"title":      parsed.Title,
+		"year":       parsed.Year,
+		"season":     parsed.Season,
+		"episode":    parsed.Episode,
+		"tmdb_id":    parsed.TmdbId,
+		"source":     source,
+		"candidates": candidates,
 	}})
 }
 
@@ -632,13 +651,13 @@ func searchTmdbCandidatesForFailed(ctx context.Context, title string, year int, 
 	out := make([]gin.H, 0, 10)
 	add := func(t, original string, y int, tmdbID int64, mediaType, posterPath, overview string) {
 		item := gin.H{
-			"title":        t,
-			"year":         y,
-			"tmdb_id":      tmdbID,
-			"media_type":   mediaType,
-			"poster_url":   "",
-			"poster_path":  posterPath,
-			"overview":     overview,
+			"title":       t,
+			"year":        y,
+			"tmdb_id":     tmdbID,
+			"media_type":  mediaType,
+			"poster_url":  "",
+			"poster_path": posterPath,
+			"overview":    overview,
 		}
 		if posterPath != "" {
 			item["poster_url"] = imageBase + "/t/p/w185" + posterPath

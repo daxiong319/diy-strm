@@ -16,6 +16,7 @@ import (
 	"diy-strm/internal/models"
 	"diy-strm/internal/notification"
 	"diy-strm/internal/notificationmanager"
+	"diy-strm/internal/qbittorrent"
 	"diy-strm/internal/synccron"
 )
 
@@ -287,13 +288,70 @@ func seedStartedAt(client *Client, ctx context.Context, hash string) time.Time {
 }
 
 // autoDeleteSeeds 自动删种：做种达到 SeedRetentionHours 且对应上传任务已全部完成时，
-// 调 MP 删除接口移除种子并删除本地文件释放磁盘空间。0=关闭。
+// 删除种子及本地文件释放磁盘空间。0=关闭。
 // 删除条件刻意从严：任务不存在（尚未建上传任务）或未到 uploaded 终态都不删，宁可多留不做种。
+// 数据源优先级：配置了 qBittorrent（QbittorrentURL+账密）→ 直连 qB（做种时长用 qB 自报
+// seeding_time，可靠且覆盖已从 MP 下载列表消失的老种子）；否则回退走 MP 删除接口。
 func autoDeleteSeeds(cfg *models.MoviePilotConfig) {
 	retention := cfg.SeedRetentionHours
 	if retention <= 0 {
 		return
 	}
+	if strings.TrimSpace(cfg.QbittorrentURL) != "" {
+		autoDeleteSeedsViaQb(cfg, retention)
+		return
+	}
+	autoDeleteSeedsViaMP(cfg, retention)
+}
+
+// autoDeleteSeedsViaQb 直连 qBittorrent 删种（推荐路径）
+func autoDeleteSeedsViaQb(cfg *models.MoviePilotConfig, retention int) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	client := qbittorrent.NewClient(cfg.QbittorrentURL, cfg.QbittorrentUser, cfg.QbittorrentPass)
+	torrents, err := client.ListTorrents(ctx)
+	if err != nil {
+		helpers.AppLogger.Warnf("MoviePilot 自动删种：连接 qBittorrent 失败：%v", err)
+		return
+	}
+	minSeeded := time.Duration(retention) * time.Hour
+	for _, tor := range torrents {
+		if tor.Hash == "" {
+			continue
+		}
+		// 只删下载完成（progress=100）且非下载/校验状态的种子；missingFiles 同样可删（文件已丢，纯占记录）
+		if tor.Progress < 100 && tor.State != "missingFiles" {
+			continue
+		}
+		task := models.FindMoviePilotUploadTask(tor.Hash)
+		if task == nil || task.Status != models.MoviePilotUploadUploaded {
+			continue
+		}
+		seeded := time.Duration(tor.SeedingTime) * time.Second
+		if seeded < minSeeded {
+			continue
+		}
+		// missingFiles：本地文件已不存在，只删种子记录（deleteFiles 无所谓）
+		deleteFiles := tor.State != "missingFiles"
+		name := tor.Name
+		if len(name) > 24 {
+			name = name[:24]
+		}
+		if err := client.DeleteTorrent(ctx, tor.Hash, deleteFiles); err != nil {
+			helpers.AppLogger.Errorf("MoviePilot 自动删种失败：%s（hash=%s）：%v", name, tor.Hash[:min(12, len(tor.Hash))], err)
+			continue
+		}
+		helpers.AppLogger.Infof("MoviePilot 自动删种完成（qB）：种子 %s…（做种 %s，上传任务 #%d 已完成%s），已删除种子%s",
+			tor.Hash[:min(12, len(tor.Hash))], formatDurationCN(seeded), task.ID,
+			map[bool]string{true: "、含本地文件", false: "（文件已丢失仅删记录）"}[deleteFiles],
+			map[bool]string{true: "及本地文件", false: ""}[deleteFiles])
+	}
+}
+
+// autoDeleteSeedsViaMP 经 MP 删除接口删种（未配置 qB 时的回退路径）。
+// ⚠ 已知局限：MP /api/v1/download/ 只含仍在管理中的任务，纯做种老种子不在列表里
+// 会被漏删；建议在 MP 订阅设置里配置 qBittorrent 地址以启用直连路径。
+func autoDeleteSeedsViaMP(cfg *models.MoviePilotConfig, retention int) {
 	client := NewClient(cfg.BaseUrl, cfg.ApiToken)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -586,7 +644,8 @@ func checkDownloadHistory() error {
 
 // resolveHistoryLocalPath 从下载历史记录定位容器内可访问的本地路径。
 // 取历史 path 最后一段（MP 转移后的目录/文件名），在本地视图根下递归匹配（最多 3 层）。
-func resolveHistoryLocalPath(h *DownloadHistory, cfg *models.MoviePilotConfig) string {	lastSeg := path.Base(strings.TrimRight(strings.ReplaceAll(h.Path, "\\", "/"), "/"))
+func resolveHistoryLocalPath(h *DownloadHistory, cfg *models.MoviePilotConfig) string {
+	lastSeg := path.Base(strings.TrimRight(strings.ReplaceAll(h.Path, "\\", "/"), "/"))
 	if lastSeg == "" || lastSeg == "." || lastSeg == "/" {
 		return ""
 	}

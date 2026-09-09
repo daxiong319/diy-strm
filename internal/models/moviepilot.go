@@ -11,19 +11,19 @@ import (
 
 // MoviePilotConfig MoviePilot 对接配置（单行表）
 type MoviePilotConfig struct {
-	ID             uint     `json:"id" gorm:"primaryKey"`
-	Enabled        bool     `json:"enabled" gorm:"default:false"`    // 是否启用订阅自动下载检测
-	BaseUrl        string   `json:"base_url"`                        // MoviePilot 地址，如 http://127.0.0.1:3000
-	ApiToken       string   `json:"api_token"`                       // MoviePilot API Token（settings.API_TOKEN）
-	DownloadRoot   string   `json:"download_root"`                   // 下载器保存根目录（MoviePilot 侧路径）
-	LocalViewRoot  string   `json:"local_view_root"`                 // 下载目录在本容器/进程中的路径（用于前缀映射）
-	UploadAccountId uint    `json:"upload_account_id"`               // 目标网盘账号 ID（0=禁用上传）
-	UploadRoot     string   `json:"upload_root"`                     // 目标网盘上传根目录（路径）
-	UploadRootId   string   `json:"upload_root_id"`                  // 目标网盘上传根目录 ID
-	StrmLocalDir   string   `json:"strm_local_dir"`                  // STRM 文件本地输出目录
-	PollInterval   int      `json:"poll_interval" gorm:"default:5"`  // 轮询间隔（分钟）
-	NotifyEnabled  bool     `json:"notify_enabled" gorm:"default:true"` // 完成后是否发送通知
-	CategoryConfig string   `json:"category_config"`                 // 分类策略配置（MoviePilot category.yaml 风格，空=默认）
+	ID              uint   `json:"id" gorm:"primaryKey"`
+	Enabled         bool   `json:"enabled" gorm:"default:false"`       // 是否启用订阅自动下载检测
+	BaseUrl         string `json:"base_url"`                           // MoviePilot 地址，如 http://127.0.0.1:3000
+	ApiToken        string `json:"api_token"`                          // MoviePilot API Token（settings.API_TOKEN）
+	DownloadRoot    string `json:"download_root"`                      // 下载器保存根目录（MoviePilot 侧路径）
+	LocalViewRoot   string `json:"local_view_root"`                    // 下载目录在本容器/进程中的路径（用于前缀映射）
+	UploadAccountId uint   `json:"upload_account_id"`                  // 目标网盘账号 ID（0=禁用上传）
+	UploadRoot      string `json:"upload_root"`                        // 目标网盘上传根目录（路径）
+	UploadRootId    string `json:"upload_root_id"`                     // 目标网盘上传根目录 ID
+	StrmLocalDir    string `json:"strm_local_dir"`                     // STRM 文件本地输出目录
+	PollInterval    int    `json:"poll_interval" gorm:"default:5"`     // 轮询间隔（分钟）
+	NotifyEnabled   bool   `json:"notify_enabled" gorm:"default:true"` // 完成后是否发送通知
+	CategoryConfig  string `json:"category_config"`                    // 分类策略配置（MoviePilot category.yaml 风格，空=默认）
 	// PromotionOrder 促销优先阶梯（逗号分隔，从高到低）：free=免费 2xfree=2X免费 normal=普通 half=50% 2xhalf=2X 50%。
 	// 空=默认 free,2xfree,normal,half,2xhalf。订阅促销监督按此顺序逐层回退：
 	// 始终优先下载最高可用促销层，该层持续无新下载则放宽到下一层，一旦下载立即回到最高层
@@ -32,9 +32,12 @@ type MoviePilotConfig struct {
 	PromotionPatienceHours int `json:"promotion_patience_hours" gorm:"default:12"`
 	// SeedRetentionHours 种子做种保留时长（小时）：下载完成上传成功后，做种达到该时长自动
 	// 删除种子及本地文件释放磁盘空间；0=不自动删除
-	SeedRetentionHours int `json:"seed_retention_hours" gorm:"default:0"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	SeedRetentionHours int       `json:"seed_retention_hours" gorm:"default:0"`
+	QbittorrentURL     string    `json:"qbittorrent_url" gorm:"type:varchar(200)"`  // qBittorrent WebUI 地址（删种联动直连；空=走 MP 删除）
+	QbittorrentUser    string    `json:"qbittorrent_user" gorm:"type:varchar(100)"` // qB WebUI 用户名
+	QbittorrentPass    string    `json:"qbittorrent_pass" gorm:"type:varchar(200)"` // qB WebUI 密码
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 func (*MoviePilotConfig) TableName() string { return "movie_pilot_configs" }
@@ -78,6 +81,12 @@ func UpdateMoviePilotConfig(req *MoviePilotConfig) (*MoviePilotConfig, bool) {
 	// 做种保留时长：允许 0（不自动删除），只拦负数
 	if req.SeedRetentionHours >= 0 {
 		cfg.SeedRetentionHours = req.SeedRetentionHours
+	}
+	// qBittorrent 删种联动（QbittorrentPass 由控制器处理留空保持语义后传入）
+	cfg.QbittorrentURL = strings.TrimSpace(req.QbittorrentURL)
+	cfg.QbittorrentUser = strings.TrimSpace(req.QbittorrentUser)
+	if req.QbittorrentPass != "" {
+		cfg.QbittorrentPass = req.QbittorrentPass
 	}
 	if err := db.Db.Model(cfg).Where("id = ?", cfg.ID).Save(cfg).Error; err != nil {
 		helpers.AppLogger.Errorf("更新 MoviePilot 配置失败：%v", err)
@@ -127,9 +136,9 @@ func PromotionOrderList(order string) []string {
 
 // MoviePilotPromotionLadder 订阅促销优先阶梯状态（diy-strm 促销监督的游标）
 type MoviePilotPromotionLadder struct {
-	SubscribeID   uint  `json:"subscribe_id" gorm:"primaryKey"` // MP 订阅 ID
-	Tier          int   `json:"tier"`                           // 当前允许到的层（0=最高优先层）
-	TierStartedAt int64 `json:"tier_started_at"`                // 当前层开始时间（unix 秒）
+	SubscribeID   uint      `json:"subscribe_id" gorm:"primaryKey"` // MP 订阅 ID
+	Tier          int       `json:"tier"`                           // 当前允许到的层（0=最高优先层）
+	TierStartedAt int64     `json:"tier_started_at"`                // 当前层开始时间（unix 秒）
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
@@ -178,20 +187,20 @@ const (
 
 // MoviePilotUploadTask MoviePilot 下载完成后的 139 上传任务
 type MoviePilotUploadTask struct {
-	ID            uint                  `json:"id" gorm:"primaryKey"`
-	TorrentHash   string                `json:"torrent_hash" gorm:"index"` // 下载任务哈希，用于去重
-	Title         string                `json:"title"`                     // 种子标题
-	MediaType     string                `json:"media_type"`                // movie/tv
-	TmdbId        int64                 `json:"tmdb_id"`
-	Season        string                `json:"season"`
-	LocalPath     string                `json:"local_path"`  // 上传源目录（容器内路径）
-	RemotePath    string                `json:"remote_path"` // 139 目标目录
+	ID            uint                   `json:"id" gorm:"primaryKey"`
+	TorrentHash   string                 `json:"torrent_hash" gorm:"index"` // 下载任务哈希，用于去重
+	Title         string                 `json:"title"`                     // 种子标题
+	MediaType     string                 `json:"media_type"`                // movie/tv
+	TmdbId        int64                  `json:"tmdb_id"`
+	Season        string                 `json:"season"`
+	LocalPath     string                 `json:"local_path"`  // 上传源目录（容器内路径）
+	RemotePath    string                 `json:"remote_path"` // 139 目标目录
 	Status        MoviePilotUploadStatus `json:"status" gorm:"index"`
-	TotalFiles    int                   `json:"total_files"`    // 总文件数
-	UploadedFiles int                   `json:"uploaded_files"` // 已上传文件数
-	TotalBytes    int64                 `json:"total_bytes"`
-	UploadedBytes int64                 `json:"uploaded_bytes"`
-	Error         string                `json:"error" gorm:"type:text"`
+	TotalFiles    int                    `json:"total_files"`    // 总文件数
+	UploadedFiles int                    `json:"uploaded_files"` // 已上传文件数
+	TotalBytes    int64                  `json:"total_bytes"`
+	UploadedBytes int64                  `json:"uploaded_bytes"`
+	Error         string                 `json:"error" gorm:"type:text"`
 	// EmptySourceSince 源目录暂无文件（等待落盘）的开始时间；nil=非等待中。
 	// MP 完成信号可能早于文件落盘，空源时任务保持等待由轮询自动重试而非立即失败，
 	// 超过 emptySourceWaitLimit 仍无文件才终态失败。
@@ -300,18 +309,18 @@ const (
 // MoviePilotFailedFile MoviePilot 上传整理时无法识别的文件（识别失败独立菜单数据）
 type MoviePilotFailedFile struct {
 	BaseModel
-	TaskID    uint   `json:"task_id" gorm:"index"`              // 关联上传任务 ID
-	FileName  string `json:"file_name"`                         // 网盘文件名
-	ParentID  string `json:"parent_id"`                         // 文件所在源目录 ID（网盘语义）
-	RootPath  string `json:"root_path"`                         // 文件所在源目录路径（整理根目录）
-	AccountID uint   `json:"account_id"`                        // 网盘账号 ID
+	TaskID    uint   `json:"task_id" gorm:"index"`                // 关联上传任务 ID
+	FileName  string `json:"file_name"`                           // 网盘文件名
+	ParentID  string `json:"parent_id"`                           // 文件所在源目录 ID（网盘语义）
+	RootPath  string `json:"root_path"`                           // 文件所在源目录路径（整理根目录）
+	AccountID uint   `json:"account_id"`                          // 网盘账号 ID
 	Status    string `json:"status" gorm:"index;default:pending"` // 处理状态：pending/resolved/skipped
-	MediaType string `json:"media_type"`                        // 确认后的媒体类型：movie/tv
-	Title     string `json:"title"`                             // 确认后的标题
-	TmdbId    int64  `json:"tmdb_id"`                           // 确认后的 TMDB ID
-	Year      int    `json:"year"`                              // 确认后的年份
-	Season    int    `json:"season"`                            // 确认后的季号（剧集）
-	Reason    string `json:"reason"`                            // 失败原因
+	MediaType string `json:"media_type"`                          // 确认后的媒体类型：movie/tv
+	Title     string `json:"title"`                               // 确认后的标题
+	TmdbId    int64  `json:"tmdb_id"`                             // 确认后的 TMDB ID
+	Year      int    `json:"year"`                                // 确认后的年份
+	Season    int    `json:"season"`                              // 确认后的季号（剧集）
+	Reason    string `json:"reason"`                              // 失败原因
 }
 
 func (*MoviePilotFailedFile) TableName() string { return "movie_pilot_failed_files" }

@@ -224,7 +224,37 @@
             <el-option label="做种 7 天后删除" :value="168" />
           </el-select>
           <div class="form-help">
-            下载完成且上传网盘成功后，做种达到所选时长即自动删除种子并删除本地文件释放磁盘空间；做种时长按下载完成时间计算
+            下载完成且上传网盘成功后，做种达到所选时长即自动删除种子并删除本地文件释放磁盘空间；直连 qB 时按 qB 自报做种时长计算
+          </div>
+        </el-form-item>
+
+        <el-form-item label="qBittorrent 直连">
+          <div style="width: 100%">
+            <el-input
+              v-model="formData.qbittorrent_url"
+              placeholder="qB WebUI 地址，如 http://192.168.16.1:8080（推荐，直连可删纯做种老种子）"
+              :disabled="loading || !formData.enabled"
+              style="margin-bottom: 8px"
+              clearable
+            />
+            <el-input
+              v-model="formData.qbittorrent_user"
+              placeholder="qB WebUI 用户名（如 admin）"
+              :disabled="loading || !formData.enabled"
+              style="width: 200px; margin-right: 8px"
+              clearable
+            />
+            <el-input
+              v-model="formData.qbittorrent_pass"
+              type="password"
+              show-password
+              placeholder="qB WebUI 密码（留空保持原值）"
+              :disabled="loading || !formData.enabled"
+              style="width: 260px"
+            />
+            <div class="form-help">
+              配置后删种直连 qBittorrent：做种时长按 qB 自报值计算，且能覆盖已从 MoviePilot 下载列表消失的纯做种老种子；未配置时走 MoviePilot 删除接口（仅覆盖仍在管理中的任务）
+            </div>
           </div>
         </el-form-item>
 
@@ -318,6 +348,9 @@ interface MoviePilotSettings {
   promotion_order: string
   promotion_patience_hours: number
   seed_retention_hours: number
+  qbittorrent_url?: string
+  qbittorrent_user?: string
+  qbittorrent_pass?: string
 }
 
 interface TestStatus {
@@ -355,6 +388,9 @@ const formData = reactive<MoviePilotSettings>({
   promotion_order: 'free,2xfree,normal,half,2xhalf',
   promotion_patience_hours: 12,
   seed_retention_hours: 0,
+  qbittorrent_url: '',
+  qbittorrent_user: '',
+  qbittorrent_pass: '',
 })
 
 // ---- 促销优先级排序 ----
