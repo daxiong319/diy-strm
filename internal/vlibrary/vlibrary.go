@@ -44,7 +44,7 @@ func GetSettings() *Settings {
 		Collections: map[string]string{},
 	}
 	var row struct{ Value string }
-	if err := db.Db.Table("discovery_settings").Select("value").Where("`key` = ?", "ranking_virtual_libraries").Take(&row).Error; err != nil {
+	if err := db.Db.Table("discovery_settings").Select("value").Where("key = ?", "ranking_virtual_libraries").Take(&row).Error; err != nil {
 		if err != gorm.ErrRecordNotFound {
 			helpers.AppLogger.Warnf("虚拟库设置读取失败：%v", err)
 		}

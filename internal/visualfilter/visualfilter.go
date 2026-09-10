@@ -183,7 +183,7 @@ func discoverySettingGet(key string) (string, bool) {
 	var row struct {
 		Value string
 	}
-	if err := db.Db.Table("discovery_settings").Select("value").Where("`key` = ?", key).Take(&row).Error; err != nil {
+	if err := db.Db.Table("discovery_settings").Select("value").Where("key = ?", key).Take(&row).Error; err != nil {
 		return "", false
 	}
 	return row.Value, true

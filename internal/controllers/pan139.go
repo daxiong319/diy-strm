@@ -140,12 +140,16 @@ func GetPan139UrlByFileId(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误", Data: nil})
 		return
 	}
-	// 兼容两种参数：新链接使用 pickcode（与其它云盘一致），历史链接使用 fileid
-	fileId := strings.TrimSpace(c.Query("fileid"))
+	// 兼容两种参数：新链接使用 pickcode（与其它云盘一致），历史链接使用 fileid。
+	// 注意：emby302 反代链路中，中间件已触发 gin 的 queryCache 固化，setStrmQuery
+	// 修改 RawQuery 后 c.Query 仍返回旧缓存，因此这里必须实时解析 RawQuery。
+	liveQuery, _ := url.ParseQuery(c.Request.URL.RawQuery)
+	fileId := strings.TrimSpace(liveQuery.Get("fileid"))
 	if fileId == "" {
 		fileId = strings.TrimSpace(req.PickCode)
 	}
 	if fileId == "" {
+		helpers.AppLogger.Warnf("139 直链请求缺少文件 ID：%s", c.Request.URL.String())
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "fileid：不能为空", Data: nil})
 		return
 	}
@@ -154,9 +158,10 @@ func GetPan139UrlByFileId(c *gin.Context) {
 		return
 	}
 	// 定位账号（参考 参考 UI 实现：STRM URL 携带 account 直接定位，不依赖文件记录表）：
-	// 优先 account（账号 ID）-> 其次 userid -> 最后按文件记录反查账号
+	// 优先 account（账号 ID）-> 其次 userid -> 最后按文件记录反查账号。
+	// account 同样用实时解析的 liveQuery 读取，规避 gin queryCache 固化问题。
 	var account *models.Account
-	if accID := strings.TrimSpace(c.Query("account")); accID != "" {
+	if accID := strings.TrimSpace(liveQuery.Get("account")); accID != "" {
 		id, err := strconv.ParseUint(accID, 10, 64)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "账号 ID 无效", Data: nil})
@@ -177,6 +182,7 @@ func GetPan139UrlByFileId(c *gin.Context) {
 	} else {
 		syncFile := models.GetFileByPickCode(fileId)
 		if syncFile == nil {
+			helpers.AppLogger.Warnf("139 直链无法定位账号：fileId=%s 无 account/userid 参数且 sync_files 无记录", fileId)
 			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "文件 ID 不存在，请重新同步生成 STRM 后重试", Data: nil})
 			return
 		}
@@ -188,6 +194,7 @@ func GetPan139UrlByFileId(c *gin.Context) {
 		}
 	}
 	if account.SourceType != models.SourceTypePan139 {
+		helpers.AppLogger.Warnf("139 直链定位到的账号类型异常：fileId=%s accountId=%d 类型=%s", fileId, account.ID, string(account.SourceType))
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "账号类型不是中国移动云盘", Data: nil})
 		return
 	}
@@ -207,6 +214,7 @@ func GetPan139UrlByFileId(c *gin.Context) {
 	if cachedUrl == "" {
 		cachedUrl, err = client.GetDownloadURL(c.Request.Context(), fileId)
 		if err != nil {
+			helpers.AppLogger.Warnf("获取中国移动云盘下载链接失败：fileId=%s 错误：%v", fileId, err)
 			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取中国移动云盘下载链接失败：" + err.Error(), Data: nil})
 			return
 		}

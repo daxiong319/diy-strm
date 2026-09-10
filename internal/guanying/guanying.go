@@ -61,7 +61,7 @@ func settingGet(key string) (string, bool) {
 	var row struct {
 		Value string
 	}
-	if err := db.Db.Table("discovery_settings").Select("value").Where("`key` = ?", key).Take(&row).Error; err != nil {
+	if err := db.Db.Table("discovery_settings").Select("value").Where("key = ?", key).Take(&row).Error; err != nil {
 		if err != gorm.ErrRecordNotFound {
 			helpers.AppLogger.Warnf("观影读取设置 %s 失败：%v", key, err)
 		}
@@ -375,7 +375,7 @@ func SessionStatus() map[string]any {
 // ClearSession 清除会话与凭据
 func ClearSession() error {
 	for _, key := range []string{sessionKey, credentialsKey} {
-		if err := db.Db.Table("discovery_settings").Where("`key` = ?", key).Delete(nil).Error; err != nil {
+		if err := db.Db.Table("discovery_settings").Where("key = ?", key).Delete(nil).Error; err != nil {
 			return err
 		}
 	}

@@ -44,7 +44,7 @@ func GetConfig() (Config, bool) {
 		var row struct {
 			Value string
 		}
-		if err := db.Db.Table("discovery_settings").Select("value").Where("`key` = ?", key).Take(&row).Error; err != nil {
+		if err := db.Db.Table("discovery_settings").Select("value").Where("key = ?", key).Take(&row).Error; err != nil {
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				helpers.AppLogger.Warnf("SeedHub 读取 %s 失败：%v", key, err)
 			}

@@ -42,7 +42,7 @@ func GetConfig() (Config, bool) {
 		Key   string
 		Value string
 	}
-	if err := db.Db.Table("discovery_settings").Select("`key`, value").Where("`key` IN ?", []string{SettingAPIURL, SettingAPIKey}).Find(&rows).Error; err != nil {
+	if err := db.Db.Table("discovery_settings").Select("key, value").Where("key IN ?", []string{SettingAPIURL, SettingAPIKey}).Find(&rows).Error; err != nil {
 		if err != gorm.ErrRecordNotFound {
 			helpers.AppLogger.Warnf("弹幕配置读取失败：%v", err)
 		}
@@ -75,7 +75,7 @@ func SaveConfig(apiURL, apiKey string) error {
 		raw, _ := json.Marshal(value)
 		setting := map[string]any{"key": key, "value": string(raw), "updated_at": time.Now()}
 		if err := db.Db.Table("discovery_settings").
-			Where("`key` = ?", key).
+			Where("key = ?", key).
 			Assign(setting).
 			FirstOrCreate(&struct {
 				Key   string
