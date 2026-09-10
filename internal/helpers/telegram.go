@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"unicode/utf16"
 )
 
 // TelegramBot 结构体用于处理 Telegram 机器人操作
@@ -99,6 +100,56 @@ func NewTelegramBotWithProxy(token, chatID, proxyURL string) (*TelegramBot, erro
 }
 
 // SendMessage 发送消息到 Telegram
+// telegramUTF16Len 计算 Telegram 侧的文本长度（UTF-16 code units，中文 BMP=1、emoji=2）
+func telegramUTF16Len(s string) int {
+	n := 0
+	for _, r := range s {
+		l := utf16.RuneLen(r)
+		if l < 1 {
+			l = 1
+		}
+		n += l
+	}
+	return n
+}
+
+// truncateTelegramUTF16 按 UTF-16 code units 截断到 limit
+func truncateTelegramUTF16(s string, limit int) string {
+	n := 0
+	for i, r := range s {
+		l := utf16.RuneLen(r)
+		if l < 1 {
+			l = 1
+		}
+		if n+l > limit {
+			return s[:i]
+		}
+		n += l
+	}
+	return s
+}
+
+// telegramTruncate 按 Telegram 长度限制截断 HTML 模式消息文本：
+// 1) 按 UTF-16 code units 截断 2) 清理截断产生的未闭合标签/实体残段
+// 3) 剩余文本中的 '<' 替换为全角（ParseMode=HTML 下防解析失败） 4) 追加截断提示
+func telegramTruncate(text string, limit int) string {
+	if telegramUTF16Len(text) <= limit {
+		return text
+	}
+	truncated := truncateTelegramUTF16(text, limit)
+	// 未闭合标签残段（LastIndex('<') 在 LastIndex('>') 之后）
+	if lt, gt := strings.LastIndex(truncated, "<"), strings.LastIndex(truncated, ">"); lt > gt {
+		truncated = truncated[:lt]
+	}
+	// 未闭合实体残段（如 "&amp"）
+	if amp, semi := strings.LastIndex(truncated, "&"), strings.LastIndex(truncated, ";"); amp > semi {
+		truncated = truncated[:amp]
+	}
+	// 剩余 '<' 一律转全角，保证 HTML 解析安全
+	truncated = strings.ReplaceAll(truncated, "<", "＜")
+	return truncated + "\n\n…（内容过长已截断）"
+}
+
 func (bot *TelegramBot) SendMessage(text string) error {
 	if bot == nil {
 		return fmt.Errorf("Telegram Bot 实例不能为空")
@@ -113,7 +164,8 @@ func (bot *TelegramBot) SendMessage(text string) error {
 		return fmt.Errorf("Telegram Chat ID 不能为空")
 	}
 
-	msg := tgbotapi.NewMessage(StringToInt64(bot.ChatID), text)
+	// Telegram sendMessage 上限 4096（UTF-16 计数），超长直接拒绝（message is too long）
+	msg := tgbotapi.NewMessage(StringToInt64(bot.ChatID), telegramTruncate(text, 4000))
 	msg.ParseMode = "HTML"
 	_, err := bot.Client.Send(msg)
 	if err != nil {
@@ -189,13 +241,8 @@ func (bot *TelegramBot) SendPhoto(image string, caption string) error {
 
 	msg := tgbotapi.NewPhoto(StringToInt64(bot.ChatID), file)
 	if caption != "" {
-		// Telegram 照片 caption 上限约为 1024 个字符，这里做简单截断。
-		if len([]rune(caption)) > 1024 {
-			// 保留前 1024 个字符。
-			runes := []rune(caption)
-			caption = string(runes[:1024])
-		}
-		msg.Caption = caption
+		// Telegram 照片 caption 上限 1024（UTF-16 计数），统一走安全截断
+		msg.Caption = telegramTruncate(caption, 1000)
 		msg.ParseMode = "HTML"
 	}
 

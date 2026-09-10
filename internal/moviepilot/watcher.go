@@ -1042,10 +1042,10 @@ func TriggerStrmSyncForDir(account *models.Account, sourcePath, strmLocalDir str
 		TargetPath: strings.TrimRight(strmLocalDir, "/"),
 	}
 	if err := synccron.AddNewSyncTask(syncTask); err != nil {
-		helpers.AppLogger.Errorf("MoviePilot 触发 STRM 同步失败（%s）：%v", sourcePath, err)
+		helpers.AppLogger.Errorf("影视订阅触发 STRM 同步失败（%s）：%v", sourcePath, err)
 		return
 	}
-	helpers.AppLogger.Infof("MoviePilot 已触发 STRM 同步：%s → %s", sourcePath, strmLocalDir)
+	helpers.AppLogger.Infof("[影视订阅] diy-strm 上传整理完成，已触发 STRM 同步：%s → %s", sourcePath, strmLocalDir)
 }
 
 // healEmptySourceTasks 自愈扫描：源目录文件晚于"下载完成"信号落盘时，
