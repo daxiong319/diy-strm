@@ -321,7 +321,19 @@ func RequestEmbyRefreshTargets(syncPathId uint, targets []EmbyRefreshTarget) err
 
 		libraries := GetEmbyLibraryIdsBySyncPathId(syncPathId)
 		if len(libraries) == 0 {
-			helpers.AppLogger.Infof("同步目录 %d 未关联 Emby 媒体库，跳过提交刷新任务", syncPathId)
+			// 对齐 tgto123 的保底策略：解析不到具体媒体库（如临时同步反查失败、
+			// 媒体库关联缺失）时退化为刷新全部已知库，保证新增 STRM 必定入库。
+			allLibs, gerr := GetAllEmbyLibraries()
+			if gerr != nil || len(allLibs) == 0 {
+				helpers.AppLogger.Infof("同步目录 %d 未关联 Emby 媒体库且无可用库列表，跳过提交刷新任务", syncPathId)
+				continue
+			}
+			helpers.AppLogger.Infof("同步目录 %d 未关联 Emby 媒体库，退化为刷新全部 %d 个媒体库", syncPathId, len(allLibs))
+			for _, lib := range allLibs {
+				if err := upsertEmbyLibraryRefreshTask(lib.LibraryId, lib.Name, syncPathId, now); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		for libraryID, libraryName := range libraries {
