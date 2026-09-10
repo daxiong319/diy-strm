@@ -56,6 +56,19 @@ var leadingIndexRe = regexp.MustCompile(`^\d{1,3}[.\-_ ]+\s*`)
 // yearFanRe 「年番N」季标记（年番第 N 部 → TMDB 第 N 季）
 var yearFanRe = regexp.MustCompile(`年番\s*(\d{1,2})`)
 
+// cjkDotRe 中文之间的点分隔（TG 分享名的敏感词规避符号，如「遮.天」=「遮天」）。
+// 必须在 ParseMedia 之前移除：path.Ext 会把名字里最后一个点当扩展名分隔符，
+// 导致 stem 被截断（「遮.天 (2026)」→ stem「遮」，「天 (2026)」被当扩展名丢弃）。
+var cjkDotRe = regexp.MustCompile(`([\p{Han}])\.([\p{Han}])`)
+
+// stripCjkDots 删除中文夹点场景的点（循环处理多段；英文/数字/扩展名的点不受影响）
+func stripCjkDots(s string) string {
+	for cjkDotRe.MatchString(s) {
+		s = cjkDotRe.ReplaceAllString(s, "$1$2")
+	}
+	return s
+}
+
 // normalizeAutoDirName 归一化 TG 转存目录名：
 //  1. 「年番N」提取为季号并从名字移除（「2-遮.天 年番4 (2026)」→「遮.天 (2026)」+ S4）
 //  2. 剥前导批次序号「N-」（剥后非空才采用）
@@ -76,6 +89,8 @@ func normalizeAutoDirName(name string) (string, int) {
 			name = trimmed
 		}
 	}
+	// 中文夹点移除（规避 path.Ext 把「遮.天 (2026)」截成「遮」的问题）
+	name = stripCjkDots(name)
 	// 压缩移除年番/序号后残留的连续空格
 	return strings.Join(strings.Fields(name), " "), fanSeason
 }
@@ -767,7 +782,7 @@ func handleRenameDuplicate(ctx context.Context, account *models.Account, cfg *mo
 // buildAutoMedia 由文件名 + 目录级信息组装媒体信息。
 // 标题/年份优先目录级（目录名通常更规范），季/集优先文件级。
 func buildAutoMedia(fileName string, dirCtx *autoDirMedia) (*IdentifyResult, error) {
-	cleanFileName := stripTmdbTag(fileName)
+	cleanFileName := stripCjkDots(stripTmdbTag(fileName))
 	fileCategory, fileTitle, _, fileEpisode, fileYear := mediaparse.ParseMedia(cleanFileName)
 	fileParsed, hasEp := mediaparse.ParseEpisode(cleanFileName)
 

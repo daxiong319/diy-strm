@@ -9,7 +9,7 @@ func TestNormalizeAutoDirName(t *testing.T) {
 		wantFanSeason int
 	}{
 		// TG 分享批次序号 + 年番季标记
-		{"2-遮.天 年番4 (2026)", "遮.天 (2026)", 4},
+		{"2-遮.天 年番4 (2026)", "遮天 (2026)", 4},
 		{"2-一斩苍穹 (2026)", "一斩苍穹 (2026)", 0},
 		// 无序号无年番：原样
 		{"炽夏.Never-Ending-Summer.2026.S01", "炽夏.Never-Ending-Summer.2026.S01", 0},
