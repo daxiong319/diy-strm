@@ -2,6 +2,7 @@
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -120,7 +121,61 @@ func ResolveEmbyRefreshTarget(syncFile *SyncFile) (EmbyRefreshTarget, error) {
 		return target, nil
 	}
 
+	// 条目/兄弟集均未命中时，先按变更文件的本地路径做库 Location 前缀匹配
+	// （对齐 tgto123 的智能路径推断：STRM 落盘路径天然位于对应库 Locations 之下），
+	// 精准锁定单个库，避免退化为刷新同步目录关联的全部库。
+	if target, ok := resolveLibraryByLocalPath(syncFile.LocalFilePath); ok {
+		target.SyncPathID = syncFile.SyncPathId
+		return target, nil
+	}
+
 	return withFallback(EmbyRefreshTarget{TargetType: EmbyRefreshTargetTypeLibrary}), nil
+}
+
+// resolveLibraryByLocalPath 按本地文件路径前缀匹配 Emby 媒体库 Locations，
+// 命中唯一的库时返回库级刷新目标（最长前缀优先，多库同时命中取最深）。
+func resolveLibraryByLocalPath(localPath string) (EmbyRefreshTarget, bool) {
+	if localPath == "" || GlobalEmbyConfig == nil || GlobalEmbyConfig.EmbyUrl == "" || GlobalEmbyConfig.EmbyApiKey == "" {
+		return EmbyRefreshTarget{}, false
+	}
+	client := embyclientrestgo.NewClient(GlobalEmbyConfig.EmbyUrl, GlobalEmbyConfig.EmbyApiKey)
+	folders, err := client.GetLibraryVirtualFolders()
+	if err != nil || len(folders) == 0 {
+		if err != nil {
+			helpers.AppLogger.Debugf("按路径匹配媒体库失败（回退同步目录关联）：%v", err)
+		}
+		return EmbyRefreshTarget{}, false
+	}
+	normalizedPath := filepath.ToSlash(strings.TrimRight(localPath, `/\`))
+	bestID, bestName, bestLen := "", "", -1
+	for _, folder := range folders {
+		for _, location := range folder.Locations {
+			if location == "" {
+				continue
+			}
+			normalizedLoc := filepath.ToSlash(strings.TrimRight(location, `/\`))
+			if !strings.HasPrefix(normalizedPath, normalizedLoc) {
+				continue
+			}
+			if len(normalizedLoc) > bestLen {
+				bestID = folder.ItemId
+				if bestID == "" {
+					bestID = folder.ID
+				}
+				bestName = folder.Name
+				bestLen = len(normalizedLoc)
+			}
+		}
+	}
+	if bestID == "" {
+		return EmbyRefreshTarget{}, false
+	}
+	helpers.AppLogger.Infof("按路径匹配媒体库：%s => %s（%s）", localPath, bestName, bestID)
+	return EmbyRefreshTarget{
+		TargetType:          EmbyRefreshTargetTypeLibrary,
+		FallbackLibraryId:   bestID,
+		FallbackLibraryName: bestName,
+	}, true
 }
 
 func findEmbyItemBySyncFile(syncFile *SyncFile) (*EmbyMediaItem, error) {
