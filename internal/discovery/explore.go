@@ -382,7 +382,13 @@ func Rankings(ctx context.Context, provider, region, mediaType string, page int,
 		// hdhive:netflix 指定平台的流媒体榜
 		return hdhiveStreamingTop(ctx, strings.TrimPrefix(provider, "hdhive:"), region, mediaType, force)
 	case strings.HasPrefix(provider, "tmdb"):
+		// 兼容多种 key 格式：tmdb / tmdb_popular / tmdb_popular_movie / tmdb_popular_movie:movie
 		category := strings.TrimPrefix(provider, "tmdb")
+		if idx := strings.Index(category, ":"); idx >= 0 {
+			category = category[:idx]
+		}
+		category = strings.TrimSuffix(strings.TrimSuffix(category, "_movie"), "_tv")
+		category = strings.Trim(category, "_")
 		if category == "" {
 			category = "popular"
 		}
@@ -545,6 +551,10 @@ func doubanCollectionRanking(collection string, page int, force bool) (*PageResu
 	client := douban.NewClient()
 	rawItems, err := client.GetCollectionItems(collection, (page-1)*30, 30)
 	if err != nil {
+		// 豆瓣已下架部分旧榜单（如 tv_weekly_best），给出可操作的提示
+		if strings.Contains(err.Error(), "404") {
+			return nil, fmt.Errorf("豆瓣已下架该榜单（404），剧集请改用「华语口碑剧集榜」或「全球口碑剧集榜」")
+		}
 		return nil, err
 	}
 	items := make([]Item, 0, len(rawItems))

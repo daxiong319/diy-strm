@@ -9,11 +9,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"diy-strm/internal/db"
 	"diy-strm/internal/discovery"
 	"diy-strm/internal/helpers"
+	"diy-strm/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -109,10 +111,15 @@ func SyncCollections(ctx context.Context, api EmbyAPI) ([]SyncResult, error) {
 			if created >= max {
 				break
 			}
-			if item.TMDBID <= 0 {
-				continue
+			tmdbID := item.TMDBID
+			if tmdbID <= 0 {
+				// 豆瓣等来源无 TMDB ID：按标题+年份搜索 TMDB 补全后再匹配 Emby
+				tmdbID = resolveTmdbID(ctx, item)
+				if tmdbID <= 0 {
+					continue
+				}
 			}
-			if embyID, ok := findEmbyItemByTmdb(ctx, api, item.TMDBID, item.MediaType); ok {
+			if embyID, ok := findEmbyItemByTmdb(ctx, api, tmdbID, item.MediaType); ok {
 				itemIDs = append(itemIDs, embyID)
 				created++
 			}
@@ -205,6 +212,43 @@ func ensureCollection(ctx context.Context, api EmbyAPI, cfg *Settings, key, name
 
 // findEmbyItemByTmdb 按 TMDB ID 查 Emby 条目 id；EmbyAPI 同时承担合集创建，
 // 按 TMDB 找条目通过 optional 接口（Client 实现了 TmdbFinder）。
+// doubanTmdbCache 豆瓣条目 → TMDB ID 映射缓存（进程级，避免重复搜索）
+var doubanTmdbCache sync.Map
+
+// resolveTmdbID 为无 TMDB ID 的榜单条目（豆瓣等）按标题+年份搜索 TMDB 补全。
+// 失败返回 0（该条目跳过）。
+func resolveTmdbID(ctx context.Context, item discovery.Item) int64 {
+	title := strings.TrimSpace(item.Title)
+	if title == "" {
+		return 0
+	}
+	cacheKey := item.MediaType + ":" + title + ":" + fmt.Sprintf("%d", item.Year)
+	if v, ok := doubanTmdbCache.Load(cacheKey); ok {
+		return v.(int64)
+	}
+	client := models.GlobalScrapeSettings.GetTmdbClient()
+	if client == nil {
+		return 0
+	}
+	language := models.GlobalScrapeSettings.GetTmdbLanguage()
+
+	var tmdbID int64
+	if item.MediaType == "tv" {
+		if resp, err := client.SearchTv(title, item.Year, language, false); err == nil && len(resp.Results) > 0 {
+			tmdbID = int64(resp.Results[0].ID)
+		}
+	} else {
+		if resp, err := client.SearchMovie(title, item.Year, language, false, false); err == nil && len(resp.Results) > 0 {
+			tmdbID = int64(resp.Results[0].ID)
+		}
+	}
+	if tmdbID > 0 {
+		helpers.AppLogger.Infof("虚拟库：豆瓣条目「%s (%d)」已映射 TMDB %d", title, item.Year, tmdbID)
+		doubanTmdbCache.Store(cacheKey, tmdbID)
+	}
+	return tmdbID
+}
+
 func findEmbyItemByTmdb(ctx context.Context, api EmbyAPI, tmdbID int64, mediaType string) (string, bool) {
 	finder, ok := api.(TmdbFinder)
 	if !ok {

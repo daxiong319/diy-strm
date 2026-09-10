@@ -242,6 +242,34 @@
           </template>
 
           <div class="feature-item">
+            <el-form-item label="媒体入库通知" prop="enable_media_notification">
+              <div class="switch-wrapper">
+                <el-switch
+                  v-model="embyData.enable_media_notification"
+                  :active-value="1"
+                  :inactive-value="0"
+                  :disabled="embyLoading"
+                  active-color="#67c23a"
+                  inactive-color="#dcdfe6"
+                />
+                <span
+                  class="switch-label"
+                  :class="{ 'is-active': embyData.enable_media_notification }"
+                >
+                  {{ embyData.enable_media_notification ? '启用' : '禁用' }}
+                </span>
+              </div>
+            </el-form-item>
+            <div class="feature-description">
+              <p class="feature-note">
+                Emby 有新影片/剧集入库时，通过已配置的通知渠道（Telegram 等）推送入库通知，附带海报、评分与季集信息。
+              </p>
+            </div>
+          </div>
+
+          <el-divider class="feature-divider" />
+
+          <div class="feature-item">
             <el-form-item label="入库后提取媒体信息" prop="enable_extract_media_info">
               <div class="switch-wrapper">
                 <el-switch
@@ -1052,6 +1080,7 @@ const embyData = reactive({
   sync_cron: CRON_DEFAULTS.embySync,
   enable_refresh_library: 1,
   enable_extract_media_info: 1,
+  enable_media_notification: 0,
   enable_delete_netdisk: 0,
   enable_auth: 1,
   sync_all_libraries: 1,
@@ -1111,6 +1140,7 @@ const defaultConfig = {
   sync_cron: CRON_DEFAULTS.embySync,
   enable_refresh_library: 1,
   enable_extract_media_info: 1,
+  enable_media_notification: 0,
   enable_delete_netdisk: 0,
   enable_auth: 1,
   sync_all_libraries: 1,
@@ -1205,6 +1235,7 @@ const saveEmbyConfig = async () => {
         sync_cron: embyData.sync_cron,
         enable_refresh_library: embyData.enable_refresh_library,
         enable_extract_media_info: embyData.enable_extract_media_info,
+        enable_media_notification: embyData.enable_media_notification,
         enable_delete_netdisk: embyData.enable_delete_netdisk,
         enable_auth: embyData.enable_auth,
         sync_all_libraries: embyData.sync_all_libraries,
@@ -1609,7 +1640,8 @@ const vlibrarySyncResults = ref<{ key: string; provider: string; media_type: str
 
 const vlibraryRankingOptions = [
   { key: 'douban:movie_weekly_best:movie', label: '豆瓣一周口碑电影' },
-  { key: 'douban:tv_weekly_best:tv', label: '豆瓣一周口碑剧集' },
+  { key: 'douban:tv_chinese_best_weekly:tv', label: '豆瓣华语口碑剧集榜' },
+  { key: 'douban:tv_global_best_weekly:tv', label: '豆瓣全球口碑剧集榜' },
   { key: 'douban:movie_top250:movie', label: '豆瓣 Top250' },
   { key: 'tmdb_popular_movie:movie', label: 'TMDB 热门电影' },
   { key: 'tmdb_popular_tv:tv', label: 'TMDB 热门剧集' },
