@@ -1162,6 +1162,7 @@ const loadEmbyConfig = async () => {
         embyData.sync_cron = config.sync_cron || CRON_DEFAULTS.embySync
         embyData.enable_refresh_library = config.enable_refresh_library ?? 1
         embyData.enable_extract_media_info = config.enable_extract_media_info ?? 1
+        embyData.enable_media_notification = config.enable_media_notification ?? 0
         embyData.enable_delete_netdisk = config.enable_delete_netdisk ?? 0
         embyData.enable_auth = config.enable_auth ?? 1
         embyData.sync_all_libraries = config.sync_all_libraries ?? 1
