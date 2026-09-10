@@ -291,6 +291,138 @@ func CompareQuality(newQ, oldQ *FileQuality, groupPriority []string, rules []Was
 	return 0
 }
 
+// ---- 洗版对比明细（日志/洗版记录归因用）----
+
+var washFieldLabels = map[string]string{
+	"resolution": "分辨率", "codec": "编码", "format": "来源",
+	"channels": "声道", "bitdepth": "色深", "group": "组名",
+}
+
+// qualityFieldDisplay 规则字段的人类可读值（如 2160p / H265 / WEB-DL / 5.1 / Ocat）
+func qualityFieldDisplay(field string, q *FileQuality) string {
+	if q == nil {
+		return "?"
+	}
+	switch field {
+	case "resolution":
+		if q.ResTag != "" {
+			return strings.ToLower(q.ResTag)
+		}
+		if q.Resolution > 0 {
+			return fmt.Sprintf("%dp", q.Resolution)
+		}
+		return "未知"
+	case "codec":
+		if q.CodecTag != "" {
+			return q.CodecTag
+		}
+		if q.Codec != "" {
+			return strings.ToUpper(q.Codec)
+		}
+		return "未知"
+	case "format":
+		if q.VideoFormat != "" {
+			return strings.ToUpper(q.VideoFormat)
+		}
+		return "未知"
+	case "channels":
+		if q.AudioTag != "" {
+			return q.AudioTag
+		}
+		if q.Channels > 0 {
+			return fmt.Sprintf("%dch", q.Channels)
+		}
+		return "未知"
+	case "bitdepth":
+		if q.BitDepth != "" {
+			return strings.ToUpper(q.BitDepth)
+		}
+		return "未知"
+	case "group":
+		if q.Group != "" {
+			return q.Group
+		}
+		return "无组"
+	}
+	return "?"
+}
+
+// qualityCompareTrace 洗版逐项对比描述：按规则顺序输出「字段 新值/旧值 关系」，
+// 在决出胜负的字段处标注（>新优 / <新差），后面的项不再列（与 CompareQuality 语义一致）。
+// 全部持平返回「逐项持平」。
+func qualityCompareTrace(newQ, oldQ *FileQuality, groupPriority []string, rules []WashRule) string {
+	if newQ == nil || oldQ == nil {
+		return "任一侧质量不可解析"
+	}
+	var parts []string
+	for _, r := range rules {
+		var nv, ov int
+		if r.Field == "group" {
+			nv = groupRank(newQ.Group, groupPriority)
+			ov = groupRank(oldQ.Group, groupPriority)
+		} else {
+			nv = fieldValue(r, newQ)
+			ov = fieldValue(r, oldQ)
+		}
+		label := washFieldLabels[r.Field]
+		if label == "" {
+			label = r.Field
+		}
+		nd, od := qualityFieldDisplay(r.Field, newQ), qualityFieldDisplay(r.Field, oldQ)
+		switch {
+		case nv == ov:
+			if nd == od {
+				parts = append(parts, fmt.Sprintf("%s %s=%s", label, nd, od))
+			} else {
+				parts = append(parts, fmt.Sprintf("%s %s/%s 同档", label, nd, od))
+			}
+		default:
+			better := (r.Higher && nv > ov) || (!r.Higher && nv < ov)
+			if better {
+				parts = append(parts, fmt.Sprintf("%s %s>%s（新优）", label, nd, od))
+			} else {
+				parts = append(parts, fmt.Sprintf("%s %s<%s（新差）", label, nd, od))
+			}
+			return strings.Join(parts, "；")
+		}
+	}
+	if len(parts) == 0 {
+		return "逐项持平"
+	}
+	return strings.Join(parts, "；") + "；逐项持平"
+}
+
+// mergeAiQualityHints 文件名解析缺项时用 AI 识别的质量维度补齐（不覆盖文件名已解析出的值）
+func mergeAiQualityHints(q, hint *FileQuality) {
+	if q == nil || hint == nil {
+		return
+	}
+	if q.Resolution == 0 {
+		q.Resolution = hint.Resolution
+		if q.ResTag == "" {
+			q.ResTag = hint.ResTag
+		}
+	}
+	if q.Codec == "" {
+		q.Codec = hint.Codec
+		if q.CodecTag == "" {
+			q.CodecTag = hint.CodecTag
+		}
+	}
+	if q.VideoFormat == "" {
+		q.VideoFormat = hint.VideoFormat
+	}
+	if q.AudioTag == "" {
+		q.AudioTag = hint.AudioTag
+		if q.Channels == 0 {
+			q.Channels = hint.Channels
+		}
+	}
+	if q.Group == "" {
+		q.Group = hint.Group
+	}
+}
+
 // ---- 同名匹配（P0-1：忽略扩展名/质量标签后缀）----
 
 var washQualityTokenRe = regexp.MustCompile(`(?i)^(2160p|4k|uhd|1440p|1080p|1080i|720p|576p|540p|480p|h265|hevc|x265|av1|h264|avc|x264|h\.265|h\.264|mpeg4|xvid|divx|mpeg2|h263|vc1|atmos|truehd|dts[\w.-]*|eac3|ddp|ac3|dd5\.1|dd2\.0|dolby[\w.-]*|7\.1|5\.1|5\.0|2\.0|stereo|mono|aac|flac|lpcm|opus|bd[\w.-]*|remux|blu[\w.-]*ray|web[\w.-]*(?:dl|rip)?|hdtv|hdr10\+?|dolby[\w.-]*vision|dv|imax|10bit|12bit|8bit|60fps|50fps|30fps|25fps|24fps|uncut|unrated|extended|theatrical|remastered|1080|720|4k)$`)

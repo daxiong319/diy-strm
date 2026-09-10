@@ -30,7 +30,8 @@ type organizeEntry struct {
 	Name     string
 	ParentID string
 	IsDir    bool
-	Size     int64 // 文件大小（字节），洗版比较用；目录为 0
+	Size     int64  // 文件大小（字节），洗版比较用；目录为 0
+	RelPath  string // 相对扫描根目录的路径（整理日志「源完整路径」用，根目录直挂时等于 Name）
 }
 
 // errMediaUnrecognized 文件名无法识别（正则与 AI 均未命中）
@@ -57,7 +58,7 @@ func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, r
 	result := &organizeMediaResult{}
 	var entries []organizeEntry
 	counter := 0
-	if err := collectOrganizeEntries(ctx, account, rootID, &entries, &counter, 0); err != nil {
+	if err := collectOrganizeEntries(ctx, account, rootID, "", &entries, &counter, 0); err != nil {
 		helpers.AppLogger.Errorf("MoviePilot 整理扫描目录 %s 失败：%v", rootPath, err)
 		return result
 	}
@@ -136,9 +137,14 @@ func organizeUploadedDir(ctx context.Context, account *models.Account, rootID, r
 // organizeOneFile 整理单个网盘文件：TMDB 校验 → 分类 → 建目标目录 → 移动 → 重命名。
 // media 为已解析的媒体信息；无法识别（含 TMDB 校验失败）返回 errMediaUnrecognized（不移动）。
 // rootPath 为已整理根目录路径；返回整理成功的目标相对目录（相对已整理根目录）。
+// 日志/历史记录使用 symedia 风格完整路径：源（扫描根目录 + 相对路径）=> 目标（已整理根目录 + 相对路径）。
 func organizeOneFile(ctx context.Context, account *models.Account, e organizeEntry, rootPath string, dirCache map[string]string, media *IdentifyResult) (string, error) {
 	extra := baseOrganizeExtra(account, e.ParentID, 0)
-	sourcePath := e.ParentID + "/" + e.Name
+	sourceRel := e.RelPath
+	if sourceRel == "" {
+		sourceRel = e.Name
+	}
+	sourcePath := strings.TrimRight(rootPath, "/") + "/" + sourceRel
 	if media == nil || strings.TrimSpace(media.Title) == "" {
 		recordSkipped(account, e, sourcePath, "", "", 0, 0, 0, 0, "", "文件名无法识别", extra)
 		return "", errMediaUnrecognized
@@ -161,6 +167,8 @@ func organizeOneFile(ctx context.Context, account *models.Account, e organizeEnt
 	// 新文件质量快照：洗版比较用；命名追加的质量标签用 officialTitle 重算
 	// （ParseQualityFromName 内部用 ParseMedia 的标题剥标签，中英混合名可能解析出垃圾标题）
 	newQ := ParseQualityFromName(e.Name)
+	// AI 识别出的质量维度补齐文件名解析缺项（symedia 契约）
+	mergeAiQualityHints(newQ, media.AiQuality)
 	newName = appendQualityTagsToName(media.Category, officialTitle, media.Season, media.Episode, year, path.Ext(e.Name), extractQualityTags(e.Name, officialTitle))
 
 	targetDirID, err := ensureOrganizeDirInternal(ctx, account, rootPath, relDir, dirCache)
@@ -174,6 +182,8 @@ func organizeOneFile(ctx context.Context, account *models.Account, e organizeEnt
 	// 删除新文件（同质量绝不堆积副本，139 的同名自动改名不会触发）。
 	var washTargets []int
 	var washOldEntries []organizeEntry
+	var washLoser organizeEntry
+	var washLoserQ *FileQuality
 	if oldEntries, lErr := listNetDirByID(ctx, account, targetDirID); lErr == nil && len(oldEntries) > 0 {
 		targets := findWashTargets(newName, newQ, oldEntries)
 		if len(targets) > 0 {
@@ -192,16 +202,19 @@ func organizeOneFile(ctx context.Context, account *models.Account, e organizeEnt
 					}
 				}
 				newBetter = false
+				washLoser = *old
+				washLoserQ = oldQ
 				break
 			}
 			if !newBetter {
+				trace := qualityCompareTrace(newQ, washLoserQ, nil, DefaultWashRules)
 				if err := deleteNetdiskFileInternal(account, e.ID, e.ParentID); err != nil {
 					helpers.AppLogger.Warnf("MoviePilot 洗版删除新文件失败：%s：%v", e.Name, err)
-					recordSkipped(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "同集旧版本质量不低于新版本，新文件保留原目录（删除失败）", "", extra)
+					recordSkipped(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, fmt.Sprintf("洗版判定%s：新版「%s」%s vs 现版「%s」%s：%s → 质量不高于现版本，新文件保留原目录（删除失败）", washEpisodeLabel(newName), e.Name, sizeGBText(e.Size), washLoser.Name, sizeGBText(washLoser.Size), trace), "", extra)
 					return relDir, nil
 				}
-				helpers.AppLogger.Infof("MoviePilot 洗版：同集旧版本质量不低于新版本，删除新文件 %s（保留库内版本）", e.Name)
-				recordSkipped(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "同集旧版本质量不低于新版本，删除新文件（保留库内版本）", "", extra)
+				helpers.AppLogger.Infof("MoviePilot 洗版判定%s：新版「%s」%s vs 现版「%s」%s：%s → 质量不高于现版本，删除新文件（保留库内版本）", washEpisodeLabel(newName), e.Name, sizeGBText(e.Size), washLoser.Name, sizeGBText(washLoser.Size), trace)
+				recordSkipped(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, fmt.Sprintf("洗版判定%s：新版「%s」%s vs 现版「%s」%s：%s → 质量不高于现版本，删除新文件（保留库内版本）", washEpisodeLabel(newName), e.Name, sizeGBText(e.Size), washLoser.Name, sizeGBText(washLoser.Size), trace), "", extra)
 				return relDir, nil
 			}
 			// 新文件更优：记录待删旧版本，先移入新文件、成功后再删
@@ -226,10 +239,10 @@ func organizeOneFile(ctx context.Context, account *models.Account, e organizeEnt
 		if err := deleteNetdiskFileInternal(account, old.ID, old.ParentID); err != nil {
 			helpers.AppLogger.Warnf("MoviePilot 洗版删除旧版本失败：%s：%v", old.Name, err)
 		} else {
-			helpers.AppLogger.Infof("MoviePilot 洗版：新版本已就位，删除旧版本 %s", old.Name)
+			helpers.AppLogger.Infof("MoviePilot 洗版替换%s：新版「%s」%s 已就位，删除旧版本「%s」%s", washEpisodeLabel(newName), newName, sizeGBText(e.Size), old.Name, sizeGBText(old.Size))
 		}
 	}
-	recordSuccess(account, e, sourcePath, relDir+"/"+newName, media.Category, officialTitle, year, media.Season, media.Episode, tmdbID, newName, "整理成功", extra)
+	recordSuccess(account, e, sourcePath, strings.TrimRight(rootPath, "/")+"/"+relDir+"/"+newName, media.Category, officialTitle, year, media.Season, media.Episode, tmdbID, newName, "整理成功", extra)
 	return relDir, nil
 }
 
@@ -371,8 +384,8 @@ func appendQualityTagsToName(category, title string, season, episode, year int, 
 	return base + "." + tags + ext
 }
 
-// collectOrganizeEntries 递归收集目录项（限深度与数量）
-func collectOrganizeEntries(ctx context.Context, account *models.Account, parentID string, out *[]organizeEntry, counter *int, depth int) error {
+// collectOrganizeEntries 递归收集目录项（限深度与数量），prefix 为当前层级的相对路径前缀
+func collectOrganizeEntries(ctx context.Context, account *models.Account, parentID, prefix string, out *[]organizeEntry, counter *int, depth int) error {
 	if depth > organizeMaxDepth || *counter > organizeMaxEntries {
 		return nil
 	}
@@ -385,9 +398,10 @@ func collectOrganizeEntries(ctx context.Context, account *models.Account, parent
 		if *counter > organizeMaxEntries {
 			break
 		}
+		f.RelPath = prefix + f.Name
 		*out = append(*out, f)
 		if f.IsDir {
-			if err := collectOrganizeEntries(ctx, account, f.ID, out, counter, depth+1); err != nil {
+			if err := collectOrganizeEntries(ctx, account, f.ID, f.RelPath+"/", out, counter, depth+1); err != nil {
 				return err
 			}
 		}

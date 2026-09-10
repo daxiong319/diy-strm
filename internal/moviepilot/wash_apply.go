@@ -94,18 +94,23 @@ func washCompareAndApply(ctx context.Context, account *models.Account, cfg *mode
 	}
 
 	newBetter := true
+	loserIdx := -1
+	var loserQ *FileQuality
 	for _, idx := range targets {
 		old := &entries[idx]
 		oldQ := ParseQualityFromName(old.Name)
 		cmp := CompareQuality(newQ, oldQ, groupPrio, rules)
 		if cmp <= 0 {
 			newBetter = false
+			loserIdx = idx
+			loserQ = oldQ
 			break
 		}
 	}
 	if !newBetter {
 		// 新文件更差/持平：处置新文件（默认 keep 留在待整理目录，绝不自动删源）
-		return washHandleNewLoser(ctx, account, cfg, newEntry, media, officialTitle, year, tmdbID, relDir)
+		// 消息带上与现库文件（哪一集、哪个版本）的逐项对比，归因一目了然
+		return washHandleNewLoser(ctx, account, cfg, newEntry, media, officialTitle, year, tmdbID, relDir, &entries[loserIdx], loserQ, newQ, groupPrio, rules)
 	}
 
 	// 新文件更优：不立即处置旧文件（落败方），生成延后动作清单，
@@ -113,10 +118,11 @@ func washCompareAndApply(ctx context.Context, account *models.Account, cfg *mode
 	// （原先「先删旧后移新」：移动失败时旧文件已删，库内缺集）
 	treated := len(targets)
 	treatmentCounts := make(map[string]int) // 配置动作计数（delete/archive/keep，按配置而非执行结果）
+	const maxTreatDetail = 3
 	for _, idx := range targets {
 		old := &entries[idx]
 		oldQ := ParseQualityFromName(old.Name)
-		msg := fmt.Sprintf("新版本质量更优，旧文件待新文件就位后%s", washLoserActionDesc(loserTreated, loserTreated))
+		trace := qualityCompareTrace(newQ, oldQ, groupPrio, rules)
 		treatmentCounts[loserTreated]++
 		decision.pendingLosers = append(decision.pendingLosers, washLoserOp{
 			entry:  *old,
@@ -135,12 +141,20 @@ func washCompareAndApply(ctx context.Context, account *models.Account, cfg *mode
 				NewName:      newName,
 				NewQuality:   newQ.Summary(),
 				LoserTreated: loserTreated,
-				Message:      msg,
-				EventTime:    time.Now(),
+				Message: fmt.Sprintf("洗版替换%s：新版「%s」%s vs 旧版「%s」%s：%s → 新版更优，旧版待新版就位后%s",
+					washEpisodeLabel(newName), newName, sizeGBText(newEntry.Size), old.Name, sizeGBText(old.Size), trace, washLoserActionDesc(loserTreated, loserTreated)),
+				EventTime: time.Now(),
 			},
 		})
+		if len(decision.treatments) < maxTreatDetail {
+			decision.treatments = append(decision.treatments, fmt.Sprintf("洗版替换%s：新版「%s」%s vs 旧版「%s」%s：%s → 旧版待新版就位后%s",
+				washEpisodeLabel(newName), newName, sizeGBText(newEntry.Size), old.Name, sizeGBText(old.Size), trace, washLoserActionDesc(loserTreated, loserTreated)))
+		}
 	}
-	decision.treatments = append(decision.treatments, fmt.Sprintf("洗版替换：匹配到 %d 个旧版本（%s）", treated, func() string {
+	if treated > maxTreatDetail {
+		decision.treatments = append(decision.treatments, fmt.Sprintf("洗版替换：其余 %d 个旧版本同批处置（明细见洗版记录）", treated-maxTreatDetail))
+	}
+	decision.treatments = append(decision.treatments, fmt.Sprintf("洗版替换：共匹配 %d 个旧版本（%s）", treated, func() string {
 		summaries := make([]string, 0, len(treatmentCounts))
 		for k, v := range treatmentCounts {
 			summaries = append(summaries, fmt.Sprintf("%s×%d", k, v))
@@ -148,6 +162,19 @@ func washCompareAndApply(ctx context.Context, account *models.Account, cfg *mode
 		return strings.Join(summaries, "，")
 	}()))
 	return decision
+}
+
+// washEpisodeLabel 从文件名提取「S01E08」式集号标签，无则空串（洗版日志定位用）
+func washEpisodeLabel(fileName string) string {
+	if ep := episodeKeyOf(fileName); ep != "" {
+		return "（" + ep + "）"
+	}
+	return ""
+}
+
+// sizeGBText 字节数转「3.21GB」展示文本
+func sizeGBText(n int64) string {
+	return fmt.Sprintf("%.2fGB", float64(n)/(1<<30))
 }
 
 // applyDeferredWashLosers 新文件成功移入后执行延后的旧文件处置（delete/archive）并落日志。
@@ -182,35 +209,68 @@ func applyDeferredWashLosers(ctx context.Context, account *models.Account, cfg *
 	}
 }
 
-// washHandleNewLoser 新文件落败时的处置（默认 keep：留待整理目录，改由用户决定）
-func washHandleNewLoser(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, newEntry *organizeEntry, media *IdentifyResult, officialTitle string, year int, tmdbID int64, relDir string) washDecision {
+// washHandleNewLoser 新文件落败时的处置（默认 keep：留待整理目录，改由用户决定）。
+// 消息带上与现库文件（哪一集、哪个版本）的逐项对比明细：哪集 vs 哪集、体积、
+// 各维度（分辨率/编码/来源/声道/色深/组名）对比与决出项，归因一目了然。
+func washHandleNewLoser(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, newEntry *organizeEntry, media *IdentifyResult, officialTitle string, year int, tmdbID int64, relDir string, loser *organizeEntry, loserQ, newQ *FileQuality, groupPriority []string, rules []WashRule) washDecision {
 	action := cfg.LoserSourceAction
 	if action == "" {
 		action = "keep"
 	}
-	newQ := ParseQualityFromName(newEntry.Name)
-	skipMessage := "新版本质量不高于现版本，不覆盖（保留现有版本）"
+	if newQ == nil {
+		newQ = ParseQualityFromName(newEntry.Name)
+	}
+	// 对比明细：新版/现版文件与体积 + 逐项质量对比
+	trace := "现库版本质量不可解析（按可覆盖处理）"
+	if loserQ != nil {
+		trace = qualityCompareTrace(newQ, loserQ, groupPriority, rules)
+	}
+	loserName := ""
+	loserSize := ""
+	if loser != nil {
+		loserName = loser.Name
+		if loser.Size > 0 {
+			loserSize = sizeGBText(loser.Size)
+		}
+	}
+	newSize := ""
+	if newEntry.Size > 0 {
+		newSize = sizeGBText(newEntry.Size)
+	}
+	base := fmt.Sprintf("洗版判定%s：新版「%s」%s vs 现版「%s」%s：%s", washEpisodeLabel(newEntry.Name), newEntry.Name, newSize, loserName, loserSize, trace)
+	actionTail := "，保留现有版本（新文件留在待整理目录）"
 	if action == "delete" {
 		// 用户显式配置 delete 时才删除来源文件（危险操作，仅按配置执行）
 		if err := deleteNetdiskFileInternal(account, newEntry.ID, newEntry.ParentID); err == nil {
-			skipMessage = fmt.Sprintf("新版本质量不高于现版本，已按配置删除来源文件：%s", newEntry.Name)
+			actionTail = "，已按配置删除来源文件"
 		} else {
 			helpers.AppLogger.Warnf("洗版删除来源文件失败（账号 %d）：%s：%v", cfg.AccountID, newEntry.Name, err)
+			actionTail = "，保留现有版本（来源文件删除失败已保留）"
 		}
 	} else if action == "archive" {
 		targetID, err := washArchiveDirID(ctx, account, cfg)
 		if err == nil && targetID != "" && targetID != "0" {
 			if err := moveNetdiskFileInternal(account, newEntry.ID, newEntry.ParentID, targetID); err == nil {
-				skipMessage = fmt.Sprintf("新版本质量不高于现版本，已按配置归档来源文件：%s → %s", newEntry.Name, cfg.LoserArchiveDir)
+				actionTail = fmt.Sprintf("，已按配置归档来源文件 → %s", cfg.LoserArchiveDir)
 			} else {
 				helpers.AppLogger.Warnf("洗版归档来源文件失败（账号 %d）：%s：%v", cfg.AccountID, newEntry.Name, err)
+				actionTail = "，保留现有版本（来源文件归档失败已保留）"
 			}
 		} else {
 			helpers.AppLogger.Warnf("洗版归档来源文件失败（账号 %d）：归档目录不可用：%v", cfg.AccountID, err)
 			if err != nil {
 				helpers.AppLogger.Errorf("洗版归档来源文件：%v", err)
 			}
+			actionTail = "，保留现有版本（来源文件归档失败已保留）"
 		}
+	}
+	skipMessage := base + " → 质量不高于现版本" + actionTail
+	oldName, oldQuality := "", ""
+	if loser != nil {
+		oldName = loser.Name
+	}
+	if loserQ != nil {
+		oldQuality = loserQ.Summary()
 	}
 	_ = models.AddWashLog(&models.WashLog{
 		AccountID:    cfg.AccountID,
@@ -221,7 +281,8 @@ func washHandleNewLoser(ctx context.Context, account *models.Account, cfg *model
 		SeasonNum:    media.Season,
 		EpisodeNum:   media.Episode,
 		TMDBID:       tmdbID,
-		OldName:      "",
+		OldName:      oldName,
+		OldQuality:   oldQuality,
 		NewName:      newEntry.Name,
 		NewQuality:   newQ.Summary(),
 		LoserTreated: "saved_source",

@@ -196,15 +196,26 @@ func (c *Client) SetBaseUrl(baseUrl string) {
 	c.baseURL = baseUrl
 }
 
+// MediaInfoAI AI 识别返回的结构化媒体信息（借鉴 symedia「ChatGPT 辅助识别」输出契约：
+// 除片名/年份外还带季集与质量维度，供洗版比较与整理日志直接使用）
 type MediaInfoAI struct {
-	Name string `json:"name"`
-	Year int    `json:"year"`
+	Name          string `json:"name"`
+	Year          int    `json:"year"`
+	MediaType     string `json:"type"`           // movie / tv（空=未知）
+	OriginalTitle string `json:"original_title"` // 原文标题（可空）
+	Season        int    `json:"season"`
+	Episode       int    `json:"episode"`
+	Resolution    string `json:"resolution"`  // 2160p / 1080p / 720p…
+	Source        string `json:"source"`      // WEB-DL / BluRay / REMUX / WEBRip / HDTV…
+	ReleaseGroup  string `json:"release_group"`
+	VideoCodec    string `json:"video_codec"` // H.265 / H.264 / AV1…
+	AudioCodec    string `json:"audio_codec"` // AAC / DDP5.1 / DTS-HD MA…
 }
 
 func (c *Client) TakeMoiveName(filename string, prompt string) (*MediaInfoAI, error) {
 	var userMessage string
 	var message []Message = make([]Message, 0)
-	userMessage += `\n输出格式：请严格按以下 JSON 格式返回，不要添加任何其他内容：{"name": "提取出的影视剧名称", "year": 年份或 0}\n现在请处理文件名：{{filename}}`
+	userMessage += `\n输出格式：请严格按以下 JSON 格式返回，不要添加任何其他内容：{"name": "提取出的影视剧名称", "original_title": "原文标题，无则空串", "type": "movie 或 tv", "year": 年份或0, "season": 季号或0, "episode": 集号或0, "resolution": "分辨率标签如2160p/1080p/720p，无则空串", "source": "来源标签如WEB-DL/BluRay/REMUX/WEBRip/HDTV，无则空串", "release_group": "发布组名如Ocat/FRDS，无则空串", "video_codec": "如H.265/H.264/AV1，无则空串", "audio_codec": "如AAC/DDP5.1/DTS-HD MA，无则空串"}\n注意：所有字段只能来自文件名本身的信息，缺失的填空串或 0，不要编造。\n现在请处理文件名：{{filename}}`
 	userMessage = strings.ReplaceAll(userMessage, "{{filename}}", filename)
 	message = append(message, Message{
 		Role:    "user",

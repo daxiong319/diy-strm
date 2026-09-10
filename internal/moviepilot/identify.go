@@ -2,6 +2,7 @@ package moviepilot
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"diy-strm/internal/helpers"
@@ -18,6 +19,9 @@ type IdentifyResult struct {
 	Episode  int
 	Year     int
 	TmdbId   int64
+	// AiQuality AI 识别出的质量快照（分辨率/来源/组名/编码，symedia 契约），
+	// 文件名解析缺项时用于补齐洗版比较维度
+	AiQuality *FileQuality
 }
 
 // IdentifyFileWithAI 对无法正则识别的文件名执行 AI 辅助识别（复用刮削 AI 配置），
@@ -50,9 +54,16 @@ func IdentifyFileWithAIContext(ctx context.Context, hintName, fileName string) (
 	// 命中后仍走下方 TMDB 校验，校验失败删除缓存条目避免坏缓存
 	cacheKey := models.AICacheKey(hint, fileName)
 	var aiInfo *openai.MediaInfoAI
-	if name, year, ok := models.GetAIParseCache(cacheKey); ok {
-		helpers.AppLogger.Infof("AI 识别缓存命中：%s → %s (%d)", aiInput, name, year)
-		aiInfo = &openai.MediaInfoAI{Name: name, Year: year}
+	if row := models.GetAIParseCacheFull(cacheKey); row != nil {
+		aiInfo = &openai.MediaInfoAI{Name: row.ResultName, Year: row.ResultYear}
+		// 旧缓存只有名称/年份；新缓存恢复完整结构（季集/质量维度）
+		if row.ResultJSON != "" {
+			var full openai.MediaInfoAI
+			if err := json.Unmarshal([]byte(row.ResultJSON), &full); err == nil && strings.TrimSpace(full.Name) != "" {
+				aiInfo = &full
+			}
+		}
+		helpers.AppLogger.Infof("AI 识别缓存命中：%s → %s (%d)", aiInput, aiInfo.Name, aiInfo.Year)
 	} else {
 		res, err := client.TakeMoiveName(aiInput, settings.GetAiPrompt())
 		if err != nil {
@@ -63,25 +74,112 @@ func IdentifyFileWithAIContext(ctx context.Context, hintName, fileName string) (
 			return IdentifyResult{}, false
 		}
 		aiInfo = res
-		models.SaveAIParseCache(cacheKey, aiInput, aiInfo.Name, aiInfo.Year)
+		models.SaveAIParseCache(cacheKey, aiInput, aiInfo.Name, aiInfo.Year, models.MarshalAIParseResult(aiInfo))
 	}
-	// TMDB 校验：优先电影，其次剧集；再试去空格变体（AI 可能返回「遮 天」）
+	// 识别结果结构化日志（对齐 symedia「ChatGPT 辅助识别」输出，便于排查与洗版归因）
+	helpers.AppLogger.Infof("AI 识别结果：%s → %s（type=%s year=%d S%02dE%02d %s %s %s %s %s）",
+		aiInput, aiInfo.Name, orDash(aiInfo.MediaType), aiInfo.Year, aiInfo.Season, aiInfo.Episode,
+		orDash(aiInfo.Resolution), orDash(aiInfo.Source), orDash(aiInfo.VideoCodec), orDash(aiInfo.AudioCodec), orDash(aiInfo.ReleaseGroup))
+	// TMDB 校验：按 AI 判定的类型优先（未判定则先电影），另一类型兜底；
+	// 再试去空格变体（AI 可能返回「遮 天」）
 	verifyNames := []string{aiInfo.Name}
 	if noSpace := strings.ReplaceAll(strings.TrimSpace(aiInfo.Name), " ", ""); noSpace != "" && noSpace != strings.TrimSpace(aiInfo.Name) {
 		verifyNames = append(verifyNames, noSpace)
 	}
+	tryMovieFirst := aiInfo.MediaType != "tv"
 	for _, verifyName := range verifyNames {
-		if res, ok := verifyIdentifyByTmdb(ctx, fileName, verifyName, aiInfo.Year, true); ok {
-			return res, true
+		var order []bool // true=电影 false=剧集
+		if tryMovieFirst {
+			order = []bool{true, false}
+		} else {
+			order = []bool{false, true}
 		}
-		if res, ok := verifyIdentifyByTmdb(ctx, fileName, verifyName, aiInfo.Year, false); ok {
-			return res, true
+		for _, isMovie := range order {
+			if res, ok := verifyIdentifyByTmdb(ctx, fileName, verifyName, aiInfo.Year, isMovie); ok {
+				applyAiExtras(&res, aiInfo)
+				return res, true
+			}
 		}
 	}
 	// 校验失败：删缓存（可能是坏缓存），未命中缓存的也无需保留失败结果
 	models.DeleteAIParseCache(cacheKey)
 	helpers.AppLogger.Warnf("AI 识别结果未通过 TMDB 校验（%s → %s %d）", aiInput, aiInfo.Name, aiInfo.Year)
 	return IdentifyResult{}, false
+}
+
+// applyAiExtras 把 AI 识别的季集/类型/质量快照合并进校验结果
+// （文件名解析缺项时以 AI 为准；文件名已明确解析出的值不覆盖）。
+func applyAiExtras(res *IdentifyResult, aiInfo *openai.MediaInfoAI) {
+	if res.Category == "tv" {
+		if aiInfo.Season > 0 && res.Season <= 1 {
+			res.Season = aiInfo.Season
+		}
+		if aiInfo.Episode > 0 && res.Episode <= 0 {
+			res.Episode = aiInfo.Episode
+		}
+	}
+	res.AiQuality = aiQualityFromFile(aiInfo)
+}
+
+// orDash 空串显示为「-」（结构化日志用）
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return strings.TrimSpace(s)
+}
+
+// aiQualityFromFile AI 识别的质量字段 → 文件质量快照（洗版比较维度）。
+// 全部为空时返回 nil（不产生误导性的空快照）。
+func aiQualityFromFile(ai *openai.MediaInfoAI) *FileQuality {
+	if ai == nil {
+		return nil
+	}
+	q := &FileQuality{}
+	if r := strings.ToLower(strings.TrimSpace(ai.Resolution)); r != "" {
+		q.ResTag = r
+		switch {
+		case strings.Contains(r, "2160"), strings.Contains(r, "4k"), strings.Contains(r, "uhd"):
+			q.Resolution = 2160
+		case strings.Contains(r, "1440"):
+			q.Resolution = 1440
+		case strings.Contains(r, "1080"):
+			q.Resolution = 1080
+		case strings.Contains(r, "720"):
+			q.Resolution = 720
+		case strings.Contains(r, "576"), strings.Contains(r, "540"):
+			q.Resolution = 576
+		case strings.Contains(r, "480"):
+			q.Resolution = 480
+		}
+	}
+	if s := strings.ToLower(strings.TrimSpace(ai.Source)); s != "" {
+		q.VideoFormat = s
+	}
+	if g := strings.TrimSpace(ai.ReleaseGroup); g != "" {
+		q.Group = g
+	}
+	if c := strings.ToLower(strings.TrimSpace(ai.VideoCodec)); c != "" {
+		switch {
+		case strings.Contains(c, "265"), strings.Contains(c, "hevc"):
+			q.Codec = "h265"
+			q.CodecTag = "H265"
+		case strings.Contains(c, "264"), strings.Contains(c, "avc"):
+			q.Codec = "h264"
+			q.CodecTag = "H264"
+		case strings.Contains(c, "av1"):
+			q.Codec = "av1"
+			q.CodecTag = "AV1"
+		}
+	}
+	if a := strings.TrimSpace(ai.AudioCodec); a != "" {
+		q.AudioTag = strings.ToUpper(a)
+		q.Channels = audioChannels(a)
+	}
+	if q.Resolution == 0 && q.VideoFormat == "" && q.Group == "" && q.Codec == "" && q.AudioTag == "" {
+		return nil
+	}
+	return q
 }
 
 // verifyIdentifyByTmdb 用 TMDB 校验 AI 识别的名称与年份，命中则返回规范化媒体信息。

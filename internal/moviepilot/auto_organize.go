@@ -103,6 +103,18 @@ func startsWithDigit(s string) bool {
 	return s[0] >= '0' && s[0] <= '9'
 }
 
+// joinRelPath 拼接相对路径段（跳过空段，自动补 /），用于日志源完整路径组装
+func joinRelPath(parts ...string) string {
+	var out []string
+	for _, p := range parts {
+		p = strings.Trim(p, "/")
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, "/")
+}
+
 // extractReleaseGroup 从文件名提取发布组（最后一个「-」之后的标签，如 xxx.H.265-Ocat → Ocat）
 func extractReleaseGroup(name string) string {
 	base := strings.TrimSuffix(name, filepath.Ext(name))
@@ -211,14 +223,14 @@ func RunAutoOrganize(ctx context.Context, cfg *models.AutoOrganizeConfig) *AutoO
 			break
 		}
 		if e.IsDir {
-			processAutoOrganizeDir(ctx, account, cfg, result, &e, organizedRoot, &rules, dirCache, &aiBudget, 0)
+			processAutoOrganizeDir(ctx, account, cfg, result, &e, "", organizedRoot, &rules, dirCache, &aiBudget, 0)
 		} else {
 			if !mediaparse.IsVideoExt(e.Name) {
 				result.NonMedia++
 				result.Details = append(result.Details, fmt.Sprintf("跳过非视频文件：%s", e.Name))
 				continue
 			}
-			if err := organizeAutoVideoFile(ctx, account, cfg, result, &e, nil, organizedRoot, &rules, dirCache, &aiBudget); err != nil {
+			if err := organizeAutoVideoFile(ctx, account, cfg, result, &e, nil, e.RelPath, organizedRoot, &rules, dirCache, &aiBudget); err != nil {
 				if errors.Is(err, errMediaUnrecognized) {
 					result.Unrecognized++
 					moveEntryToFailedDir(ctx, account, cfg, &e, result, fmt.Sprintf("识别失败：%v", err))
@@ -281,8 +293,10 @@ func isGenericAggregateDirName(name string) bool {
 
 // processAutoOrganizeDir 整理一个顶层目录资源（转存分享树根目录）。
 // 目录名识别优先（保持既有机制）；目录级识别失败且目录名为通用分类容器名时，
-// 兜底读取目录内容逐个子资源独立识别。depth 为聚合容器兜底递归深度。
-func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, dir *organizeEntry, organizedRoot string, rules *categoryRules, dirCache map[string]string, aiBudget *int, depth int) {
+// 兜底读取目录内容逐个子资源独立识别。depth 为聚合容器兜底递归深度；
+// dirRel 为该目录相对待整理根目录的路径（顶层为空串，聚合容器子目录为其父路径），
+// 用于日志输出源完整路径（symedia 风格）。
+func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, dir *organizeEntry, dirRel string, organizedRoot string, rules *categoryRules, dirCache map[string]string, aiBudget *int, depth int) {
 	// 目录名解析（标题/年份优先从目录名取，季集优先从文件名取）；
 	// 先归一化目录名（剥前导批次序号、提取「年番N」季标记）并剥离内嵌
 	// TMDB 标记（{tmdbid-xxx}），避免污染标题搜索
@@ -304,7 +318,7 @@ func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *m
 	{
 		var all []organizeEntry
 		counter := 0
-		if err := collectOrganizeEntries(ctx, account, dir.ID, &all, &counter, 0); err != nil {
+		if err := collectOrganizeEntries(ctx, account, dir.ID, "", &all, &counter, 0); err != nil {
 			result.Failed++
 			result.Details = append(result.Details, fmt.Sprintf("扫描目录 %s 失败：%v", dir.Name, err))
 			moveEntryToFailedDir(ctx, account, cfg, dir, result, fmt.Sprintf("目录扫描失败：%v", err))
@@ -322,7 +336,7 @@ func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *m
 		result.NonMedia++
 		// 无视频也可能因为是聚合容器（子内容暂未下载完/全是图片字幕）：
 		// 通用容器名时尝试逐子资源兜底，成功则照常收尾，否则跳过
-		if tryOrganizeAggregateChildren(ctx, account, cfg, result, dir, organizedRoot, rules, dirCache, aiBudget, depth) {
+		if tryOrganizeAggregateChildren(ctx, account, cfg, result, dir, dirRel, organizedRoot, rules, dirCache, aiBudget, depth) {
 			finalizeAutoOrganizeDir(ctx, account, cfg, result, dir)
 			return
 		}
@@ -338,18 +352,21 @@ func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *m
 		RawName:  dir.Name,
 		TmdbId:   extractTmdbIDFromName(dir.Name),
 	}
+	// 源完整路径（相对待整理根目录）：目录相对路径 + 目录名 + 文件相对路径
+	dirPathRel := joinRelPath(dirRel, dir.Name)
 	for _, v := range videos {
 		if err := ctx.Err(); err != nil {
 			result.Details = append(result.Details, "上下文取消，本轮中断")
 			break
 		}
-		if err := organizeAutoVideoFile(ctx, account, cfg, result, v, dirCtx, organizedRoot, rules, dirCache, aiBudget); err != nil {
+		srcRel := joinRelPath(dirPathRel, v.RelPath)
+		if err := organizeAutoVideoFile(ctx, account, cfg, result, v, dirCtx, srcRel, organizedRoot, rules, dirCache, aiBudget); err != nil {
 			if errors.Is(err, errMediaUnrecognized) {
 				result.Unrecognized++
 				// 兜底：目录名为通用分类容器（剧集/动漫/电影等）且无 TMDB 标记时，
 				// 目录名不是真实标题，读取目录内容逐个子资源独立识别（子目录按自身剧名识别，
 				// 直挂视频按文件名识别）；单个子资源失败单独进失败目录，不再拖垮整个目录。
-				if tryOrganizeAggregateChildren(ctx, account, cfg, result, dir, organizedRoot, rules, dirCache, aiBudget, depth) {
+				if tryOrganizeAggregateChildren(ctx, account, cfg, result, dir, dirRel, organizedRoot, rules, dirCache, aiBudget, depth) {
 					finalizeAutoOrganizeDir(ctx, account, cfg, result, dir)
 					return
 				}
@@ -373,7 +390,7 @@ func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *m
 //
 // 返回 true 表示已按聚合容器模式处理（调用方随后 finalize 收尾）；false 表示目录名
 // 不是通用分类容器（调用方维持原逻辑整目录移入失败目录）。
-func tryOrganizeAggregateChildren(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, dir *organizeEntry, organizedRoot string, rules *categoryRules, dirCache map[string]string, aiBudget *int, depth int) bool {
+func tryOrganizeAggregateChildren(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, dir *organizeEntry, dirRel string, organizedRoot string, rules *categoryRules, dirCache map[string]string, aiBudget *int, depth int) bool {
 	if !isGenericAggregateDirName(stripTmdbTag(dir.Name)) || extractTmdbIDFromName(dir.Name) != 0 {
 		return false
 	}
@@ -383,6 +400,8 @@ func tryOrganizeAggregateChildren(ctx context.Context, account *models.Account, 
 		result.Details = append(result.Details, fmt.Sprintf("扫描聚合容器 %s 失败：%v", dir.Name, err))
 		return true
 	}
+	// 容器自身相对路径：子资源完整路径 = 容器路径 + 子资源名
+	containerRel := joinRelPath(dirRel, dir.Name)
 	for i := range entries {
 		e := &entries[i]
 		if ctx.Err() != nil {
@@ -391,9 +410,9 @@ func tryOrganizeAggregateChildren(ctx context.Context, account *models.Account, 
 		}
 		switch {
 		case e.IsDir:
-			processAutoOrganizeDir(ctx, account, cfg, result, e, organizedRoot, rules, dirCache, aiBudget, depth+1)
+			processAutoOrganizeDir(ctx, account, cfg, result, e, containerRel, organizedRoot, rules, dirCache, aiBudget, depth+1)
 		case mediaparse.IsVideoExt(e.Name):
-			if err := organizeAutoVideoFile(ctx, account, cfg, result, e, nil, organizedRoot, rules, dirCache, aiBudget); err != nil {
+			if err := organizeAutoVideoFile(ctx, account, cfg, result, e, nil, joinRelPath(containerRel, e.Name), organizedRoot, rules, dirCache, aiBudget); err != nil {
 				if errors.Is(err, errMediaUnrecognized) {
 					result.Unrecognized++
 					moveEntryToFailedDir(ctx, account, cfg, e, result, fmt.Sprintf("识别失败：%v", err))
@@ -474,14 +493,19 @@ func yearFromTMDBDate(dateStr string) int {
 // organizeAutoVideoFile 整理单个视频文件：
 // 目录级信息 + 文件级季集解析 → TMDB 校验 → 分类 → 建目录 → 移动 → 重命名（保留质量标签）。
 // 返回 errMediaUnrecognized 表示识别失败/TMDB 查不到（调用方负责移入失败目录）。
-func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, entry *organizeEntry, dirCtx *autoDirMedia, organizedRoot string, rules *categoryRules, dirCache map[string]string, aiBudget *int) error {
+func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, entry *organizeEntry, dirCtx *autoDirMedia, srcRel string, organizedRoot string, rules *categoryRules, dirCache map[string]string, aiBudget *int) error {
 	vidStart := time.Now()
 	helpers.AppLogger.Infof("自动整理开始文件（账号 %d）：%s", cfg.AccountID, entry.Name)
 	defer func() {
 		helpers.AppLogger.Infof("自动整理文件结束（账号 %d）：%s（耗时 %.1fs）", cfg.AccountID, entry.Name, time.Since(vidStart).Seconds())
 	}()
 	extra := baseOrganizeExtra(account, entry.ParentID, 0)
-	sourcePath := strings.TrimRight(cfg.PendingDir, "/") + "/" + entry.Name
+	// 源完整路径（symedia 风格）：待整理根目录 + 文件相对路径；srcRel 缺失时回退文件名直挂
+	sourceRel := strings.TrimSpace(srcRel)
+	if sourceRel == "" {
+		sourceRel = entry.Name
+	}
+	sourcePath := strings.TrimRight(cfg.PendingDir, "/") + "/" + sourceRel
 	media, err := buildAutoMedia(entry.Name, dirCtx)
 	if err != nil {
 		recordSkipped(account, *entry, sourcePath, "", "", 0, 0, 0, 0, "", "文件名无法识别", extra)
@@ -539,6 +563,8 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 		return fmt.Errorf("%w：媒体信息不完整", errMediaUnrecognized)
 	}
 	newQ := ParseQualityFromName(entry.Name)
+	// AI 识别出的质量维度补齐文件名解析缺项（symedia 契约：AI 返回分辨率/来源/组名/编码）
+	mergeAiQualityHints(newQ, media.AiQuality)
 	// 洗版延后处置：旧文件删除/归档动作在新文件成功移入后执行（wash_apply 先删后移的缺集窗口修复）
 	var deferredWash washDecision
 
@@ -638,8 +664,10 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 		if !found {
 			result.SuccessDirs = append(result.SuccessDirs, relDir)
 		}
-		result.Details = append(result.Details, fmt.Sprintf("✓ %s → %s/%s", entry.Name, relDir, newName))
-		helpers.AppLogger.Infof("自动整理成功：%s → %s/%s", entry.Name, relDir, newName)
+		// symedia 风格完整路径：源（待整理根目录起） => 目标（已整理根目录起）
+		targetFullPath := strings.TrimRight(organizedRoot, "/") + "/" + relDir + "/" + newName
+		result.Details = append(result.Details, fmt.Sprintf("✓ 整理成功：%s => %s", sourcePath, targetFullPath))
+		helpers.AppLogger.Infof("自动整理成功：%s => %s", sourcePath, targetFullPath)
 		result.Items = append(result.Items, OrganizedItem{
 			Title:        officialTitle,
 			Year:         year,
@@ -653,7 +681,7 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 			SizeGB:       float64(entry.Size) / (1 << 30),
 			TmdbID:       tmdbID,
 		})
-		recordSuccess(account, *entry, sourcePath, relDir+"/"+newName, media.Category, officialTitle, year, media.Season, media.Episode, tmdbID, newName, "整理成功", extra)
+		recordSuccess(account, *entry, sourcePath, strings.TrimRight(organizedRoot, "/")+"/"+relDir+"/"+newName, media.Category, officialTitle, year, media.Season, media.Episode, tmdbID, newName, "整理成功", extra)
 	}
 
 	if err := moveNetdiskFileInternal(account, entry.ID, entry.ParentID, targetDirID); err != nil {

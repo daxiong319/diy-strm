@@ -63,8 +63,16 @@ func TestWashCompareAndApplyDefersLoserDisposal(t *testing.T) {
 	if decision.pendingLosers[0].log == nil || decision.pendingLosers[0].log.OldName == "" {
 		t.Fatal("延后处置应携带 wash_replace 日志（含旧文件名）")
 	}
-	if len(decision.treatments) == 0 || !strings.Contains(decision.treatments[0], "1 个旧版本") {
+	if len(decision.treatments) == 0 {
+		t.Fatalf("treatments 不应为空，实际 %v", decision.treatments)
+	}
+	joined := strings.Join(decision.treatments, "\n")
+	if !strings.Contains(joined, "1 个旧版本") {
 		t.Fatalf("treatments 应含匹配数量摘要，实际 %v", decision.treatments)
+	}
+	// 明细行应含新旧文件对比与决出项（洗版日志可归因）
+	if !strings.Contains(joined, "分辨率 2160p>1080p") || !strings.Contains(joined, "vs") {
+		t.Fatalf("treatments 应含新旧版本对比明细，实际 %v", decision.treatments)
 	}
 }
 
