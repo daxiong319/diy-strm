@@ -173,6 +173,41 @@ func yearMatchScore(wantYear int, haveYear int, seasonYears []int, hasProfile bo
 	return yearBucketUnknown, false
 }
 
+// scoredCandidate 带标题分的候选（评分中间态）
+type scoredCandidate struct {
+	cand  tmdbCandidate
+	score int
+}
+
+// sortCandidatesByScore 综合分排序取最高；同分（如多个候选标题满分但年份档相同）时
+// 年份就近者胜、再按 ID 稳定排序——年份只做辅助排位，不做硬过滤。
+func sortCandidatesByScore(final []scoredCandidate, wantYear int) {
+	sort.SliceStable(final, func(i, j int) bool {
+		if final[i].score != final[j].score {
+			return final[i].score > final[j].score
+		}
+		if wantYear > 0 {
+			di, dj := yearDistance(final[i].cand.Year, wantYear), yearDistance(final[j].cand.Year, wantYear)
+			if di != dj {
+				return di < dj
+			}
+		}
+		return final[i].cand.ID < final[j].cand.ID
+	})
+}
+
+// yearDistance 候选年份与目标年份的距离（候选无年份视为最远）
+func yearDistance(year, want int) int {
+	if year <= 0 {
+		return 1 << 30
+	}
+	d := year - want
+	if d < 0 {
+		d = -d
+	}
+	return d
+}
+
 // matchTmdbCandidates TMDB 多候选评分匹配（核心入口）：
 //  1. TV 不带年搜索（movie 带年与不带年合并去重）
 //  2. 标题分 ≥ 阈值的候选拉 TV 季画像做年份精确校验（限前 N 个）
@@ -231,10 +266,7 @@ func matchTmdbCandidates(ctx context.Context, title string, wantYear int, mediaT
 		return nil, fmt.Errorf("TMDB 没有数据")
 	}
 
-	type scored struct {
-		cand  tmdbCandidate
-		score int
-	}
+	type scored = scoredCandidate
 	scored0 := make([]scored, 0, len(cands))
 	for _, cand := range cands {
 		ts := titleMatchScore(title, cand.Name)
@@ -320,13 +352,7 @@ func matchTmdbCandidates(ctx context.Context, title string, wantYear int, mediaT
 	if len(final) == 0 {
 		return nil, fmt.Errorf("TMDB 候选年份与 %d 均不符", wantYear)
 	}
-	// 综合分排序取最高
-	sort.SliceStable(final, func(i, j int) bool {
-		if final[i].score != final[j].score {
-			return final[i].score > final[j].score
-		}
-		return final[i].cand.ID < final[j].cand.ID
-	})
+	sortCandidatesByScore(final, wantYear)
 	best := final[0].cand
 	helpers.AppLogger.Infof("TMDB 多候选匹配：%s (%d) → %s (%d)（综合分 %d / %d 候选）",
 		title, wantYear, best.Name, best.ID, final[0].score, len(scored0))

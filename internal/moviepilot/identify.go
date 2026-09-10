@@ -8,7 +8,6 @@ import (
 	"diy-strm/internal/mediaparse"
 	"diy-strm/internal/models"
 	"diy-strm/internal/openai"
-	"diy-strm/internal/scrape"
 )
 
 // IdentifyResult AI 辅助识别的媒体信息
@@ -87,26 +86,28 @@ func IdentifyFileWithAIContext(ctx context.Context, hintName, fileName string) (
 
 // verifyIdentifyByTmdb 用 TMDB 校验 AI 识别的名称与年份，命中则返回规范化媒体信息。
 // isMovie=true 时按电影查询，否则按剧集查询（季集从文件名补齐，缺省 1）。
+// 校验统一走多候选评分匹配：年份只做辅助评分而非硬过滤——AI 给出的年份常是
+// 年番/续季的播出年（如 遮天年番 2026），与 TMDB 首播年（2023）不同，
+// 带年过滤会搜空导致 AI 兜底整体失效。
 func verifyIdentifyByTmdb(ctx context.Context, fileName, name string, year int, isMovie bool) (IdentifyResult, bool) {
-	var officialName string
-	var tmdbID int64
-	var tmdbYear int
-	var err error
+	mediaType := "tv"
 	if isMovie {
-		movieImpl := scrape.NewTmdbMovieImpl(nil, ctx)
-		officialName, tmdbID, tmdbYear, err = movieImpl.CheckByNameAndYear(name, year, true)
-	} else {
-		tvImpl := scrape.NewTmdbTvShowImpl(nil, ctx)
-		officialName, tmdbID, tmdbYear, err = tvImpl.CheckByNameAndYear(name, year, true)
+		mediaType = "movie"
 	}
-	if err != nil || tmdbID <= 0 {
+	best, err := matchTmdbCandidates(ctx, name, year, mediaType)
+	if err != nil || best == nil || best.ID <= 0 {
 		return IdentifyResult{}, false
 	}
+	officialName := best.Name
+	if officialName == "" {
+		officialName = best.OrigName
+	}
+	tmdbYear := best.Year
 	res := IdentifyResult{
 		Category: "movie",
 		Title:    officialName,
 		Year:     tmdbYear,
-		TmdbId:   tmdbID,
+		TmdbId:   best.ID,
 	}
 	if tmdbYear <= 0 && year > 0 {
 		res.Year = year
@@ -120,6 +121,6 @@ func verifyIdentifyByTmdb(ctx context.Context, fileName, name string, year int, 
 			res.Episode = parsed.Episode
 		}
 	}
-	helpers.AppLogger.Infof("AI 识别成功：%s → %s（%s，TMDB %d）", fileName, officialName, res.Category, tmdbID)
+	helpers.AppLogger.Infof("AI 识别成功：%s → %s（%s，TMDB %d）", fileName, officialName, res.Category, best.ID)
 	return res, true
 }

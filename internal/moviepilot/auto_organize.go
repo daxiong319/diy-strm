@@ -69,9 +69,9 @@ func stripCjkDots(s string) string {
 	return s
 }
 
-// normalizeAutoDirName 归一化 TG 转存目录名：
+// normalizeAutoDirName 归一化 TG 转存目录名/独立文件名：
 //  1. 「年番N」提取为季号并从名字移除（「2-遮.天 年番4 (2026)」→「遮.天 (2026)」+ S4）
-//  2. 剥前导批次序号「N-」（剥后非空才采用）
+//  2. 剥前导批次序号「N-」（剥后非空且不以数字开头才采用——避免误伤「2.5D」这类标题）
 //
 // 返回归一化后的名字与年番季号（0=非年番）
 func normalizeAutoDirName(name string) (string, int) {
@@ -85,7 +85,7 @@ func normalizeAutoDirName(name string) (string, int) {
 	}
 	if leadingIndexRe.MatchString(name) {
 		trimmed := leadingIndexRe.ReplaceAllString(name, "")
-		if strings.TrimSpace(trimmed) != "" {
+		if t := strings.TrimSpace(trimmed); t != "" && !startsWithDigit(t) {
 			name = trimmed
 		}
 	}
@@ -93,6 +93,14 @@ func normalizeAutoDirName(name string) (string, int) {
 	name = stripCjkDots(name)
 	// 压缩移除年番/序号后残留的连续空格
 	return strings.Join(strings.Fields(name), " "), fanSeason
+}
+
+// startsWithDigit 判断字符串是否以 ASCII 数字开头（批次序号剥离的防误伤护栏）
+func startsWithDigit(s string) bool {
+	if s == "" {
+		return false
+	}
+	return s[0] >= '0' && s[0] <= '9'
 }
 
 // extractReleaseGroup 从文件名提取发布组（最后一个「-」之后的标签，如 xxx.H.265-Ocat → Ocat）
@@ -479,9 +487,14 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 		recordSkipped(account, *entry, sourcePath, "", "", 0, 0, 0, 0, "", "文件名无法识别", extra)
 		return err
 	}
+	// AI 兜底上下文：目录名优先（目录名常比文件名更完整），独立文件用文件名自身
+	aiHint := ""
+	if dirCtx != nil {
+		aiHint = strings.TrimSpace(dirCtx.RawName)
+	}
 	if strings.TrimSpace(media.Title) == "" && *aiBudget > 0 {
 		*aiBudget--
-		if ai, ok := IdentifyFileWithAI(ctx, entry.Name); ok {
+		if ai, ok := IdentifyFileWithAIContext(ctx, aiHint, entry.Name); ok {
 			media = &ai
 			if dirCtx != nil && dirCtx.Year > 0 && media.Year <= 0 {
 				media.Year = dirCtx.Year
@@ -497,12 +510,12 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 	}
 
 	officialTitle, tmdbID, tmdbYear, categoryName, tmdbScore, err := lookupTmdbMediaWithRules(ctx, media, *rules)
-	if err != nil && dirCtx != nil && strings.TrimSpace(dirCtx.RawName) != "" && *aiBudget > 0 {
-		// 目录级标题可能解析损坏（批次序号/杂讯）导致 TMDB 搜不到；
+	if err != nil && *aiBudget > 0 {
+		// 目录级标题可能解析损坏（批次序号/杂讯）或独立文件名带杂讯导致 TMDB 搜不到；
 		// 用 AI 对「目录名 + 文件名」重新识别，命中则替换 media 重试一次
 		*aiBudget--
-		helpers.AppLogger.Infof("自动整理：TMDB 未命中（%s），尝试 AI 兜底（目录：%s）", media.Title, dirCtx.RawName)
-		if ai, ok := IdentifyFileWithAIContext(ctx, dirCtx.RawName, entry.Name); ok {
+		helpers.AppLogger.Infof("自动整理：TMDB 未命中（%s），尝试 AI 兜底（上下文：%s）", media.Title, aiHint)
+		if ai, ok := IdentifyFileWithAIContext(ctx, aiHint, entry.Name); ok {
 			ai.Season = media.Season
 			ai.Episode = media.Episode
 			if ai.Category == "" {
@@ -781,8 +794,10 @@ func handleRenameDuplicate(ctx context.Context, account *models.Account, cfg *mo
 
 // buildAutoMedia 由文件名 + 目录级信息组装媒体信息。
 // 标题/年份优先目录级（目录名通常更规范），季/集优先文件级。
+// 文件名与目录名走同一归一化（剥批次序号/年番季标记/中文夹点），
+// 独立文件（无目录级信息）也能按「年份前文字做片名、年番N 提季」识别。
 func buildAutoMedia(fileName string, dirCtx *autoDirMedia) (*IdentifyResult, error) {
-	cleanFileName := stripCjkDots(stripTmdbTag(fileName))
+	cleanFileName, fileFanSeason := normalizeAutoDirName(stripTmdbTag(fileName))
 	fileCategory, fileTitle, _, fileEpisode, fileYear := mediaparse.ParseMedia(cleanFileName)
 	fileParsed, hasEp := mediaparse.ParseEpisode(cleanFileName)
 
@@ -827,6 +842,9 @@ func buildAutoMedia(fileName string, dirCtx *autoDirMedia) (*IdentifyResult, err
 	}
 	if dirCtx != nil && dirCtx.Season > 0 {
 		media.Season = dirCtx.Season
+	} else if fileFanSeason > 0 && fileParsed.Season <= 0 {
+		// 独立文件名里的「年番N」季标记（目录级缺失时兜底）
+		media.Season = fileFanSeason
 	}
 	if media.Category == "movie" {
 		media.Episode = 0
