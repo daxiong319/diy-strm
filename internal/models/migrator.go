@@ -20,7 +20,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 81
+var MaxVersionCode = 82
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -38,6 +38,7 @@ var AllTables = []any{
 	MonitorTransferRecord{},
 	Pan139DirCache{},
 	Emby302ProxyRule{},
+	AIParseCache{},
 }
 
 func (*Migrator) TableName() string {
@@ -946,6 +947,16 @@ func Migrate() {
 			return
 		}
 		helpers.AppLogger.Info("移动云盘：目录指纹缓存表已就绪")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 81 {
+		// AI 识别结果缓存（借鉴 tgto123 ai_media_parser exact 缓存）：
+		// 相同目录名+文件名输入不重复调用 AI，命中后仍走 TMDB 校验
+		if err := db.Db.AutoMigrate(&AIParseCache{}); err != nil {
+			helpers.AppLogger.Errorf("迁移 AI 识别缓存表失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("AI 识别缓存表已就绪")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)

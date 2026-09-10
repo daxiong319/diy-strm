@@ -7,6 +7,7 @@ import (
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/mediaparse"
 	"diy-strm/internal/models"
+	"diy-strm/internal/openai"
 	"diy-strm/internal/scrape"
 )
 
@@ -46,13 +47,24 @@ func IdentifyFileWithAIContext(ctx context.Context, hintName, fileName string) (
 	if hint != "" {
 		aiInput = hint + " " + fileName
 	}
-	aiInfo, err := client.TakeMoiveName(aiInput, settings.GetAiPrompt())
-	if err != nil {
-		helpers.AppLogger.Warnf("AI 识别文件名失败（%s）：%v", aiInput, err)
-		return IdentifyResult{}, false
-	}
-	if aiInfo == nil || strings.TrimSpace(aiInfo.Name) == "" {
-		return IdentifyResult{}, false
+	// AI 识别缓存（借鉴 tgto123 exact 缓存）：相同输入不重复调用 AI；
+	// 命中后仍走下方 TMDB 校验，校验失败删除缓存条目避免坏缓存
+	cacheKey := models.AICacheKey(hint, fileName)
+	var aiInfo *openai.MediaInfoAI
+	if name, year, ok := models.GetAIParseCache(cacheKey); ok {
+		helpers.AppLogger.Infof("AI 识别缓存命中：%s → %s (%d)", aiInput, name, year)
+		aiInfo = &openai.MediaInfoAI{Name: name, Year: year}
+	} else {
+		res, err := client.TakeMoiveName(aiInput, settings.GetAiPrompt())
+		if err != nil {
+			helpers.AppLogger.Warnf("AI 识别文件名失败（%s）：%v", aiInput, err)
+			return IdentifyResult{}, false
+		}
+		if res == nil || strings.TrimSpace(res.Name) == "" {
+			return IdentifyResult{}, false
+		}
+		aiInfo = res
+		models.SaveAIParseCache(cacheKey, aiInput, aiInfo.Name, aiInfo.Year)
 	}
 	// TMDB 校验：优先电影，其次剧集；再试去空格变体（AI 可能返回「遮 天」）
 	verifyNames := []string{aiInfo.Name}
@@ -67,6 +79,8 @@ func IdentifyFileWithAIContext(ctx context.Context, hintName, fileName string) (
 			return res, true
 		}
 	}
+	// 校验失败：删缓存（可能是坏缓存），未命中缓存的也无需保留失败结果
+	models.DeleteAIParseCache(cacheKey)
 	helpers.AppLogger.Warnf("AI 识别结果未通过 TMDB 校验（%s → %s %d）", aiInput, aiInfo.Name, aiInfo.Year)
 	return IdentifyResult{}, false
 }

@@ -246,6 +246,40 @@ func matchTmdbCandidates(ctx context.Context, title string, wantYear int, mediaT
 		}
 		scored0 = append(scored0, scored{cand: cand, score: ts})
 	}
+	// 别名兜底（借鉴 tgto123 _fetch_candidate_alias_titles）：
+	// 全部候选标题未达标时，拉前几个候选的 TMDB 别名（alternative titles）
+	// 再做标题匹配（别名常含更贴合本地化/罗马音的写法），命中则纳入评分
+	if len(scored0) == 0 {
+		probe := 0
+		for _, cand := range cands {
+			if probe >= tvSeasonYearsProbeMax {
+				break
+			}
+			probe++
+			var altNames []string
+			var aErr error
+			if isTV {
+				altNames, aErr = client.GetTvAlternativeTitles(cand.ID)
+			} else {
+				altNames, aErr = client.GetMovieAlternativeTitles(cand.ID)
+			}
+			if aErr != nil || len(altNames) == 0 {
+				continue
+			}
+			for _, alt := range altNames {
+				ts := titleMatchScore(title, alt)
+				if ts < titleAcceptMin {
+					continue
+				}
+				scored0 = append(scored0, scored{cand: cand, score: ts})
+				helpers.AppLogger.Infof("TMDB 别名命中：%s ← %s（候选 %s）", title, alt, cand.Name)
+				break
+			}
+			if len(scored0) > 0 {
+				break
+			}
+		}
+	}
 	if len(scored0) == 0 {
 		return nil, fmt.Errorf("TMDB 候选均未通过标题校验（%s）", title)
 	}
