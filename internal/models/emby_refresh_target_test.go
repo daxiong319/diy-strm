@@ -612,11 +612,13 @@ func TestRequestEmbyRefreshTargetsExpandsLibraryFallbackAcrossAllSyncPathLibrari
 	}
 }
 
-func TestRequestEmbyRefreshTargetsExpandsAllLibrariesWhenLibraryTargetHasFallbackHint(t *testing.T) {
+func TestRequestEmbyRefreshTargetsKeepsLibraryTargetWithResolvedFallback(t *testing.T) {
 	setupEmbyRefreshTestDB(t)
 	db.Db.Create(&EmbyLibrarySyncPath{LibraryId: "lib-movie", LibraryName: "电影", SyncPathId: 10})
 	db.Db.Create(&EmbyLibrarySyncPath{LibraryId: "lib-tv", LibraryName: "剧集", SyncPathId: 10})
 
+	// 已精准解析到具体库的 Library 目标不得按同步目录关联展开
+	//（一个同步目录可能关联全部媒体库，展开会把单库刷新放大成全库刷新）。
 	if err := RequestEmbyRefreshTargets(10, []EmbyRefreshTarget{{
 		TargetType:          EmbyRefreshTargetTypeLibrary,
 		FallbackLibraryId:   "lib-movie",
@@ -629,8 +631,8 @@ func TestRequestEmbyRefreshTargetsExpandsAllLibrariesWhenLibraryTargetHasFallbac
 	if err := db.Db.Order("library_id ASC").Find(&tasks).Error; err != nil {
 		t.Fatalf("查询媒体库刷新任务失败: %v", err)
 	}
-	if len(tasks) != 2 || tasks[0].LibraryId != "lib-movie" || tasks[1].LibraryId != "lib-tv" {
-		t.Fatalf("媒体库刷新任务 = %+v，期望展开 lib-movie 和 lib-tv", tasks)
+	if len(tasks) != 1 || tasks[0].LibraryId != "lib-movie" {
+		t.Fatalf("媒体库刷新任务 = %+v，期望仅锁定 lib-movie", tasks)
 	}
 }
 

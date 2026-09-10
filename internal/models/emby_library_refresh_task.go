@@ -366,7 +366,11 @@ func expandEmbyRefreshLibraryTargets(syncPathId uint, targets []EmbyRefreshTarge
 		if target.TargetType == "" {
 			target.TargetType = EmbyRefreshTargetTypeLibrary
 		}
-		if target.TargetType != EmbyRefreshTargetTypeLibrary {
+		// 条目目标与已锁定具体库的目标直接保留：
+		// Library target 携带 FallbackLibraryId 说明上游已精准解析到库
+		//（条目定位/兄弟集/路径匹配 Locations），不得按同步目录关联展开，
+		// 否则一个关联了全部媒体库的同步目录会把单库刷新放大成全库刷新。
+		if target.TargetType != EmbyRefreshTargetTypeLibrary || target.FallbackLibraryId != "" {
 			expanded = append(expanded, target)
 			continue
 		}
