@@ -1,0 +1,21 @@
+name: diag
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 抓取 diy-strm 容器识别日志
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          command_timeout: 120s
+          script: |
+            echo '=== 遮天识别日志（3h 内） ==='
+            docker logs diy-strm --since 3h 2>&1 | grep -E '遮|TMDB 多候选|变体|识别失败|自动整理|AI 兜底' | tail -60
+            echo '=== 多候选匹配日志（全部） ==='
+            docker logs diy-strm --since 6h 2>&1 | grep -E 'TMDB 多候选匹配|TMDB 变体' | tail -30
