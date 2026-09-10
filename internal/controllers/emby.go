@@ -168,13 +168,19 @@ func Webhook(ctx *gin.Context) {
 	}
 	if event.Event == "library.new" || event.Event == "library.modified" {
 		// 同步 Emby 条目到本地，用于更新 QMediaSync 本地索引。
-		go func() {
-			if changed, err := emby.SyncEmbyItemByID(event.Item.ID); err != nil {
-				helpers.AppLogger.Warnf("Webhook 单条同步 Emby 条目失败，Item ID=%s，错误=%v", event.Item.ID, err)
-			} else if changed {
-				helpers.AppLogger.Infof("Webhook 单条同步 Emby 条目完成，Item ID=%s", event.Item.ID)
-			}
-		}()
+		// 只同步可播放条目：Series/Season/Folder 是容器，单条同步查询（IncludeItemTypes=Movie,Video,Episode）
+		// 永远查不到它们；Emby 4.8 批量入库的合并事件用 Series 代表（"将 N 项目添加到 X"），
+		// 子条目各自有独立事件，跳过容器类型避免误报"未找到 Emby 条目"。
+		switch event.Item.Type {
+		case "Movie", "Episode", "Video":
+			go func() {
+				if changed, err := emby.SyncEmbyItemByID(event.Item.ID); err != nil {
+					helpers.AppLogger.Warnf("Webhook 单条同步 Emby 条目失败，Item ID=%s，错误=%v", event.Item.ID, err)
+				} else if changed {
+					helpers.AppLogger.Infof("Webhook 单条同步 Emby 条目完成，Item ID=%s", event.Item.ID)
+				}
+			}()
+		}
 	}
 	if event.Event == "library.deleted" {
 		// 删除媒体通知
