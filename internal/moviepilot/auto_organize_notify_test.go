@@ -27,8 +27,8 @@ func TestExtractReleaseGroup(t *testing.T) {
 	}{
 		{"赌金.2026.S01E01.第1集.2160p.WEB-DL.DoVi.H.265.DDP5.1-Ocat.mkv", "Ocat"},
 		{"Movie.2026.2160p.WEB-DL-HHWEB.mkv", "HHWEB"},
-		{"NoGroup.2026.1080p.mkv", ""},   // 尾段含数字/点，过滤
-		{"plainname.mkv", ""},            // 无 - 段
+		{"NoGroup.2026.1080p.mkv", ""}, // 尾段含数字/点，过滤
+		{"plainname.mkv", ""},          // 无 - 段
 	}
 	for _, tc := range cases {
 		if got := extractReleaseGroup(tc.in); got != tc.want {

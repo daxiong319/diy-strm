@@ -23,6 +23,13 @@ type IdentifyResult struct {
 // IdentifyFileWithAI 对无法正则识别的文件名执行 AI 辅助识别（复用刮削 AI 配置），
 // 识别结果通过 TMDB 校验。未启用 AI、AI 调用失败或 TMDB 校验失败时返回 ok=false。
 func IdentifyFileWithAI(ctx context.Context, fileName string) (IdentifyResult, bool) {
+	return IdentifyFileWithAIContext(ctx, "", fileName)
+}
+
+// IdentifyFileWithAIContext 同 IdentifyFileWithAI，但允许提供目录名作为识别
+// 上下文（文件名常不含标题，如「S01E08.2026.2160p.mp4」，标题在目录名里）。
+// hintName 非空时 AI 输入为「目录名 + 文件名」，并对去空格变体做 TMDB 校验。
+func IdentifyFileWithAIContext(ctx context.Context, hintName, fileName string) (IdentifyResult, bool) {
 	settings := models.GlobalScrapeSettings
 	if settings.EnableAi == models.AiActionOff {
 		return IdentifyResult{}, false
@@ -34,22 +41,33 @@ func IdentifyFileWithAI(ctx context.Context, fileName string) (IdentifyResult, b
 	if client == nil {
 		return IdentifyResult{}, false
 	}
-	aiInfo, err := client.TakeMoiveName(fileName, settings.GetAiPrompt())
+	aiInput := fileName
+	hint := strings.TrimSpace(hintName)
+	if hint != "" {
+		aiInput = hint + " " + fileName
+	}
+	aiInfo, err := client.TakeMoiveName(aiInput, settings.GetAiPrompt())
 	if err != nil {
-		helpers.AppLogger.Warnf("AI 识别文件名失败（%s）：%v", fileName, err)
+		helpers.AppLogger.Warnf("AI 识别文件名失败（%s）：%v", aiInput, err)
 		return IdentifyResult{}, false
 	}
 	if aiInfo == nil || strings.TrimSpace(aiInfo.Name) == "" {
 		return IdentifyResult{}, false
 	}
-	// TMDB 校验：优先电影，其次剧集
-	if res, ok := verifyIdentifyByTmdb(ctx, fileName, aiInfo.Name, aiInfo.Year, true); ok {
-		return res, true
+	// TMDB 校验：优先电影，其次剧集；再试去空格变体（AI 可能返回「遮 天」）
+	verifyNames := []string{aiInfo.Name}
+	if noSpace := strings.ReplaceAll(strings.TrimSpace(aiInfo.Name), " ", ""); noSpace != "" && noSpace != strings.TrimSpace(aiInfo.Name) {
+		verifyNames = append(verifyNames, noSpace)
 	}
-	if res, ok := verifyIdentifyByTmdb(ctx, fileName, aiInfo.Name, aiInfo.Year, false); ok {
-		return res, true
+	for _, verifyName := range verifyNames {
+		if res, ok := verifyIdentifyByTmdb(ctx, fileName, verifyName, aiInfo.Year, true); ok {
+			return res, true
+		}
+		if res, ok := verifyIdentifyByTmdb(ctx, fileName, verifyName, aiInfo.Year, false); ok {
+			return res, true
+		}
 	}
-	helpers.AppLogger.Warnf("AI 识别结果未通过 TMDB 校验（%s → %s %d）", fileName, aiInfo.Name, aiInfo.Year)
+	helpers.AppLogger.Warnf("AI 识别结果未通过 TMDB 校验（%s → %s %d）", aiInput, aiInfo.Name, aiInfo.Year)
 	return IdentifyResult{}, false
 }
 

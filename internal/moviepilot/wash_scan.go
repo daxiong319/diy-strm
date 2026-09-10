@@ -16,12 +16,12 @@ import (
 
 // WashScanSummary 一次违规扫描的结果摘要（同时持久化到配置 LastResult 供前端展示 + 通知）
 type WashScanSummary struct {
-	AccountID    uint   `json:"account_id"`
-	OrgRoot      string `json:"org_root"`
-	ScannedFiles int    `json:"scanned_files"` // 扫描到的视频文件数
-	ViolationNum int    `json:"violation_num"` // 判定为待洗版（违规）的条目数
-	CleanRemoved int    `json:"clean_removed"` // 本次扫描清除的已达标/已消失条目数
-	Errors       int    `json:"errors"`
+	AccountID    uint     `json:"account_id"`
+	OrgRoot      string   `json:"org_root"`
+	ScannedFiles int      `json:"scanned_files"` // 扫描到的视频文件数
+	ViolationNum int      `json:"violation_num"` // 判定为待洗版（违规）的条目数
+	CleanRemoved int      `json:"clean_removed"` // 本次扫描清除的已达标/已消失条目数
+	Errors       int      `json:"errors"`
 	Details      []string `json:"details"`
 }
 

@@ -327,6 +327,41 @@ func lookupTmdbMediaWithRules(ctx context.Context, media *IdentifyResult, rules 
 			checkName, checkID, checkYear, err = tvImpl.CheckByNameAndYear(media.Title, media.Year, true)
 		}
 		if err != nil || checkID <= 0 {
+			// 变体重试：CheckByNameAndYear 的多结果校验要求搜索名与 TMDB 正名完全一致，
+			// 1) 标题含空格时先试去空格（「遮 天」→「遮天」）
+			// 2) 仍失败再去掉年份重搜（分享标注年份与 TMDB 首播年常不一致，年番尤其明显）
+			candidates := make([]struct {
+				name string
+				year int
+			}, 0, 2)
+			noSpace := strings.ReplaceAll(strings.TrimSpace(media.Title), " ", "")
+			if noSpace != "" && noSpace != strings.TrimSpace(media.Title) {
+				candidates = append(candidates, struct {
+					name string
+					year int
+				}{noSpace, media.Year})
+			}
+			if media.Year > 0 {
+				candidates = append(candidates, struct {
+					name string
+					year int
+				}{noSpace, 0})
+			}
+			for _, cand := range candidates {
+				if isMovie {
+					movieImpl := scrape.NewTmdbMovieImpl(nil, ctx)
+					checkName, checkID, checkYear, err = movieImpl.CheckByNameAndYear(cand.name, cand.year, true)
+				} else {
+					tvImpl := scrape.NewTmdbTvShowImpl(nil, ctx)
+					checkName, checkID, checkYear, err = tvImpl.CheckByNameAndYear(cand.name, cand.year, true)
+				}
+				if err == nil && checkID > 0 {
+					helpers.AppLogger.Infof("TMDB 变体搜索命中：%s → %s（TMDB %d）", media.Title, checkName, checkID)
+					break
+				}
+			}
+		}
+		if err != nil || checkID <= 0 {
 			if err == nil {
 				err = fmt.Errorf("TMDB 校验失败")
 			}

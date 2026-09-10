@@ -236,6 +236,7 @@ func (c *Client) UpdateSubscribeStatus(ctx context.Context, subscribeID int64, s
 // 促销名（普通/免费/2X免费/50%/2X 50%…）恒为最后一段，故用 $ 锚定精确匹配：
 //   - free:   排除「2X免费/4X免费」（它们以 X 结尾再接免费）
 //   - half:   排除「2X 50%」（50% 前是 "X "）
+//
 // 返回空串表示不限促销。
 func PromotionIncludeRegex(promotion string) string {
 	switch promotion {
@@ -335,18 +336,18 @@ func (c *Client) UpdateSubscribeInclude(ctx context.Context, subscribeID int64, 
 
 // DownloadTorrent MP 下载器任务
 type DownloadTorrent struct {
-	Hash        string  `json:"hash"`
-	Title       string  `json:"title"`
-	Name        string  `json:"name"`
-	Year        string  `json:"year"`
-	SeasonEpisode string `json:"season_episode"`
-	Path        string  `json:"path"`
-	SavePath    string  `json:"save_path"`
-	ContentPath string  `json:"content_path"`
-	State       string  `json:"state"`
-	Progress    float64 `json:"progress"`
-	Category    string  `json:"category"`
-	Media       map[string]any `json:"media"`
+	Hash          string         `json:"hash"`
+	Title         string         `json:"title"`
+	Name          string         `json:"name"`
+	Year          string         `json:"year"`
+	SeasonEpisode string         `json:"season_episode"`
+	Path          string         `json:"path"`
+	SavePath      string         `json:"save_path"`
+	ContentPath   string         `json:"content_path"`
+	State         string         `json:"state"`
+	Progress      float64        `json:"progress"`
+	Category      string         `json:"category"`
+	Media         map[string]any `json:"media"`
 }
 
 // ListDownloads 查询所有下载任务

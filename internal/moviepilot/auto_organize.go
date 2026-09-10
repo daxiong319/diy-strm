@@ -50,6 +50,36 @@ type OrganizedItem struct {
 	TmdbID       int64   `json:"tmdb_id"`
 }
 
+// leadingIndexRe TG 频道分享名的前导批次序号（如「2-遮.天」的「2-」）
+var leadingIndexRe = regexp.MustCompile(`^\d{1,3}[.\-_ ]+\s*`)
+
+// yearFanRe 「年番N」季标记（年番第 N 部 → TMDB 第 N 季）
+var yearFanRe = regexp.MustCompile(`年番\s*(\d{1,2})`)
+
+// normalizeAutoDirName 归一化 TG 转存目录名：
+//  1. 「年番N」提取为季号并从名字移除（「2-遮.天 年番4 (2026)」→「遮.天 (2026)」+ S4）
+//  2. 剥前导批次序号「N-」（剥后非空才采用）
+//
+// 返回归一化后的名字与年番季号（0=非年番）
+func normalizeAutoDirName(name string) (string, int) {
+	name = strings.TrimSpace(name)
+	fanSeason := 0
+	if m := yearFanRe.FindStringSubmatch(name); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+			fanSeason = n
+		}
+		name = strings.TrimSpace(yearFanRe.ReplaceAllString(name, " "))
+	}
+	if leadingIndexRe.MatchString(name) {
+		trimmed := leadingIndexRe.ReplaceAllString(name, "")
+		if strings.TrimSpace(trimmed) != "" {
+			name = trimmed
+		}
+	}
+	// 压缩移除年番/序号后残留的连续空格
+	return strings.Join(strings.Fields(name), " "), fanSeason
+}
+
 // extractReleaseGroup 从文件名提取发布组（最后一个「-」之后的标签，如 xxx.H.265-Ocat → Ocat）
 func extractReleaseGroup(name string) string {
 	base := strings.TrimSuffix(name, filepath.Ext(name))
@@ -231,9 +261,14 @@ func isGenericAggregateDirName(name string) bool {
 // 兜底读取目录内容逐个子资源独立识别。depth 为聚合容器兜底递归深度。
 func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *models.AutoOrganizeConfig, result *AutoOrganizeResult, dir *organizeEntry, organizedRoot string, rules *categoryRules, dirCache map[string]string, aiBudget *int, depth int) {
 	// 目录名解析（标题/年份优先从目录名取，季集优先从文件名取）；
-	// 先剥离目录名中内嵌的 TMDB 标记（{tmdbid-xxx}），避免污染标题搜索
-	cleanDirName := stripTmdbTag(dir.Name)
+	// 先归一化目录名（剥前导批次序号、提取「年番N」季标记）并剥离内嵌
+	// TMDB 标记（{tmdbid-xxx}），避免污染标题搜索
+	normalizedDirName, fanSeason := normalizeAutoDirName(stripTmdbTag(dir.Name))
+	cleanDirName := normalizedDirName
 	dirCategory, dirTitle, dirSeason, _, dirYear := mediaparse.ParseMedia(cleanDirName)
+	if fanSeason > 0 && dirSeason <= 0 {
+		dirSeason = fanSeason
+	}
 
 	dirStart := time.Now()
 	helpers.AppLogger.Infof("自动整理开始目录（账号 %d）：%s（目录级：类别=%s 标题=%s 季=%d 年份=%d，TMDB ID=%d）",
@@ -277,6 +312,7 @@ func processAutoOrganizeDir(ctx context.Context, account *models.Account, cfg *m
 		Title:    dirTitle,
 		Season:   dirSeason,
 		Year:     dirYear,
+		RawName:  dir.Name,
 		TmdbId:   extractTmdbIDFromName(dir.Name),
 	}
 	for _, v := range videos {
@@ -377,6 +413,7 @@ type autoDirMedia struct {
 	Season   int
 	Year     int
 	TmdbId   int64
+	RawName  string // 原始目录名（AI 兜底识别上下文用）
 }
 
 var (
@@ -445,6 +482,21 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 	}
 
 	officialTitle, tmdbID, tmdbYear, categoryName, tmdbScore, err := lookupTmdbMediaWithRules(ctx, media, *rules)
+	if err != nil && dirCtx != nil && strings.TrimSpace(dirCtx.RawName) != "" && *aiBudget > 0 {
+		// 目录级标题可能解析损坏（批次序号/杂讯）导致 TMDB 搜不到；
+		// 用 AI 对「目录名 + 文件名」重新识别，命中则替换 media 重试一次
+		*aiBudget--
+		helpers.AppLogger.Infof("自动整理：TMDB 未命中（%s），尝试 AI 兜底（目录：%s）", media.Title, dirCtx.RawName)
+		if ai, ok := IdentifyFileWithAIContext(ctx, dirCtx.RawName, entry.Name); ok {
+			ai.Season = media.Season
+			ai.Episode = media.Episode
+			if ai.Category == "" {
+				ai.Category = media.Category
+			}
+			media = &ai
+			officialTitle, tmdbID, tmdbYear, categoryName, tmdbScore, err = lookupTmdbMediaWithRules(ctx, media, *rules)
+		}
+	}
 	if err != nil {
 		recordSkipped(account, *entry, sourcePath, media.Category, media.Title, media.Year, media.Season, media.Episode, 0, "", "TMDB 未找到匹配结果："+err.Error(), extra)
 		return fmt.Errorf("%w：%v", errMediaUnrecognized, err)

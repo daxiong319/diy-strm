@@ -13,19 +13,19 @@ import (
 
 // FileQuality 从文件名解析出的质量快照（借鉴成熟方案 MediaUpgradeRecord 的质量维度）
 type FileQuality struct {
-	Resolution int    `json:"resolution"` // 0/480/720/1080/2160
-	ResTag     string `json:"res_tag"`
-	Codec      string `json:"codec"` // h265/h264/av1/mpeg/unknown
-	CodecTag   string `json:"codec_tag"`
-	VideoFormat string `json:"video_format"` // bluray/remux/web-dl/webrip/hdtv
-	BitDepth   string `json:"bitdepth"`     // 8bit/10bit/12bit
-	HDR        string `json:"hdr"`
-	AudioTag   string `json:"audio_tag"`
-	Channels   int    `json:"channels"`
-	Edition    string `json:"edition"`
+	Resolution    int    `json:"resolution"` // 0/480/720/1080/2160
+	ResTag        string `json:"res_tag"`
+	Codec         string `json:"codec"` // h265/h264/av1/mpeg/unknown
+	CodecTag      string `json:"codec_tag"`
+	VideoFormat   string `json:"video_format"` // bluray/remux/web-dl/webrip/hdtv
+	BitDepth      string `json:"bitdepth"`     // 8bit/10bit/12bit
+	HDR           string `json:"hdr"`
+	AudioTag      string `json:"audio_tag"`
+	Channels      int    `json:"channels"`
+	Edition       string `json:"edition"`
 	Customization string `json:"customization"` // 平台/定制词（Baha/NF/...，命名模板用）
-	Group      string `json:"group"`
-	Tags       string `json:"tags"` // 质量标签段原样（点分）
+	Group         string `json:"group"`
+	Tags          string `json:"tags"` // 质量标签段原样（点分）
 }
 
 func (q *FileQuality) Summary() string {
@@ -65,7 +65,7 @@ var (
 	qualityFpsRe        = regexp.MustCompile(`(?i)\b(120fps|60fps|50fps|30fps|25fps|24fps)\b`)
 	qualityEditionRe    = regexp.MustCompile(`(?i)\b(uncut|unrated|extended|theatrical|director['’]?s?[-_ ]?cut|remastered)\b`)
 	// 组 token 仅纯字母（如 -Ocat / [FRDS]，避免误剥 S01E02 / 2160p 等含数字 token）
-	groupSuffixRe       = regexp.MustCompile(`[-\[\]]([A-Z][A-Za-z]{1,20})$`)
+	groupSuffixRe = regexp.MustCompile(`[-\[\]]([A-Z][A-Za-z]{1,20})$`)
 )
 
 // codecRank 编码评分（越高越优，参考 成熟方案 preferred_codecs=hevc,h265,av1）

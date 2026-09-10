@@ -212,24 +212,24 @@ func TestBuildAutoMediaWithFileTmdbTag(t *testing.T) {
 
 func TestIsGenericAggregateDirName(t *testing.T) {
 	cases := map[string]bool{
-		"剧集":      true,
-		"动漫":      true,
-		"电影":      true,
-		" 剧集 ":     true,
-		"电视剧":     true,
-		"未分类":     true,
-		"国产剧集":    true, // 二级分类名：含关键词不带年份
-		"日韩剧集":    true,
-		"欧美剧集":    true,
-		"国产动漫":    true,
-		"日番动漫":    true,
-		"动画电影":    true,
-		"花开锦绣":    false,
-		"斗破苍穹年番":  false,
+		"剧集":                          true,
+		"动漫":                          true,
+		"电影":                          true,
+		" 剧集 ":                        true,
+		"电视剧":                         true,
+		"未分类":                         true,
+		"国产剧集":                        true, // 二级分类名：含关键词不带年份
+		"日韩剧集":                        true,
+		"欧美剧集":                        true,
+		"国产动漫":                        true,
+		"日番动漫":                        true,
+		"动画电影":                        true,
+		"花开锦绣":                        false,
+		"斗破苍穹年番":                      false,
 		"花开锦绣 (2026) {tmdbid-287496}": false, // 调用方已先 stripTmdbTag，此处模拟剥离后
-		"斗破苍穹.2017": false, // 带年份，即使含分类词也不是容器
-		"神盾局特工":   false,
-		"":         false,
+		"斗破苍穹.2017":                   false, // 带年份，即使含分类词也不是容器
+		"神盾局特工":                       false,
+		"":                            false,
 	}
 	for name, want := range cases {
 		if got := isGenericAggregateDirName(name); got != want {
