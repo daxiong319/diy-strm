@@ -95,6 +95,7 @@ type BaseItemDtoV2 struct {
 type MediaSource struct {
 	Path string `json:"Path,omitempty"`
 	Name string `json:"Name,omitempty"`
+	Size int64  `json:"Size,omitempty"`
 }
 
 type MediaStreamV2 struct {
@@ -446,7 +447,7 @@ func (c *Client) RefreshLibrary(libraryId string, libraryName string) error {
 	if err != nil {
 		return err
 	}
-	helpers.AppLogger.Infof("已触发 Emby 媒体库 %s => %s 刷新", libraryId, libraryName)
+	helpers.AppLogger.Infof("📡 [Emby刷新] 媒体库 %s（%s）刷新已触发", libraryId, libraryName)
 	return nil
 }
 

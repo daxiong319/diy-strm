@@ -469,7 +469,7 @@ func (s *SyncStrm) Start() error {
 	// 提交 Emby 媒体库刷新任务（含临时同步：MP 整理/上传链路触发的同步也需通知 Emby 入库）
 	go func() {
 		if shouldRequestEmbyLibraryRefresh(s.NewMeta, s.NewStrm) {
-			s.Sync.Logger.Info("有新的元数据文件或 STRM 文件，提交 Emby 媒体库刷新任务")
+			s.Sync.Logger.Info("📡 [STRM同步] 新增 STRM/元数据文件，提交 Emby 媒体库刷新任务")
 			targets := s.drainEmbyRefreshTargets()
 			if len(targets) == 0 {
 				targets = []models.EmbyRefreshTarget{{TargetType: models.EmbyRefreshTargetTypeLibrary}}
@@ -481,7 +481,7 @@ func (s *SyncStrm) Start() error {
 				refreshSyncPathId = s.RealSyncPathId
 			}
 			if err := models.RequestEmbyRefreshTargets(refreshSyncPathId, targets); err != nil {
-				s.Sync.Logger.Errorf("提交 Emby 媒体库刷新任务失败：%v", err)
+				s.Sync.Logger.Errorf("❌ [Emby刷新] 提交刷新任务失败：%v", err)
 			}
 		}
 	}()

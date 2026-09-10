@@ -142,7 +142,7 @@ func resolveLibraryByLocalPath(localPath string) (EmbyRefreshTarget, bool) {
 	folders, err := client.GetLibraryVirtualFolders()
 	if err != nil || len(folders) == 0 {
 		if err != nil {
-			helpers.AppLogger.Debugf("按路径匹配媒体库失败（回退同步目录关联）：%v", err)
+			helpers.AppLogger.Debugf("⚠️ [Emby刷新] 路径匹配库失败（回退同步目录关联）：%v", err)
 		}
 		return EmbyRefreshTarget{}, false
 	}

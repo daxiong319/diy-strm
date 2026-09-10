@@ -23,6 +23,8 @@ import (
 	"diy-strm/internal/notificationmanager"
 
 	"github.com/gin-gonic/gin"
+"regexp"
+"strconv"
 )
 
 const embyTempImagePrefix = "qms_emby_"
@@ -147,8 +149,13 @@ func Webhook(ctx *gin.Context) {
 			}
 			if event.Item.Type == "Movie" {
 				sendNewMovieNotification(event.Item.ID)
+				return
 			}
-
+			// Emby 4.8 批量入库只发一条合并事件（Item 为 Series/Season 代表，
+			// 标题「将 N 项目添加到 X」），此前不处理导致入库通知永远收不到。
+			if event.Item.Type == "Series" || event.Item.Type == "Season" || event.Item.Type == "Folder" || event.Item.Type == "BoxSet" {
+				sendMergedMediaNotification(event.Item.ID, event.Title)
+			}
 		}()
 		if event.Item.Type == "Movie" || event.Item.Type == "Episode" {
 			// 触发媒体信息提取
@@ -446,17 +453,208 @@ func startNewSeriesBufferTicker() {
 	}
 }
 
-var notificationTemplate = `
-{{title}} ({{year}})
+// parseNewItemCountFromTitle 解析 Emby 4.8 合并事件标题「将 N 项目添加到 X」中的 N。
+func parseNewItemCountFromTitle(title string) int {
+	re := regexp.MustCompile(`将\s*(\d+)\s*项目添加到`)
+	m := re.FindStringSubmatch(title)
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
 
-🆔 评分：{{rate}}
-🎬 类型：{{genes}}
-👤 主演：{{actors}}
-⏰ 入库时间：{{addedTime}}
+// summarizeReleaseGroups 从文件名中提取发布组并按出现次数汇总（tgto123 _summarize_release_groups 语义）。
+func summarizeReleaseGroups(fileNames []string) string {
+	if len(fileNames) == 0 {
+		return ""
+	}
+	counter := make(map[string]int)
+	for _, name := range fileNames {
+		base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+		// 取最后一个「-」之后的标签作为发布组候选，如 xxx.2160p.WEB-DL.H.265-Ocat
+		if idx := strings.LastIndex(base, "-"); idx > 0 {
+			group := strings.TrimSpace(base[idx+1:])
+			// 过滤纯数字/过短/含点号的非发布组 token
+			if group != "" && len(group) <= 32 && !strings.ContainsAny(group, ".0123456789") {
+				counter[group]++
+			}
+		}
+	}
+	type groupCount struct {
+		name  string
+		count int
+	}
+	groups := make([]groupCount, 0, len(counter))
+	for name, count := range counter {
+		groups = append(groups, groupCount{name, count})
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].count != groups[j].count {
+			return groups[i].count > groups[j].count
+		}
+		return groups[i].name < groups[j].name
+	})
+	if len(groups) > 3 {
+		groups = groups[:3]
+	}
+	parts := make([]string, 0, len(groups))
+	for _, g := range groups {
+		if g.count > 1 {
+			parts = append(parts, fmt.Sprintf("%s×%d", g.name, g.count))
+		} else {
+			parts = append(parts, g.name)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
 
-📝 简介
-{{overview}}
-`
+// formatBytesHuman 体积人性化显示（tgto123 _format_size 语义）。
+func formatBytesHuman(size int64) string {
+	const unit = 1024
+	if size < unit {
+		return fmt.Sprintf("%d B", size)
+	}
+	value := float64(size)
+	units := []string{"KB", "MB", "GB", "TB", "PB"}
+	for _, u := range units {
+		value /= unit
+		if value < unit {
+			return fmt.Sprintf("%.2f %s", value, u)
+		}
+	}
+	return fmt.Sprintf("%.2f EB", value)
+}
+
+// sendMergedMediaNotification 处理 Emby 4.8 批量入库合并事件（library.new，Item 为 Series/Season 代表）。
+// 借鉴 tgto123 OrganizeLibraryNotifier：解析新增数量，拉取最新入库集明细，
+// 构建「季集区间 + 体积 + 发布组」的消息并携带海报发送。
+func sendMergedMediaNotification(itemId, eventTitle string) {
+	detail := emby.GetEmbyItemDetail(itemId)
+	if detail == nil {
+		helpers.AppLogger.Errorf("获取 Emby 媒体 %s 详情失败，无法发送入库合并通知", itemId)
+		return
+	}
+
+	newCount := parseNewItemCountFromTitle(eventTitle)
+	// 拉取最新入库的集明细（新增数量已知时精确拉取）
+	episodes := make([]embyclientrestgo.BaseItemDtoV2, 0)
+	if newCount > 0 && (detail.Type == "Series" || detail.Type == "Season") {
+		if models.GlobalEmbyConfig != nil && models.GlobalEmbyConfig.EmbyUrl != "" && models.GlobalEmbyConfig.EmbyApiKey != "" {
+			client := embyclientrestgo.NewClient(models.GlobalEmbyConfig.EmbyUrl, models.GlobalEmbyConfig.EmbyApiKey)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			fetchLimit := newCount
+			if fetchLimit > 100 {
+				fetchLimit = 100
+			}
+			_ = client.FetchMediaItemsByLibraryID(ctx, embyclientrestgo.EmbyItemsQuery{
+				LibraryID:        itemId,
+				Limit:            fetchLimit,
+				IncludeItemTypes: "Episode",
+				Fields:           "MediaSources",
+			}, func(item embyclientrestgo.BaseItemDtoV2) error {
+				episodes = append(episodes, item)
+				return nil
+			})
+		}
+	}
+
+	// 组装扩展行：季集区间 / 体积 / 发布组
+	seasons := make(map[int][]int)
+	fileNames := make([]string, 0)
+	var totalSize int64
+	for _, ep := range episodes {
+		season := ep.ParentIndexNumber
+		if season == 0 {
+			season = 1
+		}
+		seasons[season] = append(seasons[season], ep.IndexNumber)
+		for _, source := range ep.MediaSources {
+			totalSize += source.Size
+			if source.Path != "" {
+				fileNames = append(fileNames, source.Path)
+			}
+		}
+	}
+
+	extraLines := ""
+	seasonEpisodes := formatSeasonEpisodes(seasons)
+	if seasonEpisodes != "" {
+		extraLines += fmt.Sprintf("📺 入库季集：%s（新增 %d 集）\n", seasonEpisodes, len(episodes))
+	}
+	if totalSize > 0 {
+		extraLines += fmt.Sprintf("💾 体积：%s\n", formatBytesHuman(totalSize))
+	}
+	if groups := summarizeReleaseGroups(fileNames); groups != "" {
+		extraLines += fmt.Sprintf("🏷️ 发布组：%s\n", groups)
+	}
+
+	content := buildMediaNotificationContent(detail, extraLines)
+	mediaType := "电视剧"
+	if detail.Type == "Movie" {
+		mediaType = "电影"
+	}
+	helpers.AppLogger.Infof("已构建 Emby 合并入库通知：%s（新增 %d 项）", detail.Name, len(episodes))
+	sendNewItemNotification(content, detail, mediaType)
+}
+
+// buildMediaNotificationContent 构建入库通知正文（tgto123 OrganizeLibraryNotifier._build_message 风格），
+// extraLines 追加在入库时间之前（季集区间/体积/发布组等扩展信息）。
+func buildMediaNotificationContent(detail *embyclientrestgo.BaseItemDtoV2, extraLines string) string {
+	rate := "暂无评分"
+	if detail.CommunityRating > 0 {
+		rate = fmt.Sprintf("%.1f", detail.CommunityRating)
+	}
+	genes := "暂无数据"
+	if len(detail.Genres) > 0 {
+		genes = strings.Join(detail.Genres, ", ")
+	}
+	actors := "暂无数据"
+	if len(detail.People) > 0 {
+		actorNames := make([]string, 0)
+		for _, person := range detail.People {
+			if person.Type == "Actor" {
+				actorNames = append(actorNames, person.Name)
+				if len(actorNames) >= 5 {
+					break
+				}
+			}
+		}
+		if len(actorNames) > 0 {
+			actors = strings.Join(actorNames, ", ")
+		}
+	}
+	addedTime := time.Now().Format("2006-01-02 15:04:05")
+	if detail.DateCreated != "" {
+		if parsed, err := time.Parse(time.RFC3339, detail.DateCreated); err == nil {
+			addedTime = parsed.Format("2006-01-02 15:04:05")
+		}
+	}
+	overview := detail.Overview
+	if overview == "" {
+		overview = "暂无简介"
+	}
+	tmdbID := ""
+	if v, ok := detail.ProviderIds["Tmdb"]; ok {
+		tmdbID = v
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s (%d)\n\n", detail.Name, detail.ProductionYear)
+	if tmdbID != "" {
+		fmt.Fprintf(&b, "🆔 TMDB：%s\n", tmdbID)
+	}
+	fmt.Fprintf(&b, "⭐ 评分：%s\n", rate)
+	fmt.Fprintf(&b, "🎭 类型：%s\n", genes)
+	fmt.Fprintf(&b, "👤 主演：%s\n", actors)
+	b.WriteString(extraLines)
+	fmt.Fprintf(&b, "⏰ 入库时间：%s\n\n", addedTime)
+	fmt.Fprintf(&b, "📝 简介\n%s", overview)
+	return b.String()
+}
 
 // 发送新电影消息
 func sendNewMovieNotification(itemId string) {
@@ -465,54 +663,8 @@ func sendNewMovieNotification(itemId string) {
 		helpers.AppLogger.Errorf("获取 Emby 媒体 %s 详情失败，无法发送新电影通知", itemId)
 		return
 	}
-	// 使用变量格式化通知内容
-	content := strings.ReplaceAll(notificationTemplate, "{{title}}", detail.Name)
-	content = strings.ReplaceAll(content, "{{year}}", fmt.Sprintf("%d", detail.ProductionYear))
-	content = strings.ReplaceAll(content, "{{rate}}", fmt.Sprintf("%.1f", detail.CommunityRating))
-	// 拼接流派
-	if len(detail.Genres) == 0 {
-		content = strings.ReplaceAll(content, "{{genes}}", "暂无数据")
-	} else {
-		genes := strings.Join(detail.Genres, ", ")
-		content = strings.ReplaceAll(content, "{{genes}}", genes)
-	}
-	// 拼接主演
-	actors := ""
-	if len(detail.People) > 0 {
-		actorNames := make([]string, 0)
-		// 计数
-		actorCount := 0
-		for _, person := range detail.People {
-			if person.Type == "Actor" {
-				actorNames = append(actorNames, person.Name)
-				actorCount++
-			}
-			if actorCount >= 5 {
-				break
-			}
-		}
-		actors = strings.Join(actorNames, ", ")
-	} else {
-		actors = "暂无数据"
-	}
-	content = strings.ReplaceAll(content, "{{actors}}", actors)
-	// 通过格式化 detail.DateCreated 字段得到入库时间，格式：2025-12-10T16:00:00.0000000Z
-	addedTime := time.Now().Format("2006-01-02 15:04:05")
-	if detail.DateCreated != "" {
-		if parsedTime, err := time.Parse(time.RFC3339, detail.DateCreated); err == nil {
-			addedTime = parsedTime.Format("2006-01-02 15:04:05")
-		}
-	}
-	content = strings.ReplaceAll(content, "{{addedTime}}", addedTime)
-	// 简介
-	overview := detail.Overview
-	if overview == "" {
-		overview = "暂无简介"
-	}
-	content = strings.ReplaceAll(content, "{{overview}}", overview)
-	// 将 seasonEpisodes 占位符替换为空
-	content = strings.ReplaceAll(content, "{{seasonepisodes}}", "")
-	helpers.AppLogger.Infof("已格式化完成通知内容，movieID=%s\n%s", itemId, content)
+	content := buildMediaNotificationContent(detail, "")
+	helpers.AppLogger.Infof("已构建入库通知内容：电影 %s", detail.Name)
 	sendNewItemNotification(content, detail, "电影")
 }
 
@@ -522,62 +674,21 @@ func sendNewSeriesNotification(seriesId string, seasons map[int][]int) {
 		helpers.AppLogger.Errorf("获取 Emby 媒体 %s 详情失败，无法发送新剧集通知", seriesId)
 		return
 	}
-	// 使用变量格式化通知内容
-	content := strings.ReplaceAll(notificationTemplate, "{{title}}", detail.Name)
-	content = strings.ReplaceAll(content, "{{year}}", fmt.Sprintf("%d", detail.ProductionYear))
-	if detail.CommunityRating > 0 {
-		content = strings.ReplaceAll(content, "{{rate}}", fmt.Sprintf("%.1f", detail.CommunityRating))
-	} else {
-		content = strings.ReplaceAll(content, "{{rate}}", "暂无数据")
-	}
-	// 拼接流派
-	if len(detail.Genres) == 0 {
-		content = strings.ReplaceAll(content, "{{genes}}", "暂无数据")
-	} else {
-		genes := strings.Join(detail.Genres, ", ")
-		content = strings.ReplaceAll(content, "{{genes}}", genes)
-	}
-
-	// 拼接主演
-	actors := ""
-	if len(detail.People) > 0 {
-		actorNames := make([]string, 0)
-		// 计数
-		actorCount := 0
-		for _, person := range detail.People {
-			if person.Type == "Actor" {
-				actorNames = append(actorNames, person.Name)
-				actorCount++
-			}
-			if actorCount >= 5 {
-				break
-			}
-		}
-		actors = strings.Join(actorNames, ", ")
-		content = strings.ReplaceAll(content, "{{actors}}", actors)
-	} else {
-		content = strings.ReplaceAll(content, "{{actors}}", "暂无数据")
-	}
-
-	// 入库时间
-	addedTime := time.Now().Format("2006-01-02 15:04:05")
-	content = strings.ReplaceAll(content, "{{addedTime}}", addedTime)
-	// 简介
-	overview := detail.Overview
-	if overview == "" {
-		overview = "暂无简介"
-	}
-	content = strings.ReplaceAll(content, "{{overview}}", overview)
-	// 拼接季集信息，格式：S1E1-E3; S2E1,E5。
+	extraLines := ""
 	seasonEpisodes := formatSeasonEpisodes(seasons)
 	if seasonEpisodes != "" {
-		seasonEpisodes = fmt.Sprintf("📺 入库季集：%s\n", seasonEpisodes)
+		extraLines += fmt.Sprintf("📺 入库季集：%s\n", seasonEpisodes)
 	}
-	content = strings.ReplaceAll(content, "⏰ 入库时间：", fmt.Sprintf("%s\n⏰ 入库时间：", seasonEpisodes))
+	content := buildMediaNotificationContent(detail, extraLines)
+	helpers.AppLogger.Infof("已构建入库通知内容：剧集 %s（%s）", detail.Name, seasonEpisodes)
 	sendNewItemNotification(content, detail, "电视剧")
 }
 
 func sendNewItemNotification(content string, detail *embyclientrestgo.BaseItemDtoV2, mediaType string) {
+	if models.GlobalEmbyConfig == nil || models.GlobalEmbyConfig.EnableMediaNotification != 1 {
+		helpers.AppLogger.Infof("媒体入库通知未启用（enable_media_notification=0），跳过发送：%s", detail.Name)
+		return
+	}
 	imagePath := ""
 	if detail.ImageTags != nil {
 		imageUrl := ""

@@ -256,11 +256,11 @@ func resetEmbyRefreshTimerStateForTest() {
 
 func RequestEmbyLibraryRefreshBySyncPathId(syncPathId uint) error {
 	if syncPathId == 0 {
-		helpers.AppLogger.Infof("临时同步路径不触发 Emby 媒体库刷新")
+		helpers.AppLogger.Infof("⏭️ [Emby刷新] 临时同步路径未匹配到同步目录，跳过提交刷新任务")
 		return nil
 	}
 	if GlobalEmbyConfig == nil || GlobalEmbyConfig.EmbyUrl == "" || GlobalEmbyConfig.EmbyApiKey == "" || GlobalEmbyConfig.EnableRefreshLibrary == 0 {
-		helpers.AppLogger.Infof("Emby 未配置或未启用刷新媒体库，跳过提交刷新任务")
+		helpers.AppLogger.Infof("⏭️ [Emby刷新] 未启用刷新媒体库开关，跳过提交刷新任务")
 		return nil
 	}
 
@@ -290,11 +290,11 @@ func RequestEmbyLibraryRefreshBySyncPathId(syncPathId uint) error {
 // RequestEmbyRefreshTargets 批量提交已解析的 Emby 刷新目标。
 func RequestEmbyRefreshTargets(syncPathId uint, targets []EmbyRefreshTarget) error {
 	if syncPathId == 0 {
-		helpers.AppLogger.Infof("临时同步路径不触发 Emby 媒体库刷新")
+		helpers.AppLogger.Infof("⏭️ [Emby刷新] 临时同步路径未匹配到同步目录，跳过提交刷新任务")
 		return nil
 	}
 	if !isEmbyLibraryRefreshEnabled() {
-		helpers.AppLogger.Infof("Emby 未配置或未启用刷新媒体库，跳过提交刷新任务")
+		helpers.AppLogger.Infof("⏭️ [Emby刷新] 未启用刷新媒体库开关，跳过提交刷新任务")
 		return nil
 	}
 	targets = expandEmbyRefreshLibraryTargets(syncPathId, targets)
@@ -325,10 +325,10 @@ func RequestEmbyRefreshTargets(syncPathId uint, targets []EmbyRefreshTarget) err
 			// 媒体库关联缺失）时退化为刷新全部已知库，保证新增 STRM 必定入库。
 			allLibs, gerr := GetAllEmbyLibraries()
 			if gerr != nil || len(allLibs) == 0 {
-				helpers.AppLogger.Infof("同步目录 %d 未关联 Emby 媒体库且无可用库列表，跳过提交刷新任务", syncPathId)
+				helpers.AppLogger.Infof("⚠️ [Emby刷新] 同步目录 %d 未关联 Emby 媒体库且无可用库列表，跳过提交刷新任务", syncPathId)
 				continue
 			}
-			helpers.AppLogger.Infof("同步目录 %d 未关联 Emby 媒体库，退化为刷新全部 %d 个媒体库", syncPathId, len(allLibs))
+			helpers.AppLogger.Infof("⚠️ [Emby刷新] 同步目录 %d 未关联 Emby 媒体库，退化为刷新全部 %d 个媒体库", syncPathId, len(allLibs))
 			for _, lib := range allLibs {
 				if err := upsertEmbyLibraryRefreshTask(lib.LibraryId, lib.Name, syncPathId, now); err != nil {
 					return err
@@ -818,7 +818,7 @@ func RequestEmbyRefreshBySyncFile(syncFile *SyncFile) error {
 		return nil
 	}
 	if !isEmbyLibraryRefreshEnabled() {
-		helpers.AppLogger.Infof("Emby 未配置或未启用刷新媒体库，跳过提交刷新任务")
+		helpers.AppLogger.Infof("⏭️ [Emby刷新] 未启用刷新媒体库开关，跳过提交刷新任务")
 		return nil
 	}
 	target, err := ResolveEmbyRefreshTarget(syncFile)
