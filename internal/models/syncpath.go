@@ -1,4 +1,4 @@
-﻿package models
+package models
 
 import (
 	"errors"
@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"path"
 
 	"diy-strm/internal/db"
 	"diy-strm/internal/helpers"
@@ -115,6 +117,41 @@ func normalizeLocalSyncPath(p string) string {
 // 此前 Linux 用 Trim、Windows 用 TrimRight 且不处理 "/"，同一配置两平台存库不同）
 func normalizeRemoteSyncPath(p string) string {
 	return strings.Trim(strings.TrimSpace(p), "/\\")
+}
+
+// MatchSyncPathForTempSync 为按路径触发的临时同步（sync_path_id=0，如 MoviePilot 整理/
+// 上传完成后自动触发的 STRM 同步）匹配真实同步目录。临时同步没有 sync_paths 记录，
+// 提交 Emby 刷新任务时无法通过 sync_path_id 找到关联媒体库，需按路径前缀反查：
+// 同账号 + 临时源路径命中 remote_path 前缀（取最长），目标路径须与 local_path 一致
+// 或临时目标+源路径落在 local_path 之下。找不到返回 nil。
+func MatchSyncPathForTempSync(accountId uint, sourcePath, targetPath string) *SyncPath {
+	var paths []SyncPath
+	if err := db.Db.Where("account_id = ?", accountId).Find(&paths).Error; err != nil {
+		return nil
+	}
+	remote := normalizeRemoteSyncPath(sourcePath)
+	localTarget := normalizeLocalSyncPath(targetPath)
+	var best *SyncPath
+	bestLen := -1
+	for i := range paths {
+		sp := &paths[i]
+		spRemote := normalizeRemoteSyncPath(sp.RemotePath)
+		if spRemote == "" || !strings.HasPrefix(remote, spRemote) {
+			continue
+		}
+		if localTarget != "" {
+			spLocal := normalizeLocalSyncPath(sp.LocalPath)
+			if localTarget != spLocal &&
+				!strings.HasPrefix(path.Join(localTarget, remote), spLocal) {
+				continue
+			}
+		}
+		if len(spRemote) > bestLen {
+			best = sp
+			bestLen = len(spRemote)
+		}
+	}
+	return best
 }
 
 func (sp *SyncPath) GetScrapePathIds() []uint {
@@ -424,15 +461,15 @@ func CreateSyncPath(sourceType SourceType, accountId uint, baseCid, localPath, r
 	// 复用 CreateSyncPathWithDB：结构体插入直接回填 ID，
 	// 旧的 map 插入 + 按属性回查在并发创建相同路径时会错拿对方的记录（Order("id DESC") 取最新）
 	syncPath, err := CreateSyncPathWithDB(db.Db, SyncPathWriteInput{
-		SourceType:              sourceType,
-		AccountID:               accountId,
-		BaseCid:                 baseCid,
-		LocalPath:               localPath,
-		RemotePath:              remotePath,
-		EnableCron:              enableCron,
-		CustomConfig:            customConfig,
-		DirectoryUploadEnabled:  directoryUploadEnabled,
-		Setting:                 syncPathSetting,
+		SourceType:             sourceType,
+		AccountID:              accountId,
+		BaseCid:                baseCid,
+		LocalPath:              localPath,
+		RemotePath:             remotePath,
+		EnableCron:             enableCron,
+		CustomConfig:           customConfig,
+		DirectoryUploadEnabled: directoryUploadEnabled,
+		Setting:                syncPathSetting,
 	})
 	if err != nil {
 		helpers.AppLogger.Errorf("创建同步路径失败：%v", err)

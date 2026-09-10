@@ -61,6 +61,10 @@ type SyncStrm struct {
 	// 临时表
 	TempTableName string
 	SyncPathId    uint
+	// RealSyncPathId 临时同步（SyncPathId=0）按路径反查到的真实同步目录 ID，
+	// 用于同步完成后提交 Emby 刷新任务时解析关联媒体库（临时 ID 在
+	// emby_library_sync_paths 中没有关联记录）。
+	RealSyncPathId uint
 
 	// 计数
 	NewMeta   int64
@@ -170,6 +174,13 @@ func newSyncStrm(account *models.Account, syncPathId uint, sourcePath, sourcePat
 	if s.SyncPathId == 0 {
 		s.SyncPathId = uint(time.Now().UnixNano())
 		s.TmpSyncPath = true
+		// 反查真实同步目录（同账号 + 源/目标路径前缀匹配），供 Emby 刷新任务
+		// 提交时解析关联媒体库；匹配不到不影响同步本身。
+		if account != nil {
+			if matched := models.MatchSyncPathForTempSync(account.ID, sourcePath, targetPath); matched != nil {
+				s.RealSyncPathId = matched.ID
+			}
+		}
 	}
 	if createSyncRecord {
 		// 新增一条 Sync 记录
@@ -463,7 +474,13 @@ func (s *SyncStrm) Start() error {
 			if len(targets) == 0 {
 				targets = []models.EmbyRefreshTarget{{TargetType: models.EmbyRefreshTargetTypeLibrary}}
 			}
-			if err := models.RequestEmbyRefreshTargets(s.SyncPathId, targets); err != nil {
+			// 临时同步用反查到的真实同步目录 ID 提交刷新，否则按 sync_path_id
+			// 找不到关联媒体库会被跳过（新剧首次生成 STRM 的场景）。
+			refreshSyncPathId := s.SyncPathId
+			if s.TmpSyncPath && s.RealSyncPathId > 0 {
+				refreshSyncPathId = s.RealSyncPathId
+			}
+			if err := models.RequestEmbyRefreshTargets(refreshSyncPathId, targets); err != nil {
 				s.Sync.Logger.Errorf("提交 Emby 媒体库刷新任务失败：%v", err)
 			}
 		}
