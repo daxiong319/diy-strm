@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -19,17 +21,84 @@ import (
 
 // AutoOrganizeResult 一次自动整理运行的结果摘要（同时持久化到配置的 LastResult 供前端展示）
 type AutoOrganizeResult struct {
-	AccountID        uint     `json:"account_id"`
-	Organized        int      `json:"organized"`         // 成功整理（移动+重命名）的视频数
-	Failed           int      `json:"failed"`            // 整理失败（流程错误）数
-	Unrecognized     int      `json:"unrecognized"`      // 识别失败/TMDB 查不到，已移入失败目录数
-	SkippedOverwrite int      `json:"skipped_overwrite"` // 目标已存在同片且非洗版模式，跳过数
-	NonMedia         int      `json:"non_media"`         // 非视频条目跳过数
-	DeletedEmptySrc  int      `json:"deleted_empty_src"` // 整理后清空的源目录删除数
-	MovedToFailed    int      `json:"moved_to_failed"`   // 整体移入失败目录的资源数（目录/文件）
-	SuccessDirs      []string `json:"success_dirs"`      // 整理成功的目标相对目录（相对已整理根目录）
-	FailedNames      []string `json:"failed_names"`      // 移入失败目录/处理失败的资源名
-	Details          []string `json:"details"`           // 明细（前端展示/日志）
+	AccountID        uint            `json:"account_id"`
+	Organized        int             `json:"organized"`         // 成功整理（移动+重命名）的视频数
+	Failed           int             `json:"failed"`            // 整理失败（流程错误）数
+	Unrecognized     int             `json:"unrecognized"`      // 识别失败/TMDB 查不到，已移入失败目录数
+	SkippedOverwrite int             `json:"skipped_overwrite"` // 目标已存在同片且非洗版模式，跳过数
+	NonMedia         int             `json:"non_media"`         // 非视频条目跳过数
+	DeletedEmptySrc  int             `json:"deleted_empty_src"` // 整理后清空的源目录删除数
+	MovedToFailed    int             `json:"moved_to_failed"`   // 整体移入失败目录的资源数（目录/文件）
+	SuccessDirs      []string        `json:"success_dirs"`      // 整理成功的目标相对目录（相对已整理根目录）
+	FailedNames      []string        `json:"failed_names"`      // 移入失败目录/处理失败的资源名
+	Details          []string        `json:"details"`           // 明细（前端展示/日志）
+	Items            []OrganizedItem `json:"items,omitempty"`   // 成功整理的影视条目（通知展示用）
+}
+
+// OrganizedItem 单个成功整理的影视条目（通知展示用，tgto123 风格分组）
+type OrganizedItem struct {
+	Title        string  `json:"title"`
+	Year         int     `json:"year"`
+	Category     string  `json:"category"`
+	MediaType    string  `json:"media_type"` // movie / tv
+	Season       int     `json:"season"`
+	Episode      int     `json:"episode"`
+	Quality      string  `json:"quality"` // 质量标签摘要
+	ReleaseGroup string  `json:"release_group"`
+	FileName     string  `json:"file_name"` // 整理后文件名
+	SizeGB       float64 `json:"size_gb"`
+	TmdbID       int64   `json:"tmdb_id"`
+}
+
+// extractReleaseGroup 从文件名提取发布组（最后一个「-」之后的标签，如 xxx.H.265-Ocat → Ocat）
+func extractReleaseGroup(name string) string {
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	if idx := strings.LastIndex(base, "-"); idx > 0 {
+		g := strings.TrimSpace(base[idx+1:])
+		if g != "" && len(g) <= 32 && !strings.ContainsAny(g, ".0123456789") {
+			return g
+		}
+	}
+	return ""
+}
+
+// formatEpisodeRanges 集号列表转紧凑区间（[1,2,3,7] → "E01-E03、E07"）
+func formatEpisodeRanges(episodes []int) string {
+	if len(episodes) == 0 {
+		return ""
+	}
+	sorted := append([]int(nil), episodes...)
+	sort.Ints(sorted)
+	parts := make([]string, 0, len(sorted))
+	start, prev := sorted[0], sorted[0]
+	flush := func() {
+		if start == prev {
+			parts = append(parts, fmt.Sprintf("E%02d", start))
+		} else {
+			parts = append(parts, fmt.Sprintf("E%02d-E%02d", start, prev))
+		}
+	}
+	for _, e := range sorted[1:] {
+		if e == prev+1 {
+			prev = e
+			continue
+		}
+		flush()
+		start, prev = e, e
+	}
+	flush()
+	return strings.Join(parts, "、")
+}
+
+// accountDisplayName 账号显示名：备注（name）优先，回退用户名
+func accountDisplayName(account *models.Account) string {
+	if account == nil {
+		return ""
+	}
+	if strings.TrimSpace(account.Name) != "" {
+		return account.Name
+	}
+	return account.Username
 }
 
 // RunAutoOrganize 对指定账号执行一轮自动整理：
@@ -491,6 +560,19 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 		}
 		result.Details = append(result.Details, fmt.Sprintf("✓ %s → %s/%s", entry.Name, relDir, newName))
 		helpers.AppLogger.Infof("自动整理成功：%s → %s/%s", entry.Name, relDir, newName)
+		result.Items = append(result.Items, OrganizedItem{
+			Title:        officialTitle,
+			Year:         year,
+			Category:     strings.SplitN(relDir, "/", 2)[0],
+			MediaType:    media.Category,
+			Season:       media.Season,
+			Episode:      media.Episode,
+			Quality:      extractQualityTags(entry.Name, officialTitle),
+			ReleaseGroup: extractReleaseGroup(entry.Name),
+			FileName:     newName,
+			SizeGB:       float64(entry.Size) / (1 << 30),
+			TmdbID:       tmdbID,
+		})
 		recordSuccess(account, *entry, sourcePath, relDir+"/"+newName, media.Category, officialTitle, year, media.Season, media.Episode, tmdbID, newName, "整理成功", extra)
 	}
 
@@ -928,16 +1010,72 @@ func sendAutoOrganizeNotify(cfg *models.AutoOrganizeConfig, result *AutoOrganize
 	if result.DeletedEmptySrc > 0 {
 		lines = append(lines, fmt.Sprintf("清理空源目录：%d 个", result.DeletedEmptySrc))
 	}
-	if len(result.Details) > 0 {
-		lines = append(lines, "── 明细 ──")
-		const maxDetails = 40
-		if len(result.Details) > maxDetails {
-			lines = append(lines, result.Details[:maxDetails]...)
-			lines = append(lines, fmt.Sprintf("…共 %d 条，其余详见系统日志", len(result.Details)))
-		} else {
-			lines = append(lines, result.Details...)
+
+	// tgto123 风格：按影视条目分组展示（同一部影片/季合并为一张卡片）
+	if len(result.Items) > 0 {
+		lines = append(lines, "", "━━ 新片入库 ━━")
+		type itemGroup struct {
+			item     OrganizedItem
+			episodes []int
+			files    int
+			sizeGB   float64
+		}
+		groups := make([]*itemGroup, 0, len(result.Items))
+		index := make(map[string]*itemGroup)
+		for _, it := range result.Items {
+			key := fmt.Sprintf("%d:%d", it.TmdbID, it.Season)
+			g, ok := index[key]
+			if !ok {
+				g = &itemGroup{item: it}
+				index[key] = g
+				groups = append(groups, g)
+			}
+			g.episodes = append(g.episodes, it.Episode)
+			g.files++
+			g.sizeGB += it.SizeGB
+			if it.Quality != "" && g.item.Quality == "" {
+				g.item.Quality = it.Quality
+			}
+		}
+		const maxGroups = 20
+		for i, g := range groups {
+			if i >= maxGroups {
+				lines = append(lines, fmt.Sprintf("…其余 %d 部影片详见系统日志", len(groups)-maxGroups))
+				break
+			}
+			it := g.item
+			var card []string
+			card = append(card, fmt.Sprintf("🎬 新片入库：%s (%d)", it.Title, it.Year))
+			if sourceName := accountDisplayName(account); sourceName != "" {
+				card = append(card, fmt.Sprintf("📡 来源：%s", sourceName))
+			}
+			if it.Category != "" {
+				card = append(card, fmt.Sprintf("📂 分类：%s", it.Category))
+			}
+			if it.Quality != "" {
+				card = append(card, fmt.Sprintf("🎞 版本：%s", it.Quality))
+			}
+			if it.MediaType == "tv" && len(g.episodes) > 0 {
+				line := fmt.Sprintf("📺 本季：S%02d", it.Season)
+				if r := formatEpisodeRanges(g.episodes); r != "" {
+					line += " · " + r
+				}
+				line += fmt.Sprintf("（%d 个文件 · %.2f GB）", g.files, g.sizeGB)
+				card = append(card, line)
+			} else if it.FileName != "" {
+				card = append(card, fmt.Sprintf("📄 文件：%s（%.2f GB）", it.FileName, g.sizeGB))
+			}
+			if it.TmdbID > 0 {
+				card = append(card, fmt.Sprintf("🆔 影号：TMDB %d", it.TmdbID))
+			}
+			if it.ReleaseGroup != "" {
+				card = append(card, fmt.Sprintf("🏷 组名：%s", it.ReleaseGroup))
+			}
+			card = append(card, "又有新片可以看了，快来探索吧🎉")
+			lines = append(lines, strings.Join(card, "\n"))
 		}
 	}
+
 	lines = append(lines, fmt.Sprintf("⏰ 时间：%s", time.Now().Format("2006-01-02 15:04:05")))
 	sendSystemNotification(title, strings.Join(lines, "\n"))
 }
