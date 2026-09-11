@@ -3630,7 +3630,10 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
   </div>
-</template>令牌（对齐参考实现 media_discovery 视觉） ============ */
+</template>
+
+<style scoped>
+/* ============ 令牌（对齐参考实现 media_discovery 视觉） ============ */
 .md-page {
   --md-primary: #6366f1;
   --md-primary-hover: #4f46e5;
@@ -5774,7 +5777,6 @@ onBeforeUnmount(() => {
   color: var(--md-text-secondary, #94a3b8);
 }
 
-<style scoped>
 /* ============ 发现页复刻扩展样式（对齐参考实现 media_discovery.css 关键参数） ============ */
 
 /* 目录源等待/缓存提示 */
@@ -5832,7 +5834,7 @@ onBeforeUnmount(() => {
 /* Emby 徽章 chip（对齐参考实现 tone 配色） */
 .md-emby-chip {
   position: absolute;
-  top: 8px;
+  bottom: 8px;
   right: 8px;
   z-index: 2;
   font-size: 10.5px;
