@@ -681,23 +681,19 @@ type doubanPrefetchTask struct {
 	force      bool
 }
 
+// 通道在包初始化时创建：若懒创建，Worker 先启动会在 nil channel 上
+// 永久阻塞（接收表达式不会因全局变量重新赋值而恢复），预抓任务永远无法送达
 var (
-	prefetchMu       sync.Mutex
-	doubanPrefetchCh chan doubanPrefetchTask
-	tmdbMatchCh      chan struct{}
 	workerOnce       sync.Once
+	doubanPrefetchCh = make(chan doubanPrefetchTask, 64)
+	tmdbMatchCh      = make(chan struct{}, 8)
 )
 
-// kickDoubanPrefetch 投递豆瓣预抓任务（去重：同目录只保留最新任务）
+// kickDoubanPrefetch 投递豆瓣预抓任务（通道满则丢弃最旧任务，保留最新）
 func kickDoubanPrefetch(catalogKey, mediaType, tag, sort string, need int, force bool) {
-	prefetchMu.Lock()
-	if doubanPrefetchCh == nil {
-		doubanPrefetchCh = make(chan doubanPrefetchTask, 64)
-	}
-	prefetchMu.Unlock()
 	task := doubanPrefetchTask{catalogKey: catalogKey, mediaType: mediaType, tag: tag, sort: sort, need: need, force: force}
 	select {
-	case <-doubanPrefetchCh: // 通道满则丢弃旧任务
+	case <-doubanPrefetchCh: // 丢弃一个旧任务腾位
 	default:
 	}
 	select {
@@ -708,11 +704,6 @@ func kickDoubanPrefetch(catalogKey, mediaType, tag, sort string, need int, force
 
 // kickTMDBMatch 触发一次 TMDB 匹配
 func kickTMDBMatch() {
-	prefetchMu.Lock()
-	if tmdbMatchCh == nil {
-		tmdbMatchCh = make(chan struct{}, 8)
-	}
-	prefetchMu.Unlock()
 	select {
 	case tmdbMatchCh <- struct{}{}:
 	default:
