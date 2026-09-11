@@ -577,7 +577,7 @@ func initOthers() {
 	models.InitNotificationManager()                           // 初始化通知管理器
 	controllers.StartListenTelegramBot()                       // 初始化 Telegram Bot 监听
 	controllers.StartChannelWatcher(context.Background())      // 启动 TG 频道订阅引擎
-	controllers.StartHiveWatcher(context.Background())         // 启动RE0（HDHive）订阅引擎
+	// controllers.StartHiveWatcher(context.Background())      // RE0 订阅引擎已迁移到 tgto123 对齐引擎（discovery.StartDiscoveryWorkers）
 	moviepilot.StartMoviePilotWatcher()                        // 启动 MoviePilot 订阅下载检测
 	controllers.StartAutoOrganizeWatcher(context.Background()) // 启动云盘自动整理监控
 	discovery.StartDiscoveryWorkers()                          // 启动发现页后台 Worker（目录预抓/TMDB匹配/订阅调度/缺集扫描）

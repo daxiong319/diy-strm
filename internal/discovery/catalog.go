@@ -729,6 +729,10 @@ func kickTMDBMatch() {
 
 // StartDiscoveryWorkers 启动发现页后台 Worker（目录预抓 + TMDB 匹配 + 订阅调度 + 缺集扫描）
 func StartDiscoveryWorkers() {
+	// RE0 旧订阅迁移到 tgto123 对齐引擎（幂等）
+	if err := MigrateHiveSubscriptions(); err != nil {
+		log.Printf("[discovery] RE0 订阅迁移失败：%v", err)
+	}
 	workerOnce.Do(func() {
 		go doubanPrefetchWorker()
 		go tmdbMatchWorker()
