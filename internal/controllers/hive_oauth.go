@@ -23,20 +23,12 @@ import (
 // ---------------------------------------------------------------------------
 
 // hiveAuthURLFor 按账号通道生成授权 URL：
-// 中转通道走会话握手 OAuth（回调指向本站 /hive-symedia/callback）；
-// 直连通道直接生成 install_id 签名授权链接
+// tgtodrive/symedia/nanshare 三通道已全部失效，统一走官方通道（re0.me OAuth 授权码模式）
 func hiveAuthURLFor(ctx context.Context, acc *models.HiveOAuthAccount, origin string) (string, error) {
-	if sc, ok := models.HiveClientForAccount(acc).(*hdhive.SymediaClient); ok {
-		callback := ""
-		if origin != "" {
-			callback = strings.TrimRight(origin, "/") + "/hive-symedia/callback"
-		}
-		return sc.StartOAuth(ctx, callback)
-	}
-	if oc, ok := models.HiveClientForAccount(acc).(*hdhive.OAuthClient); ok {
-		return oc.BuildAuthURL(), nil
-	}
-	return "", nil
+	// 全部通道统一走官方 OAuth 授权（re0.me/openapi/authorize），
+	// 回调指向本站 /hive-official/callback
+	redirectURI := strings.TrimRight(origin, "/") + "/hive-official/callback"
+	return hdhive.BuildOfficialAuthURL(redirectURI, "official"), nil
 }
 
 // hiveTokenStatusFor 按通道取 token 状态：中转通道以 proxy_user_key 是否绑定代替，
