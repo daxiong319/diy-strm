@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"diy-strm/internal/db"
 	"diy-strm/internal/models"
@@ -77,6 +78,11 @@ func TestUpdateEmbyConfigProxyPort(t *testing.T) {
 		t.Fatalf("端口 80 应被校验拒绝(400+proxy_port 提示)，实际 %d：%s", w.Code, w.Body.String())
 	}
 
+	// 钩子是 go 异步触发的（不阻塞响应），CI 慢机器上第 3 次可能尚未执行完，轮询等待
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&reloadCalls) < 3 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if atomic.LoadInt32(&reloadCalls) < 3 {
 		t.Fatalf("每次成功保存都应触发热重载钩子（至少 3 次），实际 %d", reloadCalls)
 	}
