@@ -1102,9 +1102,9 @@ func setRouter(r *gin.Engine) {
 		api.GET("/cloud/hive/oauth/status", controllers.HiveOAuthStatusAPI)                // OAuth 授权状态
 		api.POST("/cloud/hive/oauth/refresh", controllers.HiveOAuthRefreshAPI)             // 刷新授权状态
 		api.POST("/cloud/hive/oauth/auth-url", controllers.HiveOAuthAuthURLAPI)            // 生成授权 URL
-		api.POST("/cloud/hive/oauth/checkin", controllers.HiveCheckinAPI)                  // 手动签到
+	api.POST("/cloud/hive/oauth/checkin", controllers.HiveCheckinAPI)                  // 手动签到
 		api.POST("/cloud/hive/oauth/checkin-all", controllers.HiveCheckinAllAPI)           // 全部账号签到
-		api.GET("/cloud/hive/checkin/records", controllers.HiveCheckinRecordsAPI)          // 签到历史（S3）
+	api.GET("/cloud/hive/checkin/records", controllers.HiveCheckinRecordsAPI)          // 签到历史（S3）
 		api.DELETE("/cloud/hive/checkin/records", controllers.HiveCheckinRecordsDeleteAPI) // 删除签到历史（S3）
 
 		// RE0手动搜索（SSE 流式）/ 解锁 / 手动转存
