@@ -116,15 +116,39 @@ func doubanCatalogKey(mediaType, tag, sort string) string {
 	return fmt.Sprintf("douban:v1:%s:%s:%s", mediaType, tag, sort)
 }
 
-// doubanRecommendFetch 拉取一页豆瓣推荐目录（带内存缓存抗重放）
+// doubanCategoryKey 把豆瓣分类 chip 映射到 rexxar recommend 的 selected_categories 键
+// （键错时接口返回 200 空列表而非报错，须按官方筛选语义映射；热门=不过滤）
+func doubanCategoryKey(mediaType, tag string) string {
+	regions := map[string]bool{"华语": true, "欧美": true, "韩国": true, "日本": true, "美国": true, "英国": true, "法国": true, "德国": true, "泰国": true, "印度": true, "中国大陆": true, "香港": true, "台湾": true}
+	if mediaType == "tv" {
+		switch tag {
+		case "动画", "纪录片", "短片", "综艺":
+			return "形式"
+		}
+		if regions[tag] {
+			return "地区"
+		}
+		return "类型"
+	}
+	switch tag {
+	case "动画", "纪录片", "短片":
+		return "形式"
+	}
+	if regions[tag] {
+		return "地区"
+	}
+	return "类型"
+}
+
+// doubanRecommendFetch 拉取一页豆瓣推荐目录
 func doubanRecommendFetch(mediaType, tag, sort string, start, count int) ([]douban.RecommendItem, int, error) {
 	client := douban.NewClient()
 	categories := map[string]any{}
 	if tag != "" && tag != "热门" {
-		categories["标签"] = tag
+		categories[doubanCategoryKey(mediaType, tag)] = tag
 	}
 	categoriesJSON, _ := json.Marshal(categories)
-	items, total, err := client.GetRecommend(mediaType, string(categoriesJSON), tag, sort, start, count)
+	items, total, err := client.GetRecommend(mediaType, string(categoriesJSON), sort, start, count)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -187,7 +211,11 @@ func fetchDoubanCatalogPage(catalogKey, mediaType, tag, sort string) (added int,
 	if total > 0 {
 		updates["total_items"] = total
 	}
-	if len(items) < doubanCatalogPageSize { // 抓到底
+	if start == 0 && len(items) == 0 {
+		// 首页 0 条：豆瓣风控/接口异常，标记错误而非完成
+		updates["status"] = "error"
+		updates["last_error"] = "豆瓣未返回条目（可能触发风控，稍后自动重试）"
+	} else if len(items) < doubanCatalogPageSize { // 抓到底
 		updates["status"] = "ready"
 	} else {
 		updates["status"] = "pending"

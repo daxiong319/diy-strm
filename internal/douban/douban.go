@@ -140,8 +140,8 @@ type recommendResponse struct {
 
 // GetRecommend 获取豆瓣推荐目录（rexxar recommend 接口，支持分类/地区/形式/排序翻页）
 // subjectType: movie/tv；selectedCategories 形如 {"类型":"电影","地区":"美国","形式":"剧集"}
-// 的 JSON 串（按需组合，空分类传 {}）；tags 为空格分隔的补充标签；sort: T(推荐)/S(近期热门)/R(高分)
-func (c *Client) GetRecommend(subjectType, selectedCategories, tags, sort string, start int, count int) ([]RecommendItem, int, error) {
+// 的 JSON 串（按需组合，空分类传 {}）；sort: T(推荐)/S(近期热门)/R(高分)
+func (c *Client) GetRecommend(subjectType, selectedCategories, sort string, start int, count int) ([]RecommendItem, int, error) {
 	if subjectType != "tv" {
 		subjectType = "movie"
 	}
@@ -162,9 +162,7 @@ func (c *Client) GetRecommend(subjectType, selectedCategories, tags, sort string
 	params.Set("count", fmt.Sprintf("%d", count))
 	params.Set("selected_categories", selectedCategories)
 	params.Set("sort", sort)
-	if tags != "" {
-		params.Set("tags", tags)
-	}
+	
 	rawURL := fmt.Sprintf("%s/rexxar/api/v2/%s/recommend?%s", mobileBaseURL, subjectType, params.Encode())
 	body, err := c.doGet(rawURL)
 	if err != nil {
