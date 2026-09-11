@@ -1960,8 +1960,7 @@ const filterActive = computed(() => {
     !!exploreGenre.value ||
     !!exploreYear.value ||
     exploreRegion.value !== '' ||
-    exploreSort.value !== 'popular' ||
-    (librarySource.value === 'douban' && exploreDoubanTag.value !== '热门')
+    exploreSort.value !== 'popular'
   )
 })
 
