@@ -118,6 +118,65 @@ func (c *Client) GetSubjects(subjectType string, tag string, pageStart int, page
 	return result.Subjects, nil
 }
 
+// RecommendItem 豆瓣推荐目录条目（rexxar recommend 接口）
+type RecommendItem struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Year    string `json:"year"`
+	Subtype string `json:"subtype"`
+	Info    string `json:"info"`
+	Rating  struct {
+		Value float64 `json:"value"`
+	} `json:"rating"`
+	Cover struct {
+		URL string `json:"url"`
+	} `json:"cover"`
+}
+
+type recommendResponse struct {
+	Items []RecommendItem `json:"items"`
+	Total int             `json:"total"`
+}
+
+// GetRecommend 获取豆瓣推荐目录（rexxar recommend 接口，支持分类/地区/形式/排序翻页）
+// subjectType: movie/tv；selectedCategories 形如 {"类型":"电影","地区":"美国","形式":"剧集"}
+// 的 JSON 串（按需组合，空分类传 {}）；tags 为空格分隔的补充标签；sort: T(推荐)/S(近期热门)/R(高分)
+func (c *Client) GetRecommend(subjectType, selectedCategories, tags, sort string, start int, count int) ([]RecommendItem, int, error) {
+	if subjectType != "tv" {
+		subjectType = "movie"
+	}
+	if count <= 0 {
+		count = 24
+	}
+	if count > 50 {
+		count = 50
+	}
+	if selectedCategories == "" {
+		selectedCategories = "{}"
+	}
+	if sort == "" {
+		sort = "T"
+	}
+	params := url.Values{}
+	params.Set("start", fmt.Sprintf("%d", start))
+	params.Set("count", fmt.Sprintf("%d", count))
+	params.Set("selected_categories", selectedCategories)
+	params.Set("sort", sort)
+	if tags != "" {
+		params.Set("tags", tags)
+	}
+	rawURL := fmt.Sprintf("%s/rexxar/api/v2/%s/recommend?%s", mobileBaseURL, subjectType, params.Encode())
+	body, err := c.doGet(rawURL)
+	if err != nil {
+		return nil, 0, err
+	}
+	var result recommendResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, 0, fmt.Errorf("解析豆瓣推荐响应失败：%w", err)
+	}
+	return result.Items, result.Total, nil
+}
+
 // GetCollectionItems 获取片单条目（豆瓣 rexxar 接口）
 // collection: movie_hot_gaia / tv_hot_gaia / movie_weekly_best / tv_weekly_best 等
 func (c *Client) GetCollectionItems(collection string, start int, count int) ([]CollectionItem, error) {

@@ -132,3 +132,36 @@ func (c *Client) DeleteTorrent(ctx context.Context, hash string, deleteFiles boo
 	}
 	return nil
 }
+
+// AddMagnet 提交磁力/种子链接下载任务（影视发现离线动作）。
+// savePath 为空时使用 qB 默认保存路径。
+func (c *Client) AddMagnet(ctx context.Context, magnetURL, savePath string) error {
+	if strings.TrimSpace(magnetURL) == "" {
+		return fmt.Errorf("链接内容为空")
+	}
+	if err := c.login(ctx); err != nil {
+		return err
+	}
+	body := &strings.Builder{}
+	body.WriteString("urls=" + magnetURL)
+	if strings.TrimSpace(savePath) != "" {
+		body.WriteString("&savepath=" + savePath)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v2/torrents/add", strings.NewReader(body.String()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		c.loggedIn = false
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode != http.StatusOK {
+		c.loggedIn = false
+		return fmt.Errorf("qBittorrent 添加任务失败（HTTP %d：%s）", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}

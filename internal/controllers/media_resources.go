@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
+	"diy-strm/internal/discovery"
 	"diy-strm/internal/guanying"
 	"diy-strm/internal/hdhive"
 	"diy-strm/internal/models"
@@ -28,6 +30,9 @@ type resourceSearchRequest struct {
 	MediaType string   `json:"media_type"`
 	Year      string   `json:"year"`
 	Sources   []string `json:"sources"`
+	Provider  string   `json:"provider"`
+	Season    int      `json:"season"`
+	Episode   int      `json:"episode"`
 }
 
 // resourceItem 关联资源卡片字段（对齐 tgto123 media_discovery.js 渲染所需全集）
@@ -170,14 +175,44 @@ func SearchMediaResourcesAPI(c *gin.Context) {
 		mediaType = "movie"
 	}
 
+	wantProvider := strings.ToLower(strings.TrimSpace(req.Provider))
 	for _, source := range sources {
 		sourceItems, err := searchResourceBySource(c.Request.Context(), source, mediaType, req.TmdbID, req.Title)
 		if err != nil {
 			errs = append(errs, gin.H{"source": source, "code": resourceSourceErrorCode(err), "error": err.Error()})
 			continue
 		}
-		items = append(items, sourceItems...)
+		// 目标网盘过滤（对齐参考实现：provider 非 offline 时须精确匹配）
+		for i := range sourceItems {
+			if wantProvider == "" || wantProvider == "offline" {
+				continue
+			}
+			itemProvider := strings.ToLower(strings.TrimSpace(sourceItems[i].Provider))
+			if itemProvider == "magnet" || itemProvider == "ed2k" {
+				continue
+			}
+			if normalizeProviderFilter(itemProvider) != normalizeProviderFilter(wantProvider) {
+				sourceItems[i].Provider = "" // 标记剔除
+			}
+		}
+		filtered := sourceItems[:0]
+		for _, it := range sourceItems {
+			if it.Provider == "" {
+				continue
+			}
+			filtered = append(filtered, it)
+		}
+		items = append(items, filtered...)
 	}
+
+	// 季集过滤（对齐参考实现：season 相等；episode 落在 [begin,end]）
+	if req.Season > 0 || req.Episode > 0 {
+		items = filterResourcesByEpisode(items, req.Season, req.Episode)
+	}
+	// 排序：已解锁优先 → 有积分低优先
+	sort.SliceStable(items, func(i, j int) bool {
+		return resourceCandidateWeight(items[i]) > resourceCandidateWeight(items[j])
+	})
 
 	c.JSON(http.StatusOK, APIResponse[gin.H]{
 		Code:    Success,
@@ -188,7 +223,7 @@ func SearchMediaResourcesAPI(c *gin.Context) {
 
 // normalizeResourceSources 归一化来源：hdhive→re0，去重，仅保留已知来源
 func normalizeResourceSources(raw []string) []string {
-	known := map[string]bool{"re0": true, "guanying": true, "seedhub": true}
+	known := map[string]bool{"re0": true, "guanying": true, "seedhub": true, "tg": true}
 	out := make([]string, 0, len(raw))
 	seen := map[string]bool{}
 	for _, s := range raw {
@@ -227,6 +262,8 @@ func searchResourceBySource(ctx context.Context, source, mediaType string, tmdbI
 		return searchGuanyingResources(ctx, mediaType, tmdbID, title)
 	case "seedhub":
 		return searchSeedhubResources(ctx, mediaType, tmdbID, title)
+	case "tg":
+		return searchTGChannelResources(ctx, mediaType, title)
 	default:
 		return nil, fmt.Errorf("未知资源来源：%s", source)
 	}
@@ -364,4 +401,117 @@ func searchSeedhubResources(ctx context.Context, mediaType string, tmdbID int64,
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+
+// normalizeProviderFilter 网盘过滤键归一
+func normalizeProviderFilter(p string) string {
+	switch strings.ToLower(strings.TrimSpace(p)) {
+	case "guangyapan", "guangya", "gy":
+		return "guangya"
+	case "123", "123pan":
+		return "123"
+	case "139", "pan139":
+		return "pan139"
+	}
+	return strings.ToLower(strings.TrimSpace(p))
+}
+
+// searchTGChannelResources 公开 TG 频道资源检索（免登录直查 t.me/s）
+func searchTGChannelResources(ctx context.Context, mediaType, title string) ([]resourceItem, error) {
+	if strings.TrimSpace(title) == "" {
+		return nil, fmt.Errorf("TG 频道检索需要标题")
+	}
+	matches, errs := discovery.SearchTGChannelResources(ctx, title, nil, "")
+	items := make([]resourceItem, 0, len(matches))
+	for i, m := range matches {
+		linkType := strings.ToLower(m.Link.Type)
+		isOffline := linkType == "magnet" || linkType == "ed2k"
+		item := resourceItem{
+			ItemKey:       fmt.Sprintf("tg:%s:%s:%d", m.Channel, m.PostID, i),
+			Source:        "tg",
+			Provider:      m.Link.Type,
+			ProviderLabel: resourceProviderLabel(m.Link.Type),
+			Title:         firstTGTitle(m.PostText, title),
+			ShareURL:      m.Link.URL,
+			LinkType:      linkType,
+			IsUnlocked:    true,
+			Remark:        truncateTGText(m.PostText, 200),
+		}
+		if isOffline {
+			item.SupportedTargets = offlineSupportedTargets(linkType)
+		}
+		items = append(items, item)
+	}
+	if len(items) == 0 && len(errs) > 0 {
+		msgs := make([]string, 0, len(errs))
+		for _, e := range errs {
+			msgs = append(msgs, e.Error)
+		}
+		return nil, fmt.Errorf("%s", strings.Join(msgs, "；"))
+	}
+	return items, nil
+}
+
+// firstTGTitle TG 帖子标题（取首行，截断）
+func firstTGTitle(postText, fallback string) string {
+	for _, line := range strings.Split(postText, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			if len([]rune(line)) > 80 {
+				line = string([]rune(line)[:80])
+			}
+			return line
+		}
+	}
+	return fallback
+}
+
+func truncateTGText(s string, n int) string {
+	if len([]rune(s)) <= n {
+		return s
+	}
+	return string([]rune(s)[:n]) + "…"
+}
+
+// filterResourcesByEpisode 季集过滤
+func filterResourcesByEpisode(items []resourceItem, season, episode int) []resourceItem {
+	out := items[:0]
+	for _, item := range items {
+		ep := item.Episode
+		if ep == nil {
+			out = append(out, item)
+			continue
+		}
+		if season > 0 && ep.SeasonNum != nil && *ep.SeasonNum != season {
+			continue
+		}
+		if episode > 0 && ep.EpisodeNum != nil {
+			begin := *ep.EpisodeNum
+			end := begin
+			if ep.EndEpisodeNum != nil {
+				end = *ep.EndEpisodeNum
+			}
+			if episode < begin || episode > end {
+				continue
+			}
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+// resourceCandidateWeight 排序权重
+func resourceCandidateWeight(item resourceItem) float64 {
+	w := 0.0
+	if item.IsUnlocked {
+		w += 100
+	}
+	if item.PointsKnown && item.UnlockPoints > 0 {
+		w += float64(1000-item.UnlockPoints) / 10
+	}
+	if item.UnlockedUsersCt > 0 {
+		w += float64(item.UnlockedUsersCt) / 100
+	}
+	return w
 }

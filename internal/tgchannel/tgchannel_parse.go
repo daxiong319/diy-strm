@@ -472,3 +472,91 @@ func collectText(n *html.Node) string {
 	walk(n)
 	return sb.String()
 }
+
+// ParseChannelSearch 在 t.me/s/{channel} 公开预览页按关键词搜索（?q= 参数，
+// 复刻参考实现「公开频道直查」：无需 TG API 或登录，直接读取公开页搜索结果）。
+// 返回帖子列表（新到旧）与实际请求页数。maxPages<=0 按单页处理。
+func ParseChannelSearch(ctx context.Context, channel, query string, maxPages int) ([]ChannelPost, int, error) {
+	channel = normalizeChannelName(channel)
+	query = strings.TrimSpace(query)
+	if channel == "" {
+		return nil, 0, fmt.Errorf("频道名为空")
+	}
+	if query == "" {
+		return ParseChannelPageRange(ctx, channel, "", maxPages)
+	}
+	if maxPages <= 0 {
+		maxPages = 1
+	}
+	var all []ChannelPost
+	seen := map[string]bool{}
+	beforeID := ""
+	pages := 0
+	for page := 1; page <= maxPages; page++ {
+		select {
+		case <-ctx.Done():
+			return dedupChannelPosts(all, seen), pages, nil
+		default:
+		}
+		pageURL := "https://t.me/s/" + channel + "?q=" + urlQueryEscape(query)
+		if beforeID != "" {
+			pageURL += "&before=" + beforeID
+		}
+		posts, err := fetchChannelPage(ctx, pageURL)
+		if err != nil {
+			if len(all) == 0 {
+				return nil, pages, err
+			}
+			return dedupChannelPosts(all, seen), pages, nil
+		}
+		pages++
+		if len(posts) == 0 {
+			break
+		}
+		added := 0
+		for _, p := range posts {
+			if p.PostID != "" && !seen[p.PostID] {
+				seen[p.PostID] = true
+				all = append(all, p)
+				added++
+			}
+		}
+		if added == 0 {
+			break
+		}
+		oldest := posts[len(posts)-1].PostID
+		if oldest == "" {
+			break
+		}
+		beforeID = oldest
+		if page < maxPages {
+			select {
+			case <-ctx.Done():
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+	}
+	sort.Slice(all, func(i, j int) bool {
+		return postIDNewer(all[i].PostID, all[j].PostID)
+	})
+	return all, pages, nil
+}
+
+// urlQueryEscape 查询串编码（避免引入 net/url 全链）
+func urlQueryEscape(s string) string {
+	var sb strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' {
+			sb.WriteByte(c)
+		} else if c == ' ' {
+			sb.WriteByte('+')
+		} else {
+			const hex = "0123456789ABCDEF"
+			sb.WriteByte('%')
+			sb.WriteByte(hex[c>>4])
+			sb.WriteByte(hex[c&0xF])
+		}
+	}
+	return sb.String()
+}

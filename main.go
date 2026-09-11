@@ -580,6 +580,7 @@ func initOthers() {
 	controllers.StartHiveWatcher(context.Background())         // 启动RE0（HDHive）订阅引擎
 	moviepilot.StartMoviePilotWatcher()                        // 启动 MoviePilot 订阅下载检测
 	controllers.StartAutoOrganizeWatcher(context.Background()) // 启动云盘自动整理监控
+	discovery.StartDiscoveryWorkers()                          // 启动发现页后台 Worker（目录预抓/TMDB匹配/订阅调度/缺集扫描）
 	models.GetEmbyConfig()                                     // 加载 Emby 配置
 	helpers.SubscribeSync(helpers.V115TokenInValidEvent, models.HandleV115TokenInvalid)
 	helpers.SubscribeSync(helpers.SaveOpenListTokenEvent, models.HandleOpenListTokenSaveSync)
@@ -978,6 +979,38 @@ func setRouter(r *gin.Engine) {
 		api.POST("/media-discovery/guanying/relogin", controllers.ReloginGuanyingAPI)              // 凭据自动恢复
 		api.POST("/media-discovery/guanying/test", controllers.TestGuanyingAPI)                    // 会话有效性测试
 		api.DELETE("/media-discovery/guanying/session", controllers.ClearGuanyingSessionAPI)       // 清除会话与凭据
+		// 影视发现复刻扩展（对齐 tgto123 media_discovery 全功能）：目录流/演员/搜索/详情/猫眼/订阅/Emby
+		api.GET("/media-discovery/explore/douban/catalog", controllers.GetMediaExploreDoubanCatalog) // 豆瓣目录流
+		api.GET("/media-discovery/anime/catalog", controllers.GetMediaAnimeCatalog)                  // 动漫目录流（AniList/Bangumi）
+		api.GET("/media-discovery/actors", controllers.GetMediaActors)                               // 热门演员
+		api.GET("/media-discovery/actors/:id/works", controllers.GetMediaActorWorks)                 // 演员作品列表
+		api.GET("/media-discovery/search", controllers.GetMediaSearch)                               // 统一搜索（movie/tv/person）
+		api.GET("/media-discovery/details/:source/:type/:id", controllers.GetMediaDetails)           // 作品/人物详情
+		api.GET("/media-discovery/rankings/maoyan", controllers.GetMediaRankingsMaoyan)              // 猫眼榜单
+		api.POST("/media-discovery/resources/offline", controllers.OfflineMediaResourceAPI)          // 资源离线（磁力→qB）
+		api.POST("/media-discovery/resources/transfer", controllers.TransferMediaResourceAPI)        // 资源转存（解锁→网盘目录）
+		api.POST("/media-discovery/resources/torrent", controllers.TorrentMediaResourceAPI)          // 种子文件→磁力→离线
+		api.GET("/media-discovery/subscriptions", controllers.MediaSubscriptionsAPI)                 // 订阅列表
+		api.POST("/media-discovery/subscriptions", controllers.MediaSubscriptionsAPI)                // 创建订阅
+		api.PATCH("/media-discovery/subscriptions/:id", controllers.MediaSubscriptionDetailAPI)      // 更新订阅
+		api.DELETE("/media-discovery/subscriptions/:id", controllers.MediaSubscriptionDetailAPI)     // 删除订阅
+		api.POST("/media-discovery/subscriptions/:id/run", controllers.MediaSubscriptionRunAPI)      // 立即检查
+		api.POST("/media-discovery/subscriptions/run-due", controllers.MediaSubscriptionRunDueAPI)   // 执行到期订阅
+		api.GET("/media-discovery/subscriptions/history", controllers.MediaSubscriptionHistoryAPI)   // 执行历史
+		api.GET("/media-discovery/subscriptions/events", controllers.MediaSubscriptionEventsAPI)     // 订阅事件流
+		api.GET("/media-discovery/subscriptions/candidates", controllers.MediaSubscriptionCandidatesAPI) // 候选审阅
+		api.POST("/media-discovery/emby/cards", controllers.EmbyCardsAPI)                            // Emby 批量入库徽章
+		api.POST("/media-discovery/emby/tv-progress/preheat", controllers.TvProgressPreheatAPI)      // 剧集进度预热
+		api.POST("/media-discovery/emby/test", controllers.EmbyTestMediaAPI)                         // 发现 Emby 连接测试
+		api.GET("/media-discovery/emby-missing/status", controllers.EmbyMissingStatusAPI)            // 缺集扫描状态
+		api.GET("/media-discovery/emby-missing/libraries", controllers.EmbyMissingLibrariesAPI)      // 电视剧库列表
+		api.GET("/media-discovery/emby-missing/scans", controllers.EmbyMissingScansAPI)              // 扫描历史
+		api.POST("/media-discovery/emby-missing/scans", controllers.EmbyMissingScansAPI)             // 启动扫描
+		api.GET("/media-discovery/emby-missing/results", controllers.EmbyMissingResultsAPI)          // 缺集结果
+		api.GET("/media-discovery/emby-missing/events", controllers.EmbyMissingEventsAPI)            // 缺集事件流
+		api.GET("/media-discovery/emby-missing/subscriptions", controllers.EmbyMissingSubscriptionsAPI)   // 补档订阅列表
+		api.POST("/media-discovery/emby-missing/subscriptions", controllers.EmbyMissingSubscriptionsAPI)  // 创建补档订阅
+		api.POST("/media-discovery/emby-missing/subscriptions/:id/run", controllers.EmbyMissingSubscriptionRunAPI) // 立即检查补档
 		// 弹幕联动（Misaka Danmaku）：配置 + 302 播放自动导入下一集（钩子在 emby302）
 		api.GET("/danmu/config", controllers.GetDanmuConfigAPI)   // 弹幕配置
 		api.POST("/danmu/config", controllers.SaveDanmuConfigAPI) // 保存弹幕配置

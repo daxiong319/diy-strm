@@ -88,6 +88,7 @@ type BaseItemDtoV2 struct {
 	Genres            []string          `json:"Genres,omitempty"`
 	People            []PersonDto       `json:"People,omitempty"`
 	Overview          string            `json:"Overview,omitempty"`
+	Status            string            `json:"Status,omitempty"`
 	ImageTags         map[string]string `json:"ImageTags,omitempty"`
 	ProviderIds       map[string]string `json:"ProviderIds,omitempty"`
 }
@@ -759,4 +760,54 @@ func ProcessLibraries(embyURL, apiKey string, excludeIds []string) []map[string]
 		// wg.Wait()
 	}
 	return tasks
+}
+
+// GetSeriesEpisodes 拉取剧集的全部已知分集（影视发现缺集扫描用）。
+// fields 例："ParentIndexNumber,IndexNumber,PremiereDate"。
+func (c *Client) GetSeriesEpisodes(seriesID string, fields string) ([]BaseItemDtoV2, error) {
+	episodes := []BaseItemDtoV2{}
+	startIndex := 0
+	const pageSize = 1000
+	for {
+		params := url.Values{}
+		params.Add("Fields", fields)
+		params.Add("StartIndex", strconv.Itoa(startIndex))
+		params.Add("Limit", strconv.Itoa(pageSize))
+		params.Add("api_key", c.apiKey)
+		baseURL, err := url.Parse(fmt.Sprintf("%s/emby/Shows/%s/Episodes", c.embyURL, seriesID))
+		if err != nil {
+			return nil, fmt.Errorf("解析剧集分集 URL 失败：%w", err)
+		}
+		baseURL.RawQuery = params.Encode()
+		req, err := http.NewRequest(http.MethodGet, baseURL.String(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("创建剧集分集请求失败：%w", err)
+		}
+		req.Header.Set("Accept", "application/json")
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("发送剧集分集请求失败：%w", err)
+		}
+		var result struct {
+			Items []BaseItemDtoV2 `json:"Items"`
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("读取剧集分集响应失败：%w", readErr)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("获取剧集分集返回非 200 状态码：%d", resp.StatusCode)
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, fmt.Errorf("解析剧集分集响应失败：%w", err)
+		}
+		batch := result.Items
+		episodes = append(episodes, batch...)
+		if len(batch) < pageSize {
+			break
+		}
+		startIndex += pageSize
+	}
+	return episodes, nil
 }

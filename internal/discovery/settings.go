@@ -20,7 +20,7 @@ func (DiscoverySetting) TableName() string { return "discovery_settings" }
 
 // 默认设置项（与 参考实现 DEFAULT_SETTINGS 对齐的 diy-strm 子集）
 const (
-	SettingDefaultExploreSource   = "default_explore_source"   // 默认探索来源 tmdb/douban/anime
+	SettingDefaultExploreSource   = "default_explore_source"   // 默认探索来源 tmdb/douban/anilist/bangumi/actors
 	SettingDefaultExploreSort     = "default_explore_sort"     // 默认排序 popular/latest/rating
 	SettingCalendarDays           = "calendar_days"            // 追剧日历天数 7-60
 	SettingCalendarKind           = "calendar_kind"            // 日历类型 all/tv/movie/upcoming/on-air/airing-today
@@ -31,6 +31,16 @@ const (
 	SettingEmbyCheckEnabled       = "emby_check_enabled"       // 发现条目联动 Emby 入库检测
 	SettingCacheTTLMinutes        = "cache_ttl_minutes"        // 目录缓存分钟数
 	SettingGuanyingEnabled        = "guanying_enabled"         // 观影资源源开关
+	// —— 资源闭环（对齐参考实现 media_settings）——
+	SettingTGResourceChannels     = "tg_resource_channels"     // 公开 TG 资源检索频道 {123:[],guangya:[],pan139:[]}
+	SettingMediaTransferTargets   = "media_transfer_targets"   // 影视发现保存目录 {123:{folder_path,folder_name},...}
+	SettingMediaEmby              = "media_emby"               // Emby 媒体库 {enabled,server_url,api_key}
+	SettingTargetProvider         = "target_provider"          // 默认转存目标网盘 123/guangya/pan139
+	SettingCheckIntervalMinutes   = "check_interval_minutes"   // 订阅默认检查间隔（分钟）
+	SettingMaxPoints              = "max_points"               // 订阅默认解锁积分上限
+	SettingEmbyMissingAutoScan    = "emby_missing_auto_scan"   // 缺集自动扫描
+	SettingEmbyMissingInterval    = "emby_missing_scan_interval_minutes" // 缺集扫描间隔（分钟）
+	SettingEmbyMissingAutoSubs    = "emby_missing_auto_create_subscriptions" // 自动创建补档订阅
 )
 
 // DefaultSettings 默认设置值
@@ -47,6 +57,15 @@ func DefaultSettings() map[string]any {
 		SettingEmbyCheckEnabled:       false,
 		SettingCacheTTLMinutes:        30,
 		SettingGuanyingEnabled:        false,
+		SettingTGResourceChannels:     map[string]any{},
+		SettingMediaTransferTargets:   map[string]any{},
+		SettingMediaEmby:              map[string]any{},
+		SettingTargetProvider:         "123",
+		SettingCheckIntervalMinutes:   360,
+		SettingMaxPoints:              4,
+		SettingEmbyMissingAutoScan:    false,
+		SettingEmbyMissingInterval:    720,
+		SettingEmbyMissingAutoSubs:    false,
 	}
 }
 
@@ -67,6 +86,12 @@ func GetSettings() (map[string]any, error) {
 		}
 	}
 	return settings, nil
+}
+
+// mustSettings 忽略错误读取设置（缓存键/资源搜索等非关键路径用）
+func mustSettings() map[string]any {
+	settings, _ := GetSettings()
+	return settings
 }
 
 // UpdateSettings 更新设置（仅接受已知键）
@@ -133,5 +158,15 @@ func EnsureDiscoverySchema() error {
 		&DiscoverySetting{},
 		&DiscoveryFavorite{},
 		&DiscoverySubjectCache{},
+		&DiscoveryCatalogState{},
+		&DiscoveryExternalCache{},
+		&DiscoverySubscription{},
+		&DiscoverySubscriptionRule{},
+		&DiscoverySubscriptionRun{},
+		&DiscoverySubscriptionItem{},
+		&DiscoverySubscriptionEvent{},
+		&DiscoveryEmbyMissingScan{},
+		&DiscoveryEmbyMissingResult{},
+		&DiscoveryEmbyMissingEvent{},
 	)
 }

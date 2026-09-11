@@ -62,13 +62,19 @@ func init() {
 
 // MediaDiscoveryMeta 发现页元数据（类型/平台/地区/片单选项，供前端筛选器）
 type MediaDiscoveryMeta struct {
-	GenresMovie   map[string]string   `json:"genres_movie"`
-	GenresTv      map[string]string   `json:"genres_tv"`
-	Providers     []map[string]string `json:"providers"`
-	Regions       []map[string]string `json:"regions"`
-	Collections   []map[string]string `json:"collections"`
-	DoubanTags    map[string][]string `json:"douban_tags"`
-	DefaultSource string              `json:"default_source"`
+	GenresMovie    map[string]string   `json:"genres_movie"`
+	GenresTv       map[string]string   `json:"genres_tv"`
+	Providers      []map[string]string `json:"providers"`
+	Regions        []map[string]string `json:"regions"`
+	Collections    []map[string]string `json:"collections"`
+	DoubanTags     map[string][]string `json:"douban_tags"`
+	DefaultSource  string              `json:"default_source"`
+	DoubanCategory map[string][]string `json:"douban_category"` // 豆瓣目录分类 tag
+	DoubanSort     []map[string]string `json:"douban_sort"`     // 豆瓣目录排序
+	AnimeGenres    []string            `json:"anime_genres"`    // 动漫类型
+	AnimeRegions   []map[string]string `json:"anime_regions"`   // 动漫地区
+	AnimeSort      []map[string]string `json:"anime_sort"`      // 动漫排序
+	MaoyanCategory []discovery.MaoyanCategory `json:"maoyan_category"` // 猫眼榜单类别
 }
 
 // GetMediaDiscoveryMeta 获取发现页元数据
@@ -79,13 +85,19 @@ type MediaDiscoveryMeta struct {
 func GetMediaDiscoveryMeta(c *gin.Context) {
 	settings, _ := discovery.GetSettings()
 	meta := MediaDiscoveryMeta{
-		GenresMovie:   discovery.Genres("movie"),
-		GenresTv:      discovery.Genres("tv"),
-		Providers:     discovery.StreamingProviders,
-		Regions:       discovery.StreamingRegions,
-		Collections:   discovery.DoubanCollections(),
-		DoubanTags:    doubanTagList,
-		DefaultSource: stringValue(settings[discovery.SettingDefaultExploreSource], "tmdb"),
+		GenresMovie:    discovery.Genres("movie"),
+		GenresTv:       discovery.Genres("tv"),
+		Providers:      discovery.StreamingProviders,
+		Regions:        discovery.StreamingRegions,
+		Collections:    discovery.DoubanCollections(),
+		DoubanTags:     doubanTagList,
+		DefaultSource:  stringValue(settings[discovery.SettingDefaultExploreSource], "tmdb"),
+		DoubanCategory: discovery.DoubanCategoryTags,
+		DoubanSort:     discovery.DoubanSortOptions,
+		AnimeGenres:    discovery.AnimeGenreOptions,
+		AnimeRegions:   discovery.AnimeRegionOptions,
+		AnimeSort:      discovery.AnimeSortOptions,
+		MaoyanCategory: discovery.MaoyanCategories,
 	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "", Data: meta})
 }
