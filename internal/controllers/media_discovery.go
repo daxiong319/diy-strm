@@ -1,15 +1,11 @@
 package controllers
 
 import (
-	"context"
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"diy-strm/internal/discovery"
-	"diy-strm/internal/hdhive"
-	"diy-strm/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,46 +15,7 @@ import (
 // 番剧目录 / 收藏 / 基础配置。数据层在 internal/discovery 包。
 // ---------------------------------------------------------------------------
 
-func init() {
-	// 注入RE0 Feed 双通道 failover 执行器（中转主渠道 → 直连通道 备用渠道）
-	discovery.FeedExecFn = func(ctx context.Context, call func(fc hdhive.FeedClient) (*hdhive.OAuthAPIResponse, error)) (*hdhive.OAuthAPIResponse, error) {
-		accs := models.ListHiveAccountsForQuery()
-		if len(accs) == 0 {
-			return nil, errors.New("没有启用中的RE0授权账号，请先在RE0设置中完成 OAuth 授权")
-		}
-		var lastErr error
-		tried := map[string]bool{}
-		for _, acc := range accs {
-			channel := acc.Channel
-			if channel == "" {
-				channel = models.HiveChannelTgtodrive
-			}
-			if tried[channel] {
-				continue // 每个通道只尝试一次
-			}
-			tried[channel] = true
-			client := models.HiveClientForAccount(acc)
-			fc, ok := client.(hdhive.FeedClient)
-			if !ok {
-				continue
-			}
-			resp, err := call(fc)
-			if err != nil {
-				lastErr = err
-				continue
-			}
-			if resp.StatusCode >= 500 || resp.StatusCode == 401 {
-				lastErr = errors.New("通道响应异常 HTTP " + strconv.Itoa(resp.StatusCode))
-				continue
-			}
-			return resp, nil
-		}
-		if lastErr == nil {
-			lastErr = errors.New("全部通道均不可用")
-		}
-		return nil, lastErr
-	}
-}
+
 
 // MediaDiscoveryMeta 发现页元数据（类型/平台/地区/片单选项，供前端筛选器）
 type MediaDiscoveryMeta struct {

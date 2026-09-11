@@ -106,21 +106,18 @@ func InvalidateDiscoveryCache() {
 	globalCache.entries = map[string]cacheEntry{}
 }
 
-// FeedExecFn RE0 Feed 调用执行器（由 controller 层注入双通道 failover 逻辑）：
-// call 收到一个可用通道的 FeedClient 并执行具体接口调用；
-// 未注入或无可用通道时返回错误
-var FeedExecFn func(ctx context.Context, call func(fc hdhive.FeedClient) (*hdhive.OAuthAPIResponse, error)) (*hdhive.OAuthAPIResponse, error)
-
-// feedExecute 执行一次RE0 Feed 调用：
-// 优先走 tgto123 反代（同机实例，稳定可用），失败回退到 RE0 通道 failover
+// feedExecute 执行一次RE0 Feed 调用（tgto123 反代独占：
+// symedia/tgtodrive/nanshare/official 四通道的 feeds 上游已全部 404/下线，
+// 仅 tgto123 实例侧的榜单接口仍可用）
 func feedExecute(ctx context.Context, call func(fc hdhive.FeedClient) (*hdhive.OAuthAPIResponse, error)) (*hdhive.OAuthAPIResponse, error) {
-	if resp, ok, err := tgto123FeedCall(ctx, call); ok {
-		return resp, err
+	resp, ok, err := tgto123FeedCall(ctx, call)
+	if ok && err == nil {
+		return resp, nil
 	}
-	if FeedExecFn == nil {
-		return nil, fmt.Errorf("RE0 feed 通道未初始化，请先完成 OAuth 授权")
+	if err != nil {
+		return nil, fmt.Errorf("tgto123 反代不可用：%v", err)
 	}
-	return FeedExecFn(ctx, call)
+	return nil, fmt.Errorf("tgto123 反代未配置：请在发现-基础配置中填写 tgto123 地址与账号")
 }
 
 // ---------------------------------------------------------------------------

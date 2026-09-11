@@ -12,7 +12,6 @@ import (
 	"diy-strm/internal/discovery"
 	"diy-strm/internal/guanying"
 	"diy-strm/internal/hdhive"
-	"diy-strm/internal/models"
 	"diy-strm/internal/seedhub"
 
 	"github.com/gin-gonic/gin"
@@ -257,7 +256,7 @@ func resourceSourceErrorCode(err error) string {
 func searchResourceBySource(ctx context.Context, source, mediaType string, tmdbID int64, title string) ([]resourceItem, error) {
 	switch source {
 	case "re0":
-		return searchRe0Resources(ctx, mediaType, tmdbID)
+		return searchRe0Resources(ctx, mediaType, tmdbID, title)
 	case "guanying":
 		return searchGuanyingResources(ctx, mediaType, tmdbID, title)
 	case "seedhub":
@@ -326,26 +325,49 @@ func firstNonEmptyStr(values ...string) string {
 	return ""
 }
 
-// searchRe0Resources 复用 RE0（原影巢）四通道负载均衡查询资源
-func searchRe0Resources(ctx context.Context, mediaType string, tmdbID int64) ([]resourceItem, error) {
-	if tmdbID <= 0 {
-		return nil, fmt.Errorf("RE0 检索需要 TMDB ID")
+// searchRe0Resources 走 tgto123 反代搜索 RE0 资源（四通道已失效下线）
+func searchRe0Resources(ctx context.Context, mediaType string, tmdbID int64, title string) ([]resourceItem, error) {
+	if tmdbID <= 0 && strings.TrimSpace(title) == "" {
+		return nil, fmt.Errorf("RE0 检索需要 TMDB ID 或标题")
 	}
-	query, err := models.HiveQueryResourcesWithFailover(ctx, mediaType, fmt.Sprintf("%d", tmdbID))
+	resources, err := discovery.Tgto123SearchResources(ctx, title, tmdbID, mediaType, "")
 	if err != nil {
-		return nil, fmt.Errorf("RE0 通道不可用：%w", err)
+		return nil, fmt.Errorf("tgto123 反代不可用：%w", err)
 	}
-	if !query.Resp.Success {
-		msg := query.Resp.Message
-		if msg == "" {
-			msg = query.Resp.Description
+	items := make([]resourceItem, 0, len(resources))
+	for _, r := range resources {
+		linkType := strings.ToLower(strings.TrimSpace(r.PanType))
+		isOffline := linkType == "magnet" || linkType == "ed2k"
+		item := resourceItem{
+			ItemKey:         "re0:" + firstNonEmptyStr(r.Slug, r.Title),
+			Source:          "re0",
+			Provider:        r.PanType,
+			ProviderLabel:   resourceProviderLabel(r.PanType),
+			Title:           r.Title,
+			Slug:            r.Slug,
+			LinkType:        r.PanType,
+			Size:            r.ShareSize,
+			IsUnlocked:      r.IsUnlocked,
+			PointsKnown:     !isOffline && r.UnlockPoints > 0,
+			UnlockPoints:    r.UnlockPoints,
+			UnlockedUsersCt: r.UnlockedUsersCount,
+			Remark:          r.Remark,
+			ValidateMessage: r.ValidateMessage,
+			IsOfficial:      r.IsOfficial,
+			SpecTags:        append(append([]string{}, r.VideoResolution...), r.Source...),
+			SubtitleLangs:   r.SubtitleLanguage,
+			SubtitleTypes:   r.SubtitleType,
 		}
-		if strings.Contains(strings.ToLower(query.Resp.Code), "auth") {
-			return nil, fmt.Errorf("RE0 未授权：%s", msg)
+		if r.User != nil && r.User.Nickname != "" {
+			item.Sharer = r.User.Nickname
 		}
-		return nil, fmt.Errorf("%s", msg)
+		if isOffline {
+			item.ShareURL = r.Slug
+			item.SupportedTargets = offlineSupportedTargets(linkType)
+		}
+		items = append(items, item)
 	}
-	return re0ResourceItems(query.Resp)
+	return items, nil
 }
 
 // CopyRe0ResourceLinkAPI POST /api/media-discovery/resources/copy-link

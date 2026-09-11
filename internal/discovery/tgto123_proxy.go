@@ -310,3 +310,184 @@ func (c *Tgto123FeedClient) GetCalendar(ctx context.Context, days int) (*hdhive.
 	raw, _ := json.Marshal(payload)
 	return &hdhive.OAuthAPIResponse{Success: true, StatusCode: http.StatusOK, Data: raw}, nil
 }
+
+// ---------------------------------------------------------------------------
+// RE0 资源搜索 / 解锁转存（替代失效的四通道：symedia/tgtodrive/nanshare/official）
+// ---------------------------------------------------------------------------
+
+// tgto123ResourceItem tgto123 资源搜索条目（/api/media/resources/search）
+type tgto123ResourceItem struct {
+	ItemKey          string  `json:"item_key"`
+	Title            string  `json:"title"`
+	Source           string  `json:"source"`
+	Provider         string  `json:"provider"`
+	ProviderLabel    string  `json:"provider_label"`
+	Slug             string  `json:"slug"`
+	LinkType         string  `json:"link_type"`
+	ShareURL         string  `json:"share_url"`
+	Size             string  `json:"size"`
+	IsUnlocked       bool    `json:"is_unlocked"`
+	PointsKnown      bool    `json:"points_known"`
+	UnlockPoints     int     `json:"unlock_points"`
+	UnlockedUsersCt  int     `json:"unlocked_users_count"`
+	Remark           string  `json:"remark"`
+	ValidateMessage  string  `json:"validate_message"`
+	IsOfficial       bool    `json:"is_official"`
+	Sharer           string  `json:"sharer"`
+	SpecTags         []string `json:"resource_spec_tags"`
+	SubtitleLangs    []string `json:"subtitle_languages"`
+	SubtitleTypes    []string `json:"subtitle_types"`
+	Episode          *struct {
+		SeasonNum       *int `json:"season_num"`
+		EpisodeNum      *int `json:"episode_num"`
+		EndEpisodeNum   *int `json:"end_episode_num"`
+		TotalEpisodeNum *int `json:"total_episode_num"`
+		IsComplete      bool `json:"is_complete"`
+		IsUpdated       bool `json:"is_updated"`
+	} `json:"episode"`
+}
+
+// Tgto123SearchResources 通过 tgto123 反代搜索 RE0 资源（替代 HiveQueryResourcesWithFailover）
+func Tgto123SearchResources(ctx context.Context, title string, tmdbID int64, mediaType, year string) ([]hdhive.Resource, error) {
+	client := newTgto123FeedClient()
+	if client == nil {
+		return nil, fmt.Errorf("tgto123 反代未配置")
+	}
+	if mediaType != "tv" {
+		mediaType = "movie"
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"title":      title,
+		"tmdb_id":    tmdbID,
+		"media_type": mediaType,
+		"year":       year,
+		"sources":    []string{"hdhive"},
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/api/media/resources/search", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := client.login(ctx); err != nil {
+		return nil, err
+	}
+	resp, err := client.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusFound {
+		client.mu.Lock()
+		client.loggedIn = false
+		client.mu.Unlock()
+		return nil, fmt.Errorf("tgto123 会话失效，请重新填写会话")
+	}
+	var out struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []tgto123ResourceItem `json:"items"`
+			Errors []struct {
+				Source string `json:"source"`
+				Error  string `json:"error"`
+			} `json:"errors"`
+		} `json:"data"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("解析 tgto123 资源响应失败：%v", err)
+	}
+	if !out.Success {
+		return nil, fmt.Errorf("%s", firstNonEmptyStr(out.Message, "tgto123 资源搜索失败"))
+	}
+	resources := make([]hdhive.Resource, 0, len(out.Data.Items))
+	for _, it := range out.Data.Items {
+		res := hdhive.Resource{
+			Slug:               it.Slug,
+			Title:              it.Title,
+			PanType:            it.Provider,
+			ShareSize:          it.Size,
+			Remark:             it.Remark,
+			UnlockPoints:       it.UnlockPoints,
+			UnlockedUsersCount: it.UnlockedUsersCt,
+			ValidateMessage:    it.ValidateMessage,
+			IsOfficial:         it.IsOfficial,
+			IsUnlocked:         it.IsUnlocked,
+			SubtitleLanguage:   it.SubtitleLangs,
+			SubtitleType:       it.SubtitleTypes,
+		}
+		// 规格标签按「键:值」分桶到分辨率/片源/字幕
+		for _, tag := range it.SpecTags {
+			k, v, ok := strings.Cut(tag, ":")
+			if !ok {
+				continue
+			}
+			k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+			switch {
+			case strings.Contains(k, "分辨率"):
+				res.VideoResolution = append(res.VideoResolution, v)
+			case strings.Contains(k, "片源"), strings.Contains(k, "来源"):
+				res.Source = append(res.Source, v)
+			case strings.Contains(k, "字幕"):
+				res.SubtitleLanguage = append(res.SubtitleLanguage, v)
+			}
+		}
+		resources = append(resources, res)
+	}
+	return resources, nil
+}
+
+// Tgto123TransferResource 通过 tgto123 反代解锁并转存 RE0 资源
+// （tgto123 侧完成解锁与转存，落盘目录由 tgto123 基础配置的保存目录决定）
+func Tgto123TransferResource(ctx context.Context, slug, provider string) (string, error) {
+	client := newTgto123FeedClient()
+	if client == nil {
+		return "", fmt.Errorf("tgto123 反代未配置")
+	}
+	if err := client.login(ctx); err != nil {
+		return "", err
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"source":   "hdhive",
+		"provider": provider,
+		"slug":     slug,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/api/media/resources/transfer", bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	var out struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Message string `json:"message"`
+		} `json:"data"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", fmt.Errorf("解析 tgto123 转存响应失败：%v", err)
+	}
+	if !out.Success {
+		return "", fmt.Errorf("%s", firstNonEmptyStr(out.Message, out.Data.Message, "tgto123 转存失败"))
+	}
+	return firstNonEmptyStr(out.Data.Message, out.Message, "转存成功"), nil
+}
+
+// Tgto123ResourceProviderKey RE0 网盘类型 → tgto123 转存 provider 键
+func Tgto123ResourceProviderKey(panType string) string {
+	switch strings.ToLower(strings.TrimSpace(panType)) {
+	case "guangyapan", "guangya", "gy":
+		return "guangya"
+	case "123", "123pan":
+		return "123"
+	case "115":
+		return "115"
+	}
+	return strings.ToLower(strings.TrimSpace(panType))
+}

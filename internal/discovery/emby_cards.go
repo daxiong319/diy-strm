@@ -185,9 +185,13 @@ func TestMediaEmbyConnection(serverURL, apiKey string) (int, error) {
 	return total, nil
 }
 
-// UnlockRe0ForTransfer 详情页手动转存：RE0 解锁取分享链接
+// UnlockRe0ForTransfer 详情页手动转存：tgto123 反代解锁
+// （tgto123 的解锁与转存一体，此处仅校验 slug 有效并返回占位）
 func UnlockRe0ForTransfer(ctx context.Context, slug string) (*hdhiveUnlock, error) {
-	return unlockRe0Resource(ctx, slug)
+	if strings.TrimSpace(slug) == "" {
+		return nil, fmt.Errorf("缺少资源 slug")
+	}
+	return &hdhiveUnlock{URL: "tgto123://resource/" + slug, Title: slug}, nil
 }
 
 // MarshalJSONForTest 供控制器复用的 JSON 序列化

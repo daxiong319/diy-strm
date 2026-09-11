@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/rand"
 	"regexp"
@@ -16,7 +15,8 @@ import (
 	"diy-strm/internal/hdhive"
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/models"
-)
+
+	"diy-strm/internal/discovery")
 
 // hiveWatchMinInterval RE0订阅引擎最小轮询间隔（分钟）
 const hiveWatchMinInterval = 5 * time.Minute
@@ -139,47 +139,23 @@ func reactivateFinishedTVSubscriptions() {
 // 资源查询与详情/解锁调用均走四通道负载均衡（symedia/直连通道/nanshare/官方直连），
 // 通道级故障（限流/授权失效/5xx）自动逐个降级尝试。
 func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
-	mainAcc, err := models.GetHiveMainAccount()
-	if err != nil {
-		sub.LastRunAt = time.Now()
-		_ = models.SaveCloudSubscription(sub)
-		return fmt.Sprintf("订阅 #%d（RE0）获取主账号失败：%v", sub.ID, err), false
-	}
-	if !mainAcc.Authorized && !models.HasAuthorizedHiveChannelAccount() {
-		return fmt.Sprintf("订阅 #%d（RE0）主账号未授权，请先在RE0设置中完成 OAuth 授权（任一通道）", sub.ID), false
-	}
 	if sub.TMDBID <= 0 || (sub.MediaType != "movie" && sub.MediaType != "tv") {
 		return fmt.Sprintf("订阅 #%d（RE0）缺少影片信息（TMDB ID/类型），跳过", sub.ID), false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	// 查询资源列表：四通道按负载均衡调度逐个尝试，通道级故障自动降级
-	query, qerr := models.HiveQueryResourcesWithFailover(ctx, sub.MediaType, strconv.FormatInt(sub.TMDBID, 10))
+	// 查询资源列表：tgto123 反代（原四通道 feeds/资源上游已全部失效，已下线）
+	title := strings.TrimSpace(sub.TMDBTitle)
+	if title == "" {
+		title = strings.TrimSpace(sub.SearchKeyword)
+	}
+	resources, qerr := discovery.Tgto123SearchResources(ctx, title, sub.TMDBID, sub.MediaType, "")
 	if qerr != nil {
-		if !mainAcc.Authorized {
-			return fmt.Sprintf("订阅 #%d（RE0）主账号未授权且无可用通道，请先在RE0设置中完成 OAuth 授权（%v）", sub.ID, qerr), false
-		}
 		return fmt.Sprintf("订阅 #%d（RE0 %s %d）查询资源失败：%v", sub.ID, sub.MediaType, sub.TMDBID, qerr), false
 	}
-	preferredChannel := query.Channel
-	resourcesResp := query.Resp
-	if !resourcesResp.Success {
-		msg := resourcesResp.Message
-		if msg == "" {
-			msg = resourcesResp.Description
-		}
-		if msg == "" {
-			msg = "请求失败"
-		}
-		return fmt.Sprintf("订阅 #%d（RE0 %s %d）查询资源失败：%s", sub.ID, sub.MediaType, sub.TMDBID, msg), false
-	}
-	var resources []hdhive.Resource
-	if len(resourcesResp.Data) > 0 && string(resourcesResp.Data) != "null" {
-		if err := json.Unmarshal(resourcesResp.Data, &resources); err != nil {
-			return fmt.Sprintf("订阅 #%d（RE0 %s %d）解析资源列表失败：%v", sub.ID, sub.MediaType, sub.TMDBID, err), false
-		}
-	}
+	var resourcesHack struct{}
+	_ = resourcesHack
 	// 过滤无效资源（失效链接）+ 订阅自定义规则（清晰度/特效字幕/包含/排除，对齐 成熟方案）
 	filteredInvalid := 0
 	filteredOfficial := 0
@@ -319,37 +295,12 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, "去重跳过：该影片/剧集已收录", meta)
 			continue
 		}
-		// 通过分享详情获取网盘类型，必须与订阅目标网盘一致（通道级故障自动降级重试）
-		shareResp, _, serr := models.HiveCallWithFailover(ctx, preferredChannel, func(cl hdhive.ChannelClient) (*hdhive.OAuthAPIResponse, error) {
-			return cl.GetShareDetail(ctx, res.Slug)
-		})
-		if serr != nil {
-			models.RecordHiveSlugFailure(res.Slug, sub.TMDBID, serr.Error())
-			errs = append(errs, fmt.Sprintf("%s 详情获取失败：%v", res.Slug, serr))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, serr, meta)
-			continue
-		}
-		if !shareResp.Success {
-			failMsg := shareResp.Message
-			if failMsg == "" {
-				failMsg = shareResp.Description
-			}
-			models.RecordHiveSlugFailure(res.Slug, sub.TMDBID, "详情获取失败："+failMsg)
-			errs = append(errs, fmt.Sprintf("%s 详情获取失败：%s", res.Slug, failMsg))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Errorf("%s", failMsg), meta)
-			continue
-		}
-		var detail hdhive.ShareDetail
-		if err := json.Unmarshal(shareResp.Data, &detail); err != nil {
-			errs = append(errs, fmt.Sprintf("%s 详情解析失败", res.Slug))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, err, meta)
-			continue
-		}
-		panType := hivePanTypeToSourceType(detail.PanType)
+		// 网盘类型直接来自 tgto123 搜索结果（无需再取分享详情）
+		panType := hivePanTypeToSourceType(res.PanType)
 		if panType == "" {
 			unsupported++
-			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Sprintf("网盘类型 %q 暂不支持，跳过", detail.PanType), meta)
-			helpers.AppLogger.Debugf("RE0订阅 #%d：资源 %s 网盘类型 %q 暂不支持，跳过", sub.ID, res.Slug, detail.PanType)
+			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Sprintf("网盘类型 %q 暂不支持，跳过", res.PanType), meta)
+			helpers.AppLogger.Debugf("RE0订阅 #%d：资源 %s 网盘类型 %q 暂不支持，跳过", sub.ID, res.Slug, res.PanType)
 			continue
 		}
 		if panType != sub.SourceType {
@@ -368,104 +319,27 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 			helpers.AppLogger.Infof("RE0订阅 #%d：今日自动解锁已达上限 %d，剩余候选下轮处理", sub.ID, limit)
 			break
 		}
-		// 解锁（先取解锁节流许可，再走通道降级调用）
-		if uerr := hdhive.AcquireUnlock(ctx); uerr != nil {
-			errs = append(errs, fmt.Sprintf("解锁节流等待失败：%v", uerr))
-			continue
-		}
-		unlockResp, _, uerr := models.HiveCallWithFailover(ctx, preferredChannel, func(cl hdhive.ChannelClient) (*hdhive.OAuthAPIResponse, error) {
-			return cl.UnlockResource(ctx, res.Slug)
-		})
-		if uerr != nil {
-			models.RecordHiveSlugFailure(res.Slug, sub.TMDBID, "解锁失败："+uerr.Error())
-			errs = append(errs, fmt.Sprintf("%s 解锁失败：%v", res.Slug, uerr))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, uerr, meta)
-			continue
-		}
-		if !unlockResp.Success {
-			failMsg := unlockResp.Message
-			// 积分不足（借鉴 NanShare 的 INSUFFICIENT_POINTS 处理）：计为跳过而非失败，
-			// 并带上所需积分，方便调整积分上限或签到补分后重试
-			if code := strings.ToUpper(strings.TrimSpace(unlockResp.Code)); code == "INSUFFICIENT_POINTS" {
-				required := 0
-				var d struct {
-					RequiredPoints *int `json:"required_points"`
-				}
-				if len(unlockResp.Data) > 0 && json.Unmarshal(unlockResp.Data, &d) == nil && d.RequiredPoints != nil {
-					required = *d.RequiredPoints
-				}
-				if required <= 0 {
-					required = res.UnlockPoints
-				}
-				skipReason := fmt.Sprintf("积分不足：需要 %d 积分，已跳过", required)
-				skipped++
-				recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, skipReason, meta)
-				continue
-			}
-			if failMsg == "" {
-				failMsg = unlockResp.Description
-			}
-			models.RecordHiveSlugFailure(res.Slug, sub.TMDBID, "解锁失败："+failMsg)
-			errs = append(errs, fmt.Sprintf("%s 解锁失败：%s", res.Slug, failMsg))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Errorf("%s", failMsg), meta)
-			continue
-		}
-		hiveUnlockDailyInc() // U2：成功解锁计数（积分不足/失败不计数）
-		var unlock hdhive.UnlockResult
-		if err := json.Unmarshal(unlockResp.Data, &unlock); err != nil {
-			errs = append(errs, fmt.Sprintf("%s 解锁结果解析失败", res.Slug))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, err, meta)
-			continue
-		}
-		linkURL := strings.TrimSpace(unlock.FullURL)
-		if linkURL == "" {
-			linkURL = strings.TrimSpace(unlock.URL)
-		}
-		if models.HasLinkRecord(linkURL) {
-			skipped++ // 该链接已转存过
-			recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", linkURL, targetDir, sub.ID, "去重跳过：该分享链接已转存过", meta)
-			continue
-		}
-		// 转存子目录（transfer_use_subdir）：以「标题 (年份)」建子目录后转存
-		transferDir := targetDir
-		if models.GetHiveUseSubdir() {
-			subName := strings.TrimSpace(sub.SearchKeyword)
-			if subName == "" {
-				subName = sub.TMDBTitle
-			}
-			if subName == "" {
-				subName = shortHiveTitle(res.Title)
-			}
-			if sub.Year > 0 {
-				subName = fmt.Sprintf("%s (%d)", subName, sub.Year)
-			}
-			d, derr := hiveEnsureSubdir(ctx, panType, targetDir, subName)
-			if derr != nil {
-				errs = append(errs, fmt.Sprintf("创建转存子目录失败：%v", derr))
-				continue
-			}
-			transferDir = d
-		}
-		// 转存节流（借鉴 成熟方案：转存最小间隔 + 随机抖动，避免固定频率触发风控）
-		if terr := awaitHiveTransferSlot(ctx, throttle); terr != nil {
-			helpers.AppLogger.Warnf("RE0订阅 #%d：转存节流中断：%v", sub.ID, terr)
-			break
-		}
-		title, total, terr := saveShareByLink(ctx, linkURL, unlock.AccessCode, panType, transferDir)
+		// tgto123 反代：解锁+转存一体（落盘目录由 tgto123 基础配置的保存目录决定）
+		transferMsg, terr := discovery.Tgto123TransferResource(ctx, res.Slug, discovery.Tgto123ResourceProviderKey(res.PanType))
 		if terr != nil {
-			models.RecordHiveSlugFailure(res.Slug, sub.TMDBID, "转存失败："+terr.Error())
-			errs = append(errs, fmt.Sprintf("%s 转存失败：%v", linkURL, terr))
-			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", linkURL, transferDir, sub.ID, terr, meta)
-			failTitle := sub.TMDBTitle
-			if failTitle == "" {
-				failTitle = shortHiveTitle(res.Title)
+			msg := terr.Error()
+			// 积分不足计为跳过（对齐原 INSUFFICIENT_POINTS 语义）
+			if strings.Contains(msg, "积分不足") || strings.Contains(strings.ToUpper(msg), "INSUFFICIENT_POINTS") {
+				skipped++
+				recordMonitorSkipped("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, msg, meta)
+				continue
 			}
-			_ = models.CreateSubscriptionLog(&models.SubscriptionLog{
-				SubscriptionID: sub.ID, Title: failTitle, Action: "transfer",
-				Status: "failed", Message: "转存失败：" + terr.Error(), ShareLink: linkURL,
-			})
-			sendTransferFailedNotification(sub.SourceType, failTitle, transferDir, terr.Error(), notifChannel)
+			models.RecordHiveSlugFailure(res.Slug, sub.TMDBID, "转存失败："+msg)
+			errs = append(errs, fmt.Sprintf("%s 转存失败：%s", res.Slug, msg))
+			recordMonitorFailed("hive", sub.SourceType, "", hiveMsgID, "", "", targetDir, sub.ID, fmt.Errorf("%s", msg), meta)
 			continue
+		}
+		hiveUnlockDailyInc()
+		linkURL := "" // tgto123 一体转存无独立分享链接
+		transferDir := "tgto123 保存目录"
+		title, total := shortHiveTitle(res.Title), 0
+		if transferMsg != "" {
+			total = 1
 		}
 		transferred++
 		models.ClearHiveSlugAttempt(res.Slug) // 成功后清除失败历史
@@ -497,7 +371,7 @@ func RunHiveSubscriptionOnce(sub *models.CloudSubscription) (string, bool) {
 		})
 		_ = models.CreateSubscriptionLog(&models.SubscriptionLog{
 			SubscriptionID: sub.ID, Title: recTitle, Action: "transfer",
-			Status: "success", Message: fmt.Sprintf("已转存 %d 个文件到 %s", total, transferDir),
+			Status: "success", Message: fmt.Sprintf("已转存（%s）：%s", transferDir, strings.TrimSpace(transferMsg)),
 			ShareLink: linkURL, FileCount: total,
 		})
 		extra := ""

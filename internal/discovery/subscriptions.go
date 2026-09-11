@@ -14,7 +14,6 @@ import (
 
 	"diy-strm/internal/db"
 	"diy-strm/internal/hdhive"
-	"diy-strm/internal/models"
 
 	"gorm.io/gorm"
 )
@@ -547,7 +546,7 @@ func processSubscriptionLocked(id uint, trigger string) (*DiscoverySubscriptionR
 	return &run, nil
 }
 
-// searchSubscriptionResources 检索 RE0 资源（按 TMDB ID）
+// searchSubscriptionResources 检索 RE0 资源（tgto123 反代，按 TMDB ID）
 func searchSubscriptionResources(sub *DiscoverySubscription) ([]resourceCandidate, error) {
 	if sub.TMDBID <= 0 {
 		return nil, fmt.Errorf("订阅缺少 TMDB ID，无法安全检索")
@@ -556,19 +555,9 @@ func searchSubscriptionResources(sub *DiscoverySubscription) ([]resourceCandidat
 	if mediaType == "" {
 		mediaType = "movie"
 	}
-	query, err := models.HiveQueryResourcesWithFailover(context.Background(), mediaType, fmt.Sprintf("%d", sub.TMDBID))
+	resources, err := Tgto123SearchResources(context.Background(), sub.Title, sub.TMDBID, mediaType, "")
 	if err != nil {
-		return nil, fmt.Errorf("RE0 通道不可用：%v", err)
-	}
-	if !query.Resp.Success {
-		msg := firstNonEmptyStr(query.Resp.Message, query.Resp.Description, "上游接口无数据")
-		return nil, fmt.Errorf("%s", msg)
-	}
-	var resources []hdhive.Resource
-	if len(query.Resp.Data) > 0 {
-		if err := jsonUnmarshal(query.Resp.Data, &resources); err != nil {
-			return nil, fmt.Errorf("解析 RE0 资源失败：%v", err)
-		}
+		return nil, fmt.Errorf("tgto123 反代不可用：%v", err)
 	}
 	candidates := make([]resourceCandidate, 0, len(resources))
 	for _, r := range resources {
@@ -669,23 +658,16 @@ func planAndTransferRuleCandidates(sub *DiscoverySubscription, rule DiscoverySub
 	return selected, skipped, transferred, failures
 }
 
-// transferSubscriptionCandidate 转存单条候选（RE0 解锁 → 分享链接转存）
+// transferSubscriptionCandidate 转存单条候选（tgto123 反代：解锁+转存一体，
+// 落盘目录由 tgto123 基础配置的保存目录决定）
 func transferSubscriptionCandidate(cand resourceCandidate, provider string) (string, int, error) {
-	if cand.Source == "re0" && cand.Slug != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-		defer cancel()
-		unlock, err := unlockRe0Resource(ctx, cand.Slug)
-		if err != nil {
-			return "", 0, err
-		}
-		return TransferShareLink(ctx, unlock.URL, unlock.AccessCode, firstNonEmptyStr(unlock.PanType, provider))
+	if strings.TrimSpace(cand.Slug) == "" {
+		return "", 0, fmt.Errorf("候选缺少 slug，无法通过 tgto123 转存")
 	}
-	if cand.ShareURL != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-		defer cancel()
-		return TransferShareLink(ctx, cand.ShareURL, cand.AccessCode, provider)
-	}
-	return "", 0, fmt.Errorf("候选缺少可转存的链接")
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	msg, err := Tgto123TransferResource(ctx, cand.Slug, firstNonEmptyStr(provider, "123"))
+	return msg, 1, err
 }
 
 // candidateBlockReason 转存前置校验（对齐参考实现 _automatic_candidate_block_reason）
@@ -850,32 +832,6 @@ func subscriptionWorker() {
 			RunDueSubscriptions(5)
 		}()
 	}
-}
-
-// unlockRe0Resource 解锁 RE0 资源（slug → 分享链接）
-func unlockRe0Resource(ctx context.Context, slug string) (*hdhiveUnlock, error) {
-	if err := hdhive.AcquireUnlock(ctx); err != nil {
-		return nil, fmt.Errorf("解锁节流等待失败：%v", err)
-	}
-	resp, _, err := models.HiveCallWithFailover(ctx, "", func(cl hdhive.ChannelClient) (*hdhive.OAuthAPIResponse, error) {
-		return cl.UnlockResource(ctx, slug)
-	})
-	if err != nil {
-		return nil, err
-	}
-	if !resp.Success {
-		msg := firstNonEmptyStr(resp.Message, resp.Description, "解锁失败")
-		return nil, fmt.Errorf("%s", msg)
-	}
-	var unlock hdhive.UnlockResult
-	if err := jsonUnmarshal(resp.Data, &unlock); err != nil {
-		return nil, fmt.Errorf("解锁结果解析失败")
-	}
-	full := strings.TrimSpace(unlock.FullURL)
-	if full == "" {
-		full = strings.TrimSpace(unlock.URL)
-	}
-	return &hdhiveUnlock{URL: full, AccessCode: unlock.AccessCode, PanType: strings.TrimSpace(unlock.PanType), Title: unlock.Title}, nil
 }
 
 type hdhiveUnlock struct {

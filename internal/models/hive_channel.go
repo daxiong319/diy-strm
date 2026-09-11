@@ -263,6 +263,9 @@ func classifyHiveChannelError(resp *hdhive.OAuthAPIResponse, err error) (time.Du
 // 通道级故障（网络/5xx/401/403/429/授权缺失）时自动逐个降级下一通道；
 // 业务失败（success=false 但 HTTP 200）视为有效结果直接返回
 func HiveQueryResourcesWithFailover(ctx context.Context, mediaType, tmdbID string) (*HiveQueryResult, error) {
+	return nil, fmt.Errorf("RE0 四通道已下线：资源查询请改走 tgto123 反代（discovery.Tgto123SearchResources）")
+}
+func hiveQueryResourcesWithFailoverDead(ctx context.Context, mediaType, tmdbID string) (*HiveQueryResult, error) {
 	accs := ListHiveAccountsForQuery()
 	if len(accs) == 0 {
 		return nil, errors.New("没有启用中的RE0授权账号")
@@ -308,6 +311,9 @@ func HiveQueryResourcesWithFailover(ctx context.Context, mediaType, tmdbID strin
 // HiveCallWithFailover 通用通道调用（详情/解锁等）：优先使用 preferred 通道，
 // 通道级故障时逐个降级尝试其余通道。返回响应与实际使用的通道名。
 func HiveCallWithFailover(ctx context.Context, preferred string, call func(hdhive.ChannelClient) (*hdhive.OAuthAPIResponse, error)) (*hdhive.OAuthAPIResponse, string, error) {
+	return nil, "", fmt.Errorf("RE0 四通道已下线：请改走 tgto123 反代（discovery.Tgto123TransferResource）")
+}
+func hiveCallWithFailoverDead(ctx context.Context, preferred string, call func(hdhive.ChannelClient) (*hdhive.OAuthAPIResponse, error)) (*hdhive.OAuthAPIResponse, string, error) {
 	order := hiveChannelOrder(preferred)
 	var lastErr error
 	for _, ch := range order {

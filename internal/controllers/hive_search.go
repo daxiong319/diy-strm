@@ -14,10 +14,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"diy-strm/internal/helpers"
-	"diy-strm/internal/hdhive"
 	"diy-strm/internal/models"
 	"diy-strm/internal/tgchannel"
-)
+
+	"diy-strm/internal/discovery")
 
 // hiveRefreshingCount 正在后台执行的订阅搜索数（列表接口 refreshing_counts 字段，成熟方案 对齐）
 var hiveRefreshingCount atomic.Int64
@@ -446,29 +446,10 @@ func hiveManualSearchHDHive(ctx context.Context, c *gin.Context, mediaType strin
 		writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "hdhive", Status: "error", Message: "缺少 TMDB ID"})
 		return
 	}
-	query, err := models.HiveQueryResourcesWithFailover(ctx, mediaType, strconv.FormatInt(tmdbID, 10))
+	resources, err := discovery.Tgto123SearchResources(ctx, "", tmdbID, mediaType, "")
 	if err != nil {
 		writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "hdhive", Status: "error", Message: err.Error()})
 		return
-	}
-	resp := query.Resp
-	if !resp.Success {
-		msg := resp.Message
-		if msg == "" {
-			msg = resp.Description
-		}
-		if msg == "" {
-			msg = "搜索失败"
-		}
-		writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "hdhive", Status: "error", Message: msg})
-		return
-	}
-	var resources []hdhive.Resource
-	if len(resp.Data) > 0 && string(resp.Data) != "null" {
-		if err := json.Unmarshal(resp.Data, &resources); err != nil {
-			writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "hdhive", Status: "error", Message: "解析资源列表失败"})
-			return
-		}
 	}
 	items := make([]gin.H, 0, len(resources))
 	for _, r := range resources {
@@ -717,56 +698,16 @@ func HiveUnlockAPI(c *gin.Context) {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "缺少资源 slug", Data: nil})
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 120*time.Second)
 	defer cancel()
-	if err := hdhive.AcquireUnlock(ctx); err != nil {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "解锁节流等待失败：" + err.Error(), Data: nil})
+	// tgto123 反代：解锁+转存一体（RE0 四通道已失效下线）
+	transferMsg, terr := discovery.Tgto123TransferResource(ctx, req.Slug, "123")
+	if terr != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "转存失败：" + terr.Error(), Data: nil})
 		return
 	}
-	unlockResp, _, uerr := models.HiveCallWithFailover(ctx, "", func(cl hdhive.ChannelClient) (*hdhive.OAuthAPIResponse, error) {
-		return cl.UnlockResource(ctx, req.Slug)
-	})
-	if uerr != nil {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "解锁失败：" + uerr.Error(), Data: nil})
-		return
-	}
-	if !unlockResp.Success {
-		msg := unlockResp.Message
-		if msg == "" {
-			msg = unlockResp.Description
-		}
-		if msg == "" {
-			msg = "解锁失败"
-		}
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "RE0接口返回：" + msg, Data: nil})
-		return
-	}
-	var unlock hdhive.UnlockResult
-	if err := json.Unmarshal(unlockResp.Data, &unlock); err != nil {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "解锁结果解析失败", Data: nil})
-		return
-	}
-	fullURL := strings.TrimSpace(unlock.FullURL)
-	if fullURL == "" {
-		fullURL = strings.TrimSpace(unlock.URL)
-	}
-	panicType := strings.TrimSpace(unlock.PanType)
-	// 解锁响应未带网盘类型时，用分享详情补一次
-	if panicType == "" {
-		if detailResp, _, derr := models.HiveCallWithFailover(ctx, "", func(cl hdhive.ChannelClient) (*hdhive.OAuthAPIResponse, error) {
-			return cl.GetShareDetail(ctx, req.Slug)
-		}); derr == nil && detailResp.Success {
-			var detail struct {
-				PanType string `json:"pan_type"`
-			}
-			if json.Unmarshal(detailResp.Data, &detail) == nil {
-				panicType = detail.PanType
-			}
-		}
-	}
-	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "解锁成功", Data: gin.H{
-		"url": fullURL, "full_url": fullURL, "pan_type": panicType,
-		"title": unlock.Title, "access_code": unlock.AccessCode,
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "已通过 tgto123 转存", Data: gin.H{
+		"transferred": true, "message": transferMsg,
 	}})
 }
 
