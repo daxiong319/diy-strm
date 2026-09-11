@@ -111,8 +111,12 @@ func InvalidateDiscoveryCache() {
 // 未注入或无可用通道时返回错误
 var FeedExecFn func(ctx context.Context, call func(fc hdhive.FeedClient) (*hdhive.OAuthAPIResponse, error)) (*hdhive.OAuthAPIResponse, error)
 
-// feedExecute 执行一次RE0 Feed 调用（自动主备切换）
+// feedExecute 执行一次RE0 Feed 调用：
+// 优先走 tgto123 反代（同机实例，稳定可用），失败回退到 RE0 通道 failover
 func feedExecute(ctx context.Context, call func(fc hdhive.FeedClient) (*hdhive.OAuthAPIResponse, error)) (*hdhive.OAuthAPIResponse, error) {
+	if resp, ok, err := tgto123FeedCall(ctx, call); ok {
+		return resp, err
+	}
 	if FeedExecFn == nil {
 		return nil, fmt.Errorf("RE0 feed 通道未初始化，请先完成 OAuth 授权")
 	}

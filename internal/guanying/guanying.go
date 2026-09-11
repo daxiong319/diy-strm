@@ -42,9 +42,9 @@ const (
 	sessionKey     = "guanying_session"
 	credentialsKey = "guanying_credentials"
 
-	loginURL      = "https://guanying.app/auth/login"
-	captchaURL    = "https://guanying.app/auth/captcha"
-	searchURL     = "https://guanying.app/api/resources/search"
+	loginURL      = "/auth/login"
+	captchaURL    = "/auth/captcha"
+	searchURL     = "/api/resources/search"
 	userAgentText = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36"
 
 	defaultTimeout = 30 * time.Second
@@ -81,7 +81,8 @@ type Client struct {
 	baseURL string
 }
 
-// SharedClient 返回带已保存会话的共享客户端（无会话也可用，仅限公开接口）
+// SharedClient 返回带已保存会话的共享客户端（无会话也可用，仅限公开接口）。
+// base URL 从防失联页动态解析（guanying.site 已失效的教训：域名会不定期更换）。
 func SharedClient() *Client {
 	sharedMu.Lock()
 	defer sharedMu.Unlock()
@@ -89,17 +90,36 @@ func SharedClient() *Client {
 		jar, _ := cookiejar.New(nil)
 		shared = &Client{
 			http:    &http.Client{Timeout: defaultTimeout, Jar: jar},
-			baseURL: "https://guanying.app",
+			baseURL: EnsureFreshBaseURL(context.Background(), false),
 		}
 		// 恢复会话
 		if raw, ok := settingGet(sessionKey); ok {
 			var s Session
 			if json.Unmarshal([]byte(raw), &s) == nil && s.Cookies != "" {
-				restoreCookies(shared.http.Jar, s.Cookies)
+				restoreCookiesAt(shared.http.Jar, s.Cookies, shared.baseURL)
 			}
 		}
 	}
 	return shared
+}
+
+// restoreCookiesAt 把 cookie 恢复到指定站点域
+func restoreCookiesAt(jar http.CookieJar, raw, baseURL string) {
+	var pairs []struct {
+		Name   string `json:"name"`
+		Value  string `json:"value"`
+		Domain string `json:"domain"`
+		Path   string `json:"path"`
+	}
+	if json.Unmarshal([]byte(raw), &pairs) != nil {
+		return
+	}
+	u, _ := url.Parse(baseURL)
+	cookies := make([]*http.Cookie, 0, len(pairs))
+	for _, p := range pairs {
+		cookies = append(cookies, &http.Cookie{Name: p.Name, Value: p.Value, Domain: p.Domain, Path: p.Path})
+	}
+	jar.SetCookies(u, cookies)
 }
 
 // restoreCookies 把序列化 cookie 字符串恢复进 jar
@@ -150,7 +170,7 @@ func (c *Client) StartLogin(ctx context.Context, username, password, attemptID s
 	if attemptID != "" {
 		form.Set("attempt_id", attemptID)
 	}
-	body, status, err := c.postForm(ctx, loginURL, form)
+	body, status, err := c.postForm(ctx, c.baseURL + loginURL, form)
 	if err != nil {
 		return false, nil, "", err
 	}
@@ -191,7 +211,7 @@ func (c *Client) GetCaptcha(ctx context.Context, attemptID string) (*CaptchaChal
 		return nil, fmt.Errorf("缺少 attempt_id")
 	}
 	form := url.Values{"attempt_id": {attemptID}}
-	body, _, err := c.postForm(ctx, captchaURL, form)
+	body, _, err := c.postForm(ctx, c.baseURL+captchaURL, form)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +242,7 @@ func (c *Client) GetCaptcha(ctx context.Context, attemptID string) (*CaptchaChal
 // VerifyCaptcha 提交点选坐标（顺序与提示字符一致）
 func (c *Client) VerifyCaptcha(ctx context.Context, attemptID string, points []map[string]float64) error {
 	payload, _ := json.Marshal(map[string]any{"attempt_id": attemptID, "points": points})
-	body, _, err := c.postJSON(ctx, captchaURL+"/verify", payload)
+	body, _, err := c.postJSON(ctx, c.baseURL+captchaURL+"/verify", payload)
 	if err != nil {
 		return err
 	}
@@ -241,7 +261,7 @@ func (c *Client) SearchResources(ctx context.Context, title, mediaType string, t
 	payload, _ := json.Marshal(map[string]any{
 		"title": title, "media_type": mediaType, "tmdb_id": tmdbID, "year": year,
 	})
-	body, _, err := c.postJSON(ctx, searchURL, payload)
+	body, _, err := c.postJSON(ctx, c.baseURL+searchURL, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -284,14 +304,43 @@ func (c *Client) postJSON(ctx context.Context, rawURL string, payload []byte) ([
 
 func (c *Client) do(req *http.Request) ([]byte, int, error) {
 	httpMu.Lock()
-	defer httpMu.Unlock()
 	resp, err := c.http.Do(req)
 	if err != nil {
+		httpMu.Unlock()
+		// 域名可能已更换（DNS 解析失败/连接失败）→ 重新解析防失联页并重试一次
+		if isConnError(err) {
+			if newBase := EnsureFreshBaseURL(req.Context(), true); newBase != "" && newBase != c.baseURL {
+				req.URL.Host = strings.TrimPrefix(strings.TrimPrefix(newBase, "https://"), "http://")
+				req.Host = req.URL.Host
+				httpMu.Lock()
+				resp2, err2 := c.http.Do(req)
+				if err2 != nil {
+					httpMu.Unlock()
+					return nil, 0, err2
+				}
+				defer resp2.Body.Close()
+				body, err3 := io.ReadAll(io.LimitReader(resp2.Body, 4<<20))
+				httpMu.Unlock()
+				return body, resp2.StatusCode, err3
+			}
+		}
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	httpMu.Unlock()
 	return body, resp.StatusCode, err
+}
+
+// isConnError 连接层错误（DNS 解析失败/拒连/超时）
+func isConnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no such host") || strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "dial tcp") || strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "server misbehaving")
 }
 
 // --- 会话与凭据持久化 ---

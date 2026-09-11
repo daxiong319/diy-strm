@@ -38,6 +38,10 @@ const (
 	SettingTargetProvider         = "target_provider"          // 默认转存目标网盘 123/guangya/pan139
 	SettingCheckIntervalMinutes   = "check_interval_minutes"   // 订阅默认检查间隔（分钟）
 	SettingMaxPoints              = "max_points"               // 订阅默认解锁积分上限
+	SettingTgto123URL             = "tgto123_proxy_url"        // tgto123 反代地址（榜单/日历优先通道）
+	SettingTgto123Username        = "tgto123_proxy_username"   // tgto123 登录用户名
+	SettingTgto123Password        = "tgto123_proxy_password"   // tgto123 登录密码
+	tgto123DefaultURL             = "http://127.0.0.1:12366"  // tgto123 反代默认地址（同机部署）
 	SettingEmbyMissingAutoScan    = "emby_missing_auto_scan"   // 缺集自动扫描
 	SettingEmbyMissingInterval    = "emby_missing_scan_interval_minutes" // 缺集扫描间隔（分钟）
 	SettingEmbyMissingAutoSubs    = "emby_missing_auto_create_subscriptions" // 自动创建补档订阅
@@ -63,6 +67,9 @@ func DefaultSettings() map[string]any {
 		SettingTargetProvider:         "123",
 		SettingCheckIntervalMinutes:   360,
 		SettingMaxPoints:              4,
+		SettingTgto123URL:             tgto123DefaultURL,
+		SettingTgto123Username:        "admin",
+		SettingTgto123Password:        "",
 		SettingEmbyMissingAutoScan:    false,
 		SettingEmbyMissingInterval:    720,
 		SettingEmbyMissingAutoSubs:    false,
