@@ -88,6 +88,7 @@ type CatalogPage struct {
 	IsStale          bool   `json:"is_stale"`
 	SourceExhausted  bool   `json:"source_exhausted"` // 目录已抓到底
 	CatalogTotal     int    `json:"catalog_total"`
+	FallbackSource   string `json:"fallback_source,omitempty"` // 上游故障时自动回退的数据源
 	MatchedCount     int    `json:"matched_count"` // 已匹配 TMDB 的条数
 }
 

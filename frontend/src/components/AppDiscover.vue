@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useHttpClient } from '@/http/client'
 import { SERVER_URL } from '@/const'
 import { CircleCheck } from '@element-plus/icons-vue'
+import DirectorySelector from './DirectorySelector.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 // 影视发现：复刻参考实现 media_discovery 分区式布局
@@ -195,6 +196,7 @@ const items = ref<DiscoverItem[]>([])
 
 // 目录源状态（豆瓣/AniList/Bangumi：后台预抓 + TMDB 匹配）
 interface CatalogMeta {
+  fallback_source?: string
   catalog_status?: string
   page_state?: string
   pending_count?: number
@@ -427,6 +429,49 @@ const setTargetPath = (provider: string, value: string) => {
     ...(settingsForm.value.media_transfer_targets[provider] || {}),
     folder_path: value.trim(),
     folder_name: value.trim(),
+  }
+  markDirty('transferTargets')
+}
+
+// 保存目录点击选择（对齐参考实现目录选择器：从对应网盘账号目录树中点选）
+const dirPickerVisible = ref(false)
+const dirPickerProvider = ref<'123' | 'guangya' | 'pan139'>('123')
+const cloudAccounts = ref<{ id: number; source_type: string; name?: string; username?: string }[]>([])
+
+const dirPickerSourceType = computed(() =>
+  dirPickerProvider.value === 'guangya' ? 'guangyapan' : dirPickerProvider.value
+)
+
+const openDirPicker = async (provider: '123' | 'guangya' | 'pan139') => {
+  dirPickerProvider.value = provider
+  dirPickerVisible.value = true
+  if (!cloudAccounts.value.length) {
+    try {
+      const response = await http.get(`${SERVER_URL}/account/list`)
+      cloudAccounts.value = response?.data?.data || []
+    } catch {
+      // 账号列表读取失败时选择器仍可打开（内部会报错提示）
+    }
+  }
+}
+
+const dirPickerAccount = computed(() => {
+  const st = dirPickerSourceType.value
+  return cloudAccounts.value.find((a) => a.source_type === st) || null
+})
+
+const dirPickerMissing = computed(() => !dirPickerAccount.value || !dirPickerAccount.value.id)
+
+const onDirPicked = (dir: { path?: string; name?: string } | null) => {
+  if (!dir || !dir.path) return
+  setTargetPath(dirPickerProvider.value, dir.path)
+}
+
+const clearTargetPath = (provider: '123' | 'guangya' | 'pan139') => {
+  settingsForm.value.media_transfer_targets[provider] = {
+    ...(settingsForm.value.media_transfer_targets[provider] || {}),
+    folder_path: '',
+    folder_name: '',
   }
   markDirty('transferTargets')
 }
@@ -713,11 +758,13 @@ const load = async (force = false, append = false, isRetry = false) => {
   errorMessage.value = ''
   try {
     const url = buildLibraryUrl(force)
-    const response = await http.get(url)
+    // 目录源（豆瓣/动漫）服务端最多等待 wait=20s 预抓，前端超时放宽到 40s
+    const response = await http.get(url, isCatalogSource.value ? { timeout: 40000 } : undefined)
     if (response?.data?.code === 200) {
       const data: any = response.data.data
       const fresh: DiscoverItem[] = data?.items || []
       catalogMeta.value = {
+        fallback_source: data?.fallback_source || '',
         catalog_status: data?.catalog_status,
         page_state: data?.page_state,
         pending_count: data?.pending_count,
@@ -3136,13 +3183,16 @@ onBeforeUnmount(() => {
                 <div class="md-channel-grid">
                   <div v-for="p in (['123', 'guangya', 'pan139'] as const)" :key="p" class="md-channel-card">
                     <strong>{{ transferProviderNames[p] }} 保存目录</strong>
-                    <input
-                      :value="targetPath(p)"
-                      class="md-input"
-                      placeholder="例如：/媒体库/影视发现（网盘内路径）"
-                      @input="setTargetPath(p, ($event.target as HTMLInputElement).value)"
-                    />
-                    <small>{{ targetPath(p) ? '目录 ' + targetPath(p) : '尚未选择目录' }}</small>
+                    <div class="md-target-display" :class="{ 'is-empty': !targetPath(p) }">
+                      {{ targetPath(p) || '尚未选择目录' }}
+                    </div>
+                    <div class="md-target-actions">
+                      <button type="button" class="md-btn is-small" @click="openDirPicker(p)">
+                        {{ targetPath(p) ? '更换目录' : '选择目录' }}
+                      </button>
+                      <button v-if="targetPath(p)" type="button" class="md-btn is-small" @click="clearTargetPath(p)">清除</button>
+                    </div>
+                    <small>{{ targetPath(p) ? '目录 ' + targetPath(p) : '影视发现资源将转存到此目录' }}</small>
                   </div>
                 </div>
               </div>
@@ -3628,6 +3678,33 @@ onBeforeUnmount(() => {
         <button class="md-btn" @click="subModalVisible = false">取消</button>
         <button class="md-btn is-primary" :disabled="subSaving" @click="saveSubscription">保存订阅</button>
       </template>
+    </el-dialog>
+
+    <!-- ================= 保存目录选择器 ================= -->
+    <el-dialog
+      v-model="dirPickerVisible"
+      :title="`选择${transferProviderNames[dirPickerProvider]}保存目录`"
+      width="min(520px, calc(100vw - 32px))"
+      append-to-body
+      class="md-dirpicker-dialog"
+    >
+      <p class="md-field-hint" style="margin-top: 0">
+        在{{ transferProviderNames[dirPickerProvider] }}账号的目录树中点选保存目录；选择后影视发现转存会保存到该目录。
+      </p>
+      <template v-if="dirPickerMissing">
+        <el-empty description="未找到对应网盘账号" />
+        <p class="md-field-hint">
+          请先在「网盘账号」页添加并授权一个{{ transferProviderNames[dirPickerProvider] }}账号，再回到这里选择目录。
+        </p>
+      </template>
+      <DirectorySelector
+        v-else
+        :source-type="dirPickerSourceType"
+        :account-id="dirPickerAccount?.id"
+        :model-value="null"
+        @update:model-value="onDirPicked"
+        @select="dirPickerVisible = false"
+      />
     </el-dialog>
   </div>
 </template>
@@ -6069,6 +6146,16 @@ onBeforeUnmount(() => {
 .md-missing-event { display: flex; align-items: center; gap: 10px; }
 .md-missing-event small { opacity: 0.72; }
 
+.md-target-display {
+  border: 1px dashed rgba(148, 163, 184, 0.3);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  min-height: 34px;
+  word-break: break-all;
+}
+.md-target-display.is-empty { opacity: 0.5; }
+.md-target-actions { display: flex; gap: 8px; }
 @media (max-width: 900px) {
   .md-work-columns { grid-template-columns: 1fr; }
   .md-work-hero-body { flex-direction: column; align-items: flex-start; }

@@ -1,4 +1,4 @@
-// Package hdhive —— 官方直连通道客户端（hdhive.com OpenAPI，成熟方案 同款接入）。
+// Package hdhive —— 官方直连通道客户端（RE0 OpenAPI，hdhive.com 已更名迁移至 re0.me）。
 //
 // 认证模型（官方文档 _hdhive_docs/docs/open/authentication.md）：
 //   - 应用认证：X-API-Key: <app secret>（所有 /api/open/* 业务接口必带）
@@ -25,7 +25,7 @@ import (
 
 // 官方直连常量（应用凭证来自 成熟方案 镜像 .so 字符串，可用环境变量覆盖）
 const (
-	DefaultOfficialBaseURL = "https://hdhive.com"
+	DefaultOfficialBaseURL = "https://re0.me"
 	officialRequestTimeout = 20 * time.Second
 	officialScope          = "query unlock write"
 
@@ -38,6 +38,9 @@ const (
 	officialCheckinPath   = "/api/open/checkin"
 	officialMePath        = "/api/open/me"
 	officialPingPath      = "/api/open/ping"
+	// feeds：榜单推荐 + 追剧日历（2026-09 起新增，旧 /api/feeds/* 已随域名迁移下线）
+	officialStreamingTopPath = "/api/open/streaming-top" // ?provider=&region=&media_type=
+	officialCalendarPath     = "/api/open/calendar"     // ?days=N
 )
 
 var (
@@ -312,6 +315,33 @@ func (c *OfficialClient) Checkin(ctx context.Context, isGambler bool) (*OAuthAPI
 		payload["is_gambler"] = true
 	}
 	return c.request(ctx, http.MethodPost, officialCheckinPath, payload)
+}
+
+// GetStreamingTop 流媒体榜单（GET /api/open/streaming-top，FeedClient 实现）
+func (c *OfficialClient) GetStreamingTop(ctx context.Context, provider, region, mediaType string) (*OAuthAPIResponse, error) {
+	q := url.Values{}
+	if provider != "" {
+		q.Set("provider", provider)
+	}
+	if region != "" {
+		q.Set("region", region)
+	}
+	if mediaType != "" {
+		q.Set("media_type", mediaType)
+	}
+	path := officialStreamingTopPath
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return c.request(ctx, http.MethodGet, path, nil)
+}
+
+// GetCalendar 追剧日历（GET /api/open/calendar，FeedClient 实现）
+func (c *OfficialClient) GetCalendar(ctx context.Context, days int) (*OAuthAPIResponse, error) {
+	if days <= 0 {
+		days = 7
+	}
+	return c.request(ctx, http.MethodGet, fmt.Sprintf("%s?days=%d", officialCalendarPath, days), nil)
 }
 
 // ReauthNeeded 是否需要重新授权（REAUTH_REQUIRED 后置位）

@@ -69,10 +69,19 @@ func GetMediaAnimeCatalog(c *gin.Context) {
 		Sort:   c.Query("sort"),
 	}
 	result, err := discovery.DiscoverAnimeCatalog(c.Request.Context(), c.Query("source"), filter, page, wait, force)
+	fallbackSource := ""
+	if err != nil && strings.EqualFold(strings.TrimSpace(c.Query("source")), "anilist") {
+		// AniList 上游停服/故障时自动回退 Bangumi（同一筛选参数语义兼容）
+		result, err = discovery.DiscoverAnimeCatalog(c.Request.Context(), "bangumi", filter, page, wait, force)
+		if err == nil {
+			fallbackSource = "bangumi"
+		}
+	}
 	if err != nil {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "动漫目录加载失败：" + err.Error(), Data: nil})
 		return
 	}
+	result.FallbackSource = fallbackSource
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "", Data: result})
 }
 

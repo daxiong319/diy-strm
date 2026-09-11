@@ -42,9 +42,9 @@ const (
 	sessionKey     = "guanying_session"
 	credentialsKey = "guanying_credentials"
 
-	loginURL      = "https://guanying.site/auth/login"
-	captchaURL    = "https://guanying.site/auth/captcha"
-	searchURL     = "https://guanying.site/api/resources/search"
+	loginURL      = "https://guanying.app/auth/login"
+	captchaURL    = "https://guanying.app/auth/captcha"
+	searchURL     = "https://guanying.app/api/resources/search"
 	userAgentText = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36"
 
 	defaultTimeout = 30 * time.Second
@@ -89,7 +89,7 @@ func SharedClient() *Client {
 		jar, _ := cookiejar.New(nil)
 		shared = &Client{
 			http:    &http.Client{Timeout: defaultTimeout, Jar: jar},
-			baseURL: "https://guanying.site",
+			baseURL: "https://guanying.app",
 		}
 		// 恢复会话
 		if raw, ok := settingGet(sessionKey); ok {
@@ -113,7 +113,7 @@ func restoreCookies(jar http.CookieJar, raw string) {
 	if json.Unmarshal([]byte(raw), &pairs) != nil {
 		return
 	}
-	u, _ := url.Parse("https://guanying.site")
+	u, _ := url.Parse("https://guanying.app")
 	cookies := make([]*http.Cookie, 0, len(pairs))
 	for _, p := range pairs {
 		cookies = append(cookies, &http.Cookie{Name: p.Name, Value: p.Value, Domain: p.Domain, Path: p.Path})
@@ -123,7 +123,7 @@ func restoreCookies(jar http.CookieJar, raw string) {
 
 // serializeCookies 导出 jar 内 cookie
 func serializeCookies(jar http.CookieJar) string {
-	u, _ := url.Parse("https://guanying.site")
+	u, _ := url.Parse("https://guanying.app")
 	cookies := jar.Cookies(u)
 	pairs := make([]map[string]string, 0, len(cookies))
 	for _, c := range cookies {
