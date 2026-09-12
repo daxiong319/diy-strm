@@ -1,6 +1,6 @@
 [
     {
-        "stepTitle": "卸载QMediaSync",
+        "stepTitle": "卸载diy-strm",
         "items": [
             {
                 "type": "radio",

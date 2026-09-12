@@ -2,7 +2,7 @@
 
 # PostgreSQL 安装与配置脚本
 # 支持 Ubuntu/Debian/CentOS/RHEL/Fedora/Arch Linux
-# 用于 QMediaSync 应用的数据库环境配置
+# 用于 diy-strm 应用的数据库环境配置
 
 set -e  # 遇到错误立即退出
 
@@ -349,7 +349,7 @@ setup_environment() {
         log_info "1. 使用 sudo 重新运行脚本"
         log_info "2. 手动将以下环境变量添加到您的配置文件："
         echo ""
-        echo "# QMediaSync PostgreSQL 环境变量"
+        echo "# diy-strm PostgreSQL 环境变量"
         echo "export DB_HOST=$host"
         echo "export DB_PORT=$port"
         echo "export DB_USER=$user"
@@ -374,7 +374,7 @@ setup_environment() {
     # 添加新的环境变量设置
     cat >> "$config_file" << EOF
 
-# QMediaSync PostgreSQL 环境变量
+# diy-strm PostgreSQL 环境变量
 export DB_HOST=$host
 export DB_PORT=$port
 export DB_USER=$user
@@ -406,26 +406,26 @@ check_systemctl() {
     return 0
 }
 
-# 创建 QMediaSync 服务文件
-create_qmediasync_service() {
-    local service_file="/etc/systemd/system/qmediasync.service"
+# 创建 diy-strm 服务文件
+create_diy-strm_service() {
+    local service_file="/etc/systemd/system/diy-strm.service"
     
     # 检查服务文件是否已存在
     if [ -f "$service_file" ]; then
-        log_warn "QMediaSync 服务文件已存在，将进行更新"
+        log_warn "diy-strm 服务文件已存在，将进行更新"
     fi
     
-    # 获取 QMediaSync 可执行文件路径
-    local qmediasync_path="$(pwd)/QMediaSync"
-    if [ ! -f "$qmediasync_path" ]; then
-        log_error "QMediaSync 可执行文件不存在，请确保在 QMediaSync 目录下运行此脚本"
+    # 获取 diy-strm 可执行文件路径
+    local diy-strm_path="$(pwd)/diy-strm"
+    if [ ! -f "$diy-strm_path" ]; then
+        log_error "diy-strm 可执行文件不存在，请确保在 diy-strm 目录下运行此脚本"
         return 1
     fi
     
     # 创建服务文件
     cat > "$service_file" << EOF
 [Unit]
-Description=QMediaSync Media Synchronization Service
+Description=diy-strm Media Synchronization Service
 After=network.target postgresql.service
 
 [Service]
@@ -433,36 +433,36 @@ Type=simple
 User=$SUDO_USER
 Group=$SUDO_USER
 WorkingDirectory=$(pwd)
-ExecStart=$qmediasync_path
+ExecStart=$diy-strm_path
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-EnvironmentFile=/etc/qmediasync/postgres.env
+EnvironmentFile=/etc/diy-strm/postgres.env
 
 [Install]
 WantedBy=multi-user.target
 EOF
     
     if [ $? -eq 0 ]; then
-        log_info "QMediaSync 服务文件创建成功"
+        log_info "diy-strm 服务文件创建成功"
         return 0
     else
-        log_error "QMediaSync 服务文件创建失败"
+        log_error "diy-strm 服务文件创建失败"
         return 1
     fi
 }
 
-# 安装 QMediaSync 服务
-install_qmediasync_service() {
+# 安装 diy-strm 服务
+install_diy-strm_service() {
     if ! check_systemctl; then
         return 1
     fi
     
-    log_info "安装 QMediaSync 服务并设置开机启动..."
+    log_info "安装 diy-strm 服务并设置开机启动..."
     
     # 创建服务文件
-    if ! create_qmediasync_service; then
+    if ! create_diy-strm_service; then
         return 1
     fi
     
@@ -475,68 +475,68 @@ install_qmediasync_service() {
     fi
     
     # 设置开机启动
-    if systemctl enable qmediasync >/dev/null 2>&1; then
-        log_info "QMediaSync 服务已设置开机启动"
+    if systemctl enable diy-strm >/dev/null 2>&1; then
+        log_info "diy-strm 服务已设置开机启动"
     else
-        log_error "无法设置 QMediaSync 服务开机启动"
+        log_error "无法设置 diy-strm 服务开机启动"
         return 1
     fi
     
     # 启动服务
-    if systemctl start qmediasync >/dev/null 2>&1; then
-        log_info "QMediaSync 服务已启动"
+    if systemctl start diy-strm >/dev/null 2>&1; then
+        log_info "diy-strm 服务已启动"
     else
-        log_error "无法启动 QMediaSync 服务"
+        log_error "无法启动 diy-strm 服务"
         return 1
     fi
     
     # 检查服务状态
-    if systemctl is-active --quiet qmediasync; then
-        log_info "QMediaSync 服务正在运行"
+    if systemctl is-active --quiet diy-strm; then
+        log_info "diy-strm 服务正在运行"
         return 0
     else
-        log_error "QMediaSync 服务未正常运行"
-        log_info "查看服务状态: sudo systemctl status qmediasync"
+        log_error "diy-strm 服务未正常运行"
+        log_info "查看服务状态: sudo systemctl status diy-strm"
         return 1
     fi
 }
 
-# 删除 QMediaSync 服务
-remove_qmediasync_service() {
+# 删除 diy-strm 服务
+remove_diy-strm_service() {
     if ! check_systemctl; then
         return 1
     fi
     
-    log_info "删除 QMediaSync 服务..."
+    log_info "删除 diy-strm 服务..."
     
     # 停止服务
-    if systemctl stop qmediasync >/dev/null 2>&1; then
-        log_info "QMediaSync 服务已停止"
+    if systemctl stop diy-strm >/dev/null 2>&1; then
+        log_info "diy-strm 服务已停止"
     else
-        log_warn "无法停止 QMediaSync 服务（可能未运行）"
+        log_warn "无法停止 diy-strm 服务（可能未运行）"
     fi
     
     # 禁用服务
-    if systemctl disable qmediasync >/dev/null 2>&1; then
-        log_info "QMediaSync 服务已禁用开机启动"
+    if systemctl disable diy-strm >/dev/null 2>&1; then
+        log_info "diy-strm 服务已禁用开机启动"
     else
-        log_warn "无法禁用 QMediaSync 服务开机启动"
+        log_warn "无法禁用 diy-strm 服务开机启动"
     fi
     
     # 删除服务文件
-    local service_file="/etc/systemd/system/qmediasync.service"
+    local service_file="/etc/systemd/system/diy-strm.service"
     if [ -f "$service_file" ]; then
         if rm "$service_file" >/dev/null 2>&1; then
-            log_info "QMediaSync 服务文件已删除"
+            log_info "diy-strm 服务文件已删除"
         else
-            log_warn "无法删除 QMediaSync 服务文件"
+            log_warn "无法删除 diy-strm 服务文件"
         fi
     fi
     
     # 重新加载 systemd 配置
     systemctl daemon-reload >/dev/null 2>&1
     
-    log_info "QMediaSync 服务删除完成"
+    log_info "diy-strm 服务删除完成"
     return 0
 }
 
@@ -547,32 +547,32 @@ usage() {
     echo "  -v version    指定 PostgreSQL 版本 (默认: $DEFAULT_PG_VERSION)"
     echo "  -h host       指定 PostgreSQL 主机地址 (默认: $DEFAULT_DB_HOST)"
     echo "  -P port       指定 PostgreSQL 端口 (默认: $DEFAULT_DB_PORT)"
-    echo "  -u user       指定 QMediaSync 数据库用户 (默认: $DEFAULT_DB_USER)"
+    echo "  -u user       指定 diy-strm 数据库用户 (默认: $DEFAULT_DB_USER)"
     echo "  -U admin      指定 PostgreSQL 管理员用户 (默认: postgres)"
-    echo "  -p password   设置 QMediaSync 数据库密码 (默认: $DEFAULT_DB_PASSWORD)"
-    echo "  -n name       指定 QMediaSync 数据库名称 (默认: $DEFAULT_DB_NAME)"
+    echo "  -p password   设置 diy-strm 数据库密码 (默认: $DEFAULT_DB_PASSWORD)"
+    echo "  -n name       指定 diy-strm 数据库名称 (默认: $DEFAULT_DB_NAME)"
     echo "  -s sslmode    指定 PostgreSQL SSL 模式 (默认: $DEFAULT_DB_SSLMODE)"
-    echo "  -i            安装 QMediaSync 为系统服务并设置开机启动"
-    echo "  -r            删除 QMediaSync 系统服务"
+    echo "  -i            安装 diy-strm 为系统服务并设置开机启动"
+    echo "  -r            删除 diy-strm 系统服务"
     echo "  -?            显示此帮助信息"
     echo ""
     echo "示例:"
     echo "  $0                          # 安装默认版本 PostgreSQL 并配置环境变量"
     echo "  $0 -v 14 -p mypass          # 安装 PostgreSQL 14 并设置自定义密码"
     echo "  $0 -h localhost -u qms -p mypass  # 仅设置环境变量（PostgreSQL 已安装）"
-    echo "  $0 -i                       # 安装并配置 PostgreSQL，然后设置 QMediaSync 服务"
-    echo "  $0 -r                       # 删除 QMediaSync 服务"
+    echo "  $0 -i                       # 安装并配置 PostgreSQL，然后设置 diy-strm 服务"
+    echo "  $0 -r                       # 删除 diy-strm 服务"
     echo ""
     echo "注意:"
     echo "  - 安装 PostgreSQL 时需要 root 权限"
     echo "  - 如果 PostgreSQL 已安装，脚本将仅设置环境变量"
     echo "  - 服务管理功能需要 systemd 支持"
-    echo "  - 请确保在 QMediaSync 应用程序目录下运行服务相关命令"
+    echo "  - 请确保在 diy-strm 应用程序目录下运行服务相关命令"
 }
 
 # 主函数
 main() {
-    log_info "QMediaSync PostgreSQL 环境配置脚本"
+    log_info "diy-strm PostgreSQL 环境配置脚本"
     
     # 解析命令行参数
     local pg_version="$DEFAULT_PG_VERSION"
@@ -611,10 +611,10 @@ main() {
     
     # 处理服务管理操作
     if [ "$remove_service" = "true" ]; then
-        if remove_qmediasync_service; then
-            log_info "QMediaSync 服务删除完成"
+        if remove_diy-strm_service; then
+            log_info "diy-strm 服务删除完成"
         else
-            log_error "QMediaSync 服务删除失败"
+            log_error "diy-strm 服务删除失败"
         fi
         exit 0
     fi
@@ -655,12 +655,12 @@ main() {
     # 设置环境变量
     setup_environment "$db_host" "$db_port" "$db_user" "$db_password" "$db_name" "$db_sslmode"
     
-    # 安装 QMediaSync 服务（如果需要）
+    # 安装 diy-strm 服务（如果需要）
     if [ "$install_service" = "true" ]; then
-        if install_qmediasync_service; then
-            log_info "QMediaSync 服务安装完成"
+        if install_diy-strm_service; then
+            log_info "diy-strm 服务安装完成"
         else
-            log_error "QMediaSync 服务安装失败"
+            log_error "diy-strm 服务安装失败"
             exit 1
         fi
     fi
@@ -668,20 +668,20 @@ main() {
     # 显示完成信息
     log_info "\n=== 配置完成 ==="
     log_info "PostgreSQL 环境已配置完成"
-    log_info "QMediaSync 可通过以下环境变量连接到数据库:"
+    log_info "diy-strm 可通过以下环境变量连接到数据库:"
     log_info "  主机: ${db_host}"
     log_info "  端口: ${db_port}"
     log_info "  用户: ${db_user}"
     log_info "  数据库: ${db_name}"
     log_info ""
     log_info "连接数据库命令: psql -h ${db_host} -p ${db_port} -U ${db_user} -d ${db_name}"
-    log_info "使用环境变量文件: source /etc/qmediasync/postgres.env"
+    log_info "使用环境变量文件: source /etc/diy-strm/postgres.env"
     
     if [ "$install_service" = "true" ]; then
-        log_info "\nQMediaSync 服务已安装并启动"
-        log_info "查看服务状态: systemctl status qmediasync"
-        log_info "停止服务: systemctl stop qmediasync"
-        log_info "重启服务: systemctl restart qmediasync"
+        log_info "\ndiy-strm 服务已安装并启动"
+        log_info "查看服务状态: systemctl status diy-strm"
+        log_info "停止服务: systemctl stop diy-strm"
+        log_info "重启服务: systemctl restart diy-strm"
     fi
     
     log_info "\n所有操作已完成！"

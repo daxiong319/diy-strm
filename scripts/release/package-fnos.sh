@@ -43,7 +43,7 @@ if [ ! -d "$WEB_STATICS_DIR" ]; then
   exit 1
 fi
 
-FNOS_DIR="FNOS/qmediasync-${TARGET_ARCH}"
+FNOS_DIR="FNOS/diy-strm-${TARGET_ARCH}"
 APP_DIR="$FNOS_DIR/app"
 MANIFEST="$FNOS_DIR/manifest"
 FNOS_VERSION="${TAG#v}"
@@ -54,15 +54,15 @@ if [ ! -d "$FNOS_DIR" ]; then
 fi
 
 mkdir -p "$APP_DIR" "$OUT_DIR"
-rm -f "$APP_DIR/QMediaSync"
+rm -f "$APP_DIR/diy-strm"
 rm -rf "$APP_DIR/web_statics"
 
 if [ -f "$MANIFEST" ]; then
   sed -i "s/^version[[:space:]]*=.*/version = ${FNOS_VERSION}/g" "$MANIFEST"
 fi
 
-cp "$BINARY_PATH" "$APP_DIR/QMediaSync"
-chmod +x "$APP_DIR/QMediaSync"
+cp "$BINARY_PATH" "$APP_DIR/diy-strm"
+chmod +x "$APP_DIR/diy-strm"
 cp -R "$WEB_STATICS_DIR" "$APP_DIR/web_statics"
 
 if [ -f "assets/db_config.html" ]; then
@@ -71,10 +71,10 @@ fi
 
 (cd "$FNOS_DIR" && fnpack build)
 
-if [ ! -f "$FNOS_DIR/qmediasync.fpk" ]; then
-  echo "FNOS package was not generated: $FNOS_DIR/qmediasync.fpk" >&2
+if [ ! -f "$FNOS_DIR/diy-strm.fpk" ]; then
+  echo "FNOS package was not generated: $FNOS_DIR/diy-strm.fpk" >&2
   exit 1
 fi
 
-cp "$FNOS_DIR/qmediasync.fpk" "$OUT_DIR/QMediaSync_${TARGET_ARCH}.fpk"
-echo "Created $OUT_DIR/QMediaSync_${TARGET_ARCH}.fpk"
+cp "$FNOS_DIR/diy-strm.fpk" "$OUT_DIR/diy-strm_${TARGET_ARCH}.fpk"
+echo "Created $OUT_DIR/diy-strm_${TARGET_ARCH}.fpk"

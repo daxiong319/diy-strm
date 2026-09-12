@@ -1,7 +1,7 @@
 {
     ".url": {
-        "qmediasync.Application": {
-            "title": "qmediasync",
+        "diy-strm.Application": {
+            "title": "diy-strm",
             "icon": "images/icon_{0}.png",
             "type": "url",
             "protocol": "",

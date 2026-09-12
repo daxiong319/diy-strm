@@ -2,10 +2,10 @@
     "data-share": {
         "shares": [
             {
-                "name": "qmediasync",
+                "name": "diy-strm",
                 "permission": {
                     "rw": [
-                        "qmediasync"
+                        "diy-strm"
                     ]
                 }
             }

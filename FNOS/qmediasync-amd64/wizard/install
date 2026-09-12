@@ -1,10 +1,10 @@
 [
     {
-        "stepTitle": "欢迎安装QMediaSync",
+        "stepTitle": "欢迎安装diy-strm",
         "items": [
             {
                 "type": "tips",
-                "helpText": "QMediaSync是一个开源的，免费的STRM工具，支持115，百度网盘，Openlist，远程挂载四种来源。"
+                "helpText": "diy-strm是一个开源的，免费的STRM工具，支持115，百度网盘，Openlist，远程挂载四种来源。"
             },
             {
                 "type": "tips",

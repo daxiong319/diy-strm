@@ -45,11 +45,11 @@ esac
 
 case "$TARGET_OS" in
   windows)
-    EXECUTABLE_NAME="QMediaSync.exe"
+    EXECUTABLE_NAME="diy-strm.exe"
     ARCHIVE_EXT="zip"
     ;;
   linux)
-    EXECUTABLE_NAME="QMediaSync"
+    EXECUTABLE_NAME="diy-strm"
     ARCHIVE_EXT="tar.gz"
     ;;
   *)
@@ -58,7 +58,7 @@ case "$TARGET_OS" in
     ;;
 esac
 
-ARCHIVE_NAME="QMediaSync_${TARGET_OS}_${ARCHIVE_ARCH}"
+ARCHIVE_NAME="diy-strm_${TARGET_OS}_${ARCHIVE_ARCH}"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 

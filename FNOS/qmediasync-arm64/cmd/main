@@ -17,7 +17,7 @@ start_process() {
 
     log_msg "应用启动中 ..."
     cd "$TRIM_APPDEST"
-    ./QMediaSync --guid ${TRIM_UID} --fnos true 2>&1 &
+    ./diy-strm --guid ${TRIM_UID} --fnos true 2>&1 &
     # write pid to pidfile
     printf "%s" "$!" > ${PID_FILE}
     return 0

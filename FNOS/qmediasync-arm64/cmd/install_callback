@@ -40,7 +40,7 @@ EOF
 if [ "$DATABASE_TYPE" = "sqlite" ]; then
     cat >> "$TRIM_PKGETC/config.yaml" << 'EOF'
   engine: sqlite
-  sqliteFile: qmediasync.db
+  sqliteFile: diy-strm.db
   postgresType: external
   postgresConfig:
     host: "localhost"
@@ -54,7 +54,7 @@ EOF
 else
     cat >> "$TRIM_PKGETC/config.yaml" << EOF
   engine: postgres
-  sqliteFile: qmediasync.db
+  sqliteFile: diy-strm.db
   postgresType: external
   postgresConfig:
     host: $POSTGRES_HOST
@@ -70,7 +70,7 @@ fi
 # 添加其他默认配置
 cat >> "$TRIM_PKGETC/config.yaml" << EOF
 cacheSize: 20971520
-jwtSecret: QMediaSync-JWT-TOKEN-250706
+jwtSecret: diy-strm-JWT-TOKEN-250706
 httpHost: :12333
 httpsHost: :12332
 strm:
@@ -79,7 +79,7 @@ strm:
   metaExt: []
   cron: ""
 authServer: https://api.mqfamily.top
-baiDuPanAppId: QMediaSync
+baiDuPanAppId: diy-strm
 EOF
 
 echo "Configuration file created at $TRIM_PKGETC/config.yaml"
