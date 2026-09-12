@@ -1,9 +1,16 @@
 package guanying
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/json"
+	"fmt"
 	"io"
+	"math/big"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -128,7 +135,15 @@ func resolveNow(ctx context.Context) *domainResolution {
 			continue
 		}
 		if challengeRe.MatchString(body) {
-			res.Skipped = append(res.Skipped, base+"（浏览器验证墙）")
+			// PoW 验证墙：尝试求解 RSW 谜题后探活
+			domain := strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
+			working, perr := ResolveWithPoW(ctx, domain)
+			if perr == nil && working != "" {
+				res.BaseURL = working
+				res.Source = "directory+pow"
+				return res
+			}
+			res.Skipped = append(res.Skipped, base+"（PoW 求解失败）")
 			continue
 		}
 		// 200/404/405 均视为站点可达（路径差异不代表站点不可用）
@@ -226,3 +241,110 @@ func EnsureFreshBaseURL(ctx context.Context, force bool) string {
 	}
 	return res.BaseURL
 }
+
+// ---------------------------------------------------------------------------
+// PoW (Proof of Work) 挑战求解：RSW 时间锁谜题 y = x^(2^t) mod N
+// 官方域名（教父.com/星际穿越.com/hgeme.com 等）均需通过此验证才能访问
+// ---------------------------------------------------------------------------
+
+// ResolveWithPoW 对带 PoW 验证墙的域名执行完整解析：
+// 1. GET /res/pow 获取挑战 {N,x,t}
+// 2. 解算 y = x^(2^t) mod N
+// 3. POST /res/pow 提交 {y} → 服务端设置验证 cookie
+// 4. 探活 /auth/login 确认可用
+func ResolveWithPoW(ctx context.Context, domain string) (string, error) {
+	base := "https://" + domain
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		Jar:     newCookieJar(),
+	}
+
+	// Step 1: 获取挑战
+	req, _ := http.NewRequestWithContext(ctx, "GET", base+"/res/pow", nil)
+	req.Header.Set("User-Agent", userAgentText)
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("获取 PoW 挑战失败：%v", err)
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+
+	var challenge struct {
+		N string `json:"N"`
+		X string `json:"x"`
+		T int    `json:"t"`
+	}
+	if err := json.Unmarshal(body, &challenge); err != nil || challenge.N == "" {
+		return "", fmt.Errorf("PoW 挑战解析失败（可能无验证）：body=%s", truncateForLog(string(body), 100))
+	}
+
+	// Step 2: RSW 解算 y = x^(2^t) mod N
+	y, err := solveRSW(challenge.N, challenge.X, challenge.T)
+	if err != nil {
+		return "", fmt.Errorf("PoW 解算失败：%v", err)
+	}
+
+	// Step 3: 提交结果
+	submitBody, _ := json.Marshal(map[string]string{"y": y})
+	req2, _ := http.NewRequestWithContext(ctx, "POST", base+"/res/pow", bytes.NewReader(submitBody))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("User-Agent", userAgentText)
+	resp2, err := client.Do(req2)
+	if err != nil {
+		return "", fmt.Errorf("提交 PoW 结果失败：%v", err)
+	}
+	resp2.Body.Close()
+
+	// Step 4: 探活
+	req3, _ := http.NewRequestWithContext(ctx, "GET", base+"/auth/login", nil)
+	req3.Header.Set("User-Agent", userAgentText)
+	resp3, err := client.Do(req3)
+	if err != nil {
+		return "", fmt.Errorf("探活失败：%v", err)
+	}
+	resp3.Body.Close()
+	if resp3.StatusCode >= 200 && resp3.StatusCode < 400 {
+		return base, nil
+	}
+	return "", fmt.Errorf("PoW 验证后仍不可访问（HTTP %d）", resp3.StatusCode)
+}
+
+// solveRSW 计算 RSW 时间锁 y = x^(2^t) mod N（连续平方 t 次）
+func solveRSW(nHex, xHex string, t int) (string, error) {
+	n, ok := new(big.Int).SetString(nHex, 16)
+	if !ok {
+		return "", fmt.Errorf("N 解析失败")
+	}
+	x, ok := new(big.Int).SetString(xHex, 16)
+	if !ok {
+		return "", fmt.Errorf("x 解析失败")
+	}
+	y := new(big.Int).Set(x)
+	for i := 0; i < t; i++ {
+		y.Mul(y, y)
+		y.Mod(y, n)
+	}
+	return y.Text(16), nil
+}
+
+func newCookieJar() *cookieJarWrapper {
+	jar, _ := cookiejar.New(nil)
+	return &cookieJarWrapper{jar}
+}
+
+type cookieJarWrapper struct {
+	jar *cookiejar.Jar
+}
+
+func (w *cookieJarWrapper) Cookies(u *url.URL) []*http.Cookie { return w.jar.Cookies(u) }
+func (w *cookieJarWrapper) SetCookies(u *url.URL, cookies []*http.Cookie) {
+	w.jar.SetCookies(u, cookies)
+}
+
+func truncateForLog(s string, n int) string {
+	if len(s) <= n { return s }
+	return s[:n] + "…"
+}
+
+var _ = rand.Read
+var _ = url.Parse
