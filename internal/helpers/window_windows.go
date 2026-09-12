@@ -84,7 +84,7 @@ func setupFullFeaturedTray(parent walk.Form, stopFunc func()) error {
 	if err = notifyIcon.SetIcon(icon); err != nil {
 		return err
 	}
-	if err = notifyIcon.SetToolTip("QMediaSync 正在后台运行中"); err != nil {
+	if err = notifyIcon.SetToolTip("diy-strm 正在后台运行中"); err != nil {
 		return err
 	}
 

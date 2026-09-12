@@ -4,9 +4,9 @@ export type V115AuthSourceType =
   'built_in_appid' | 'built_in_relay' | 'third_party_service' | 'custom_appid'
 
 export type V115AuthProvider =
-  'official_pkce' | 'mqfamily' | 'qmediasync' | 'moviepilot' | 'clouddrive'
+  'official_pkce' | 'mqfamily' | 'diy-strm' | 'moviepilot' | 'clouddrive'
 
-type V115WebRelayProvider = Extract<V115AuthProvider, 'mqfamily' | 'qmediasync'>
+type V115WebRelayProvider = Extract<V115AuthProvider, 'mqfamily' | 'diy-strm'>
 type V115WebThirdPartyProvider = Extract<V115AuthProvider, 'moviepilot' | 'clouddrive'>
 
 export type V115WebAuthProviderValue =
@@ -55,7 +55,7 @@ export interface V115WebAuthProviderOption {
 }
 
 export const pinnedBuiltInAppIDs = [
-  { label: 'QMediaSync', value: '100197849', appName: 'QMediaSync' },
+  { label: 'diy-strm', value: '100197849', appName: 'diy-strm' },
   { label: 'Q115-STRM', value: '100197665', appName: 'Q115-STRM' },
   { label: 'MQ的媒体库', value: '100197503', appName: 'MQ的媒体库' },
 ] as const
@@ -69,11 +69,11 @@ export const featuredBuiltInAppIDs = [
 
 export const webAuthProviders: V115WebAuthProviderOption[] = [
   {
-    value: 'built_in_relay:qmediasync:QMediaSync',
-    label: 'QMediaSync',
+    value: 'built_in_relay:diy-strm:diy-strm',
+    label: 'diy-strm',
     sourceType: 'built_in_relay',
-    provider: 'qmediasync',
-    appName: 'QMediaSync',
+    provider: 'diy-strm',
+    appName: 'diy-strm',
   },
   {
     value: 'built_in_relay:mqfamily:Q115-STRM',
@@ -114,7 +114,7 @@ export const buildV115CreatePayload = (selection: V115CreateSelection): V115Crea
     const provider = webAuthProviders.find((item) => item.value === selection.selectedWebProvider)
     return {
       auth_source_type: provider?.sourceType ?? 'built_in_relay',
-      auth_provider: provider?.provider ?? 'qmediasync',
+      auth_provider: provider?.provider ?? 'diy-strm',
       app_id: provider?.appId || '',
       app_id_name: provider?.appName || provider?.label || '',
     }
@@ -155,7 +155,7 @@ export const getV115AuthAction = (account: V115AccountAuthInfo): V115AuthAction 
     if (account.app_id) {
       return 'pkce'
     }
-    if (['QMediaSync', 'Q115-STRM', 'MQ的媒体库'].includes(account.app_id_name || 'QMediaSync')) {
+    if (['diy-strm', 'Q115-STRM', 'MQ的媒体库'].includes(account.app_id_name || 'diy-strm')) {
       return 'oauth'
     }
   }

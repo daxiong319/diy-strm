@@ -1,4 +1,4 @@
-# QMediaSync 主配置示例。
+# diy-strm 主配置示例。
 # 运行时配置文件通常位于 config/config.yaml；从 backend 目录本地运行时通常位于 backend/config/config.yaml。
 # 本文件仅作为示例，请不要把真实密码、Token 或生产密钥提交到仓库。
 # 配置优先级：环境变量 / config/.env > 本文件 > 内置默认值；环境变量变量清单见仓库根目录 .env.example。
@@ -31,7 +31,7 @@ db:
   # 数据库引擎，可选值：sqlite、postgres。
   engine: postgres
   # SQLite 数据库文件名；使用 SQLite 时会放在运行时配置目录下。
-  sqliteFile: qmediasync.db
+  sqliteFile: diy-strm.db
   # PostgreSQL 类型，可选值：embedded、external。
   # embedded 会使用程序管理的内嵌 PostgreSQL；external 连接外部 PostgreSQL。
   postgresType: embedded
@@ -111,6 +111,6 @@ emby302:
 # 旧版授权服务地址；通常无需修改。
 authServer: https://api.mqfamily.top
 # 新版 OAuth 中转服务地址；通常无需修改。
-newAuthServer: https://oauth.qmediasync.cn
+newAuthServer: https://oauth.diy-strm.cn
 # 百度网盘应用标识。
-baiDuPanAppId: QMediaSync
+baiDuPanAppId: diy-strm

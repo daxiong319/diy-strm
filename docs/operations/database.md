@@ -10,7 +10,7 @@
 
 ## 引擎与初始化
 
-QMediaSync 支持 SQLite 和 PostgreSQL，默认 `postgres + embedded` 由程序启动内嵌 PostgreSQL。数据库配置通过 `config/config.yaml` 保存；首次配置、端口和外部 PostgreSQL 要求见 [配置、密钥与日志](configuration.md)。
+diy-strm 支持 SQLite 和 PostgreSQL，默认 `postgres + embedded` 由程序启动内嵌 PostgreSQL。数据库配置通过 `config/config.yaml` 保存；首次配置、端口和外部 PostgreSQL 要求见 [配置、密钥与日志](configuration.md)。
 
 首次启动时，如果 `migrator` 表不存在，`InitDB()` 创建所有表、写入当前版本、初始化默认设置、刮削设置和 Emby 配置。首次空库直接初始化到当前结构版本，不逐个回放历史迁移；首个管理员通过启动日志中的初始化码创建。
 

@@ -130,7 +130,7 @@ func (c *NanShareClient) signedPost(ctx context.Context, path string, body map[s
 		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "QMediaSync/HDHive-SDK")
+	req.Header.Set("User-Agent", "diy-strm/HDHive-SDK")
 	req.Header.Set("X-NanShare-Project", c.ProjectID)
 	req.Header.Set("X-NanShare-Timestamp", ts)
 	req.Header.Set("X-NanShare-Nonce", nonceHex)

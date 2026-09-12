@@ -120,7 +120,7 @@ func Redirect2OpenlistLink(c *gin.Context) {
 	}
 
 	isProxyUrl := ""
-	// 5 如果是远程地址 (STRM) 且不包含 QMediaSync 的本地代理播放链接, 则重定向处理。
+	// 5 如果是远程地址 (STRM) 且不包含 diy-strm 的本地代理播放链接, 则重定向处理。
 	if urls.IsRemote(strmUrl) || strings.HasPrefix(strmUrl, "http") || strings.HasPrefix(strmUrl, "nfs:") {
 		finalPath := getFinalRedirectLink(strmUrl, c.Request.Header.Clone())
 		if !strings.Contains(finalPath, "/proxy-115") {
@@ -129,7 +129,7 @@ func Redirect2OpenlistLink(c *gin.Context) {
 			c.Redirect(http.StatusTemporaryRedirect, finalPath)
 			return
 		} else {
-			logs.Warn("重定向 STRM 包含 QMediaSync 本地代理播放链接, 将回源处理（会走 NAS 流量）: %s", finalPath)
+			logs.Warn("重定向 STRM 包含 diy-strm 本地代理播放链接, 将回源处理（会走 NAS 流量）: %s", finalPath)
 			isProxyUrl = finalPath
 		}
 	}

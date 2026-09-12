@@ -200,7 +200,7 @@ func GetAccountList(c *gin.Context) {
 // @Param source_type query string true "账号源类型"
 // @Param name query string true "账号名称"
 // @Param app_id query string false "APP ID（自定义时必需）"
-// @Param app_id_name query string false "选择的 115 开放平台应用（QMediaSync、Q115-STRM、MQ的媒体库、自定义 APP ID）"
+// @Param app_id_name query string false "选择的 115 开放平台应用（diy-strm、Q115-STRM、MQ的媒体库、自定义 APP ID）"
 // @Success 200 {object} object
 // @Failure 200 {object} object
 // @Router /account/create [post]

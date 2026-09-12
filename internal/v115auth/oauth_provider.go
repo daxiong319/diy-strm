@@ -46,7 +46,7 @@ var errUnsupportedOAuthOperation = errors.New("当前授权服务不支持此操
 
 func GetOAuthProvider(provider AuthProvider) (OAuthProvider, bool) {
 	switch provider {
-	case ProviderQMediaSync, ProviderMQFamily:
+	case ProviderDiyStrm, ProviderMQFamily:
 		return relayOAuthProvider{}, true
 	case ProviderMoviePilot:
 		return moviePilotOAuthProvider{authServer: "https://movie-pilot.org", client: defaultOAuthHTTPClient()}, true
@@ -67,8 +67,8 @@ func (provider relayOAuthProvider) BuildAuth(_ context.Context, req OAuthURLRequ
 	clientID := strings.TrimSpace(req.AppID)
 	if clientID == "" {
 		clientID = BuiltInRelayQ115STRM
-		if req.Provider == ProviderQMediaSync {
-			clientID = BuiltInRelayQMediaSync
+		if req.Provider == ProviderDiyStrm {
+			clientID = BuiltInRelayDiyStrm
 		}
 	}
 	redirectURL := strings.TrimSpace(req.RedirectURL)
@@ -94,7 +94,7 @@ func (provider relayOAuthProvider) BuildAuth(_ context.Context, req OAuthURLRequ
 		return OAuthURLResult{}, err
 	}
 	baseURL := helpers.GlobalConfig.AuthServer
-	if req.Provider == ProviderQMediaSync || clientID == BuiltInRelayQMediaSync {
+	if req.Provider == ProviderDiyStrm || clientID == BuiltInRelayDiyStrm {
 		baseURL = helpers.GlobalConfig.NewAuthServer
 	}
 	return OAuthURLResult{AuthURL: fmt.Sprintf("%s/115.php?action=code&state=%s", strings.TrimRight(baseURL, "/"), stateEncoded)}, nil

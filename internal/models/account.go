@@ -39,7 +39,7 @@ type Account struct {
 const (
 	BuiltIn115AppQ115STRM       = "Q115-STRM"
 	BuiltIn115AppMQMediaLibrary = "MQ的媒体库"
-	BuiltIn115AppQMediaSync     = "QMediaSync"
+	BuiltIn115AppDiyStrm     = "diy-strm"
 	Custom115AppName            = "自定义"
 )
 
@@ -50,7 +50,7 @@ func (account *Account) TableName() string {
 // IsBuiltIn115AppId 判断是否为系统内置 115 开放平台应用标识。
 func IsBuiltIn115AppId(appId string) bool {
 	switch appId {
-	case BuiltIn115AppQ115STRM, BuiltIn115AppMQMediaLibrary, BuiltIn115AppQMediaSync:
+	case BuiltIn115AppQ115STRM, BuiltIn115AppMQMediaLibrary, BuiltIn115AppDiyStrm:
 		return true
 	default:
 		return false

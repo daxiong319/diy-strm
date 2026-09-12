@@ -384,7 +384,7 @@ func SetupTwoFactor(c *gin.Context) {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取用户失败", Data: nil})
 		return
 	}
-	secret, otpURL, err := helpers.GenerateTOTPSecret("QMediaSync", user.Username)
+	secret, otpURL, err := helpers.GenerateTOTPSecret("diy-strm", user.Username)
 	if err != nil {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "生成两步验证配置失败", Data: nil})
 		return

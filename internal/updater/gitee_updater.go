@@ -86,7 +86,7 @@ func (g *GiteeUpdater) findMatchingAsset(assets []GiteeAsset) (string, string) {
 	if goarch == "amd64" {
 		goarch = "x86_64"
 	}
-	filename := fmt.Sprintf("QMediaSync_%s_%s", goos, goarch)
+	filename := fmt.Sprintf("diy-strm_%s_%s", goos, goarch)
 	if goos == "windows" {
 		filename += ".zip"
 	} else {

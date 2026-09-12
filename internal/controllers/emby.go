@@ -174,7 +174,7 @@ func Webhook(ctx *gin.Context) {
 		}
 	}
 	if event.Event == "library.new" || event.Event == "library.modified" {
-		// 同步 Emby 条目到本地，用于更新 QMediaSync 本地索引。
+		// 同步 Emby 条目到本地，用于更新 diy-strm 本地索引。
 		// 只同步可播放条目：Series/Season/Folder 是容器，单条同步查询（IncludeItemTypes=Movie,Video,Episode）
 		// 永远查不到它们；Emby 4.8 批量入库的合并事件用 Series 代表（"将 N 项目添加到 X"），
 		// 子条目各自有独立事件，跳过容器类型避免误报"未找到 Emby 条目"。
@@ -704,7 +704,7 @@ func sendNewItemNotification(content string, detail *embyclientrestgo.BaseItemDt
 			if perr != nil {
 				helpers.AppLogger.Errorf("创建 Emby 海报临时文件失败：%v", perr)
 			} else {
-				derr := helpers.DownloadFile(imageUrl, posterPath, "QMediaSync")
+				derr := helpers.DownloadFile(imageUrl, posterPath, "diy-strm")
 				if derr != nil {
 					_ = removeEmbyTempImage(posterPath)
 					helpers.AppLogger.Errorf("下载 Emby 海报失败：%v", derr)
@@ -907,7 +907,7 @@ func createPlaybackNotification(webhook *models.EmbyPlaybackWebhook) *notificati
 			if perr != nil {
 				helpers.AppLogger.Errorf("创建 Emby 海报临时文件失败：%v", perr)
 			} else {
-				derr := helpers.DownloadFile(imageUrl, posterPath, "QMediaSync")
+				derr := helpers.DownloadFile(imageUrl, posterPath, "diy-strm")
 				if derr != nil {
 					_ = removeEmbyTempImage(posterPath)
 					helpers.AppLogger.Errorf("下载 Emby 海报失败：%v", derr)

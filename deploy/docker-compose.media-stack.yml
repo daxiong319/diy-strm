@@ -43,7 +43,7 @@ services:
     volumes:
       - /opt/diy-strm/config:/app/config          # 应用配置 + 内置数据库（必须备份）
       - /media/qbittorrent/下载:/downloads        # MP 下载目录（本地识别上传源）
-      - /media/QMediaSync/strm:/media             # STRM 输出目录（与 Emby 挂载同一宿主路径）
+      - /media/diy-strm/strm:/media             # STRM 输出目录（与 Emby 挂载同一宿主路径）
     # extra_hosts:
     #   # STRM 直连地址用自定义域名时，解析到本容器/宿主机
     #   - "your_domain:127.0.0.1"
@@ -158,7 +158,7 @@ services:
       - GIDLIST=0
       - TZ=${TZ}
     volumes:
-      - /media/QMediaSync/strm:/media      # STRM 目录（与 diy-strm 输出目录同一宿主路径）
+      - /media/diy-strm/strm:/media      # STRM 目录（与 diy-strm 输出目录同一宿主路径）
       - /media/embytest/config:/config     # Emby 配置（必须备份）
     networks: [media-net]
 

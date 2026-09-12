@@ -432,7 +432,7 @@ func ShouldMigrate() bool {
 		return false
 	}
 	// 仅当检测到旧版数据时才启动迁移服务：
-	// - 旧版 SQLite 数据库文件（qmediasync.db）存在
+	// - 旧版 SQLite 数据库文件（diy-strm.db）存在
 	// - 迁移备份文件已存在（迁移流程中断后继续）
 	// 全新安装（无旧数据）时直接使用内嵌 PostgreSQL 作为主数据库，跳过迁移。
 	oldSqlite := filepath.Join(helpers.ConfigDir, helpers.GlobalConfig.Db.SqliteFile)

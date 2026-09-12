@@ -96,8 +96,8 @@ jobs:
           for attempt in 1 2; do
             echo "=== GHCR push attempt ${attempt}/2 ==="
             if docker buildx imagetools create \
-              --tag "ghcr.io/${{ github.repository_owner }}/qmediasync:latest" \
-              --tag "ghcr.io/${{ github.repository_owner }}/qmediasync:${{ steps.meta.outputs.tag }}" \
+              --tag "ghcr.io/${{ github.repository_owner }}/diy-strm:latest" \
+              --tag "ghcr.io/${{ github.repository_owner }}/diy-strm:${{ steps.meta.outputs.tag }}" \
               "${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.tag }}"; then
               echo "GHCR push OK"
               exit 0

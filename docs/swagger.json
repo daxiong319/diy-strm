@@ -2,7 +2,7 @@
     "swagger": "2.0",
     "info": {
         "description": "媒体同步和刮削系统API",
-        "title": "QMediaSync API",
+        "title": "diy-strm API",
         "contact": {},
         "version": "1.0"
     },

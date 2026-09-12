@@ -113,7 +113,7 @@ var DEFAULT_FANART_API_KEY = ""  // 默认基线：环境变量 > ldflags
 const (
 	ConfigFileName         = "config.yaml"
 	legacyConfigFileName   = "config.yml"
-	DefaultJWTSecret       = "QMediaSync-JWT-TOKEN-250706"
+	DefaultJWTSecret       = "diy-strm-JWT-TOKEN-250706"
 	legacyDefaultJWTSecret = "Q115-STRM-JWT-TOKEN-250706"
 	defaultLogMaxSizeMB    = 10
 	defaultLogMaxBackups   = 3
@@ -281,7 +281,7 @@ func InitConfig() error {
 		GlobalConfig.AuthServer = "https://api.mqfamily.top"
 	}
 	if GlobalConfig.NewAuthServer == "" {
-		GlobalConfig.NewAuthServer = "https://oauth.qmediasync.cn"
+		GlobalConfig.NewAuthServer = "https://oauth.diy-strm.cn"
 	}
 	// 环境变量（config/.env 或 Docker env）覆盖 YAML 基线，放在默认值填充之后保证 env 最终生效
 	overrideConfigFromEnv(&GlobalConfig)
@@ -492,7 +492,7 @@ func MakeDefaultConfig() *Config {
 		},
 		Db: ConfigDb{
 			Engine:       DbEnginePostgres,
-			SqliteFile:   "qmediasync.db",
+			SqliteFile:   "diy-strm.db",
 			PostgresType: PostgresTypeEmbedded,
 			PostgresConfig: PostgresConfig{
 				Host:         "localhost",
@@ -510,8 +510,8 @@ func MakeDefaultConfig() *Config {
 		HttpsHost:      ":12332",
 		TrustedOrigins: []string{},
 		AuthServer:     "https://api.mqfamily.top",
-		NewAuthServer:  "https://oauth.qmediasync.cn",
-		BaiDuPanAppId:  "QMediaSync",
+		NewAuthServer:  "https://oauth.diy-strm.cn",
+		BaiDuPanAppId:  "diy-strm",
 		Strm: ConfigStrm{
 			VideoExt:     []string{".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".3gp", ".ts"},
 			MetaExt:      []string{".jpg", ".jpeg", ".png", ".webp", ".nfo", ".srt", ".ass", ".svg", ".sup", ".lrc"},

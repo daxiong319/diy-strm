@@ -6,7 +6,7 @@ import (
 )
 
 func TestTOTPValidateCode(t *testing.T) {
-	secret, otpURL, err := GenerateTOTPSecret("QMediaSync", "admin")
+	secret, otpURL, err := GenerateTOTPSecret("diy-strm", "admin")
 	if err != nil {
 		t.Fatalf("生成 TOTP Secret 失败: %v", err)
 	}

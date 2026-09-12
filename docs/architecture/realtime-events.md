@@ -8,7 +8,7 @@
 >
 > 相关代码：`backend/internal/controllers/event_stream.go`、`backend/internal/controllers/log_stream.go`、`backend/internal/realtime/`、`frontend/src/`。
 
-QMediaSync 使用 Server-Sent Events（SSE）提供只读实时更新。启动、暂停、重试、删除等操作仍通过既有受鉴权与 CSRF 保护的 HTTP API 执行；SSE 只负责服务端到浏览器的状态推送。
+diy-strm 使用 Server-Sent Events（SSE）提供只读实时更新。启动、暂停、重试、删除等操作仍通过既有受鉴权与 CSRF 保护的 HTTP API 执行；SSE 只负责服务端到浏览器的状态推送。
 
 ## 路由和同源要求
 

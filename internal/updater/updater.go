@@ -174,7 +174,7 @@ func (g *GitHubUpdater) findMatchingAsset(assets []Asset) (string, string) {
 	if goarch == "amd64" {
 		goarch = "x86_64"
 	}
-	filename := fmt.Sprintf("qmediasync_%s_%s", goos, goarch)
+	filename := fmt.Sprintf("diy-strm_%s_%s", goos, goarch)
 	if goos == "windows" {
 		filename += ".zip"
 	} else {

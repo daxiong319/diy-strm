@@ -186,7 +186,7 @@ func HiveOfficialCallback(c *gin.Context) {
 	code := c.Query("code")
 	if code == "" {
 		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(http.StatusBadRequest, `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>官方通道授权 - QMediaSync</title></head><body style="font-family:sans-serif;text-align:center;padding-top:20vh"><h3>授权失败</h3><p>缺少 code 参数</p></body></html>`)
+		c.String(http.StatusBadRequest, `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>官方通道授权 - diy-strm</title></head><body style="font-family:sans-serif;text-align:center;padding-top:20vh"><h3>授权失败</h3><p>缺少 code 参数</p></body></html>`)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
@@ -194,7 +194,7 @@ func HiveOfficialCallback(c *gin.Context) {
 	tokenResp, err := hdhive.ExchangeOfficialToken(ctx, code, officialRedirectURI(c))
 	if err != nil {
 		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(http.StatusOK, `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>官方通道授权 - QMediaSync</title></head><body style="font-family:sans-serif;text-align:center;padding-top:20vh"><h3>授权失败</h3><p>`+htmlEscape(err.Error())+`</p></body></html>`)
+		c.String(http.StatusOK, `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>官方通道授权 - diy-strm</title></head><body style="font-family:sans-serif;text-align:center;padding-top:20vh"><h3>授权失败</h3><p>`+htmlEscape(err.Error())+`</p></body></html>`)
 		return
 	}
 	acc := models.FindOrCreateHiveOfficialAccount("官方直连渠道")
@@ -209,7 +209,7 @@ func HiveOfficialCallback(c *gin.Context) {
 	acc.Enabled = true
 	if err := models.SaveHiveAccount(acc); err != nil {
 		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(http.StatusOK, `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>官方通道授权 - QMediaSync</title></head><body style="font-family:sans-serif;text-align:center;padding-top:20vh"><h3>授权信息保存失败</h3><p>`+htmlEscape(err.Error())+`</p></body></html>`)
+		c.String(http.StatusOK, `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>官方通道授权 - diy-strm</title></head><body style="font-family:sans-serif;text-align:center;padding-top:20vh"><h3>授权信息保存失败</h3><p>`+htmlEscape(err.Error())+`</p></body></html>`)
 		return
 	}
 	// 拉取用户信息落库
@@ -217,7 +217,7 @@ func HiveOfficialCallback(c *gin.Context) {
 		_ = ok
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusOK, `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>官方通道授权 - QMediaSync</title></head><body style="font-family:sans-serif;text-align:center;padding-top:20vh"><h3 style="color:#67c23a">授权成功</h3><p>官方直连通道（hdhive.com OpenAPI）已授权。</p><p style="color:#909399;font-size:13px">您现在可以关闭此窗口，返回RE0设置页刷新授权状态。</p></body></html>`)
+	c.String(http.StatusOK, `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>官方通道授权 - diy-strm</title></head><body style="font-family:sans-serif;text-align:center;padding-top:20vh"><h3 style="color:#67c23a">授权成功</h3><p>官方直连通道（hdhive.com OpenAPI）已授权。</p><p style="color:#909399;font-size:13px">您现在可以关闭此窗口，返回RE0设置页刷新授权状态。</p></body></html>`)
 }
 
 // HiveOfficialRefreshAPI POST /cloud/hive/official/refresh 刷新授权状态（Token 过期自动刷新）

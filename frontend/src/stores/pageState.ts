@@ -15,7 +15,7 @@ type PageStateDefaults = Partial<Omit<PageState, 'filters'>> & {
   filters?: Record<string, PageStatePrimitive>
 }
 
-const storageKey = 'qmediasync-page-state'
+const storageKey = 'diy-strm-page-state'
 
 function createPageStateMap(): Record<string, PageState> {
   return Object.create(null) as Record<string, PageState>

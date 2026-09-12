@@ -19,14 +19,14 @@ type AuthProvider string
 const (
 	ProviderOfficialPKCE AuthProvider = "official_pkce"
 	ProviderMQFamily     AuthProvider = "mqfamily"
-	ProviderQMediaSync   AuthProvider = "qmediasync"
+	ProviderDiyStrm   AuthProvider = "diy-strm"
 	ProviderMoviePilot   AuthProvider = "moviepilot"
 	ProviderOpenList     AuthProvider = "openlist"
 	ProviderCloudDrive   AuthProvider = "clouddrive"
 )
 
 const (
-	BuiltInRelayQMediaSync     = "QMediaSync"
+	BuiltInRelayDiyStrm     = "diy-strm"
 	BuiltInRelayQ115STRM       = "Q115-STRM"
 	BuiltInRelayMQMediaLibrary = "MQ的媒体库"
 	CustomAppName              = "自定义 APP ID"
@@ -1151,7 +1151,7 @@ var builtInAppIDCatalog = []Source{
 	{SourceType: SourceTypeBuiltInAppID, Provider: ProviderOfficialPKCE, AppID: "100197841", AppName: "低调视频播放器1", DisplayName: "低调视频播放器1"},
 	{SourceType: SourceTypeBuiltInAppID, Provider: ProviderOfficialPKCE, AppID: "100197845", AppName: "AI整理115网盘", DisplayName: "AI整理115网盘"},
 	{SourceType: SourceTypeBuiltInAppID, Provider: ProviderOfficialPKCE, AppID: "100197847", AppName: "MoviePilot-115", DisplayName: "MoviePilot-115"},
-	{SourceType: SourceTypeBuiltInAppID, Provider: ProviderOfficialPKCE, AppID: "100197849", AppName: "QMediaSync", DisplayName: "QMediaSync", Pinned: true},
+	{SourceType: SourceTypeBuiltInAppID, Provider: ProviderOfficialPKCE, AppID: "100197849", AppName: "diy-strm", DisplayName: "diy-strm", Pinned: true},
 	{SourceType: SourceTypeBuiltInAppID, Provider: ProviderOfficialPKCE, AppID: "100197851", AppName: "alpha115", DisplayName: "alpha115"},
 	{SourceType: SourceTypeBuiltInAppID, Provider: ProviderOfficialPKCE, AppID: "100197853", AppName: "青衣江", DisplayName: "青衣江"},
 	{SourceType: SourceTypeBuiltInAppID, Provider: ProviderOfficialPKCE, AppID: "100197855", AppName: "Developer", DisplayName: "Developer"},
@@ -1209,7 +1209,7 @@ func BuiltInAppIDSources() []Source {
 
 func BuiltInRelaySources() []Source {
 	return []Source{
-		{SourceType: SourceTypeBuiltInRelay, Provider: ProviderQMediaSync, AppID: BuiltInRelayQMediaSync, AppName: BuiltInRelayQMediaSync, DisplayName: BuiltInRelayQMediaSync, AuthServer: "https://oauth.qmediasync.cn", RequiresEncryptionKey: true},
+		{SourceType: SourceTypeBuiltInRelay, Provider: ProviderDiyStrm, AppID: BuiltInRelayDiyStrm, AppName: BuiltInRelayDiyStrm, DisplayName: BuiltInRelayDiyStrm, AuthServer: "https://oauth.diy-strm.cn", RequiresEncryptionKey: true},
 		{SourceType: SourceTypeBuiltInRelay, Provider: ProviderMQFamily, AppID: BuiltInRelayQ115STRM, AppName: BuiltInRelayQ115STRM, DisplayName: BuiltInRelayQ115STRM, AuthServer: "https://api.mqfamily.top", RequiresEncryptionKey: true},
 		{SourceType: SourceTypeBuiltInRelay, Provider: ProviderMQFamily, AppID: BuiltInRelayMQMediaLibrary, AppName: BuiltInRelayMQMediaLibrary, DisplayName: BuiltInRelayMQMediaLibrary, AuthServer: "https://api.mqfamily.top", RequiresEncryptionKey: true},
 	}
@@ -1338,8 +1338,8 @@ func SearchBuiltInAppIDSources(keyword string, offset int, limit int) AppIDSearc
 
 func ResolveAccountSource(appID string, appIDName string) Source {
 	switch appID {
-	case BuiltInRelayQMediaSync:
-		return Source{SourceType: SourceTypeBuiltInRelay, Provider: ProviderQMediaSync, AppID: appID, AppName: appID, DisplayName: appID, RequiresEncryptionKey: true}
+	case BuiltInRelayDiyStrm:
+		return Source{SourceType: SourceTypeBuiltInRelay, Provider: ProviderDiyStrm, AppID: appID, AppName: appID, DisplayName: appID, RequiresEncryptionKey: true}
 	case BuiltInRelayQ115STRM, BuiltInRelayMQMediaLibrary:
 		return Source{SourceType: SourceTypeBuiltInRelay, Provider: ProviderMQFamily, AppID: appID, AppName: appID, DisplayName: appID, RequiresEncryptionKey: true}
 	}
@@ -1359,8 +1359,8 @@ func ResolveAccountSource(appID string, appIDName string) Source {
 func sourceFromLegacyCreateRequest(appID string, selectedApp string, customAppName string) (Source, error) {
 	selectedApp = strings.TrimSpace(selectedApp)
 	switch selectedApp {
-	case BuiltInRelayQMediaSync:
-		return relaySourceFromProvider(ProviderQMediaSync, selectedApp)
+	case BuiltInRelayDiyStrm:
+		return relaySourceFromProvider(ProviderDiyStrm, selectedApp)
 	case BuiltInRelayQ115STRM, BuiltInRelayMQMediaLibrary:
 		return relaySourceFromProvider(ProviderMQFamily, selectedApp)
 	case "自定义", "自定义 App ID", "自定义 APPID", CustomAppName:

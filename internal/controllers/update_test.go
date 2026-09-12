@@ -115,7 +115,7 @@ func TestCancelledUpdateStillOccupiesUntilDone(t *testing.T) {
 }
 
 func TestCleanupUpdatePackageOnDownloadErrorRemovesPartialFile(t *testing.T) {
-	updateFilename := filepath.Join(t.TempDir(), "QMediaSync.tar.gz")
+	updateFilename := filepath.Join(t.TempDir(), "diy-strm.tar.gz")
 	if err := os.WriteFile(updateFilename, []byte("partial"), 0o666); err != nil {
 		t.Fatalf("写入临时更新包失败：%v", err)
 	}

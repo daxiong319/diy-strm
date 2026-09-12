@@ -189,7 +189,7 @@ func UpdateToVersion(c *gin.Context) {
 
 	// Gitee 渠道暂未启用：本仓库尚未在 Gitee 发布。保留实现，待建立 Gitee 镜像仓库后取消注释并恢复 if/else 即可。
 	// if channel == "gitee" {
-	// 	giteeUpdater := updater.NewGiteeUpdater("chen8945", "QMediaSync", helpers.Version)
+	// 	giteeUpdater := updater.NewGiteeUpdater("chen8945", "diy-strm", helpers.Version)
 	// 	downloadURL, _, _, err = giteeUpdater.GetReleaseDownloadURL(version)
 	// 	if err != nil {
 	// 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "版本不存在", Data: nil})
@@ -197,7 +197,7 @@ func UpdateToVersion(c *gin.Context) {
 	// 	}
 	// } else {
 	{
-		ghUpdater := updater.NewGitHubUpdater("chen8945", "QMediaSync", helpers.Version)
+		ghUpdater := updater.NewGitHubUpdater("chen8945", "diy-strm", helpers.Version)
 		downloadURL, _, _, err = ghUpdater.GetReleaseDownloadURL(version)
 		if err != nil {
 			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "版本不存在", Data: nil})
@@ -299,8 +299,8 @@ func UpdateToVersion(c *gin.Context) {
 			if goarch == "amd64" {
 				goarch = "x86_64"
 			}
-			srcPath := filepath.Join(updateFilePath, "qmediasync_"+goos+"_"+goarch)
-			// 解压后将文件从 qmediasync_GOOS_GOARCH 目录复制到 update 目录。
+			srcPath := filepath.Join(updateFilePath, "diy-strm_"+goos+"_"+goarch)
+			// 解压后将文件从 diy-strm_GOOS_GOARCH 目录复制到 update 目录。
 			helpers.ExtractZip(updateFilename, srcPath)
 			err = helpers.MoveDir(srcPath, updateDestpath)
 			if err != nil {
@@ -350,8 +350,8 @@ func UpdateToVersion(c *gin.Context) {
 		if helpers.IsRunningInDocker() {
 			folerName := filepath.Base(downloadURL)
 			folerName = strings.ReplaceAll(folerName, ".tar.gz", "")
-			// 重新打包，将压缩包中的文件从 qmediasync_GOOS_GOARCH 目录打包到压缩包根目录。
-			// 解压后将文件从 qmediasync_GOOS_GOARCH 目录复制到 update 目录。
+			// 重新打包，将压缩包中的文件从 diy-strm_GOOS_GOARCH 目录打包到压缩包根目录。
+			// 解压后将文件从 diy-strm_GOOS_GOARCH 目录复制到 update 目录。
 			helpers.ExtractTarGz(updateFilename, updateFilePath)
 			// 复制文件到 update 目录
 			srcPath := filepath.Join(helpers.ConfigDir, "tmp", folerName)
@@ -377,7 +377,7 @@ func UpdateToVersion(c *gin.Context) {
 					}
 				}
 			}
-			exeFile := filepath.Join(srcPath, "QMediaSync")
+			exeFile := filepath.Join(srcPath, "diy-strm")
 			if helpers.PathExists(exeFile) {
 				os.Chmod(exeFile, 0777)
 			}
@@ -526,7 +526,7 @@ func listReleases(passCache bool, channel string) []version {
 
 	// Gitee 渠道暂未启用：本仓库尚未在 Gitee 发布。保留实现，待建立 Gitee 镜像仓库后取消注释并恢复 if/else 即可。
 	// if channel == "gitee" {
-	// 	giteeUpdater := updater.NewGiteeUpdater("chen8945", "QMediaSync", helpers.Version)
+	// 	giteeUpdater := updater.NewGiteeUpdater("chen8945", "diy-strm", helpers.Version)
 	// 	giteeUpdater.IncludePreRelease = false
 	// 	releases, err = giteeUpdater.GetLatestStableReleases(5)
 	// 	if err != nil {
@@ -535,7 +535,7 @@ func listReleases(passCache bool, channel string) []version {
 	// 	}
 	// } else {
 	{
-		ghUpdater := updater.NewGitHubUpdater("chen8945", "QMediaSync", helpers.Version)
+		ghUpdater := updater.NewGitHubUpdater("chen8945", "diy-strm", helpers.Version)
 		ghUpdater.IncludePreRelease = false
 		releases, err = ghUpdater.GetLatestStableReleases(5)
 		if err != nil {
@@ -549,7 +549,7 @@ func listReleases(passCache bool, channel string) []version {
 		return nil
 	}
 
-	helpers.AppLogger.Infof("找到 %s/%s 的 %d 个最新版本（channel：%s）", "chen8945", "QMediaSync", len(releases), channel)
+	helpers.AppLogger.Infof("找到 %s/%s 的 %d 个最新版本（channel：%s）", "chen8945", "diy-strm", len(releases), channel)
 	versionList := make([]version, 0)
 	for i, release := range releases {
 		versionList = append(versionList, version{

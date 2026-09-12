@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>数据库迁移 - QMediaSync</title>
+    <title>数据库迁移 - diy-strm</title>
     <style>
         * {
             margin: 0;
@@ -404,8 +404,8 @@
                 
                 <p style="margin-bottom: 15px;">
                     <strong>详细安装教程：</strong>
-                    <a href="https://github.com/qicfan/qmediasync/wiki/Docker%E5%AE%89%E8%A3%85" target="_blank" style="color: #667eea;">
-                        https://github.com/qicfan/qmediasync/wiki/Docker安装
+                    <a href="https://github.com/qicfan/diy-strm/wiki/Docker%E5%AE%89%E8%A3%85" target="_blank" style="color: #667eea;">
+                        https://github.com/qicfan/diy-strm/wiki/Docker安装
                     </a>
                     <p>如果不明白怎么操作，加QQ群：1057459156 或者Telegram: https://t.me/q115_strm </p>
                 </p>
@@ -430,9 +430,9 @@
       qms:
         ipv4_address: 172.25.0.3
 
-  qmediasync:
-    image: ghcr.io/chen8945/qmediasync:latest
-    container_name: qmediasync
+  diy-strm:
+    image: ghcr.io/chen8945/diy-strm:latest
+    container_name: diy-strm
     restart: always
     depends_on:
       - postgres                       # 确保 postgres 服务先启动
@@ -489,8 +489,8 @@ networks:
                 
                 <p style="margin-bottom: 15px;">
                     <strong>详细安装教程：</strong>
-                    <a href="https://github.com/qicfan/qmediasync/wiki/Windows-%E5%AE%89%E8%A3%85%E4%BD%BF%E7%94%A8" target="_blank" style="color: #667eea;">
-                        https://github.com/qicfan/qmediasync/wiki/Windows-安装使用
+                    <a href="https://github.com/qicfan/diy-strm/wiki/Windows-%E5%AE%89%E8%A3%85%E4%BD%BF%E7%94%A8" target="_blank" style="color: #667eea;">
+                        https://github.com/qicfan/diy-strm/wiki/Windows-安装使用
                     </a>
                     <p>如果不明白怎么操作，加QQ群：1057459156 或者Telegram: https://t.me/q115_strm </p>
                 </p>
@@ -530,7 +530,7 @@ networks:
                 <label for="host">主机地址</label>
                 <input type="text" id="host" value="{{if .isWindows}}localhost{{else}}postgres{{end}}" oninput="onInputChanged()">
                 <p style="font-size: 12px; color: #666; margin-top: 4px;">
-                    如果使用第一种包含postgres和qmediasync的compose构建则输入 <code>postgres</code>；<br>
+                    如果使用第一种包含postgres和diy-strm的compose构建则输入 <code>postgres</code>；<br>
                     如果使用单独安装postgres的compose则输入 <code>172.25.0.1</code>
                 </p>
             </div>
@@ -554,7 +554,7 @@ networks:
             </div>
             <div class="form-group">
                 <label for="database">数据库名</label>
-                <input type="text" id="database" value="qmediasync" oninput="onInputChanged()">
+                <input type="text" id="database" value="diy-strm" oninput="onInputChanged()">
             </div>
 
             <div class="btn-group">

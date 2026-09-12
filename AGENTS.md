@@ -1,4 +1,4 @@
-# QMediaSync AI 编码工具入口
+# diy-strm AI 编码工具入口
 
 本文件是 AI 编码工具的兼容入口。完整、长期维护的工作说明见 [AI 编码助手工作说明](docs/engineering/ai-assistant.md)。
 

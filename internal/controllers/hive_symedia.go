@@ -111,7 +111,7 @@ func HiveSymediaDirectCallback(c *gin.Context) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.String(http.StatusOK, `<!DOCTYPE html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><title>Symedia 授权 - QMediaSync</title>
+<head><meta charset="utf-8"><title>Symedia 授权 - diy-strm</title>
 <style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:60vh;margin:0;background:#f5f7fa}
 .card{background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.1);padding:40px;text-align:center;max-width:420px}
 h3{color:#67c23a;margin:0 0 12px}.hint{color:#909399;font-size:13px;margin-top:8px}

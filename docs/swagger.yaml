@@ -3,7 +3,7 @@ host: localhost:8115
 info:
   contact: {}
   description: 媒体同步和刮削系统API
-  title: QMediaSync API
+  title: diy-strm API
   version: "1.0"
 paths:
   /115/newurl:

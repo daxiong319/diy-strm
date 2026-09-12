@@ -8,7 +8,7 @@
 >
 > 相关代码：`backend/internal/requests/`、`backend/internal/validation/`、`backend/internal/controllers/`、`frontend/src/constants/validation.ts`。
 
-本文档记录 QMediaSync 后端请求校验体系的当前实现和后续约定。已迁移的 HTTP 接口使用 `backend/internal/requests` 下的 Request DTO 绑定请求，复用 `backend/internal/validation` 下的通用规则；未迁移或特殊流程接口以实际代码为准。
+本文档记录 diy-strm 后端请求校验体系的当前实现和后续约定。已迁移的 HTTP 接口使用 `backend/internal/requests` 下的 Request DTO 绑定请求，复用 `backend/internal/validation` 下的通用规则；未迁移或特殊流程接口以实际代码为准。
 
 ## 适用边界
 

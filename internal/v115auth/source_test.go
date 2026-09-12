@@ -4,7 +4,7 @@ import "testing"
 
 func TestBuiltInAppIDOrder(t *testing.T) {
 	sources := BuiltInAppIDSources()
-	want := []string{"QMediaSync", "Q115-STRM", "MQ的媒体库"}
+	want := []string{"diy-strm", "Q115-STRM", "MQ的媒体库"}
 	for i, name := range want {
 		if sources[i].AppName != name {
 			t.Fatalf("第 %d 个内置 APP ID = %s，期望 %s", i, sources[i].AppName, name)
@@ -80,7 +80,7 @@ func TestResolveLegacyRelayAccount(t *testing.T) {
 		appID    string
 		provider AuthProvider
 	}{
-		{"QMediaSync", ProviderQMediaSync},
+		{"diy-strm", ProviderDiyStrm},
 		{"Q115-STRM", ProviderMQFamily},
 		{"MQ的媒体库", ProviderMQFamily},
 	}
@@ -96,7 +96,7 @@ func TestResolveLegacyRelayAccount(t *testing.T) {
 }
 
 func TestResolveNumericAppIDAccount(t *testing.T) {
-	source := ResolveAccountSource("100197849", "QMediaSync")
+	source := ResolveAccountSource("100197849", "diy-strm")
 	if source.SourceType != SourceTypeBuiltInAppID {
 		t.Fatalf("来源类型 = %s，期望 %s", source.SourceType, SourceTypeBuiltInAppID)
 	}

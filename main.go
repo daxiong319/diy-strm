@@ -59,7 +59,7 @@ var emby302StandaloneMu sync.Mutex
 // 启用时将 Emby 反代路由以兜底方式挂载到管理页同一个端口上
 var emby302Enabled bool
 
-var AppName string = "QMediaSync"
+var AppName string = "diy-strm"
 var QMSApp *App
 
 func parseBuildUnixTime(value string) int64 {
@@ -344,7 +344,7 @@ func checkRelease() {
 	}
 	arg1 := strings.ToLower(os.Args[0])
 	name := strings.ToLower(filepath.Base(arg1))
-	helpers.IsRelease = strings.Index(name, "qmediasync") == 0 && !strings.Contains(arg1, "go-build")
+	helpers.IsRelease = strings.Index(name, "diy-strm") == 0 && !strings.Contains(arg1, "go-build")
 }
 
 func getRootDir() string {
@@ -1348,7 +1348,7 @@ func parseParams() {
 	}
 }
 
-// @title QMediaSync API
+// @title diy-strm API
 // @version 1.0
 // @description 媒体同步和刮削系统 API
 // @host localhost:8115
@@ -1411,7 +1411,7 @@ func runUpdateProcess() {
 
 	os.MkdirAll(backupDir, 0777)
 
-	appName := "QMediaSync.exe"
+	appName := "diy-strm.exe"
 	appPath := filepath.Join(helpers.RootDir, appName)
 	newAppPath := filepath.Join(updateDir, appName)
 	if helpers.PathExists(newAppPath) {

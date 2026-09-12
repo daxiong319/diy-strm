@@ -5915,7 +5915,7 @@ var SwaggerInfo = &swag.Spec{
 	Host:             "localhost:8115",
 	BasePath:         "/",
 	Schemes:          []string{},
-	Title:            "QMediaSync API",
+	Title:            "diy-strm API",
 	Description:      "媒体同步和刮削系统API",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,

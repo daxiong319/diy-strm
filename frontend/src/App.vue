@@ -483,7 +483,7 @@ const getProgressStatus = () => {
 }
 
 const openHelp = () => {
-  window.open('https://gitee.com/qicfan/qmediasync/wikis/Home', '_blank')
+  window.open('https://gitee.com/qicfan/diy-strm/wikis/Home', '_blank')
 }
 
 watch(isMobile, (nextIsMobile) => {

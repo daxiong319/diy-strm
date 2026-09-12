@@ -103,16 +103,16 @@ jobs:
         include:
           - goos: windows
             goarch: amd64
-            binary: QMediaSync.exe
+            binary: diy-strm.exe
           - goos: windows
             goarch: arm64
-            binary: QMediaSync.exe
+            binary: diy-strm.exe
           - goos: linux
             goarch: amd64
-            binary: QMediaSync
+            binary: diy-strm
           - goos: linux
             goarch: arm64
-            binary: QMediaSync
+            binary: diy-strm
     steps:
       - uses: actions/checkout@v7
         with:
@@ -150,7 +150,7 @@ jobs:
           fi
 
           ldflags="${extra_ldflags}-s -w -X main.Version=${TAG} -X 'main.PublishDate=${BUILD_DATE}' -X main.FANART_API_KEY=${FANART_API_KEY} -X main.TMDB_ACCESS_TOKEN=${TMDB_ACCESS_TOKEN} -X main.TMDB_API_KEY=${TMDB_API_KEY} -X main.SC_API_KEY=${SC_API_KEY}"
-          output="dist/QMediaSync_${GOOS}_${GOARCH}"
+          output="dist/diy-strm_${GOOS}_${GOARCH}"
           if [ "$GOOS" = "windows" ]; then
             output="${output}.exe"
           fi
@@ -161,8 +161,8 @@ jobs:
           scripts/release/package-release-asset.sh "$TAG" "$GOOS" "$GOARCH" "$output" web_statics release-assets
 
           if [ "$GOOS" = "linux" ]; then
-            cp "$output" "linux-binaries/QMediaSync_linux_${GOARCH}_exe"
-            chmod +x "linux-binaries/QMediaSync_linux_${GOARCH}_exe"
+            cp "$output" "linux-binaries/diy-strm_linux_${GOARCH}_exe"
+            chmod +x "linux-binaries/diy-strm_linux_${GOARCH}_exe"
           fi
 
       - uses: actions/upload-artifact@v7
@@ -175,7 +175,7 @@ jobs:
         if: matrix.goos == 'linux'
         with:
           name: linux-binary-${{ matrix.goarch }}
-          path: linux-binaries/QMediaSync_linux_${{ matrix.goarch }}_exe
+          path: linux-binaries/diy-strm_linux_${{ matrix.goarch }}_exe
           if-no-files-found: error
 
   docker:
@@ -219,8 +219,8 @@ jobs:
           file: Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/qmediasync:${{ needs.metadata.outputs.tag }}
-            ghcr.io/${{ github.repository_owner }}/qmediasync:latest
+            ghcr.io/${{ github.repository_owner }}/diy-strm:${{ needs.metadata.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/diy-strm:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/diy-strm:${{ needs.metadata.outputs.tag }}
             ${{ secrets.DOCKERHUB_USERNAME }}/diy-strm:latest
           platforms: linux/amd64,linux/arm64
@@ -282,8 +282,8 @@ jobs:
           TAG: ${{ needs.metadata.outputs.tag }}
         run: |
           mkdir -p release-assets
-          scripts/release/package-fnos.sh "$TAG" amd64 temp_build/QMediaSync_linux_amd64_exe web_statics release-assets
-          scripts/release/package-fnos.sh "$TAG" arm64 temp_build/QMediaSync_linux_arm64_exe web_statics release-assets
+          scripts/release/package-fnos.sh "$TAG" amd64 temp_build/diy-strm_linux_amd64_exe web_statics release-assets
+          scripts/release/package-fnos.sh "$TAG" arm64 temp_build/diy-strm_linux_arm64_exe web_statics release-assets
 
       - name: Detect FNOS packages
         id: fpk_assets

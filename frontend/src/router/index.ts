@@ -1,5 +1,5 @@
 import { createRouter } from 'vue-router'
-import { createQMediaSyncHashHistory } from './history'
+import { createDiyStrmHashHistory } from './history'
 import { createAsyncRouteComponent } from './asyncRoute'
 import { useAuthStore } from '@/stores/auth'
 import { http } from '@/http/client'
@@ -932,7 +932,7 @@ const routes = [
 ]
 
 const router = createRouter({
-  history: createQMediaSyncHashHistory(),
+  history: createDiyStrmHashHistory(),
   routes,
 })
 
@@ -961,7 +961,7 @@ router.beforeEach(async (to) => {
 
 router.afterEach((to, _from, failure) => {
   if (!failure && to.meta.title) {
-    document.title = `${to.meta.title} - QMediaSync`
+    document.title = `${to.meta.title} - diy-strm`
   }
 })
 

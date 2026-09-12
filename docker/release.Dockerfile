@@ -15,7 +15,7 @@ RUN apk add --no-cache ca-certificates tzdata inotify-tools postgresql15 su-exec
     chmod 777 /app
 
 WORKDIR /app
-COPY --chmod=0755 temp_build/QMediaSync_linux_${TARGETARCH}_exe ./QMediaSync
+COPY --chmod=0755 temp_build/diy-strm_linux_${TARGETARCH}_exe ./diy-strm
 COPY backend/web_statics ./web_statics/
 COPY --chmod=0755 docker/entrypoint.sh ./scripts/docker-entrypoint.sh
 COPY --chmod=0755 docker/watch-update.sh ./scripts/watch_update.sh

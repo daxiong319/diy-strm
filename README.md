@@ -1,4 +1,4 @@
-# DIY-STRM (QMediaSync 融合版)
+# DIY-STRM (diy-strm 融合版)
 
 [![Docker Hub](https://img.shields.io/docker/pulls/afengj/diy-strm?style=flat-square)](https://hub.docker.com/r/afengj/diy-strm)
 [![GitHub Release](https://img.shields.io/github/v/release/daxiong319/diy-strm?style=flat-square)](https://github.com/daxiong319/diy-strm/releases)
@@ -6,10 +6,10 @@
 
 DIY-STRM 是一个媒体同步与刮削系统，管理 115 云盘、123 云盘、移动云盘、百度网盘、OpenList、光翼等云存储与 Emby 媒体服务器之间的文件同步、STRM 生成和媒体刮削等流程。
 
-本仓库在 [qicfan/qmediasync](https://github.com/qicfan/qmediasync)（v0.14.23）基础上，融合了以下二改项目的全部改进（v0.15.x）：
+本仓库在 [qicfan/diy-strm](https://github.com/qicfan/diy-strm)（v0.14.23）基础上，融合了以下二改项目的全部改进（v0.15.x）：
 
-- [chen8945/QMediaSync](https://github.com/chen8945/QMediaSync)（v0.15.13）：STRM Webhook、目录监控 115 上传、断点续传分片上传、SSE 实时推送、Cookie 会话/CSRF/TOTP 两步验证、Emby 增量同步、日志轮转等
-- [rong28694/qmediasync-fixed](https://github.com/rong28694/qmediasync-fixed)：季集解析支持 4 位集数（S01E0001~E9999）
+- [chen8945/diy-strm](https://github.com/chen8945/diy-strm)（v0.15.13）：STRM Webhook、目录监控 115 上传、断点续传分片上传、SSE 实时推送、Cookie 会话/CSRF/TOTP 两步验证、Emby 增量同步、日志轮转等
+- [rong28694/diy-strm-fixed](https://github.com/rong28694/diy-strm-fixed)：季集解析支持 4 位集数（S01E0001~E9999）
 
 ## 🚀 快速部署
 
@@ -147,6 +147,6 @@ docker compose up -d
 
 ## 📚 原项目地址
 
-- 上游：[qicfan/qmediasync](https://github.com/qicfan/qmediasync)
+- 上游：[qicfan/diy-strm](https://github.com/qicfan/diy-strm)
 - 前端：[qicfan/q115-strm-frontend](https://github.com/qicfan/q115-strm-frontend)
-- Wiki：[qicfan/qmediasync/wiki](https://github.com/qicfan/qmediasync/wiki)
+- Wiki：[qicfan/diy-strm/wiki](https://github.com/qicfan/diy-strm/wiki)

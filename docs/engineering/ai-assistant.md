@@ -1,6 +1,6 @@
 # AI 编码助手工作说明
 
-> 职责：定义 QMediaSync 的完整 AI 协作规则、开发约定、验证入口和文档同步方式。
+> 职责：定义 diy-strm 的完整 AI 协作规则、开发约定、验证入口和文档同步方式。
 >
 > 权威范围：`AGENTS.md` 和 `CLAUDE.md` 只作为完全相同的兼容入口；本文件是 AI 协作规则的唯一完整来源。具体业务事实以其所属的架构、运维或参考文档和源码为准。
 >
@@ -32,10 +32,10 @@
 
 ## 项目快照
 
-QMediaSync 是媒体同步和刮削系统，用于管理 115 网盘、百度网盘、OpenList 等云存储与 Emby 媒体服务器之间的文件同步、STRM 生成和媒体刮削。
+diy-strm 是媒体同步和刮削系统，用于管理 115 网盘、百度网盘、OpenList 等云存储与 Emby 媒体服务器之间的文件同步、STRM 生成和媒体刮削。
 
 - 语言：Go 1.25。
-- 后端：Gin、GORM，模块名为 `qmediasync`，位于 `backend/`。
+- 后端：Gin、GORM，模块名为 `diy-strm`，位于 `backend/`。
 - 数据库：SQLite 或 PostgreSQL，支持内嵌和外部模式。
 - 前端：Vue 3、Vite、TypeScript，位于 `frontend/`；本地生产构建输出 `frontend/dist`，发布流程将其复制为 `backend/web_statics`，运行目录使用 `web_statics`。
 - 其他目录：`backend/emby302/` 是嵌入的 Emby 302 代理，`backend/openxpanapi/` 是自动生成的百度网盘 OpenAPI 客户端，`docker/` 存放容器脚本，`scripts/` 存放安装和发布辅助脚本。
@@ -72,7 +72,7 @@ QMediaSync 是媒体同步和刮削系统，用于管理 115 网盘、百度网�
 
 ### 导入、命名和注释
 
-- Go 文件使用 `goimports` 维护 import，使用 `-local qmediasync` 识别本项目包；不要手工维护 import 分组。模块名不是域名式路径，分组以 `goimports -local qmediasync` 的实际输出为准。
+- Go 文件使用 `goimports` 维护 import，使用 `-local diy-strm` 识别本项目包；不要手工维护 import 分组。模块名不是域名式路径，分组以 `goimports -local diy-strm` 的实际输出为准。
 - 导出类型和函数使用 `PascalCase`，未导出标识符使用 `camelCase`。常见 initialism 使用 `ID`、`URL`、`API`、`HTTP`、`JSON`、`SQL`、`OAuth` 等 Go 约定形式。
 - 接口按行为或职责命名，例如 `Reader`、`Writer`、`EventHandler`、`Scraper`、`Driver`；不强制使用 `Impl` 后缀。
 - 布尔字段优先使用自然状态名，例如 `IsRunning`、`HasRemoteSeasonPath`、`CronEnabled`。存量 `EnableXxx` 命名不做无关批量修改。

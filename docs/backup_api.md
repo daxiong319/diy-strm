@@ -466,7 +466,7 @@
 ### SQL文件结构
 
 ```sql
--- QMediaSync Database Backup
+-- diy-strm Database Backup
 -- Generated at: 2024-01-15 12:00:00
 -- Database Engine: sqlite
 

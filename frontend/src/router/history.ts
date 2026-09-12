@@ -61,6 +61,6 @@ export function runWithoutHiddenScrollListeners<T>(factory: () => T): T {
 }
 
 // Vue Router 会在页面 hidden 时写入 history.state.scroll，部分浏览器窗口最小化会被该写入打断。
-export function createQMediaSyncHashHistory(): RouterHistory {
+export function createDiyStrmHashHistory(): RouterHistory {
   return runWithoutHiddenScrollListeners(() => createWebHashHistory())
 }

@@ -55,7 +55,7 @@
 ## UI 主题与皮肤
 
 - 全局视觉令牌集中在 `frontend/src/assets/tokens.css`：品牌色、表面、文本、边框、语义色、圆角、阴影、侧边栏变量，以及 Element Plus 变量映射（`--el-*`）。页面和组件样式一律引用令牌变量，不硬编码色值；浅色/深色主题通过 `:root[data-theme]` 覆盖变量，`brutal` 皮肤通过 `:root[data-skin='brutal']` 覆盖（硬边框、方形圆角、硬阴影、黄色强调）。
-- 主题与皮肤状态由 `frontend/src/composables/useTheme.ts` 统一管理：`data-theme` 写在 `<html>` 上、选择持久化到 `localStorage`（`qmediasync-theme` / `qmediasync-skin`），默认跟随系统配色偏好。新页面不应自行读写这两个属性或键名。
+- 主题与皮肤状态由 `frontend/src/composables/useTheme.ts` 统一管理：`data-theme` 写在 `<html>` 上、选择持久化到 `localStorage`（`diy-strm-theme` / `diy-strm-skin`），默认跟随系统配色偏好。新页面不应自行读写这两个属性或键名。
 - 侧边栏底部已提供主题/皮肤切换入口（`App.vue` 的 `.sidebar-tools`）。登录页背景通过 `GET /scrape/tmdb-popular`（后端 TMDB 代理）随机取热门影片 backdrop，加载失败时回退默认渐变，不得阻塞登录流程。
 
 ## 验证方式

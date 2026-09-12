@@ -8,7 +8,7 @@ func TestIsBuiltIn115AppId(t *testing.T) {
 		appId  string
 		expect bool
 	}{
-		{name: "QMediaSync", appId: BuiltIn115AppQMediaSync, expect: true},
+		{name: "diy-strm", appId: BuiltIn115AppDiyStrm, expect: true},
 		{name: "Q115-STRM", appId: BuiltIn115AppQ115STRM, expect: true},
 		{name: "MQ的媒体库", appId: BuiltIn115AppMQMediaLibrary, expect: true},
 		{name: "自定义应用", appId: "custom-app-id", expect: false},

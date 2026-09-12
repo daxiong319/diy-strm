@@ -75,7 +75,7 @@ func TestProcess115CollectedFilesWritesOnlyLatestCollisionOwner(t *testing.T) {
 		TmpSyncPath:   true,
 		PathWorkerMax: 2,
 		Config: SyncStrmConfig{
-			StrmBaseUrl:     "http://qmediasync:12333",
+			StrmBaseUrl:     "http://diy-strm:12333",
 			StrmUrlNeedPath: 2,
 		},
 		memSyncCache: NewMemorySyncCache(1),

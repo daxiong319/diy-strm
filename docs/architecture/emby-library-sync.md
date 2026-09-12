@@ -16,7 +16,7 @@ Emby 相关任务分为两条独立链路，不能混用。
 
 ### 链路 A：通知 Emby 刷新
 
-含义：QMediaSync 通知 Emby 刷新已有 item 或重新扫描它自己的媒体库。
+含义：diy-strm 通知 Emby 刷新已有 item 或重新扫描它自己的媒体库。
 
 刷新功能需要满足以下前置条件：
 
@@ -56,7 +56,7 @@ STRM Webhook 的具体规则：
 
 #### 当前不是刷新入口的功能
 
-- `POST /api/emby/sync/start`、Emby 条目同步 Cron 和 `POST /emby/webhook` 属于链路 B，只维护 QMediaSync 本地 Emby 索引，不调用刷新接口。
+- `POST /api/emby/sync/start`、Emby 条目同步 Cron 和 `POST /emby/webhook` 属于链路 B，只维护 diy-strm 本地 Emby 索引，不调用刷新接口。
 - 前端当前只有“同步后刷新媒体库”开关，没有“立即刷新媒体库”按钮，也没有独立的刷新 API。
 - `models.RefreshEmbyLibraryBySyncPathId(...)` 是直接请求 Emby 的旧函数，当前没有生产调用方；当前刷新统一经过任务协调器。
 - Telegram `strm_scrape` 对应的同步、刮削后刷新代码仍存在，但命令注册已注释，不属于当前有效入口。
@@ -140,7 +140,7 @@ group_refresh_after_at = max(组内所有 pending item 的 refresh_after_at)
 
 扫描器不会把读取到的旧任务整行写回。readiness 检查出错或任务暂不可执行时，只在任务仍为 `pending`，且 `last_event_at`、`refresh_after_at`、`deadline_at` 与扫描快照一致时更新 `last_checked_at`；检查出错时同时更新 `error`。如果期间有新事件或状态变化，条件更新不命中，旧检查结果直接丢弃。deadline 到期取消同样要求数据库中的 `deadline_at` 与旧快照一致且仍已过期；新事件已续期时，旧扫描不能取消新周期任务。SQLite 进程锁只覆盖对应的单条条件更新，PostgreSQL 依靠原子 `UPDATE ... WHERE ...` 保证该语义。
 
-SQLite 刷新任务写锁假设同一个 SQLite 数据库文件由单个 QMediaSync 进程写入；如果未来需要多进程共享写入，应切换到 PostgreSQL 或单独设计跨进程事务协调。
+SQLite 刷新任务写锁假设同一个 SQLite 数据库文件由单个 diy-strm 进程写入；如果未来需要多进程共享写入，应切换到 PostgreSQL 或单独设计跨进程事务协调。
 
 正在 `refreshing` 的 library 任务不会吸收新 item，新 item 留到下一轮。刷新完成或失败时使用 `status=refreshing` 条件更新，避免旧请求覆盖并发事件重新排队形成的 pending 任务。
 
@@ -217,7 +217,7 @@ POST /emby/Items/{libraryId}/Refresh
 
 ### 链路 B：同步 Emby 条目到本地
 
-含义：QMediaSync 从 Emby 拉取媒体条目，写入本地数据库，用于建立 Emby item、PickCode 和同步文件之间的关联。
+含义：diy-strm 从 Emby 拉取媒体条目，写入本地数据库，用于建立 Emby item、PickCode 和同步文件之间的关联。
 
 触发场景：
 
@@ -228,7 +228,7 @@ POST /emby/Items/{libraryId}/Refresh
 
 职责边界：
 
-- 只维护 QMediaSync 本地索引。
+- 只维护 diy-strm 本地索引。
 - 不调用 Emby 媒体库刷新接口。
 - 不等待 STRM 生成流程。
 - 不把“通知 Emby 扫库”和“同步 Emby 条目”串成一个长任务。
@@ -315,7 +315,7 @@ GET /emby/Items
         {
           "Id": "mediasource_10001",
           "HasPath": true,
-          "PathPrefix": "http://qmediasync:12333/"
+          "PathPrefix": "http://diy-strm:12333/"
         }
       ]
     }

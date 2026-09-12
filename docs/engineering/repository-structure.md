@@ -1,6 +1,6 @@
 # 项目结构
 
-> 职责：说明 QMediaSync 仓库顶层目录和构建产物的职责。
+> 职责：说明 diy-strm 仓库顶层目录和构建产物的职责。
 >
 > 权威范围：本文档维护仓库结构；模块局部职责以代码目录内的 `README.md` 和源码为准。
 >
@@ -36,6 +36,6 @@ cliff.toml           git-cliff 配置（从提交记录生成 changelog）
 
 本仓库基于以下原项目合并而来：
 
-- 后端：[qicfan/qmediasync](https://github.com/qicfan/qmediasync)
+- 后端：[qicfan/diy-strm](https://github.com/qicfan/diy-strm)
 - 前端：[qicfan/q115-strm-frontend](https://github.com/qicfan/q115-strm-frontend)
-- Wiki：[qicfan/qmediasync/wiki](https://github.com/qicfan/qmediasync/wiki)
+- Wiki：[qicfan/diy-strm/wiki](https://github.com/qicfan/diy-strm/wiki)

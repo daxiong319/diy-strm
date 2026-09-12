@@ -441,8 +441,8 @@ v0.14.17 - 2026-03-25
 
 - emby同步时不删除未选择的媒体库（否则前段无法展示所有媒体库）
 - 在emby设置中选择媒体库时，每次都从emby查询所有媒体库以供选择
-- 115开放平台应用和百度开放平台应用都将授权服务器迁移到qmediasync.cn
-- 115开放平台应用迁移到QMediaSync
+- 115开放平台应用和百度开放平台应用都将授权服务器迁移到diy-strm.cn
+- 115开放平台应用迁移到diy-strm
 - 编辑STRM同步目录时如果失败,显示详细失败信息
 - 修复本地目录类型同步strm时因为路径计算错误导致无法处理本地文件（上传或者删除）
 
@@ -566,7 +566,7 @@ v0.14 - 2026-02-28
 - STRM同步完成后进行数据库更新时、Emby同步数据时，每10次写入或更新或删除就休息10ms； 下载时每个工作线程完成时休息10ms，让其他协程有机会写入数据库，缓解Sqlite锁库问题
 - SQLITE锁超时时间改为10秒
 - openlist可以使用自定义的strm直连地址，如果没有自定义则依然使用网盘账号中的Openlist地址
-- 飞牛应用的config目录迁移到应用共享目录内，在文件管理 - 应用文件 - qmediasync目录内的config文件夹
+- 飞牛应用的config目录迁移到应用共享目录内，在文件管理 - 应用文件 - diy-strm目录内的config文件夹
 - 备份和恢复时弹出备份恢复进度窗口后3秒再检查状态（防止服务端还没更新状态就检查导致窗口关闭，但是任务还在后台执行）
 - 修正DOCKER版本如果设置了GUID和GPID无法在线升级的问题
 v0.13.13 - 2026-02-26
@@ -604,7 +604,7 @@ v0.13.9 - 2026-02-25
 - 修复网盘文件管理器无法查看115文件的问题
 - 优化115接口返回数据的处理，可以正确反馈错误信息
 - 重构数据备份恢复，改用json格式执行序列化和序列化
-- Emby设置增加是否启用同步功能，如果禁用则不会Emby数据到QMediaSync，同步后刷新媒体库、删除联动删除网盘文件这两个功能也将禁用
+- Emby设置增加是否启用同步功能，如果禁用则不会Emby数据到diy-strm，同步后刷新媒体库、删除联动删除网盘文件这两个功能也将禁用
 v0.13.8 - 2026-02-24
 
 - 修复首次安装时如果选用外部PG数据库不会创建数据库导致启动失败的问题
@@ -660,9 +660,9 @@ v0.13.3 - 2026-02-09
 - 8095端口优化百度网盘直链处理，当直链包含 proxy-115 时，回源处理。否则将百度直链放在DirectStreamUrl中。
 - Fix #100 OpenList 网盘联动删除功能失效
 - 首次启动时增加数据库配置页面，可以选择使用sqlite或者postgres，如果选择postgres可以选择外部连接或者内置数据库。
-- 修复Docker使用GUID和GPID启动时的权限问题，当GUID和GPID不存在时会在容器中创建，并且使用新创建的GUID和GPID权限启动QMediaSync和Postgres数据库。
+- 修复Docker使用GUID和GPID启动时的权限问题，当GUID和GPID不存在时会在容器中创建，并且使用新创建的GUID和GPID权限启动diy-strm和Postgres数据库。
 - 现在可以通过config/config.yml来修改端口号，数据库连接等配置。
-- 如果是windows版本且QMediaSync.exe在C盘、Program Files、Program Files (x86)、ProgramData、Windows目录下，会提示用户将应用程序移动到其他目录以避免权限问题。
+- 如果是windows版本且diy-strm.exe在C盘、Program Files、Program Files (x86)、ProgramData、Windows目录下，会提示用户将应用程序移动到其他目录以避免权限问题。
 - windows版本不再把postgres可执行文件放到%LOCALAPPDATA%目录下，而是放到应用程序目录下。
 v0.13.2 - 2026-02-08
 
@@ -676,7 +676,7 @@ v0.13.1 - 2026-02-08
 - STRM设置-本地播放代理增加关于百度网盘的提示：百度网盘默认不能302播放，必须打开本地播放代理才能播放；除非播放器支持百度网盘链接的302
 - 百度网盘播放逻辑修改：
    - 直链默认返回百度网盘下载链接，如果播放器支持，就可以302播放。
-   - 如果开启了本地播放代理，会返回本地代理播放链接，所有播放器都可以播放，但是流量会经过QMediaSync所在服务器
+   - 如果开启了本地播放代理，会返回本地代理播放链接，所有播放器都可以播放，但是流量会经过diy-strm所在服务器
 v0.13 - 2026-02-08
 
 **百度开放平台应用没有上线，可能会有限流等问题，请谨慎测试，目前只支持STRM同步**
@@ -786,7 +786,7 @@ v0.12.19 Pre-Release - 2026-02-01
 - 首页新增115请求统计模块，可以直观看到115当前是否限流以及按小时的请求量、平均响应时间等统计，方便调整接口QPS
 - 移除不使用的数据表：sync115_path, backup_task, restore_task, sync_files_cache
 - 更新了docker入口脚本，现在可以优雅的关闭镜像了（老版本关闭镜像要等很久）
-- windows将config目录和postgres数据库二进制文件迁移到%APPDATA%\QMediaSync目录下，避免程序目录权限不足的问题
+- windows将config目录和postgres数据库二进制文件迁移到%APPDATA%\diy-strm目录下，避免程序目录权限不足的问题
   - config/.env和config/server.crt,server.key会保留在原有位置（程序目录下的config），方便添加证书和修改环境变量
   - 原有的config/logs, config/postgres, config/backups, config/tmp, config/db.db.bak, config/custom-css, config/custom-js不会自动删除，如果需要可以手动删除（仅限windows系统）
 - 修复下载任务被加入下载队列时可能不会显示为下载中的问题
@@ -900,7 +900,7 @@ v0.12.12 - 2026-01-30
 
 - 上传队列新增重试所有失败的任务，如果刮削文件上传失败，现在可以触发重试
 - OpenList增加Token验证方式，可以代替用户名密码登录
-- 115 授权从二维码改为OAuth登录方式，支持通过115账号授权登录QMediaSync
+- 115 授权从二维码改为OAuth登录方式，支持通过115账号授权登录diy-strm
 
 ## v0.12.7 - 2026-01-26
 
@@ -1185,7 +1185,7 @@ originaltitle字段将被修改成'$orig_title #($pinyin)'的形式，例如：�
 
 ### 修复
 
-- 修复linux-init.sh脚本，linux物理机现在可以通过脚本自动安装PG数据库并设置对应的环境变量，然后将QMediaSync添加为系统服务设置开机启动（需要systemctl支持）
+- 修复linux-init.sh脚本，linux物理机现在可以通过脚本自动安装PG数据库并设置对应的环境变量，然后将diy-strm添加为系统服务设置开机启动（需要systemctl支持）
 
 ### 新增
 
@@ -1701,7 +1701,7 @@ originaltitle字段将被修改成'$orig_title #($pinyin)'的形式，例如：�
 ### Changed
 
 - 优化 Emby 媒体信息提取，现在提取任务会加入下载队列，避免跳过下载 QPS 触发 115 限制
-- 刮削时支持读取 strm 文件内容来提取对应视频文件的媒体信息（如果使用 qmediasync，请打开本地播放代理，否则无法提取）
+- 刮削时支持读取 strm 文件内容来提取对应视频文件的媒体信息（如果使用 diy-strm，请打开本地播放代理，否则无法提取）
 
 ## v0.11.13 - 2025-10-21
 
@@ -1896,7 +1896,7 @@ originaltitle字段将被修改成'$orig_title #($pinyin)'的形式，例如：�
 
 ## v0.10.22 - 2025-10-09
 ### Fixed
-* 修正ssl设置,现在只需将server.crt(需要包含完整的证书链即acme.sh的fullchain.crt)和server.key(acme.sh的key文件)放入config目录即可同时启用qmediasync和外网302的ssl功能
+* 修正ssl设置,现在只需将server.crt(需要包含完整的证书链即acme.sh的fullchain.crt)和server.key(acme.sh的key文件)放入config目录即可同时启用diy-strm和外网302的ssl功能
 
 ## v0.10.21 - 2025-10-09
 ### Changed

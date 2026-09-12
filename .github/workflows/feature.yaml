@@ -66,7 +66,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/qmediasync:${{ steps.branch.outputs.name }}
+            ghcr.io/${{ github.repository_owner }}/diy-strm:${{ steps.branch.outputs.name }}
             ${{ secrets.DOCKERHUB_USERNAME }}/diy-strm:${{ steps.branch.outputs.name }}
           file: Dockerfile
           platforms: linux/amd64,linux/arm64

@@ -180,7 +180,7 @@ onMounted(() => {
   <div class="login-container" :style="{ background: currentBackground }">
     <div class="login-box">
       <div class="login-header">
-        <h1 class="login-title">QMediaSync</h1>
+        <h1 class="login-title">diy-strm</h1>
         <p class="login-subtitle">{{ subtitle }}</p>
       </div>
 

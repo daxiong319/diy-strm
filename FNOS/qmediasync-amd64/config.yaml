@@ -8,7 +8,7 @@ log:
   syncLogDir: logs/sync
 db:
   engine: postgres
-  sqliteFile: qmediasync.db
+  sqliteFile: diy-strm.db
   postgresType: external
   postgresConfig:
     host: 192.168.31.94
@@ -19,7 +19,7 @@ db:
     maxOpenConns: 25
     maxIdleConns: 25
 cacheSize: 20971520
-jwtSecret: QMediaSync-JWT-TOKEN-250706
+jwtSecret: diy-strm-JWT-TOKEN-250706
 httpHost: :12333
 httpsHost: :12332
 strm:
@@ -28,4 +28,4 @@ strm:
   metaExt: []
   cron: ""
 authServer: https://api.mqfamily.top
-baiDuPanAppId: QMediaSync
+baiDuPanAppId: diy-strm

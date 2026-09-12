@@ -11,7 +11,7 @@ import (
 
 func TestOAuthProviderRegistry(t *testing.T) {
 	for _, provider := range []AuthProvider{
-		ProviderQMediaSync,
+		ProviderDiyStrm,
 		ProviderMQFamily,
 		ProviderMoviePilot,
 		ProviderCloudDrive,
@@ -36,21 +36,21 @@ func TestOAuthProviderRelayBuildAuth(t *testing.T) {
 	})
 
 	helpers.OAuthRelayEncryptionKey = "shared-secret"
-	helpers.GlobalConfig.NewAuthServer = "https://oauth.qmediasync.cn"
-	provider, ok := GetOAuthProvider(ProviderQMediaSync)
+	helpers.GlobalConfig.NewAuthServer = "https://oauth.diy-strm.cn"
+	provider, ok := GetOAuthProvider(ProviderDiyStrm)
 	if !ok {
-		t.Fatal("未找到 qmediasync provider")
+		t.Fatal("未找到 diy-strm provider")
 	}
 	result, err := provider.BuildAuth(context.Background(), OAuthURLRequest{
 		AccountID:   1,
-		AppID:       BuiltInRelayQMediaSync,
+		AppID:       BuiltInRelayDiyStrm,
 		RedirectURL: "http://127.0.0.1:1233",
-		Provider:    ProviderQMediaSync,
+		Provider:    ProviderDiyStrm,
 	})
 	if err != nil {
 		t.Fatalf("生成内置中转授权地址失败: %v", err)
 	}
-	if !strings.HasPrefix(result.AuthURL, "https://oauth.qmediasync.cn/115.php?action=code&state=") {
+	if !strings.HasPrefix(result.AuthURL, "https://oauth.diy-strm.cn/115.php?action=code&state=") {
 		t.Fatalf("授权地址 = %s", result.AuthURL)
 	}
 	if result.Polling {

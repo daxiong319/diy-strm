@@ -10,8 +10,8 @@ import { computed, ref, watch } from 'vue'
 export type ThemeMode = 'light' | 'dark'
 export type SkinMode = 'default' | 'brutal' | 'mv'
 
-const STORAGE_KEY_THEME = 'qmediasync-theme'
-const STORAGE_KEY_SKIN = 'qmediasync-skin'
+const STORAGE_KEY_THEME = 'diy-strm-theme'
+const STORAGE_KEY_SKIN = 'diy-strm-skin'
 
 const systemDark = window.matchMedia?.('(prefers-color-scheme: dark)')?.matches ?? false
 

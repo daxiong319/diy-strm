@@ -24,4 +24,4 @@ const (
 	DEFAULT_TIMEOUT = 30 // 秒
 )
 
-var DEFAULTUA = fmt.Sprintf("QMediaSync-GoClient/%s", helpers.Version)
+var DEFAULTUA = fmt.Sprintf("diy-strm-GoClient/%s", helpers.Version)

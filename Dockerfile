@@ -1,5 +1,5 @@
 # check=skip=SecretsUsedInArgOrEnv
-# DIY-STRM 统一构建镜像（融合自 chen8945/QMediaSync v0.15.13）
+# DIY-STRM 统一构建镜像（融合自 chen8945/diy-strm v0.15.13）
 FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-builder
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
@@ -35,7 +35,7 @@ ARG SC_API_KEY
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -tags=nomsgpack -ldflags "-s -w -X main.Version=${VERSION} -X 'main.PublishDate=${BUILD_DATE}' -X main.FANART_API_KEY=${FANART_API_KEY} -X main.TMDB_ACCESS_TOKEN=${TMDB_ACCESS_TOKEN} -X main.TMDB_API_KEY=${TMDB_API_KEY} -X main.SC_API_KEY=${SC_API_KEY}" -o QMediaSync .
+    GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -tags=nomsgpack -ldflags "-s -w -X main.Version=${VERSION} -X 'main.PublishDate=${BUILD_DATE}' -X main.FANART_API_KEY=${FANART_API_KEY} -X main.TMDB_ACCESS_TOKEN=${TMDB_ACCESS_TOKEN} -X main.TMDB_API_KEY=${TMDB_API_KEY} -X main.SC_API_KEY=${SC_API_KEY}" -o diy-strm .
 
 FROM alpine:3.20
 ENV TZ=Asia/Shanghai \
@@ -50,7 +50,7 @@ RUN apk add --no-cache ca-certificates tzdata inotify-tools postgresql15 su-exec
     chmod 777 /app
 
 WORKDIR /app
-COPY --from=backend-builder --chmod=0755 /app/QMediaSync ./QMediaSync
+COPY --from=backend-builder --chmod=0755 /app/diy-strm ./diy-strm
 COPY --from=frontend-builder /app/frontend/dist ./web_statics/
 COPY --chmod=0755 docker/entrypoint.sh ./scripts/docker-entrypoint.sh
 COPY --chmod=0755 docker/watch-update.sh ./scripts/watch_update.sh

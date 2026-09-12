@@ -69,7 +69,7 @@ const handleLogDialogClose = () => {
               <span
                 >问题请在
                 <a
-                  href="https://github.com/chen8945/QMediaSync"
+                  href="https://github.com/chen8945/diy-strm"
                   target="_blank"
                   rel="noopener noreferrer"
                   >GitHub</a

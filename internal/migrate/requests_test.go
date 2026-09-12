@@ -51,7 +51,7 @@ func TestSaveConfigRequestValidate(t *testing.T) {
 		Host:     "127.0.0.1",
 		Port:     5432,
 		User:     "postgres",
-		Database: "qmediasync",
+		Database: "diy-strm",
 	}
 
 	tests := []struct {
@@ -68,7 +68,7 @@ func TestSaveConfigRequestValidate(t *testing.T) {
 		{name: "字段会去除首尾空白", mutate: func(r *saveConfigRequest) {
 			r.Host = " 127.0.0.1 "
 			r.User = " postgres "
-			r.Database = " qmediasync "
+			r.Database = " diy-strm "
 		}},
 	}
 
@@ -83,7 +83,7 @@ func TestSaveConfigRequestValidate(t *testing.T) {
 				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr && tt.name == "字段会去除首尾空白" {
-				if req.Host != "127.0.0.1" || req.User != "postgres" || req.Database != "qmediasync" {
+				if req.Host != "127.0.0.1" || req.User != "postgres" || req.Database != "diy-strm" {
 					t.Fatalf("trimmed fields = host %q user %q database %q", req.Host, req.User, req.Database)
 				}
 			}

@@ -104,7 +104,7 @@ func TestNotificationRequestValidate(t *testing.T) {
 			Template:    "hello",
 			Headers: map[string]string{
 				" X-Trace-ID ":     "trace-1",
-				"X-Webhook-Source": "qmediasync",
+				"X-Webhook-Source": "diy-strm",
 			},
 		}
 		if err := req.ValidateCreate(); err != nil {
@@ -113,7 +113,7 @@ func TestNotificationRequestValidate(t *testing.T) {
 		if _, ok := req.Headers[" X-Trace-ID "]; ok {
 			t.Fatal("ValidateCreate() 未规范化 Header 名称")
 		}
-		if req.Headers["X-Trace-ID"] != "trace-1" || req.Headers["X-Webhook-Source"] != "qmediasync" {
+		if req.Headers["X-Trace-ID"] != "trace-1" || req.Headers["X-Webhook-Source"] != "diy-strm" {
 			t.Fatalf("Headers = %#v", req.Headers)
 		}
 	})

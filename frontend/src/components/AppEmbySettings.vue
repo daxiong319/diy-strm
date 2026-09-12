@@ -33,7 +33,7 @@
               clearable
             />
             <p style="color: red; font-weight: bold; margin-left: 16px; font-size: 28px">
-              填写 Emby 地址后，请点击页面底部的“保存设置”，并重启 QMediaSync 使配置生效
+              填写 Emby 地址后，请点击页面底部的“保存设置”，并重启 diy-strm 使配置生效
             </p>
             <div v-if="embyExample" class="emby-example-inline">
               <span class="example-label">示例格式：</span>
@@ -106,7 +106,7 @@
               </div>
               <div class="card-header-content">
                 <h3 class="card-title">通知链接配置</h3>
-                <p class="card-subtitle">配置 Emby 与 QMediaSync 的通知连接</p>
+                <p class="card-subtitle">配置 Emby 与 diy-strm 的通知连接</p>
               </div>
             </div>
           </template>
@@ -126,7 +126,7 @@
               <el-icon><InfoFilled /></el-icon>
               <span>将此链接配置到 Emby 的通知设置中，</span>
               <a
-                href="https://github.com/qicfan/qmediasync/wiki/Emby-%E9%80%9A%E7%9F%A5%E9%85%8D%E7%BD%AE"
+                href="https://github.com/qicfan/diy-strm/wiki/Emby-%E9%80%9A%E7%9F%A5%E9%85%8D%E7%BD%AE"
                 target="_blank"
                 rel="noopener noreferrer"
                 class="help-link"
@@ -292,7 +292,7 @@
               <div class="config-links">
                 <span>需要在 Emby 中配置通知后才会生效，</span>
                 <a
-                  href="https://github.com/qicfan/qmediasync/wiki/Emby-%E9%80%9A%E7%9F%A5%E9%85%8D%E7%BD%AE"
+                  href="https://github.com/qicfan/diy-strm/wiki/Emby-%E9%80%9A%E7%9F%A5%E9%85%8D%E7%BD%AE"
                   target="_blank"
                   rel="noopener noreferrer"
                   class="help-link"
@@ -307,7 +307,7 @@
                 >
               </div>
               <p class="feature-note">
-                QMediaSync 收到 Emby
+                diy-strm 收到 Emby
                 入库通知后，会自动提取该资源的视频、音频、内封字幕等媒体信息，帮助 Emby 更快起播。
               </p>
             </div>
@@ -333,7 +333,7 @@
             </el-form-item>
             <div class="feature-description">
               <p class="feature-note">
-                启用后会把 Emby 条目同步到 QMediaSync
+                启用后会把 Emby 条目同步到 diy-strm
                 本地数据库，并与网盘文件建立关联，用于刷新媒体库和联动删除网盘文件。
               </p>
             </div>
@@ -515,7 +515,7 @@
                   <strong
                     >由于 Emby 的处理机制，STRM
                     文件内容变更时可能会先触发删除再新增，因此可能出现：STRM 变更→Emby
-                    通知删除→QMediaSync 联动删除网盘→Emby 新增项目→播放失败</strong
+                    通知删除→diy-strm 联动删除网盘→Emby 新增项目→播放失败</strong
                   >，目前还没有可靠的规避方式<br />
                   <strong
                     >如果开启了 Emby 实时监控，在文件系统中删除 STRM
@@ -526,7 +526,7 @@
               <div class="config-links">
                 <span>需要在 Emby 中配置通知后才会生效，</span>
                 <a
-                  href="https://github.com/qicfan/qmediasync/wiki/Emby-%E9%80%9A%E7%9F%A5%E9%85%8D%E7%BD%AE"
+                  href="https://github.com/qicfan/diy-strm/wiki/Emby-%E9%80%9A%E7%9F%A5%E9%85%8D%E7%BD%AE"
                   target="_blank"
                   rel="noopener noreferrer"
                   class="help-link"

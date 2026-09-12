@@ -437,7 +437,7 @@ func (bot *TelegramBot) StartListening(ctx context.Context, handleCommand map[st
 		} else {
 			switch cmd {
 			case "start", "help":
-				response.Text = `👋 <b>欢迎使用 QMediaSync Bot</b>
+				response.Text = `👋 <b>欢迎使用 diy-strm Bot</b>
 
 📋 <b>命令列表：</b>
 📊 /status - 查看系统运行状态

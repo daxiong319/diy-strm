@@ -61,14 +61,14 @@ func TestExtractTarGz_解压普通文件(t *testing.T) {
 	dst := filepath.Join(t.TempDir(), "dst")
 	archivePath := writeTestTarGz(t,
 		testTarEntry{name: "qms", typeflag: tar.TypeDir},
-		testTarEntry{name: "qms/QMediaSync", typeflag: tar.TypeReg, body: "binary"},
+		testTarEntry{name: "qms/diy-strm", typeflag: tar.TypeReg, body: "binary"},
 	)
 
 	if err := ExtractTarGz(archivePath, dst); err != nil {
 		t.Fatalf("解压普通文件失败: %v", err)
 	}
 
-	content, err := os.ReadFile(filepath.Join(dst, "qms", "QMediaSync"))
+	content, err := os.ReadFile(filepath.Join(dst, "qms", "diy-strm"))
 	if err != nil {
 		t.Fatalf("读取解压文件失败: %v", err)
 	}

@@ -13,7 +13,7 @@ tar -czf /tmp/media-stack-backup.tar.gz \
   /media/mp-postgresql \                    # MP 数据库
   /media/redis/data \                       # MP Redis
   /media/qbittorrent/config \               # qBittorrent 配置（含做种任务）
-  /media/QMediaSync/strm \                  # STRM 文件（可再生，备份仅为省时间）
+  /media/diy-strm/strm \                  # STRM 文件（可再生，备份仅为省时间）
   /media/embytest/config \                  # Emby 配置与元数据
   /media/alist/data \                       # Alist 配置与数据库
   /opt/1panel/apps/openlist/openlist/data \ # OpenList 配置
@@ -44,7 +44,7 @@ diy-strm 支持三种数据库模式（`config.yaml` 的 `db.engine`，环境变
 
 | 模式 | 说明 | 适用 |
 |---|---|---|
-| `sqlite`（默认） | 单文件库，落在 `/app/config/qmediasync.db` | **推荐**：单容器即跑，备份只需 `/app/config` |
+| `sqlite`（默认） | 单文件库，落在 `/app/config/diy-strm.db` | **推荐**：单容器即跑，备份只需 `/app/config` |
 | `postgres` + `embedded` | 容器内嵌 PostgreSQL，数据在 `/app/config/postgres/data` | 需要 PG 特性且保持单容器 |
 | `postgres` + `external` | 连独立 postgres 容器（当前 134 服务器在用） | 已有外部库/多实例共享 |
 
@@ -59,7 +59,7 @@ diy-strm 支持三种数据库模式（`config.yaml` 的 `db.engine`，环境变
    - MoviePilot 设置：地址 `http://IP:3000`（或容器名 `http://moviepilot:3000`，同在 media-net 网络）、API Token
    - 下载根目录：MP 侧 `/downloads`；本地视图根 `/downloads`（与容器挂载一致）
    - 上传账号/STRM 输出目录等均从恢复的 postgres/配置自动带出
-5. **Emby**：`http://IP:8099`，媒体库路径 `/media`（容器内=宿主 `/media/QMediaSync/strm`）；diy-strm 的 Emby 302 代理地址 `http://IP:8099`
+5. **Emby**：`http://IP:8099`，媒体库路径 `/media`（容器内=宿主 `/media/diy-strm/strm`）；diy-strm 的 Emby 302 代理地址 `http://IP:8099`
 6. **参考实现**：host 网络，Web 端口见其配置；bot token 从 env 注入
 
 ## 四、路径对照表（容器内 ↔ 宿主机）
@@ -67,8 +67,8 @@ diy-strm 支持三种数据库模式（`config.yaml` 的 `db.engine`，环境变
 | 用途 | 容器内路径 | 宿主机路径 |
 |---|---|---|
 | PT 下载目录 | `/downloads`（MP/qb/diy-strm 一致） | `/media/qbittorrent/下载` |
-| STRM 输出（diy-strm 容器） | `/media` | `/media/QMediaSync/strm` |
-| STRM 读取（Emby 容器） | `/media` | `/media/QMediaSync/strm` |
+| STRM 输出（diy-strm 容器） | `/media` | `/media/diy-strm/strm` |
+| STRM 读取（Emby 容器） | `/media` | `/media/diy-strm/strm` |
 | MP 媒体根 | `/media` | `/media` |
 
 > 关键点：**diy-strm 与 Emby 必须把同一个宿主目录挂到相同的容器内路径**，STRM 里的路径才能两端一致。

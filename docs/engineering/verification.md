@@ -1,6 +1,6 @@
 # 验证说明
 
-> 职责：定义 QMediaSync 按改动范围选择验证的方式，以及稳定回归验证的边界。
+> 职责：定义 diy-strm 按改动范围选择验证的方式，以及稳定回归验证的边界。
 >
 > 权威范围：本文档是验证命令的权威来源；具体业务契约的验证方式以对应契约文档为准。
 >
@@ -49,10 +49,10 @@
 (cd backend && go vet ./...)
 
 # 统一维护 import 分组
-(cd backend && goimports -local qmediasync -w .)
+(cd backend && goimports -local diy-strm -w .)
 ```
 
-项目没有配置 Go lint 工具。Go 文件的 import 以 `goimports -local qmediasync` 的实际输出为准；仅在用户请求或本次变更确实需要格式化时运行会写入文件的命令，并检查不会带入无关改动。
+项目没有配置 Go lint 工具。Go 文件的 import 以 `goimports -local diy-strm` 的实际输出为准；仅在用户请求或本次变更确实需要格式化时运行会写入文件的命令，并检查不会带入无关改动。
 
 ## 前端命令
 
@@ -74,13 +74,13 @@
 (cd frontend && corepack enable && corepack prepare pnpm@11 --activate && pnpm install --frozen-lockfile && pnpm run build)
 
 # 本地后端构建
-(cd backend && go build -o QMediaSync .)
+(cd backend && go build -o diy-strm .)
 
 # 注入版本信息的构建
-(cd backend && CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=v1.0.0 -X 'main.PublishDate=2026-01-01'" -o QMediaSync .)
+(cd backend && CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=v1.0.0 -X 'main.PublishDate=2026-01-01'" -o diy-strm .)
 
 # Docker 构建
-docker build -f docker/source.Dockerfile -t qmediasync .
+docker build -f docker/source.Dockerfile -t diy-strm .
 ```
 
 跨平台构建、GitHub Actions 和 FPK 打包以 [发布流程](../operations/release.md) 为准。

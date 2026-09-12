@@ -1,6 +1,6 @@
 # 部署与持久化
 
-> 职责：说明 QMediaSync 的 Docker、发布二进制和飞牛应用部署方式，以及运行数据的持久化边界。
+> 职责：说明 diy-strm 的 Docker、发布二进制和飞牛应用部署方式，以及运行数据的持久化边界。
 >
 > 权威范围：本文档维护运行环境、镜像、挂载目录、端口暴露和部署身份；应用配置、密钥与日志见 [配置、密钥与日志](configuration.md)，数据库维护见 [数据库运维](database.md)，反向代理见 [反向代理与 SSE](reverse-proxy.md)。
 >
@@ -22,7 +22,7 @@
 
 ## Docker
 
-正式发布镜像为 `afengj/diy-strm:latest`（DockerHub）与 `ghcr.io/daxiong319/qmediasync:latest`（GHCR），同时提供 `linux/amd64` 和 `linux/arm64`。固定版本使用 `afengj/diy-strm:<tag>` / `ghcr.io/daxiong319/qmediasync:<tag>`；`beta` 和功能分支镜像的生成规则见 [发布流程](release.md)。
+正式发布镜像为 `afengj/diy-strm:latest`（DockerHub）与 `ghcr.io/daxiong319/diy-strm:latest`（GHCR），同时提供 `linux/amd64` 和 `linux/arm64`。固定版本使用 `afengj/diy-strm:<tag>` / `ghcr.io/daxiong319/diy-strm:<tag>`；`beta` 和功能分支镜像的生成规则见 [发布流程](release.md)。
 
 默认使用内嵌 PostgreSQL（embedded 模式），单容器即可运行，无需外部数据库依赖。以下示例把全部运行状态保存到宿主机的 `./config`，并按需给应用挂载媒体目录：
 
@@ -31,12 +31,12 @@ mkdir -p config media
 
 # 方式一：零配置（默认内嵌 PostgreSQL，开箱即用）
 docker run -d \
-  --name qmediasync \
+  --name diy-strm \
   --restart unless-stopped \
   -p 12333:12333 \
   -v "$(pwd)/config:/app/config" \
   -v "$(pwd)/media:/media" \
-  ghcr.io/daxiong319/qmediasync:latest
+  ghcr.io/daxiong319/diy-strm:latest
 ```
 
 ```bash
@@ -44,12 +44,12 @@ docker run -d \
 # 复制 .env.example 为 config/.env 后修改，启动时自动生成 config.yaml（可选，纯 .env 驱动）
 cp .env.example config/.env
 docker run -d \
-  --name qmediasync \
+  --name diy-strm \
   --restart unless-stopped \
   -p 12333:12333 \
   -v "$(pwd)/config:/app/config" \
   -v "$(pwd)/media:/media" \
-  ghcr.io/daxiong319/qmediasync:latest
+  ghcr.io/daxiong319/diy-strm:latest
 ```
 
 DockerHub 用户也可以把镜像名替换为 `afengj/diy-strm:latest`，两者构建自同一源码。首次运行没有 `config/config.yaml` 时，程序直接用默认配置（内嵌 PostgreSQL）加环境变量生成配置并启动，无需访问 Web；需要旧式配置向导时设置环境变量 `QMS_SETUP_WIZARD=1`。使用内置 HTTPS 时，将证书文件放入已挂载的 `config/` 目录（`server.crt` / `server.key`）即可，HTTP 与 HTTPS 共用 `12333` 端口，无需额外端口映射。
@@ -58,14 +58,14 @@ DockerHub 用户也可以把镜像名替换为 `afengj/diy-strm:latest`，两者
 
 ```bash
 docker run -d \
-  --name qmediasync \
+  --name diy-strm \
   --restart unless-stopped \
   -e GUID="$(id -u)" \
   -e GPID="$(id -g)" \
   -p 12333:12333 \
   -v "$(pwd)/config:/app/config" \
   -v "/srv/media:/media" \
-  ghcr.io/daxiong319/qmediasync:latest
+  ghcr.io/daxiong319/diy-strm:latest
 ```
 
 该所有权修正不覆盖 `/media`；宿主机媒体目录的读写权限仍由部署者自行保证。不要用 `--user` 替代上述入口逻辑，否则入口无法创建用户或修正持久化目录的权限。
@@ -73,23 +73,23 @@ docker run -d \
 从当前源码构建镜像使用根目录 `Dockerfile`（前端 pnpm 构建 + 后端 Go 编译，产物与 CI 一致）：
 
 ```bash
-docker build -t qmediasync .
+docker build -t diy-strm .
 ```
 
 `docker/source.Dockerfile` 与 `docker/source.local.Dockerfile` 是上游旧目录布局的遗留文件，当前仓库不使用；`docker/source.local.Dockerfile` 仅用于本地网络环境替换构建镜像源。
 
 ## 发布二进制与 systemd
 
-发布包解压后，从包含 `QMediaSync` 和 `web_statics/` 的目录启动程序。Linux 与 Windows 都把运行配置保存在可执行文件同级的 `config/`；因此替换程序和静态资源时不得覆盖该目录。
+发布包解压后，从包含 `diy-strm` 和 `web_statics/` 的目录启动程序。Linux 与 Windows 都把运行配置保存在可执行文件同级的 `config/`；因此替换程序和静态资源时不得覆盖该目录。
 
-`scripts/install/linux-init.sh` 是 Linux 上的外部 PostgreSQL 与 systemd 辅助脚本：它可安装或初始化 PostgreSQL、创建数据库和用户、写入 `/etc/qmediasync/postgres.env`，并用 `-i` 创建 `qmediasync.service`。脚本要求在发布二进制所在目录运行，并要求 root 与 systemd；它不是 Docker 或飞牛的安装入口。
+`scripts/install/linux-init.sh` 是 Linux 上的外部 PostgreSQL 与 systemd 辅助脚本：它可安装或初始化 PostgreSQL、创建数据库和用户、写入 `/etc/diy-strm/postgres.env`，并用 `-i` 创建 `diy-strm.service`。脚本要求在发布二进制所在目录运行，并要求 root 与 systemd；它不是 Docker 或飞牛的安装入口。
 
 ```bash
 sudo scripts/install/linux-init.sh -i
-systemctl status qmediasync
+systemctl status diy-strm
 ```
 
-脚本创建的服务从当前目录执行 `QMediaSync`，并从 `/etc/qmediasync/postgres.env` 读取旧式 PostgreSQL 环境变量。新实例默认使用内嵌 PostgreSQL 零配置启动，也可通过 `config/config.yaml` 确认数据库模式和连接信息；配置文件是当前运行时的权威来源。
+脚本创建的服务从当前目录执行 `diy-strm`，并从 `/etc/diy-strm/postgres.env` 读取旧式 PostgreSQL 环境变量。新实例默认使用内嵌 PostgreSQL 零配置启动，也可通过 `config/config.yaml` 确认数据库模式和连接信息；配置文件是当前运行时的权威来源。
 
 ## 飞牛 FPK
 

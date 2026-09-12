@@ -8,7 +8,7 @@
 >
 > 相关代码：`backend/internal/controllers/strm_webhook.go`、`backend/internal/syncstrm/`、`backend/internal/models/strm_generation_task.go`、`backend/internal/controllers/strm_webhook_test.go`。
 
-本文说明外部程序通过 Webhook 请求 QMediaSync 创建 STRM 生成任务的接口边界。Webhook 请求只负责入队，实际 STRM 写入、`SyncFile` 更新、同名元数据下载和 Emby 刷新提交都由后台 STRM worker 处理。
+本文说明外部程序通过 Webhook 请求 diy-strm 创建 STRM 生成任务的接口边界。Webhook 请求只负责入队，实际 STRM 写入、`SyncFile` 更新、同名元数据下载和 Emby 刷新提交都由后台 STRM worker 处理。
 
 ## 入口和鉴权
 

@@ -19,7 +19,7 @@ func TestMakeStrmContentEncodesPathQuery(t *testing.T) {
 	}
 	s := &SyncStrm{
 		Config: SyncStrmConfig{
-			StrmBaseUrl:     "http://qmediasync:12333",
+			StrmBaseUrl:     "http://diy-strm:12333",
 			StrmUrlNeedPath: 2,
 		},
 		Account: &models.Account{UserId: "user-115"},
@@ -65,7 +65,7 @@ func TestBaiduMakeStrmContentEncodesPathQuery(t *testing.T) {
 	}
 	s := &SyncStrm{
 		Config: SyncStrmConfig{
-			StrmBaseUrl:     "http://qmediasync:12333",
+			StrmBaseUrl:     "http://diy-strm:12333",
 			StrmUrlNeedPath: 2,
 		},
 		Account: &models.Account{UserId: "user-baidu"},
@@ -112,7 +112,7 @@ func TestPan123MakeStrmContentIncludesParentID(t *testing.T) {
 	}
 	s := &SyncStrm{
 		Config: SyncStrmConfig{
-			StrmBaseUrl:     "http://qmediasync:12333",
+			StrmBaseUrl:     "http://diy-strm:12333",
 			StrmUrlNeedPath: 2,
 		},
 		Account: &models.Account{UserId: "user-123"},
@@ -154,7 +154,7 @@ func TestCompareStrmRequiresCanonicalQueryOrder(t *testing.T) {
 		t.Fatalf("创建 STRM 目录失败：%v", err)
 	}
 	pathValue := strings.ReplaceAll(url.QueryEscape(file.FileName), "+", "%20")
-	oldOrderContent := "http://qmediasync:12333/115/url/video.mkv?path=" + pathValue + "&pickcode=pick-115&userid=user-115"
+	oldOrderContent := "http://diy-strm:12333/115/url/video.mkv?path=" + pathValue + "&pickcode=pick-115&userid=user-115"
 	if err := os.WriteFile(localFilePath, []byte(oldOrderContent), 0o644); err != nil {
 		t.Fatalf("写入旧顺序 STRM 失败：%v", err)
 	}
@@ -163,7 +163,7 @@ func TestCompareStrmRequiresCanonicalQueryOrder(t *testing.T) {
 		TargetPath: targetPath,
 		SourcePath: "media",
 		Config: SyncStrmConfig{
-			StrmBaseUrl:     "http://qmediasync:12333",
+			StrmBaseUrl:     "http://diy-strm:12333",
 			StrmUrlNeedPath: 2,
 		},
 		Account: &models.Account{UserId: "user-115"},
