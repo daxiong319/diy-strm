@@ -50,6 +50,7 @@ RUN apk add --no-cache ca-certificates tzdata inotify-tools postgresql15 su-exec
     chmod 777 /app
 
 WORKDIR /app
+ARG CACHEBUST=1
 COPY --from=backend-builder --chmod=0755 /app/diy-strm ./diy-strm
 COPY --from=frontend-builder /app/frontend/dist ./web_statics/
 COPY --chmod=0755 docker/entrypoint.sh ./scripts/docker-entrypoint.sh
