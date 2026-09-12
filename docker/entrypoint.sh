@@ -119,14 +119,14 @@ while true; do
         echo "使用GUID=$GUID 启动主程序"
         if id "$GUID" >/dev/null 2>&1; then
             echo "切换到用户 $GUID 并启动主程序"
-            su-exec "$GUID" /app/QMediaSync --guid "$GUID" &
+            su-exec "$GUID" /app/diy-strm --guid "$GUID" &
         else
             echo "用户 $GUID 不存在，直接启动主程序"
-            /app/QMediaSync &
+            /app/diy-strm &
         fi
     else
         echo "GUID为0或未设置，使用默认参数启动主程序"
-        /app/QMediaSync &
+        /app/diy-strm &
     fi
     MAIN_PID=$!
     echo "主进程ID: $MAIN_PID"
@@ -157,14 +157,14 @@ while true; do
         echo "创建备份目录 /app/old"
         echo "备份旧版本..."
         # 备份旧版本
-        mv /app/QMediaSync /app/old/QMediaSync
+        mv /app/diy-strm /app/old/diy-strm
         mv /app/web_statics /app/old/web_statics
         mv /app/scripts /app/old/scripts
         # 替换新版本
-        mv /app/update/QMediaSync /app/QMediaSync
+        mv /app/update/diy-strm /app/diy-strm
         mv /app/update/web_statics /app/web_statics
         mv /app/update/scripts /app/scripts
-        chmod +x /app/QMediaSync
+        chmod +x /app/diy-strm
         chmod +x /app/scripts/*.sh
         # 删除压缩包
         rm -f /app/qms.update.tar.gz

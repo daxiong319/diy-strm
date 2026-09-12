@@ -15,6 +15,6 @@ while read FILE; do
         sleep 5
         
         # 给主进程发送重启信号
-        pkill -SIGTERM QMediaSync 2>/dev/null || echo "等待主进程自然重启"
+        pkill -SIGTERM diy-strm 2>/dev/null || echo "等待主进程自然重启"
     fi
 done
