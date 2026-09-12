@@ -491,3 +491,73 @@ func Tgto123ResourceProviderKey(panType string) string {
 	}
 	return strings.ToLower(strings.TrimSpace(panType))
 }
+
+// ---------------------------------------------------------------------------
+// RE0 授权 / 状态 反代（经 tgto123 走 tgtodrive 中转 re0.tgtodrive.top）
+// tgto123 的 GET /api/re0/authorize 会 302 跳转到
+//   https://re0.tgtodrive.top/auth/start?install_id=...&ts=...&nonce=...&sig=...
+// 用户在该页登录 RE0 完成授权后，tgto123 侧 re0.authorized 变 true，
+// 我们项目通过 tgto123 反代的 RE0 资源搜索/转存即恢复。
+// ---------------------------------------------------------------------------
+
+// Tgto123RE0AuthorizeURL 取 tgto123 的 RE0 授权发起 URL（解析其 302 Location）。
+func Tgto123RE0AuthorizeURL(ctx context.Context) (string, error) {
+	client := newTgto123FeedClient()
+	if client == nil {
+		return "", fmt.Errorf("tgto123 反代未配置")
+	}
+	_ = client.login(ctx)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+"/api/re0/authorize", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	noRedirect := &http.Client{
+		Timeout: 30 * time.Second,
+		Jar:     client.http.Jar,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := noRedirect.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		// 非跳转：可能直接返回 JSON {url:...}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		var out struct {
+			URL       string `json:"url"`
+			Authorize string `json:"authorize_url"`
+		}
+		_ = json.Unmarshal(body, &out)
+		loc = firstNonEmptyStr(out.URL, out.Authorize)
+	}
+	if loc == "" {
+		return "", fmt.Errorf("tgto123 未返回 RE0 授权地址（HTTP %d）", resp.StatusCode)
+	}
+	// 相对路径补全
+	if strings.HasPrefix(loc, "/") {
+		loc = client.baseURL + loc
+	}
+	return loc, nil
+}
+
+// Tgto123RE0Status 读 tgto123 的 RE0 授权状态。
+func Tgto123RE0Status(ctx context.Context) (map[string]any, error) {
+	client := newTgto123FeedClient()
+	if client == nil {
+		return nil, fmt.Errorf("tgto123 反代未配置")
+	}
+	body, _, err := client.do(ctx, "/api/re0/status")
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("解析 tgto123 RE0 状态失败：%v", err)
+	}
+	return out, nil
+}

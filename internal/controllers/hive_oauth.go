@@ -28,11 +28,15 @@ import (
 // RE0 四通道已全部下线，授权统一在 tgto123 实例的 RE0 设置中完成，
 // 本项目通过 tgto123 反代调用 RE0 数据。
 func hiveAuthURLFor(ctx context.Context, acc *models.HiveOAuthAccount, origin string) (string, error) {
+	// 通过 tgto123 反代拿 RE0 授权发起地址（tgto123 走 tgtodrive 中转 re0.tgtodrive.top）
+	if url, err := discovery.Tgto123RE0AuthorizeURL(ctx); err == nil && url != "" {
+		return url, nil
+	}
+	// 兜底：返回 tgto123 实例登录页
 	proxyURL := discovery.SettingString(discovery.SettingTgto123URL, discovery.Tgto123DefaultURL)
 	if proxyURL == "" {
 		proxyURL = discovery.Tgto123DefaultURL
 	}
-	// 返回 tgto123 实例的登录/设置页地址
 	return strings.TrimRight(proxyURL, "/") + "/login", nil
 }
 // hiveTokenStatusFor 按通道取 token 状态：中转通道以 proxy_user_key 是否绑定代替，

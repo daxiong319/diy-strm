@@ -762,3 +762,23 @@ func EmbyMissingSubscriptionRunAPI(c *gin.Context) {
 		"run": gin.H{"id": run.ID, "status": run.Status, "message": run.Message},
 	}})
 }
+
+// MediaDiscoveryRE0Status GET /media-discovery/re0/status
+// 反代 tgto123 的 RE0 授权状态（走 tgtodrive 中转），供发现页展示"是否已授权"。
+func MediaDiscoveryRE0Status(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	st, err := discovery.Tgto123RE0Status(ctx)
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "", Data: gin.H{
+			"authorized": false, "error": err.Error(),
+		}})
+		return
+	}
+	auth, _ := st["authorized"].(bool)
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "", Data: gin.H{
+		"authorized": auth,
+		"state":      st["authorization"],
+		"raw":        st,
+	}})
+}

@@ -1003,6 +1003,7 @@ func setRouter(r *gin.Engine) {
 		api.POST("/media-discovery/emby/tv-progress/preheat", controllers.TvProgressPreheatAPI)      // 剧集进度预热
 		api.POST("/media-discovery/emby/test", controllers.EmbyTestMediaAPI)                         // 发现 Emby 连接测试
 		api.GET("/media-discovery/emby-missing/status", controllers.EmbyMissingStatusAPI)            // 缺集扫描状态
+		api.GET("/media-discovery/re0/status", controllers.MediaDiscoveryRE0Status)                        // RE0 授权状态（反代 tgto123）
 		api.GET("/media-discovery/emby-missing/libraries", controllers.EmbyMissingLibrariesAPI)      // 电视剧库列表
 		api.GET("/media-discovery/emby-missing/scans", controllers.EmbyMissingScansAPI)              // 扫描历史
 		api.POST("/media-discovery/emby-missing/scans", controllers.EmbyMissingScansAPI)             // 启动扫描
