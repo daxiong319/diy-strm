@@ -337,6 +337,10 @@ type tgto123ResourceItem struct {
 	SpecTags         []string `json:"resource_spec_tags"`
 	SubtitleLangs    []string `json:"subtitle_languages"`
 	SubtitleTypes    []string `json:"subtitle_types"`
+	SupportedTargets []string `json:"supported_targets"`
+	ResolutionTags   []string `json:"resolution_tags"`
+	SourceTags       []string `json:"source_tags"`
+	ReleaseGroup     string   `json:"release_group"`
 	Episode          *struct {
 		SeasonNum       *int `json:"season_num"`
 		EpisodeNum      *int `json:"episode_num"`
@@ -361,7 +365,7 @@ func Tgto123SearchResources(ctx context.Context, title string, tmdbID int64, med
 		"tmdb_id":    tmdbID,
 		"media_type": mediaType,
 		"year":       year,
-		"sources":    []string{"hdhive"},
+		"sources":    []string{"re0"},
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/api/media/resources/search", bytes.NewReader(payload))
 	if err != nil {
@@ -415,6 +419,8 @@ func Tgto123SearchResources(ctx context.Context, title string, tmdbID int64, med
 			IsUnlocked:         it.IsUnlocked,
 			SubtitleLanguage:   it.SubtitleLangs,
 			SubtitleType:       it.SubtitleTypes,
+			VideoResolution:    append(append([]string{}, it.ResolutionTags...), tagVals(it.SpecTags, "分辨率")...),
+			Source:             append(append(append([]string{}, it.SourceTags...), tagVals(it.SpecTags, "片源")...), tagVals(it.SpecTags, "来源")...),
 		}
 		// 规格标签按「键:值」分桶到分辨率/片源/字幕
 		for _, tag := range it.SpecTags {
@@ -448,7 +454,7 @@ func Tgto123TransferResource(ctx context.Context, slug, provider string) (string
 		return "", err
 	}
 	payload, _ := json.Marshal(map[string]any{
-		"source":   "hdhive",
+		"source":   "re0",
 		"provider": provider,
 		"slug":     slug,
 	})
@@ -560,4 +566,19 @@ func Tgto123RE0Status(ctx context.Context) (map[string]any, error) {
 		return nil, fmt.Errorf("解析 tgto123 RE0 状态失败：%v", err)
 	}
 	return out, nil
+}
+
+// tagVals 从 "标签:值" 规格标签中提取指定标签值
+func tagVals(tags []string, key string) []string {
+	out := []string{}
+	for _, t := range tags {
+		k, v, ok := strings.Cut(t, ":")
+		if !ok || strings.TrimSpace(k) != key {
+			continue
+		}
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
