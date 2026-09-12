@@ -10,27 +10,31 @@ import (
 	"sync"
 	"time"
 
-	"diy-strm/internal/hdhive"
+	"diy-strm/internal/discovery"
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/models"
 	"diy-strm/internal/notificationmanager"
 
 	"github.com/gin-gonic/gin"
-)
+
+	"diy-strm/internal/hdhive")
 
 // ---------------------------------------------------------------------------
 // OAuth 授权状态
 // ---------------------------------------------------------------------------
 
 // hiveAuthURLFor 按账号通道生成授权 URL：
-// tgtodrive/symedia/nanshare 三通道已全部失效，统一走官方通道（re0.me OAuth 授权码模式）
+// hiveAuthURLFor 返回 tgto123 反代页面地址。
+// RE0 四通道已全部下线，授权统一在 tgto123 实例的 RE0 设置中完成，
+// 本项目通过 tgto123 反代调用 RE0 数据。
 func hiveAuthURLFor(ctx context.Context, acc *models.HiveOAuthAccount, origin string) (string, error) {
-	// 全部通道统一走官方 OAuth 授权（re0.me/openapi/authorize），
-	// 回调指向本站 /hive-official/callback
-	redirectURI := strings.TrimRight(origin, "/") + "/hive-official/callback"
-	return hdhive.BuildOfficialAuthURL(redirectURI, "official"), nil
+	proxyURL := discovery.SettingString(discovery.SettingTgto123URL, discovery.Tgto123DefaultURL)
+	if proxyURL == "" {
+		proxyURL = discovery.Tgto123DefaultURL
+	}
+	// 返回 tgto123 实例的登录/设置页地址
+	return strings.TrimRight(proxyURL, "/") + "/login", nil
 }
-
 // hiveTokenStatusFor 按通道取 token 状态：中转通道以 proxy_user_key 是否绑定代替，
 // 直连通道调 token/status
 func hiveTokenStatusFor(ctx context.Context, acc *models.HiveOAuthAccount, client hdhive.ChannelClient) (*hdhive.OAuthAPIResponse, error) {

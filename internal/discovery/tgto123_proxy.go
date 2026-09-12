@@ -36,7 +36,7 @@ type Tgto123FeedClient struct {
 
 // newTgto123FeedClient 从设置构建客户端（未配置 URL 返回 nil）
 func newTgto123FeedClient() *Tgto123FeedClient {
-	base := strings.TrimRight(SettingString(SettingTgto123URL, tgto123DefaultURL), "/")
+	base := strings.TrimRight(SettingString(SettingTgto123URL, Tgto123DefaultURL), "/")
 	if base == "" {
 		return nil
 	}
