@@ -35,6 +35,7 @@ type CloudCheckFile struct {
 	Where    string `json:"where,omitempty"` // 待整理 / 已整理 / 整理记录
 	By       string `json:"by,omitempty"`    // name / episode / size / hash / record
 	Match    string `json:"match,omitempty"` // 命中的云盘文件名（可识别来源批次/版本）
+	Note     string `json:"note,omitempty"`  // 异常说明（如记录显示整理过但云盘已无此文件）
 }
 
 // CloudCheckResult 任务级校验结果
@@ -127,8 +128,11 @@ func CheckTaskCloudUploaded(ctx context.Context, taskID uint, force bool) (*Clou
 		}
 	}
 	var organized []organizeEntry
+	organizedFull := false
 	if task.TmdbId > 0 {
-		organized = listOrganizedDirsForTMDB(ctx, &account, cfg, task.TmdbId, task.MediaType)
+		var listed bool
+		organized, listed = listOrganizedDirsForTMDB(ctx, &account, cfg, task.TmdbId, task.MediaType)
+		organizedFull = listed
 	}
 
 	// 5. 逐片源比对
@@ -160,9 +164,15 @@ func CheckTaskCloudUploaded(ctx context.Context, taskID uint, force bool) (*Clou
 				cf.Uploaded, cf.Where, cf.By, cf.Match = true, where, "size", e.Name
 			}
 		}
-		// d) 整理历史记录（上传后被整理重命名，两侧列表都取不到时回退记录证据）
+		// d) 整理历史记录（回退证据）。记录只是历史快照——若已整理目录完整列取成功
+		//    （未触顶截断）却找不到该文件，说明后来被删除（如 139 秒传引用下洗版误删，
+		//    S01E23 案例），以实时为准判未上传并标注；实时不可复核时才采信记录。
 		if !cf.Uploaded && recHit[s.name] {
-			cf.Uploaded, cf.Where, cf.By = true, "已整理", "record"
+			if organizedFull {
+				cf.Note = "整理记录显示曾整理成功，但云盘实时目录已找不到该文件（可能已被删除）"
+			} else {
+				cf.Uploaded, cf.Where, cf.By = true, "已整理", "record"
+			}
 		}
 		// e) 内容指纹兜底：名称/集号/大小都对不上时，比对本地文件与候选云文件的
 		//    首块哈希（每任务候选上限受控，避免大流量下载）
@@ -504,47 +514,57 @@ func keysOf(m map[string]bool) []string {
 
 // listOrganizedDirsForTMDB 在云盘「已整理」内按 {tmdb=ID} 标记定位本任务的整理目标目录并实时列取文件。
 // 结构：已整理/{分类}/{标题 (年份) {tmdb=ID}}[/Season NN]；电影直接列标题目录，剧集列其 Season 子目录。
-func listOrganizedDirsForTMDB(ctx context.Context, account *models.Account, cfg *models.MoviePilotConfig, tmdbID int64, mediaType string) []organizeEntry {
+// 第二返回值 fullyListed：定位并完整列取成功（未触顶截断）——供上层用实时证据复核整理记录。
+func listOrganizedDirsForTMDB(ctx context.Context, account *models.Account, cfg *models.MoviePilotConfig, tmdbID int64, mediaType string) ([]organizeEntry, bool) {
 	organizeRoot := organizeRootPath(cfg.UploadRoot)
 	rootID, ok := resolveRemoteDirID(ctx, account, cfg, organizeRoot)
 	if !ok || rootID == "" {
-		return nil
+		return nil, false
 	}
 	cats, err := listNetDirByID(ctx, account, rootID)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	marker := fmt.Sprintf("{tmdb=%d}", tmdbID)
 	var files []organizeEntry
+	truncated := false
 	for _, cat := range cats {
-		if !cat.IsDir || len(files) >= 200 {
+		if !cat.IsDir {
 			continue
 		}
 		titles, err := listNetDirByID(ctx, account, cat.ID)
 		if err != nil {
-			continue
+			return files, false
 		}
 		for _, t := range titles {
-			if !t.IsDir || !strings.Contains(t.Name, marker) || len(files) >= 200 {
+			if !t.IsDir || !strings.Contains(t.Name, marker) {
 				continue
 			}
 			if mediaType == "tv" {
 				// 剧集：展开 Season NN 子目录
 				subs, err := listNetDirByID(ctx, account, t.ID)
 				if err != nil {
-					continue
+					return files, false
 				}
 				for _, sd := range subs {
 					if sd.IsDir {
+						n0 := len(files)
 						collectInto(ctx, account, sd.ID, &files, 200)
+						if len(files) >= 200 && len(files) > n0 {
+							truncated = true
+						}
 					}
 				}
 			} else {
+				n0 := len(files)
 				collectInto(ctx, account, t.ID, &files, 200)
+				if len(files) >= 200 && len(files) > n0 {
+					truncated = true
+				}
 			}
 		}
 	}
-	return files
+	return files, !truncated
 }
 
 // collectInto 列取目录内文件（非目录）追加到 out，上限 capN

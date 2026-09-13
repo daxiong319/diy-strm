@@ -192,6 +192,7 @@
                   <div v-for="f in scope.row.cloudCheck.files.slice(0, 15)" :key="f.file" style="max-width: 520px; word-break: break-all">
                     {{ f.uploaded ? '✓' : '✗' }} {{ f.file }}
                     <span v-if="f.uploaded">（{{ f.where }} / {{ f.by }}匹配<span v-if="f.match"> → {{ f.match }}</span>）</span>
+                    <span v-if="f.note" style="color: #f5a623"> {{ f.note }}</span>
                   </div>
                   <div v-if="(scope.row.cloudCheck.files?.length || 0) > 15">… 共 {{ scope.row.cloudCheck.files.length }} 个片源</div>
                   <div v-if="scope.row.cloudCheck.note" style="color: #f5a623">{{ scope.row.cloudCheck.note }}</div>
