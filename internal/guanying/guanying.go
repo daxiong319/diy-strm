@@ -241,6 +241,9 @@ func (c *Client) StartLogin(ctx context.Context, username, password, attemptID s
 	if err != nil {
 		return false, nil, "", err
 	}
+	u, _ := url.Parse(c.baseURL + "/")
+	helpers.AppLogger.Infof("观影登录 POST：%s -> %d | body %d 字节 | jar cookies %d（%v）| 响应头 Set-Cookie 存在=%v",
+		c.baseURL+loginURL, status, len(body), len(c.http.Jar.Cookies(u)), cookieNames(c.http.Jar, u), status > 0)
 	// 新版契约：POST 响应为 JSON {code:200} / {code:xxx, msg:"..."}
 	if !isHTMLBody(body) {
 		var resp struct {
@@ -595,4 +598,13 @@ func truncate(b []byte, n int) string {
 		return string(r[:n]) + "…"
 	}
 	return s
+}
+
+// cookieNames 调试用：列出 jar 内 cookie 名
+func cookieNames(jar http.CookieJar, u *url.URL) []string {
+	names := make([]string, 0, 4)
+	for _, ck := range jar.Cookies(u) {
+		names = append(names, ck.Name)
+	}
+	return names
 }
