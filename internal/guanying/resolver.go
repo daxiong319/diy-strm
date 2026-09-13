@@ -17,6 +17,8 @@ import (
 
 	"diy-strm/internal/helpers"
 	"time"
+
+	"golang.org/x/net/idna"
 )
 
 // ---------------------------------------------------------------------------
@@ -119,6 +121,9 @@ func resolveNow(ctx context.Context) *domainResolution {
 			host := strings.TrimSpace(m[1])
 			if host == "" {
 				continue
+			}
+			if ace, err := idna.Lookup.ToASCII(host); err == nil && ace != "" {
+				host = ace
 			}
 			candidates = append(candidates, "https://"+host)
 		}
