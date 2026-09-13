@@ -216,12 +216,16 @@ func (c *Client) StartLogin(ctx context.Context, username, password, attemptID s
 		pre.Header.Set("User-Agent", userAgentText)
 		_, _, _ = c.do(pre)
 	}
+	// 表单体与站点 SPA 完全一致：缺少 dosubmit/siteid 时服务端只会重新渲染登录页（静默失败）
 	form := url.Values{
-		"username":            {username},
-		"password":            {password},
-		"cookietime":          {"1"},
-		"captcha-submit-info": {attemptID},
+		"code":       {""},
+		"siteid":     {"1"},
+		"dosubmit":   {"1"},
+		"cookietime": {"10506240"},
+		"username":   {username},
+		"password":   {password},
 	}
+	_ = attemptID
 	body, _, err := c.postForm(ctx, c.baseURL+loginURL, form)
 	if err != nil {
 		return false, nil, "", err
