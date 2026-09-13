@@ -105,41 +105,29 @@ func CheckTaskCloudUploaded(ctx context.Context, taskID uint, force bool) (*Clou
 		}
 	}
 
-	// 4. 已整理侧：整理历史记录（本任务上传目录内文件 → 目标路径）+ 目标目录实时列取
-	type recT struct{ original, target string }
-	var recs []recT
-	organizedDirs := map[string]bool{}
+	// 4. 已整理侧（三路证据）：
+	//    a) 整理历史记录：按原始文件名匹配（source_path 格式跨功能不一致，不作依赖）
+	//    b) 云盘实时定位「已整理/{分类}/{标题 (年份) {tmdb=ID}}」目录并列取（改名后的集号/大小匹配）
+	srcNameSet := map[string]bool{}
+	for _, s := range srcs {
+		srcNameSet[s.name] = true
+	}
+	recHit := map[string]bool{} // original_file_name → 整理成功
 	var hist []models.OrganizeHistoryRecord
 	like := task.RemotePath + "%"
-	if err := db.Db.Where("status IN ? AND source = ? AND source_path LIKE ?",
-		[]string{models.OrganizeStatusSuccess, models.OrganizeStatusReplace}, models.SourceDisplayName(account.SourceType), like).
+	if err := db.Db.Where("status IN ? AND source = ? AND (original_file_name IN ? OR source_path LIKE ?)",
+		[]string{models.OrganizeStatusSuccess, models.OrganizeStatusReplace}, models.SourceDisplayName(account.SourceType),
+		keysOf(srcNameSet), like).
 		Order("id desc").Limit(500).Find(&hist).Error; err == nil {
 		for _, h := range hist {
-			if h.OriginalFileName != "" && h.TargetPath != "" {
-				recs = append(recs, recT{h.OriginalFileName, h.TargetPath})
-				if d := filepath.Dir(h.TargetPath); !organizedDirs[d] {
-					organizedDirs[d] = true
-				}
+			if h.OriginalFileName != "" {
+				recHit[h.OriginalFileName] = true
 			}
 		}
 	}
 	var organized []organizeEntry
-	dirCount := 0
-	for d := range organizedDirs {
-		if dirCount >= 8 || len(organized) >= 300 {
-			break
-		}
-		dirCount++
-		if dirID, ok := resolveRemoteDirID(ctx, &account, cfg, d); ok && dirID != "" {
-			files, err := listNetDirByID(ctx, &account, dirID)
-			if err == nil {
-				for _, f := range files {
-					if !f.IsDir && len(organized) < 300 {
-						organized = append(organized, f)
-					}
-				}
-			}
-		}
+	if task.TmdbId > 0 {
+		organized = listOrganizedDirsForTMDB(ctx, &account, cfg, task.TmdbId, task.MediaType)
 	}
 
 	// 5. 逐片源比对
@@ -171,14 +159,9 @@ func CheckTaskCloudUploaded(ctx context.Context, taskID uint, force bool) (*Clou
 				cf.Uploaded, cf.Where, cf.By = true, where, "size"
 			}
 		}
-		// d) 整理历史记录（上传后被整理重命名，目标文件已不在两侧列表时可回退记录证据）
-		if !cf.Uploaded {
-			for _, r := range recs {
-				if r.original == s.name {
-					cf.Uploaded, cf.Where, cf.By = true, "已整理", "record"
-					break
-				}
-			}
+		// d) 整理历史记录（上传后被整理重命名，两侧列表都取不到时回退记录证据）
+		if !cf.Uploaded && recHit[s.name] {
+			cf.Uploaded, cf.Where, cf.By = true, "已整理", "record"
 		}
 		// e) 内容指纹兜底：名称/集号/大小都对不上时，比对本地文件与候选云文件的
 		//    首块哈希（每任务候选上限受控，避免大流量下载）
@@ -506,6 +489,76 @@ func walkRemoteDirFrom(ctx context.Context, account *models.Account, p, rootID s
 		cur = found
 	}
 	return cur, true
+}
+
+// keysOf map 键集合
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// listOrganizedDirsForTMDB 在云盘「已整理」内按 {tmdb=ID} 标记定位本任务的整理目标目录并实时列取文件。
+// 结构：已整理/{分类}/{标题 (年份) {tmdb=ID}}[/Season NN]；电影直接列标题目录，剧集列其 Season 子目录。
+func listOrganizedDirsForTMDB(ctx context.Context, account *models.Account, cfg *models.MoviePilotConfig, tmdbID int64, mediaType string) []organizeEntry {
+	organizeRoot := organizeRootPath(cfg.UploadRoot)
+	rootID, ok := resolveRemoteDirID(ctx, account, cfg, organizeRoot)
+	if !ok || rootID == "" {
+		return nil
+	}
+	cats, err := listNetDirByID(ctx, account, rootID)
+	if err != nil {
+		return nil
+	}
+	marker := fmt.Sprintf("{tmdb=%d}", tmdbID)
+	var files []organizeEntry
+	for _, cat := range cats {
+		if !cat.IsDir || len(files) >= 200 {
+			continue
+		}
+		titles, err := listNetDirByID(ctx, account, cat.ID)
+		if err != nil {
+			continue
+		}
+		for _, t := range titles {
+			if !t.IsDir || !strings.Contains(t.Name, marker) || len(files) >= 200 {
+				continue
+			}
+			if mediaType == "tv" {
+				// 剧集：展开 Season NN 子目录
+				subs, err := listNetDirByID(ctx, account, t.ID)
+				if err != nil {
+					continue
+				}
+				for _, sd := range subs {
+					if sd.IsDir {
+						collectInto(ctx, account, sd.ID, &files, 200)
+					}
+				}
+			} else {
+				collectInto(ctx, account, t.ID, &files, 200)
+			}
+		}
+	}
+	return files
+}
+
+// collectInto 列取目录内文件（非目录）追加到 out，上限 capN
+func collectInto(ctx context.Context, account *models.Account, dirID string, out *[]organizeEntry, capN int) {
+	if len(*out) >= capN {
+		return
+	}
+	entries, err := listNetDirByID(ctx, account, dirID)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir && len(*out) < capN {
+			*out = append(*out, e)
+		}
+	}
 }
 
 // purgeCloudCheckCache 任务重试/取消后清缓存（状态已变，旧校验结果失效）
