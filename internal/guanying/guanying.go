@@ -211,6 +211,11 @@ type CaptchaChallenge struct {
 // upstreamError 为上游返回的错误信息（账号密码错误/IP 限次等）。
 func (c *Client) StartLogin(ctx context.Context, username, password, attemptID string) (captchaRequired bool, challenge *CaptchaChallenge, upstreamError string, err error) {
 	c.refreshEndpoint()
+	// 先 GET 登录页建立匿名会话（PHPSESSID），否则服务端会拒绝后续登录 POST
+	if pre, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+loginURL, nil); err == nil {
+		pre.Header.Set("User-Agent", userAgentText)
+		_, _, _ = c.do(pre)
+	}
 	form := url.Values{
 		"username":            {username},
 		"password":            {password},
