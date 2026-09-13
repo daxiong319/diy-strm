@@ -40,7 +40,7 @@ var (
 	domainURLRe = regexp.MustCompile(`url:\s*'https?://([^']+)'`)
 	// powChallengeRe filejin PoW 挑战页标记（/auth/login 等业务路径在未验证时返回 404，
 	// 只有根路径返回挑战页，因此必须以根路径探测）
-	powChallengeRe = regexp.MustCompile(`浏览器安全验证|pow-scope|powSolve|filejin`)
+	powChallengeRe = regexp.MustCompile(`<title>浏览器安全验证|class="pow-scope"|powSolve-`)
 	// parkedPageRe 域名停放页（guanying.app 跳 /lander）
 	parkedPageRe = regexp.MustCompile(`"/lander"|window\.location\.href="/lander"`)
 )
