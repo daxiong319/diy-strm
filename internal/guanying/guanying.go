@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,18 +25,18 @@ import (
 
 // Session 观影会话（加密存储于 discovery_settings 键 guanying_session）
 type Session struct {
-	Cookies    string `json:"cookies"`     // 序列化 cookie jar
-	Username   string `json:"username"`    // 账号提示（可掩码）
-	SavedAt    int64  `json:"saved_at"`    // 保存时间
-	ExpiresAt  int64  `json:"expires_at"`  // 会话过期时间（0=未知）
-	LastCheck  int64  `json:"last_check"`  // 最近校验时间
-	LastErr    string `json:"last_error"`  // 最近错误
+	Cookies   string `json:"cookies"`    // 序列化 cookie jar
+	Username  string `json:"username"`   // 账号提示（可掩码）
+	SavedAt   int64  `json:"saved_at"`   // 保存时间
+	ExpiresAt int64  `json:"expires_at"` // 会话过期时间（0=未知）
+	LastCheck int64  `json:"last_check"` // 最近校验时间
+	LastErr   string `json:"last_error"` // 最近错误
 }
 
 // Credentials 自动恢复凭据（加密存储于键 guanying_credentials）
 type Credentials struct {
-	Username     string `json:"username"`
-	PasswordEnc  string `json:"password_enc"` // helpers.EncryptLocalSecret 密文
+	Username    string `json:"username"`
+	PasswordEnc string `json:"password_enc"` // helpers.EncryptLocalSecret 密文
 }
 
 const (
@@ -226,44 +227,46 @@ func (c *Client) StartLogin(ctx context.Context, username, password, attemptID s
 		"password":   {password},
 	}
 	_ = attemptID
-	body, _, err := c.postForm(ctx, c.baseURL+loginURL, form)
+	// 请求头对齐 SPA fetch：Origin/Referer 缺失时服务端会静默拒绝（重新渲染登录页）
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+loginURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return false, nil, "", err
 	}
-	// 登录请求正常情况下返回 SPA 页面（HTML）；JSON 响应属于旧版/异常路径
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+	req.Header.Set("Origin", c.baseURL)
+	req.Header.Set("Referer", c.baseURL+loginURL)
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("User-Agent", userAgentText)
+	body, status, err := c.do(req)
+	if err != nil {
+		return false, nil, "", err
+	}
+	// 新版契约：POST 响应为 JSON {code:200} / {code:xxx, msg:"..."}
 	if !isHTMLBody(body) {
 		var resp struct {
-			Success         bool              `json:"success"`
-			Code            any               `json:"code"`
-			Error           string            `json:"error"`
-			Msg             string            `json:"msg"`
-			CaptchaRequired bool              `json:"captcha_required"`
-			AttemptID       string            `json:"attempt_id"`
-			Captcha         *CaptchaChallenge `json:"captcha"`
+			Code any    `json:"code"`
+			Msg  string `json:"msg"`
 		}
-		if json.Unmarshal(body, &resp) == nil {
-			if resp.CaptchaRequired {
-				ch := resp.Captcha
-				if ch == nil {
-					ch = &CaptchaChallenge{AttemptID: resp.AttemptID, Type: "click", Width: 350, Height: 200}
+		if json.Unmarshal(body, &resp) == nil && resp.Code != nil {
+			codeNum := -1
+			switch v := resp.Code.(type) {
+			case float64:
+				codeNum = int(v)
+			case string:
+				codeNum, _ = strconv.Atoi(strings.TrimSpace(v))
+			}
+			if codeNum == 200 {
+				if serr := SaveSession(c, username); serr != nil {
+					helpers.AppLogger.Warnf("观影会话保存失败：%v", serr)
 				}
-				if ch.AttemptID == "" {
-					ch.AttemptID = resp.AttemptID
-				}
-				return true, ch, "", nil
+				return false, nil, "", nil
 			}
-			if !resp.Success {
-				return false, nil, firstNonEmpty(resp.Error, resp.Msg, "账号或密码错误"), nil
-			}
-			if serr := SaveSession(c, username); serr != nil {
-				helpers.AppLogger.Warnf("观影会话保存失败：%v", serr)
-			}
-			return false, nil, "", nil
+			return false, nil, firstNonEmpty(resp.Msg, fmt.Sprintf("登录被拒绝（code=%v）", resp.Code)), nil
 		}
 	}
-	// 表单流：以登录态探活判定成功（首页含 /user/logout 链接 = 已登录）
-	if !c.isLoggedIn(ctx) {
-		return false, nil, "账号或密码错误（或站点要求验证码，请稍后重试）", nil
+	// 兜底：HTML 响应时以首页用户名/退出链接判定登录态
+	if !c.isLoggedIn(ctx, username) {
+		return false, nil, fmt.Sprintf("账号或密码错误（HTTP %d）", status), nil
 	}
 	if serr := SaveSession(c, username); serr != nil {
 		helpers.AppLogger.Warnf("观影会话保存失败：%v", serr)
@@ -271,8 +274,8 @@ func (c *Client) StartLogin(ctx context.Context, username, password, attemptID s
 	return false, nil, "", nil
 }
 
-// isLoggedIn 登录态判定：请求首页，HTML 含退出登录链接即视为已登录
-func (c *Client) isLoggedIn(ctx context.Context) bool {
+// isLoggedIn 登录态判定：请求首页，HTML 含退出登录链接或当前用户名即视为已登录
+func (c *Client) isLoggedIn(ctx context.Context, username string) bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/", nil)
 	if err != nil {
 		return false
@@ -282,7 +285,8 @@ func (c *Client) isLoggedIn(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(body), "/user/logout")
+	return strings.Contains(string(body), "/user/logout") ||
+		(username != "" && strings.Contains(string(body), username))
 }
 
 // GetCaptcha 拉取点选式验证码图片
