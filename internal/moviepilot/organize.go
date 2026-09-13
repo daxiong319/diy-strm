@@ -207,6 +207,13 @@ func organizeOneFile(ctx context.Context, account *models.Account, e organizeEnt
 				break
 			}
 			if !newBetter {
+				// 秒传引用防御：网盘秒传可能返回已存在文件的同一 ID（新版=现版本身），
+				// 此时删除新文件会把现版一起删光（S01E23 全灭案例）
+				if washLoser.ID == e.ID {
+					helpers.AppLogger.Infof("MoviePilot 洗版%s：新版与现版为同一网盘文件（秒传引用），不删除（保留现版）：%s", washEpisodeLabel(newName), e.Name)
+					recordSkipped(account, e, sourcePath, media.Category, media.Title, year, media.Season, media.Episode, tmdbID, "洗版：新版与现版为同一文件（秒传引用），保留", "", extra)
+					return relDir, nil
+				}
 				trace := qualityCompareTrace(newQ, washLoserQ, nil, DefaultWashRules)
 				if err := deleteNetdiskFileInternal(account, e.ID, e.ParentID); err != nil {
 					helpers.AppLogger.Warnf("MoviePilot 洗版删除新文件失败：%s：%v", e.Name, err)
@@ -236,6 +243,12 @@ func organizeOneFile(ctx context.Context, account *models.Account, e organizeEnt
 	// 不会出现缺集——旧版本仍在库内）
 	for _, idx := range washTargets {
 		old := &washOldEntries[idx]
+		// 秒传引用防御：139 等网盘秒传可能返回已存在文件的同一 ID，
+		// 移动+重命名后「新版」与「旧版」是同一个文件，再删旧版会把刚入库的文件删没（S01E23 案例）
+		if old.ID == e.ID {
+			helpers.AppLogger.Infof("MoviePilot 洗版替换%s：旧版与新版为同一网盘文件（秒传引用），跳过删除：%s", washEpisodeLabel(newName), old.Name)
+			continue
+		}
 		if err := deleteNetdiskFileInternal(account, old.ID, old.ParentID); err != nil {
 			helpers.AppLogger.Warnf("MoviePilot 洗版删除旧版本失败：%s：%v", old.Name, err)
 		} else {

@@ -959,8 +959,10 @@ func waitMoviePilotBatchFinalize(task *models.MoviePilotUploadTask, account *mod
 			failUploadTask(task, fmt.Errorf("全部文件上传失败（%d 个）", failedCount))
 			return
 		}
-		task.Status = models.MoviePilotUploadUploaded
-		task.Error = fmt.Sprintf("部分文件上传失败：%d 个", failedCount)
+		// 部分失败不能标「已完成」：置为失败并在错误中说明（可点重试增量补传），
+		// 已成功文件照常进入网盘整理，避免假完成掩盖漏传（E24 案例）
+		task.Status = models.MoviePilotUploadFailed
+		task.Error = fmt.Sprintf("部分文件上传失败：%d 个（成功 %d / 共 %d），已传文件照常整理", failedCount, uploadedFiles, totalFiles)
 		_ = models.UpdateMoviePilotUploadTask(task)
 		helpers.AppLogger.Warnf("MoviePilot 上传部分失败：%s：%s", task.Title, task.Error)
 		notifyUploadFinished(task, false, task.Error)
