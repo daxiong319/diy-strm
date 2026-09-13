@@ -189,9 +189,9 @@
               <span v-if="scope.row._checking" class="mp-upload-no-ep">校验中…</span>
               <el-tooltip v-else-if="scope.row.cloudCheck" placement="top" :disabled="!scope.row.cloudCheck.files?.length">
                 <template #content>
-                  <div v-for="f in scope.row.cloudCheck.files.slice(0, 15)" :key="f.file" style="max-width: 420px; word-break: break-all">
+                  <div v-for="f in scope.row.cloudCheck.files.slice(0, 15)" :key="f.file" style="max-width: 520px; word-break: break-all">
                     {{ f.uploaded ? '✓' : '✗' }} {{ f.file }}
-                    <span v-if="f.uploaded">（{{ f.where }} / {{ f.by }}匹配）</span>
+                    <span v-if="f.uploaded">（{{ f.where }} / {{ f.by }}匹配<span v-if="f.match"> → {{ f.match }}</span>）</span>
                   </div>
                   <div v-if="(scope.row.cloudCheck.files?.length || 0) > 15">… 共 {{ scope.row.cloudCheck.files.length }} 个片源</div>
                   <div v-if="scope.row.cloudCheck.note" style="color: #f5a623">{{ scope.row.cloudCheck.note }}</div>

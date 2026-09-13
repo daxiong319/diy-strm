@@ -34,6 +34,7 @@ type CloudCheckFile struct {
 	Uploaded bool   `json:"uploaded"`
 	Where    string `json:"where,omitempty"` // 待整理 / 已整理 / 整理记录
 	By       string `json:"by,omitempty"`    // name / episode / size / hash / record
+	Match    string `json:"match,omitempty"` // 命中的云盘文件名（可识别来源批次/版本）
 }
 
 // CloudCheckResult 任务级校验结果
@@ -137,26 +138,26 @@ func CheckTaskCloudUploaded(ctx context.Context, taskID uint, force bool) (*Clou
 		cf := CloudCheckFile{File: s.name, Size: s.size}
 		// a) 名称完全一致（待整理/已整理任意一侧）
 		if e, where := findByName(s.name, pending, "待整理"); e != nil {
-			cf.Uploaded, cf.Where, cf.By = true, where, "name"
+			cf.Uploaded, cf.Where, cf.By, cf.Match = true, where, "name", e.Name
 		} else if e, where := findByName(s.name, organized, "已整理"); e != nil {
-			cf.Uploaded, cf.Where, cf.By = true, where, "name"
+			cf.Uploaded, cf.Where, cf.By, cf.Match = true, where, "name", e.Name
 		}
 		// b) 集号一致（整理重命名后仍保留 SxxExx 段）
 		if !cf.Uploaded {
 			if key, ok := episodeKey(s.name); ok {
 				if e, where := findByEpisode(key, pending, "待整理"); e != nil {
-					cf.Uploaded, cf.Where, cf.By = true, where, "episode"
+					cf.Uploaded, cf.Where, cf.By, cf.Match = true, where, "episode", e.Name
 				} else if e, where := findByEpisode(key, organized, "已整理"); e != nil {
-					cf.Uploaded, cf.Where, cf.By = true, where, "episode"
+					cf.Uploaded, cf.Where, cf.By, cf.Match = true, where, "episode", e.Name
 				}
 			}
 		}
 		// c) 字节大小完全一致（重命名后的大小指纹）
 		if !cf.Uploaded && s.size > 0 {
 			if e, where := findBySize(s.size, pending, "待整理"); e != nil {
-				cf.Uploaded, cf.Where, cf.By = true, where, "size"
+				cf.Uploaded, cf.Where, cf.By, cf.Match = true, where, "size", e.Name
 			} else if e, where := findBySize(s.size, organized, "已整理"); e != nil {
-				cf.Uploaded, cf.Where, cf.By = true, where, "size"
+				cf.Uploaded, cf.Where, cf.By, cf.Match = true, where, "size", e.Name
 			}
 		}
 		// d) 整理历史记录（上传后被整理重命名，两侧列表都取不到时回退记录证据）
@@ -166,8 +167,8 @@ func CheckTaskCloudUploaded(ctx context.Context, taskID uint, force bool) (*Clou
 		// e) 内容指纹兜底：名称/集号/大小都对不上时，比对本地文件与候选云文件的
 		//    首块哈希（每任务候选上限受控，避免大流量下载）
 		if !cf.Uploaded && s.full != "" && len(cloudAll) > 0 {
-			if fingerprintMatch(ctx, &account, s, cloudAll) {
-				cf.Uploaded, cf.Where, cf.By = true, "云盘", "hash"
+			if hit, name := fingerprintMatch(ctx, &account, s, cloudAll); hit {
+				cf.Uploaded, cf.Where, cf.By, cf.Match = true, "云盘", "hash", name
 			}
 		}
 		if cf.Uploaded {
@@ -303,10 +304,11 @@ var fingerprintHTTP = &http.Client{Timeout: 120 * time.Second}
 
 // fingerprintMatch 内容指纹兜底：本地文件首块哈希 vs 云文件首块哈希（Range 下载）。
 // 候选限制在合理规模内；账号类型不支持下载直链时直接返回 false。
-func fingerprintMatch(ctx context.Context, account *models.Account, s taskSourceFile, candidates []organizeEntry) bool {
+// 返回（是否命中，命中的云文件名）。
+func fingerprintMatch(ctx context.Context, account *models.Account, s taskSourceFile, candidates []organizeEntry) (bool, string) {
 	local, err := localFirstChunkMD5(s.full, fingerprintChunkSize)
 	if err != nil {
-		return false
+		return false, ""
 	}
 	tried := 0
 	for i := range candidates {
@@ -328,10 +330,10 @@ func fingerprintMatch(ctx context.Context, account *models.Account, s taskSource
 		tried++
 		remote, err := remoteFirstChunkMD5(ctx, account, c)
 		if err == nil && remote != "" && remote == local {
-			return true
+			return true, c.Name
 		}
 	}
-	return false
+	return false, ""
 }
 
 // localFirstChunkMD5 本地文件首块 MD5
