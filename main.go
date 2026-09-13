@@ -827,6 +827,7 @@ func setRouter(r *gin.Engine) {
 		api.GET("/moviepilot/upload-tasks", controllers.ListMoviePilotUploadTasks)                  // 查询 139 上传任务
 		api.POST("/moviepilot/upload-tasks/:id/retry", controllers.RetryMoviePilotUploadTask)       // 重试上传任务
 		api.POST("/moviepilot/upload-tasks/:id/cancel", controllers.CancelMoviePilotUploadTask)     // 取消上传任务
+		api.GET("/moviepilot/upload-tasks/:id/cloud-check", controllers.GetMoviePilotUploadTaskCloudCheck) // 片源云盘存在性校验
 		api.GET("/moviepilot/failed-files", controllers.ListMoviePilotFailedFiles)                  // 查询识别失败文件
 		api.POST("/moviepilot/failed-files/:id/identify", controllers.IdentifyMoviePilotFailedFile) // AI 识别失败文件
 		api.POST("/moviepilot/failed-files/:id/resolve", controllers.ResolveMoviePilotFailedFile)   // 确认整理失败文件

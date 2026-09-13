@@ -184,10 +184,36 @@
           <el-table-column label="大小" width="110">
             <template #default="scope">{{ formatBytes(scope.row.uploaded_bytes) }} / {{ formatBytes(scope.row.total_bytes) }}</template>
           </el-table-column>
+          <el-table-column label="云盘校验" width="150">
+            <template #default="scope">
+              <span v-if="scope.row._checking" class="mp-upload-no-ep">校验中…</span>
+              <el-tooltip v-else-if="scope.row.cloudCheck" placement="top" :disabled="!scope.row.cloudCheck.files?.length">
+                <template #content>
+                  <div v-for="f in scope.row.cloudCheck.files.slice(0, 15)" :key="f.file" style="max-width: 420px; word-break: break-all">
+                    {{ f.uploaded ? '✓' : '✗' }} {{ f.file }}
+                    <span v-if="f.uploaded">（{{ f.where }} / {{ f.by }}匹配）</span>
+                  </div>
+                  <div v-if="(scope.row.cloudCheck.files?.length || 0) > 15">… 共 {{ scope.row.cloudCheck.files.length }} 个片源</div>
+                  <div v-if="scope.row.cloudCheck.note" style="color: #f5a623">{{ scope.row.cloudCheck.note }}</div>
+                </template>
+                <el-tag size="small" :type="cloudCheckTagType(scope.row.cloudCheck)">{{ cloudCheckText(scope.row.cloudCheck) }}</el-tag>
+              </el-tooltip>
+              <el-button
+                v-if="scope.row.cloudCheck && !scope.row._checking"
+                size="small"
+                link
+                type="info"
+                style="margin-left: 2px"
+                @click="checkCloud(scope.row, true)"
+                >重验</el-button
+              >
+              <el-button v-else-if="!scope.row._checking" size="small" link type="primary" :disabled="scope.row.status === 'uploading'" @click="checkCloud(scope.row)">校验</el-button>
+            </template>
+          </el-table-column>
           <el-table-column prop="error" label="错误信息" min-width="160" show-overflow-tooltip />
           <el-table-column label="操作" width="160" fixed="right">
             <template #default="scope">
-              <el-button size="small" type="warning" :disabled="scope.row.status !== 'failed'" @click="retryUploadTask(scope.row)"
+              <el-button size="small" type="warning" :disabled="scope.row.status === 'uploading'" @click="retryUploadTask(scope.row)"
                 >重试</el-button
               >
               <el-button
@@ -439,6 +465,8 @@ const loadUploadTasks = async () => {
     if (response?.data.code === 200) {
       uploadTasks.value = response.data.data?.list || []
       uploadTotal.value = Number(response.data.data?.total || 0)
+      // 不阻塞列表渲染：后台自动校验已上传/失败/取消的任务
+      void autoCheckUploadTasks()
     } else {
       ElMessage.error(response?.data.message || '加载上传任务失败')
     }
@@ -453,6 +481,53 @@ const loadUploadTasks = async () => {
 const handleUploadPageChange = (page: number) => {
   uploadPage.value = page
   loadUploadTasks()
+}
+
+// ---- 云盘存在性校验（片源 vs 待整理/已整理目录比对） ----
+const cloudCheckText = (r: any) => {
+  if (!r) return ''
+  if (r.status === 'all') return `已上传 ${r.uploaded}/${r.total}`
+  if (r.status === 'partial') return `部分 ${r.uploaded}/${r.total}`
+  if (r.status === 'none') return `未上传 0/${r.total}`
+  return '无法校验'
+}
+const cloudCheckTagType = (r: any) => {
+  if (!r) return 'info'
+  return r.status === 'all' ? 'success' : r.status === 'partial' ? 'warning' : r.status === 'none' ? 'danger' : 'info'
+}
+
+const checkCloud = async (row: any, force = false) => {
+  if (row._checking) return
+  row._checking = true
+  try {
+    const response = await http.get(`${SERVER_URL}/moviepilot/upload-tasks/${row.id}/cloud-check`, {
+      params: force ? { force: 1 } : {},
+      timeout: 160000,
+    })
+    if (response?.data.code === 200 && response.data.data) {
+      row.cloudCheck = response.data.data
+    } else {
+      row.cloudCheck = { status: 'unknown', total: 0, uploaded: 0, files: [], note: response?.data.message || '校验失败' }
+    }
+  } catch (error: any) {
+    row.cloudCheck = { status: 'unknown', total: 0, uploaded: 0, files: [], note: '校验请求失败：' + (error?.message || '') }
+  } finally {
+    row._checking = false
+  }
+}
+
+// 自动校验当前页已到达终态的任务（并发 3，服务端缓存 10 分钟）
+const autoCheckUploadTasks = async () => {
+  const targets = uploadTasks.value.filter((r: any) => !r.cloudCheck && ['uploaded', 'failed', 'canceled'].includes(r.status))
+  if (targets.length === 0) return
+  const queue = [...targets]
+  const worker = async () => {
+    while (queue.length > 0) {
+      const row = queue.shift()
+      if (row) await checkCloud(row)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(3, targets.length) }, worker))
 }
 
 const openCreateDialog = () => {

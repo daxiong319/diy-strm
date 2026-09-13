@@ -503,10 +503,34 @@ func RetryMoviePilotUploadTask(c *gin.Context) {
 		return
 	}
 	if !moviepilot.RetryUploadTask(uint(id)) {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "重试失败（仅失败/已取消任务可重试）", Data: nil})
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "重试失败（任务正在上传中或队列已满，请稍后再试）", Data: nil})
 		return
 	}
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "已加入重试队列", Data: nil})
+}
+
+// GetMoviePilotUploadTaskCloudCheck 校验任务片源是否已在云盘
+// （待整理/已整理目录搜索比对：名称/集号/大小，整理记录与首块哈希兜底）
+// @Summary 上传任务云盘存在性校验
+// @Tags MoviePilot
+// @Success 200 {object} APIResponse[any]
+// @Router /moviepilot/upload-tasks/:id/cloud-check [get]
+// @Security JwtAuth
+// @Security ApiKeyAuth
+func GetMoviePilotUploadTaskCloudCheck(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "任务 ID 无效", Data: nil})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 150*time.Second)
+	defer cancel()
+	res, err := moviepilot.CheckTaskCloudUploaded(ctx, uint(id), c.Query("force") == "1")
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "校验失败：" + err.Error(), Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "校验完成", Data: res})
 }
 
 // CancelMoviePilotUploadTask 取消上传任务

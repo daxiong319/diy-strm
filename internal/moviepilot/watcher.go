@@ -36,6 +36,10 @@ const (
 var (
 	queuedMu sync.Mutex
 	queued   = map[uint]struct{}{}
+	// processingMu/processingID 当前正在执行上传的任务 ID（0=空闲）：
+	// 重试接口据此区分「正在上传」与重启残留的 pending/uploading 状态。
+	processingMu  sync.Mutex
+	processingID  uint
 )
 
 type atomicBool struct {
@@ -100,7 +104,13 @@ func StartMoviePilotWatcher() {
 			queuedMu.Lock()
 			delete(queued, task.ID)
 			queuedMu.Unlock()
+			processingMu.Lock()
+			processingID = task.ID
+			processingMu.Unlock()
 			runUploadTask(task)
+			processingMu.Lock()
+			processingID = 0
+			processingMu.Unlock()
 		}
 	}()
 
@@ -1108,14 +1118,28 @@ func healEmptySourceTasks() {
 	}
 }
 
-// RetryUploadTask 重试失败/取消的上传任务
+// RetryUploadTask 重试上传任务。
+// 放开全部状态：failed/canceled/uploaded 与重启残留的 uploading 均重置重传；
+// pending 直接幂等重新入队；仅当前正在执行中的任务拒绝重试。
 func RetryUploadTask(taskID uint) bool {
 	task := models.GetMoviePilotUploadTask(taskID)
 	if task == nil {
 		return false
 	}
-	if task.Status != models.MoviePilotUploadFailed && task.Status != models.MoviePilotUploadCanceled {
+	processingMu.Lock()
+	processing := processingID == taskID
+	processingMu.Unlock()
+	if processing {
 		return false
+	}
+	if task.Status == models.MoviePilotUploadPending {
+		// 等待中：仅重新入队（队列去重幂等），不清空进度
+		if !enqueueUploadTask(task) {
+			helpers.AppLogger.Warnf("MoviePilot 上传队列已满，任务 #%d 重试入队失败（请稍后再试）", task.ID)
+			return false
+		}
+		purgeCloudCheckCache(task.ID)
+		return true
 	}
 	task.Status = models.MoviePilotUploadPending
 	task.Error = ""
@@ -1129,6 +1153,7 @@ func RetryUploadTask(taskID uint) bool {
 		helpers.AppLogger.Warnf("MoviePilot 上传队列已满，任务 #%d 重试入队失败（请稍后再试）", task.ID)
 		return false
 	}
+	purgeCloudCheckCache(task.ID)
 	return true
 }
 
