@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"diy-strm/internal/helpers"
 	"time"
 )
 
@@ -42,12 +44,12 @@ var (
 )
 
 type domainResolution struct {
-	BaseURL   string    `json:"base_url"`
-	Source    string    `json:"source"` // directory/fallback/static/pow
-	CheckedAt time.Time `json:"checked_at"`
-	Candidates []string `json:"candidates"`
-	Skipped   []string  `json:"skipped"` // PoW 求解失败/停放等不可直连的域名
-	Cookies   string    `json:"cookies,omitempty"` // PoW 验证通过后的 cookie（业务 jar 需注入）
+	BaseURL    string    `json:"base_url"`
+	Source     string    `json:"source"` // directory/fallback/static/pow
+	CheckedAt  time.Time `json:"checked_at"`
+	Candidates []string  `json:"candidates"`
+	Skipped    []string  `json:"skipped"`           // PoW 求解失败/停放等不可直连的域名
+	Cookies    string    `json:"cookies,omitempty"` // PoW 验证通过后的 cookie（业务 jar 需注入）
 }
 
 var (
@@ -96,6 +98,11 @@ func ResolveBaseURL(ctx context.Context, force bool) *domainResolution {
 		cachedRes = res
 	}
 	resolveMu.Unlock()
+	if res == nil || res.BaseURL == "" {
+		helpers.AppLogger.Warnf("观影域名解析失败：候选=%v 跳过=%v（将回退兜底域名）", res.Candidates, res.Skipped)
+	} else {
+		helpers.AppLogger.Infof("观影域名解析：%s（%s，候选 %d 个）", res.BaseURL, res.Source, len(res.Candidates))
+	}
 	resolveWaitChan <- res
 	return res
 }
@@ -133,6 +140,7 @@ func resolveNow(ctx context.Context) *domainResolution {
 		if err := ctx.Err(); err != nil {
 			break
 		}
+		helpers.AppLogger.Infof("观影探测候选：%s", base)
 		body, status, err := client.Probe(ctx, strings.TrimRight(base, "/")+guanyingProbePath)
 		if err != nil || status == 0 {
 			res.Skipped = append(res.Skipped, base+"（不可达）")
@@ -367,7 +375,9 @@ func (w *cookieJarWrapper) SetCookies(u *url.URL, cookies []*http.Cookie) {
 }
 
 func truncateForLog(s string, n int) string {
-	if len(s) <= n { return s }
+	if len(s) <= n {
+		return s
+	}
 	return s[:n] + "…"
 }
 
