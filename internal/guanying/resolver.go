@@ -1,7 +1,6 @@
 package guanying
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -26,7 +25,7 @@ import (
 
 const (
 	guanyingDirectoryPage = "https://www.xn--ykq321c.com/check.js?4.4"
-	guanyingProbePath     = "/auth/login" // 探活路径：正常站点 200/405，PoW 挑战页含标记
+	guanyingProbePath     = "/" // 探活路径：PoW 墙站点根路径返回挑战页，正常站点返回站点页
 	guanyingResolveTTL    = 6 * time.Hour
 )
 
@@ -35,15 +34,20 @@ var fallbackBaseDomains = []string{"https://guanying.app", "https://guanying.sit
 
 var (
 	domainURLRe = regexp.MustCompile(`url:\s*'https?://([^']+)'`)
-	challengeRe = regexp.MustCompile(`浏览器安全验证|browser_pow`)
+	// powChallengeRe filejin PoW 挑战页标记（/auth/login 等业务路径在未验证时返回 404，
+	// 只有根路径返回挑战页，因此必须以根路径探测）
+	powChallengeRe = regexp.MustCompile(`浏览器安全验证|pow-scope|powSolve|filejin`)
+	// parkedPageRe 域名停放页（guanying.app 跳 /lander）
+	parkedPageRe = regexp.MustCompile(`"/lander"|window\.location\.href="/lander"`)
 )
 
 type domainResolution struct {
 	BaseURL   string    `json:"base_url"`
-	Source    string    `json:"source"` // directory/fallback/static
+	Source    string    `json:"source"` // directory/fallback/static/pow
 	CheckedAt time.Time `json:"checked_at"`
 	Candidates []string `json:"candidates"`
-	Skipped   []string  `json:"skipped"` // PoW 挑战等不可直连的域名
+	Skipped   []string  `json:"skipped"` // PoW 求解失败/停放等不可直连的域名
+	Cookies   string    `json:"cookies,omitempty"` // PoW 验证通过后的 cookie（业务 jar 需注入）
 }
 
 var (
@@ -124,7 +128,7 @@ func resolveNow(ctx context.Context) *domainResolution {
 	candidates = uniq
 	res.Candidates = candidates
 
-	// 2) 逐个探活：/auth/login 需非挑战响应
+	// 2) 逐个探活：根路径需非挑战响应（PoW 墙站点的业务路径在未验证时全部 404）
 	for _, base := range candidates {
 		if err := ctx.Err(); err != nil {
 			break
@@ -134,19 +138,24 @@ func resolveNow(ctx context.Context) *domainResolution {
 			res.Skipped = append(res.Skipped, base+"（不可达）")
 			continue
 		}
-		if challengeRe.MatchString(body) {
-			// PoW 验证墙：尝试求解 RSW 谜题后探活
+		if parkedPageRe.MatchString(body) {
+			res.Skipped = append(res.Skipped, base+"（域名停放）")
+			continue
+		}
+		if powChallengeRe.MatchString(body) {
+			// PoW 验证墙：求解 RSW 谜题换取验证 cookie
 			domain := strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
-			working, perr := ResolveWithPoW(ctx, domain)
+			working, cookies, perr := ResolveWithPoW(ctx, domain)
 			if perr == nil && working != "" {
 				res.BaseURL = working
 				res.Source = "directory+pow"
+				res.Cookies = cookies
 				return res
 			}
-			res.Skipped = append(res.Skipped, base+"（PoW 求解失败）")
+			res.Skipped = append(res.Skipped, base+"（PoW 求解失败："+perr.Error()+"）")
 			continue
 		}
-		// 200/404/405 均视为站点可达（路径差异不代表站点不可用）
+		// 200 且非挑战页 → 站点可用
 		res.BaseURL = strings.TrimRight(base, "/")
 		res.Source = "directory"
 		return res
@@ -155,12 +164,12 @@ func resolveNow(ctx context.Context) *domainResolution {
 	// 3) 兜底域名
 	for _, base := range fallbackBaseDomains {
 		body, status, err := client.Probe(ctx, strings.TrimRight(base, "/")+guanyingProbePath)
-		if err == nil && status > 0 && !challengeRe.MatchString(body) {
+		if err == nil && status > 0 && !powChallengeRe.MatchString(body) && !parkedPageRe.MatchString(body) {
 			res.BaseURL = strings.TrimRight(base, "/")
 			res.Source = "fallback"
 			return res
 		}
-		res.Skipped = append(res.Skipped, base+"（不可达/验证墙）")
+		res.Skipped = append(res.Skipped, base+"（不可达/验证墙/停放）")
 	}
 	sort.Strings(res.Skipped)
 	return res
@@ -248,11 +257,12 @@ func EnsureFreshBaseURL(ctx context.Context, force bool) string {
 // ---------------------------------------------------------------------------
 
 // ResolveWithPoW 对带 PoW 验证墙的域名执行完整解析：
-// 1. GET /res/pow 获取挑战 {N,x,t}
+// 1. GET /res/pow 获取挑战 {N,x,t}（filejin powSolve 契约）
 // 2. 解算 y = x^(2^t) mod N
-// 3. POST /res/pow 提交 {y} → 服务端设置验证 cookie
-// 4. 探活 /auth/login 确认可用
-func ResolveWithPoW(ctx context.Context, domain string) (string, error) {
+// 3. POST /res/pow 提交 form 表单 y=<hex>（注意：上游只接受表单编码，JSON 会被静默拒绝）
+// 4. 验证通过后返回站点地址与验证 cookie（业务请求需携带）
+// 返回（baseURL, 序列化 cookie, error）。
+func ResolveWithPoW(ctx context.Context, domain string) (string, string, error) {
 	base := "https://" + domain
 	client := &http.Client{
 		Timeout: 30 * time.Second,
@@ -264,7 +274,7 @@ func ResolveWithPoW(ctx context.Context, domain string) (string, error) {
 	req.Header.Set("User-Agent", userAgentText)
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("获取 PoW 挑战失败：%v", err)
+		return "", "", fmt.Errorf("获取 PoW 挑战失败：%v", err)
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
@@ -275,38 +285,53 @@ func ResolveWithPoW(ctx context.Context, domain string) (string, error) {
 		T int    `json:"t"`
 	}
 	if err := json.Unmarshal(body, &challenge); err != nil || challenge.N == "" {
-		return "", fmt.Errorf("PoW 挑战解析失败（可能无验证）：body=%s", truncateForLog(string(body), 100))
+		return "", "", fmt.Errorf("PoW 挑战解析失败（可能无验证）：body=%s", truncateForLog(string(body), 100))
 	}
 
 	// Step 2: RSW 解算 y = x^(2^t) mod N
 	y, err := solveRSW(challenge.N, challenge.X, challenge.T)
 	if err != nil {
-		return "", fmt.Errorf("PoW 解算失败：%v", err)
+		return "", "", fmt.Errorf("PoW 解算失败：%v", err)
 	}
 
-	// Step 3: 提交结果
-	submitBody, _ := json.Marshal(map[string]string{"y": y})
-	req2, _ := http.NewRequestWithContext(ctx, "POST", base+"/res/pow", bytes.NewReader(submitBody))
-	req2.Header.Set("Content-Type", "application/json")
+	// Step 3: 表单编码提交结果（对齐 powSolve submitResult：application/x-www-form-urlencoded）
+	form := url.Values{"y": {y}}
+	req2, _ := http.NewRequestWithContext(ctx, "POST", base+"/res/pow", strings.NewReader(form.Encode()))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req2.Header.Set("User-Agent", userAgentText)
 	resp2, err := client.Do(req2)
 	if err != nil {
-		return "", fmt.Errorf("提交 PoW 结果失败：%v", err)
+		return "", "", fmt.Errorf("提交 PoW 结果失败：%v", err)
 	}
+	body2, _ := io.ReadAll(io.LimitReader(resp2.Body, 1<<20))
 	resp2.Body.Close()
+	var verify struct {
+		Success bool `json:"success"`
+	}
+	_ = json.Unmarshal(body2, &verify)
+	if !verify.Success {
+		return "", "", fmt.Errorf("PoW 验证被拒绝（HTTP %d）：%s", resp2.StatusCode, truncateForLog(string(body2), 80))
+	}
 
-	// Step 4: 探活
-	req3, _ := http.NewRequestWithContext(ctx, "GET", base+"/auth/login", nil)
+	// Step 4: 探活根路径（不再返回挑战页即通过）
+	req3, _ := http.NewRequestWithContext(ctx, "GET", base+"/", nil)
 	req3.Header.Set("User-Agent", userAgentText)
 	resp3, err := client.Do(req3)
 	if err != nil {
-		return "", fmt.Errorf("探活失败：%v", err)
+		return "", "", fmt.Errorf("探活失败：%v", err)
 	}
+	body3, _ := io.ReadAll(io.LimitReader(resp3.Body, 8192))
 	resp3.Body.Close()
-	if resp3.StatusCode >= 200 && resp3.StatusCode < 400 {
-		return base, nil
+	if resp3.StatusCode >= 200 && resp3.StatusCode < 400 && !powChallengeRe.MatchString(string(body3)) {
+		u, _ := url.Parse(base + "/")
+		var pairs []map[string]string
+		for _, ck := range client.Jar.Cookies(u) {
+			pairs = append(pairs, map[string]string{"name": ck.Name, "value": ck.Value, "domain": ck.Domain, "path": ck.Path})
+		}
+		raw, _ := json.Marshal(pairs)
+		return base, string(raw), nil
 	}
-	return "", fmt.Errorf("PoW 验证后仍不可访问（HTTP %d）", resp3.StatusCode)
+	return "", "", fmt.Errorf("PoW 验证后仍不可访问（HTTP %d）", resp3.StatusCode)
 }
 
 // solveRSW 计算 RSW 时间锁 y = x^(2^t) mod N（连续平方 t 次）

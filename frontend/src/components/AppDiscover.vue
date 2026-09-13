@@ -422,6 +422,53 @@ const setChannelText = (provider: string, value: string) => {
     .filter((x: string) => x)
   markDirty('channels')
 }
+
+// 一键应用「频道订阅」中添加的公开频道到资源检索频道（合并去重，保存后生效）
+const applyChannelBusy = ref('')
+const normalizeTgChannel = (raw: string) => {
+  let n = String(raw || '').trim()
+  for (const p of ['https://t.me/s/', 'https://t.me/', 't.me/s/', 't.me/', '@']) {
+    if (n.toLowerCase().startsWith(p.toLowerCase())) {
+      n = n.slice(p.length)
+      break
+    }
+  }
+  n = n.replace(/\/+$/, '').trim()
+  return n ? '@' + n : ''
+}
+const applyChannelSub = async (provider: string) => {
+  applyChannelBusy.value = provider
+  try {
+    const resp = await http.get(`${SERVER_URL}/cloud/channels`, {
+      params: { source_type: provider === 'guangya' ? 'guangyapan' : provider },
+    })
+    const list = resp?.data?.data || []
+    const names = (list as any[])
+      .filter((c) => c.enabled !== false)
+      .map((c) => normalizeTgChannel(c.channel))
+      .filter(Boolean)
+    if (!names.length) {
+      ElMessage.info('频道订阅中暂无启用中的公开频道')
+      return
+    }
+    const cur = new Set<string>(settingsForm.value.tg_resource_channels?.[provider] || [])
+    const added = names.filter((n) => !cur.has(n))
+    if (!added.length) {
+      ElMessage.info('频道订阅中的公开频道均已存在于检索频道')
+      return
+    }
+    settingsForm.value.tg_resource_channels[provider] = [
+      ...(settingsForm.value.tg_resource_channels?.[provider] || []),
+      ...added,
+    ]
+    markDirty('channels')
+    ElMessage.success(`已从频道订阅应用 ${added.length} 个频道，保存后生效`)
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '读取频道订阅失败')
+  } finally {
+    applyChannelBusy.value = ''
+  }
+}
 const targetPath = (provider: string) =>
   ((settingsForm.value.media_transfer_targets || {})[provider] || {}).folder_path || ''
 const setTargetPath = (provider: string, value: string) => {
@@ -3163,7 +3210,12 @@ onBeforeUnmount(() => {
                       :placeholder="p === '123' ? '每行一个公开 123 资源频道\n例如：https://t.me/QukanMovie 或 @QukanMovie' : p === 'guangya' ? '每行一个公开光鸭资源频道' : '每行一个公开 139 资源频道'"
                       @input="setChannelText(p, ($event.target as HTMLTextAreaElement).value)"
                     ></textarea>
-                    <small>{{ ((settingsForm.tg_resource_channels || {})[p] || []).length }} 个频道</small>
+                    <div class="md-target-actions">
+                      <small>{{ ((settingsForm.tg_resource_channels || {})[p] || []).length }} 个频道</small>
+                      <button type="button" class="md-btn is-small" :disabled="applyChannelBusy === p" @click="applyChannelSub(p)">
+                        {{ applyChannelBusy === p ? '应用中…' : '应用频道订阅' }}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -5935,7 +5987,7 @@ onBeforeUnmount(() => {
 .md-work-detail {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 1100; /* 高于侧边栏(.el-aside z-index:1000)与移动端抽屉(1001)，作品详情不被左侧菜单遮挡 */
   overflow-y: auto;
   background: var(--md-bg, #0b1020);
   padding: 18px clamp(16px, 4vw, 42px) 60px;

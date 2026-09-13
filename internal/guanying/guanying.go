@@ -92,15 +92,65 @@ func SharedClient() *Client {
 			http:    &http.Client{Timeout: defaultTimeout, Jar: jar},
 			baseURL: EnsureFreshBaseURL(context.Background(), false),
 		}
-		// 恢复会话
+		// 注入域名解析阶段取得的 PoW 验证 cookie（未过 PoW 时业务接口全部 404）
+		injectResolutionCookies(shared)
+		// 恢复会话（Session.Cookies 为加密存储，需先解密）
 		if raw, ok := settingGet(sessionKey); ok {
 			var s Session
 			if json.Unmarshal([]byte(raw), &s) == nil && s.Cookies != "" {
-				restoreCookiesAt(shared.http.Jar, s.Cookies, shared.baseURL)
+				if plain, err := helpers.DecryptLocalSecret(s.Cookies); err == nil && plain != "" {
+					restoreCookiesAt(shared.http.Jar, plain, shared.baseURL)
+				}
 			}
 		}
 	}
 	return shared
+}
+
+// injectResolutionCookies 把最近一次域名解析携带的 PoW 验证 cookie 注入客户端 jar
+func injectResolutionCookies(c *Client) {
+	res := ResolveBaseURL(context.Background(), false)
+	if res == nil || res.Cookies == "" {
+		return
+	}
+	var pairs []struct {
+		Name   string `json:"name"`
+		Value  string `json:"value"`
+		Domain string `json:"domain"`
+		Path   string `json:"path"`
+	}
+	if json.Unmarshal([]byte(res.Cookies), &pairs) != nil {
+		return
+	}
+	u, _ := url.Parse(c.baseURL + "/")
+	cookies := make([]*http.Cookie, 0, len(pairs))
+	for _, p := range pairs {
+		cookies = append(cookies, &http.Cookie{Name: p.Name, Value: p.Value, Domain: p.Domain, Path: p.Path})
+	}
+	if len(cookies) > 0 {
+		c.http.Jar.SetCookies(u, cookies)
+	}
+}
+
+// refreshEndpoint 业务请求前调用：解析结果与当前 base 不一致（域名更换/PoW 重验）时
+// 迁移 baseURL 并重新注入验证 cookie 与已保存会话。
+func (c *Client) refreshEndpoint() {
+	res := ResolveBaseURL(context.Background(), false)
+	if res == nil || res.BaseURL == "" || res.BaseURL == c.baseURL {
+		return
+	}
+	sharedMu.Lock()
+	defer sharedMu.Unlock()
+	c.baseURL = res.BaseURL
+	injectResolutionCookies(c)
+	if raw, ok := settingGet(sessionKey); ok {
+		var s Session
+		if json.Unmarshal([]byte(raw), &s) == nil && s.Cookies != "" {
+			if plain, err := helpers.DecryptLocalSecret(s.Cookies); err == nil && plain != "" {
+				restoreCookiesAt(c.http.Jar, plain, c.baseURL)
+			}
+		}
+	}
 }
 
 // restoreCookiesAt 把 cookie 恢复到指定站点域
@@ -122,28 +172,9 @@ func restoreCookiesAt(jar http.CookieJar, raw, baseURL string) {
 	jar.SetCookies(u, cookies)
 }
 
-// restoreCookies 把序列化 cookie 字符串恢复进 jar
-func restoreCookies(jar http.CookieJar, raw string) {
-	var pairs []struct {
-		Name  string `json:"name"`
-		Value string `json:"value"`
-		Domain string `json:"domain"`
-		Path  string `json:"path"`
-	}
-	if json.Unmarshal([]byte(raw), &pairs) != nil {
-		return
-	}
-	u, _ := url.Parse("https://guanying.app")
-	cookies := make([]*http.Cookie, 0, len(pairs))
-	for _, p := range pairs {
-		cookies = append(cookies, &http.Cookie{Name: p.Name, Value: p.Value, Domain: p.Domain, Path: p.Path})
-	}
-	jar.SetCookies(u, cookies)
-}
-
-// serializeCookies 导出 jar 内 cookie
-func serializeCookies(jar http.CookieJar) string {
-	u, _ := url.Parse("https://guanying.app")
+// serializeCookiesAt 导出 jar 内指定站点域的 cookie
+func serializeCookiesAt(jar http.CookieJar, baseURL string) string {
+	u, _ := url.Parse(baseURL)
 	cookies := jar.Cookies(u)
 	pairs := make([]map[string]string, 0, len(cookies))
 	for _, c := range cookies {
@@ -151,6 +182,18 @@ func serializeCookies(jar http.CookieJar) string {
 	}
 	raw, _ := json.Marshal(pairs)
 	return string(raw)
+}
+
+// isHTMLBody 响应是否为 HTML 页面（PoW 挑战页/错误页/停放页，上游异常时业务接口会回 HTML）
+func isHTMLBody(body []byte) bool {
+	s := strings.TrimSpace(strings.ToLower(string(body)))
+	return strings.HasPrefix(s, "<!doctype html") || strings.HasPrefix(s, "<html")
+}
+
+// upstreamPageError 上游返回 HTML 页面时的统一友好错误（不透传整页 HTML 到前端）
+func upstreamPageError(action string, status int) error {
+	InvalidateDomainCache() // 下次请求强制重新解析防失联页（域名/验证可能已更换）
+	return fmt.Errorf("观影%s失败：站点返回了安全验证页或错误页（HTTP %d），域名解析已重置，请稍后重试", action, status)
 }
 
 // CaptchaChallenge 验证码挑战（点选式）
@@ -166,6 +209,7 @@ type CaptchaChallenge struct {
 // StartLogin 发起登录：服务端生成 attempt_id，如需验证码返回挑战。
 // upstreamError 为上游返回的错误信息（账号密码错误/IP 限次等）。
 func (c *Client) StartLogin(ctx context.Context, username, password, attemptID string) (captchaRequired bool, challenge *CaptchaChallenge, upstreamError string, err error) {
+	c.refreshEndpoint()
 	form := url.Values{"username": {username}, "password": {password}}
 	if attemptID != "" {
 		form.Set("attempt_id", attemptID)
@@ -173,6 +217,9 @@ func (c *Client) StartLogin(ctx context.Context, username, password, attemptID s
 	body, status, err := c.postForm(ctx, c.baseURL + loginURL, form)
 	if err != nil {
 		return false, nil, "", err
+	}
+	if isHTMLBody(body) {
+		return false, nil, "", upstreamPageError("登录", status)
 	}
 	var resp struct {
 		Success         bool              `json:"success"`
@@ -258,12 +305,16 @@ func (c *Client) VerifyCaptcha(ctx context.Context, attemptID string, points []m
 
 // SearchResources 资源检索（聚合 115/123/光鸭/磁力，由上游返回）
 func (c *Client) SearchResources(ctx context.Context, title, mediaType string, tmdbID int64, year string) ([]map[string]any, error) {
+	c.refreshEndpoint()
 	payload, _ := json.Marshal(map[string]any{
 		"title": title, "media_type": mediaType, "tmdb_id": tmdbID, "year": year,
 	})
-	body, _, err := c.postJSON(ctx, c.baseURL+searchURL, payload)
+	body, status, err := c.postJSON(ctx, c.baseURL+searchURL, payload)
 	if err != nil {
 		return nil, err
+	}
+	if isHTMLBody(body) {
+		return nil, upstreamPageError("搜索", status)
 	}
 	var resp struct {
 		Success bool              `json:"success"`
@@ -347,7 +398,7 @@ func isConnError(err error) bool {
 
 // SaveSession 导出当前 cookie jar 加密落盘（cookie 值本身敏感 → 整体加密）
 func SaveSession(c *Client, username string) error {
-	plain := serializeCookies(c.http.Jar)
+	plain := serializeCookiesAt(c.http.Jar, c.baseURL)
 	enc, err := helpers.EncryptLocalSecret(plain)
 	if err != nil {
 		return err
