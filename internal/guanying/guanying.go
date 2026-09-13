@@ -43,7 +43,7 @@ const (
 	sessionKey     = "guanying_session"
 	credentialsKey = "guanying_credentials"
 
-	loginURL      = "/auth/login"
+	loginURL      = "/user/login" // 新版站点登录（传统表单流）
 	captchaURL    = "/auth/captcha"
 	userAgentText = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36"
 
