@@ -44,7 +44,6 @@ const (
 
 	loginURL      = "/auth/login"
 	captchaURL    = "/auth/captcha"
-	searchURL     = "/api/resources/search"
 	userAgentText = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36"
 
 	defaultTimeout = 30 * time.Second
@@ -206,50 +205,75 @@ type CaptchaChallenge struct {
 	Height    int    `json:"height"`
 }
 
-// StartLogin 发起登录：服务端生成 attempt_id，如需验证码返回挑战。
+// StartLogin 发起登录（新版站点 /user/login 传统表单流）：
+// POST 表单（username/password/cookietime）→ 服务端种会话 cookie；
+// 成功与否以「首页是否出现退出登录链接」判定（响应本身是 SPA 页面，无 JSON）。
 // upstreamError 为上游返回的错误信息（账号密码错误/IP 限次等）。
 func (c *Client) StartLogin(ctx context.Context, username, password, attemptID string) (captchaRequired bool, challenge *CaptchaChallenge, upstreamError string, err error) {
 	c.refreshEndpoint()
-	form := url.Values{"username": {username}, "password": {password}}
-	if attemptID != "" {
-		form.Set("attempt_id", attemptID)
+	form := url.Values{
+		"username":            {username},
+		"password":            {password},
+		"cookietime":          {"1"},
+		"captcha-submit-info": {attemptID},
 	}
-	body, status, err := c.postForm(ctx, c.baseURL + loginURL, form)
+	body, _, err := c.postForm(ctx, c.baseURL+loginURL, form)
 	if err != nil {
 		return false, nil, "", err
 	}
-	if isHTMLBody(body) {
-		return false, nil, "", upstreamPageError("登录", status)
-	}
-	var resp struct {
-		Success         bool              `json:"success"`
-		Code            string            `json:"code"`
-		Error           string            `json:"error"`
-		CaptchaRequired bool              `json:"captcha_required"`
-		AttemptID       string            `json:"attempt_id"`
-		Captcha         *CaptchaChallenge `json:"captcha"`
-	}
-	if uerr := json.Unmarshal(body, &resp); uerr != nil {
-		return false, nil, "", fmt.Errorf("观影登录响应解析失败（HTTP %d）：%s", status, truncate(body, 200))
-	}
-	if resp.CaptchaRequired {
-		ch := resp.Captcha
-		if ch == nil {
-			ch = &CaptchaChallenge{AttemptID: resp.AttemptID, Type: "click", Width: 350, Height: 200}
+	// 登录请求正常情况下返回 SPA 页面（HTML）；JSON 响应属于旧版/异常路径
+	if !isHTMLBody(body) {
+		var resp struct {
+			Success         bool              `json:"success"`
+			Code            any               `json:"code"`
+			Error           string            `json:"error"`
+			Msg             string            `json:"msg"`
+			CaptchaRequired bool              `json:"captcha_required"`
+			AttemptID       string            `json:"attempt_id"`
+			Captcha         *CaptchaChallenge `json:"captcha"`
 		}
-		if ch.AttemptID == "" {
-			ch.AttemptID = resp.AttemptID
+		if json.Unmarshal(body, &resp) == nil {
+			if resp.CaptchaRequired {
+				ch := resp.Captcha
+				if ch == nil {
+					ch = &CaptchaChallenge{AttemptID: resp.AttemptID, Type: "click", Width: 350, Height: 200}
+				}
+				if ch.AttemptID == "" {
+					ch.AttemptID = resp.AttemptID
+				}
+				return true, ch, "", nil
+			}
+			if !resp.Success {
+				return false, nil, firstNonEmpty(resp.Error, resp.Msg, "账号或密码错误"), nil
+			}
+			if serr := SaveSession(c, username); serr != nil {
+				helpers.AppLogger.Warnf("观影会话保存失败：%v", serr)
+			}
+			return false, nil, "", nil
 		}
-		return true, ch, "", nil
 	}
-	if !resp.Success {
-		return false, nil, firstNonEmpty(resp.Error, resp.Code, "账号或密码错误"), nil
+	// 表单流：以登录态探活判定成功（首页含 /user/logout 链接 = 已登录）
+	if !c.isLoggedIn(ctx) {
+		return false, nil, "账号或密码错误（或站点要求验证码，请稍后重试）", nil
 	}
-	// 登录成功：保存会话
 	if serr := SaveSession(c, username); serr != nil {
 		helpers.AppLogger.Warnf("观影会话保存失败：%v", serr)
 	}
 	return false, nil, "", nil
+}
+
+// isLoggedIn 登录态判定：请求首页，HTML 含退出登录链接即视为已登录
+func (c *Client) isLoggedIn(ctx context.Context) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/", nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("User-Agent", userAgentText)
+	body, _, err := c.do(req)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(body), "/user/logout")
 }
 
 // GetCaptcha 拉取点选式验证码图片
@@ -304,12 +328,21 @@ func (c *Client) VerifyCaptcha(ctx context.Context, attemptID string, points []m
 }
 
 // SearchResources 资源检索（聚合 115/123/光鸭/磁力，由上游返回）
+// SearchResources 资源检索（新版站点契约）：
+// GET /res/search?q=标题 匹配影片（inlist.i=影片ID, d=目录 mv/tv/ac）→
+// GET /res/downurl/{d}/{i} 取资源分组（清晰度标签 + 资源条数）。
+// 新版站点资源直链为二次换取的 hash 引用（downurl 仅返回混淆 hash），暂无法
+// 解出网盘/磁力直链，故命中影片时返回带说明的错误（登录与域名解析已修复）。
 func (c *Client) SearchResources(ctx context.Context, title, mediaType string, tmdbID int64, year string) ([]map[string]any, error) {
 	c.refreshEndpoint()
-	payload, _ := json.Marshal(map[string]any{
-		"title": title, "media_type": mediaType, "tmdb_id": tmdbID, "year": year,
-	})
-	body, status, err := c.postJSON(ctx, c.baseURL+searchURL, payload)
+	u := fmt.Sprintf("%s/res/search?q=%s", c.baseURL, url.QueryEscape(strings.TrimSpace(title)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", userAgentText)
+	body, status, err := c.do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -317,17 +350,49 @@ func (c *Client) SearchResources(ctx context.Context, title, mediaType string, t
 		return nil, upstreamPageError("搜索", status)
 	}
 	var resp struct {
-		Success bool              `json:"success"`
-		Error   string            `json:"error"`
-		Items   []map[string]any  `json:"items"`
+		Inlist map[string]any `json:"inlist"`
 	}
-	if json.Unmarshal(body, &resp) != nil {
+	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("观影搜索响应解析失败：%s", truncate(body, 160))
 	}
-	if !resp.Success {
-		return nil, fmt.Errorf("%s", firstNonEmpty(resp.Error, "观影搜索失败"))
+	if len(resp.Inlist) == 0 {
+		return nil, fmt.Errorf("观影未收录该片：%s", title)
 	}
-	return resp.Items, nil
+	ids, _ := resp.Inlist["i"].([]any)
+	dirs, _ := resp.Inlist["d"].([]any)
+	if len(ids) == 0 || len(dirs) == 0 {
+		return nil, fmt.Errorf("观影已收录《%s》但影片标识缺失", title)
+	}
+	filmID, _ := ids[0].(string)
+	dir, _ := dirs[0].(string)
+	// 取资源分组（downurl 契约：code=200, downlist.type.a=清晰度标签, downlist.list.m=资源 hash 列表）
+	du := fmt.Sprintf("%s/res/downurl/%s/%s", c.baseURL, dir, filmID)
+	req2, err := http.NewRequestWithContext(ctx, http.MethodGet, du, nil)
+	if err != nil {
+		return nil, err
+	}
+	req2.Header.Set("Accept", "application/json")
+	req2.Header.Set("User-Agent", userAgentText)
+	body2, _, err := c.do(req2)
+	groupCount, resCount := 0, 0
+	if err == nil && !isHTMLBody(body2) {
+		var dl struct {
+			Code     int `json:"code"`
+			Downlist struct {
+				Type struct {
+					A []string `json:"a"`
+				} `json:"type"`
+				List struct {
+					M []string `json:"m"`
+				} `json:"list"`
+			} `json:"downlist"`
+		}
+		if json.Unmarshal(body2, &dl) == nil {
+			groupCount = len(dl.Downlist.Type.A)
+			resCount = len(dl.Downlist.List.M)
+		}
+	}
+	return nil, fmt.Errorf("观影新版站点已匹配《%s》（%d 个清晰度分组 / %d 条资源），但资源直链需二次换取暂未适配，关联资源暂不可用", title, groupCount, resCount)
 }
 
 // --- 通用请求 ---
