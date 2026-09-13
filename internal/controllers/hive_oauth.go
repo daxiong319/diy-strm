@@ -741,6 +741,12 @@ func RunHiveDailyCheckins() {
 
 // execScheduledCheckin 定时签到统一执行点：加载最新账号 → 未授权/已签直接跳过 → 执行 → 失败阶梯重试（S4）。
 func execScheduledCheckin(accountID uint, mode hdhive.CheckinMode, trigger, today string) {
+	// RE0 已迁移 tgto123 反代：授权与会话由 tgto123 侧维护（token 自动续期），
+	// 本项目直连 re0.me 的旧 OAuth 通道已失效，跳过定时签到避免重试风暴。
+	if discovery.Tgto123ProxyEnabled() {
+		helpers.AppLogger.Infof("RE0定时签到：已迁移 tgto123 反代（签到由 tgto123 侧维护），跳过直连签到")
+		return
+	}
 	acc, err := models.GetHiveAccountByID(accountID)
 	if err != nil {
 		return

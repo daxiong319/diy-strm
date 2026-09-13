@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"diy-strm/internal/hdhive"
+	"diy-strm/internal/models"
 )
 
 // ---------------------------------------------------------------------------
@@ -21,6 +22,13 @@ import (
 // 登录：POST /api/login（账号密码直登，无验证码），Flask session cookie 维持会话。
 // ---------------------------------------------------------------------------
 
+
+// Tgto123ProxyEnabled RE0 是否走 tgto123 反代（已配置 URL 时为 true）。
+// 反代模式下 RE0 授权/会话由 tgto123 侧维护，本项目直连 re0.me 的旧 OAuth
+// 账号已失效，定时签到等直连操作应跳过。
+func Tgto123ProxyEnabled() bool {
+	return newTgto123FeedClient() != nil
+}
 
 // Tgto123FeedClient tgto123 反代 Feed 客户端（hdhive.FeedClient 实现）
 type Tgto123FeedClient struct {
@@ -352,6 +360,7 @@ type tgto123ResourceItem struct {
 }
 
 // Tgto123SearchResources 通过 tgto123 反代搜索 RE0 资源（替代 HiveQueryResourcesWithFailover）
+// 注意：tgto123 要求 title 非空（TITLE_REQUIRED），仅有 tmdb_id 时先经 TMDB 反查标题。
 func Tgto123SearchResources(ctx context.Context, title string, tmdbID int64, mediaType, year string) ([]hdhive.Resource, error) {
 	client := newTgto123FeedClient()
 	if client == nil {
@@ -359,6 +368,12 @@ func Tgto123SearchResources(ctx context.Context, title string, tmdbID int64, med
 	}
 	if mediaType != "tv" {
 		mediaType = "movie"
+	}
+	if strings.TrimSpace(title) == "" && tmdbID > 0 {
+		title = tgto123TitleFromTMDB(ctx, tmdbID, mediaType)
+	}
+	if strings.TrimSpace(title) == "" {
+		return nil, fmt.Errorf("RE0 资源搜索需要影片标题（TMDB 反查失败，请携带标题重试）")
 	}
 	payload, _ := json.Marshal(map[string]any{
 		"title":      title,
@@ -388,7 +403,10 @@ func Tgto123SearchResources(ctx context.Context, title string, tmdbID int64, med
 		return nil, fmt.Errorf("tgto123 会话失效，请重新填写会话")
 	}
 	var out struct {
-		Success bool `json:"success"`
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+		Error   string `json:"error"` // tgto123 错误体用 error 字段（如 TITLE_REQUIRED）
+		Code    string `json:"code"`
 		Data    struct {
 			Items []tgto123ResourceItem `json:"items"`
 			Errors []struct {
@@ -396,13 +414,12 @@ func Tgto123SearchResources(ctx context.Context, title string, tmdbID int64, med
 				Error  string `json:"error"`
 			} `json:"errors"`
 		} `json:"data"`
-		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("解析 tgto123 资源响应失败：%v", err)
 	}
 	if !out.Success {
-		return nil, fmt.Errorf("%s", firstNonEmptyStr(out.Message, "tgto123 资源搜索失败"))
+		return nil, fmt.Errorf("%s", firstNonEmptyStr(out.Message, out.Error, "tgto123 资源搜索失败"))
 	}
 	resources := make([]hdhive.Resource, 0, len(out.Data.Items))
 	for _, it := range out.Data.Items {
@@ -566,6 +583,26 @@ func Tgto123RE0Status(ctx context.Context) (map[string]any, error) {
 		return nil, fmt.Errorf("解析 tgto123 RE0 状态失败：%v", err)
 	}
 	return out, nil
+}
+
+// tgto123TitleFromTMDB 仅有 tmdb_id 时反查标题（tgto123 搜索要求 title 非空）
+func tgto123TitleFromTMDB(ctx context.Context, tmdbID int64, mediaType string) string {
+	_ = ctx
+	client := models.GlobalScrapeSettings.GetTmdbClient()
+	if client == nil || tmdbID <= 0 {
+		return ""
+	}
+	language := models.GlobalScrapeSettings.GetTmdbLanguage()
+	if mediaType == "tv" {
+		if d, err := client.GetTvDetail(tmdbID, language); err == nil && d != nil {
+			return strings.TrimSpace(d.Name)
+		}
+		return ""
+	}
+	if d, err := client.GetMovieDetail(tmdbID, language); err == nil && d != nil {
+		return strings.TrimSpace(d.Title)
+	}
+	return ""
 }
 
 // tagVals 从 "标签:值" 规格标签中提取指定标签值

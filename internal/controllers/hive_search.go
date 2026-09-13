@@ -409,7 +409,7 @@ func HiveManualSearchAPI(c *gin.Context) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			hiveManualSearchHDHive(ctx, c, req.MediaType, req.TMDBID)
+			hiveManualSearchHDHive(ctx, c, req.Keyword, req.MediaType, req.TMDBID)
 		}()
 	}
 	if telegramOn {
@@ -439,14 +439,14 @@ func HiveManualSearchAPI(c *gin.Context) {
 	}}})
 }
 
-// hiveManualSearchHDHive RE0引擎：按 TMDB 资源查询（四通道负载均衡）
-func hiveManualSearchHDHive(ctx context.Context, c *gin.Context, mediaType string, tmdbID int64) {
+// hiveManualSearchHDHive RE0引擎：经 tgto123 反代按 TMDB 资源查询
+func hiveManualSearchHDHive(ctx context.Context, c *gin.Context, keyword, mediaType string, tmdbID int64) {
 	writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "hdhive", Status: "searching"})
 	if tmdbID <= 0 {
 		writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "hdhive", Status: "error", Message: "缺少 TMDB ID"})
 		return
 	}
-	resources, err := discovery.Tgto123SearchResources(ctx, "", tmdbID, mediaType, "")
+	resources, err := discovery.Tgto123SearchResources(ctx, keyword, tmdbID, mediaType, "")
 	if err != nil {
 		writeHiveSSE(c, hiveSearchSSE{Type: "progress", Engine: "hdhive", Status: "error", Message: err.Error()})
 		return
