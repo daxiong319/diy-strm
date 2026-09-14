@@ -287,10 +287,14 @@ func searchOneTGChannel(ctx context.Context, provider, channel string, terms []s
 				continue
 			}
 			seenPost[post.PostID] = true
-			// 标题复核：TG 站内搜索对中文按 token 模糊匹配，会命中含相同词素
-			// （如"信号"）的其他影片帖；要求帖子正文归一化后确实包含检索词才采信
-			if nt := normalizeTitleTerm(term); nt != "" && !strings.Contains(normalizeTitleTerm(post.Text), nt) {
-				continue
+			// 标题复核：TG 站内搜索对中文按 token 模糊匹配会命中无关片
+			// （如《异形》简介含"求救信号"）；资源频道帖子以片名开头，
+			// 要求检索词出现在帖首（归一化前 60 字符）才采信
+			if nt := normalizeTitleTerm(term); nt != "" {
+				head := normalizeTitleTerm(string([]rune(post.Text)[:minInt(len([]rune(post.Text)), 60)]))
+				if !strings.Contains(head, nt) {
+					continue
+				}
 			}
 			// 年份过滤（帖子含其它年份且不含目标年份时跳过）
 			if year != "" && strings.Contains(post.Text, year) == false && containsOtherYear(post.Text, year) {
@@ -526,4 +530,11 @@ func normalizeTitleTerm(text string) string {
 		}
 	}
 	return b.String()
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
