@@ -346,12 +346,19 @@ func (c *Client) VerifyCaptcha(ctx context.Context, attemptID string, points []m
 // SearchResources 资源检索（聚合 115/123/光鸭/磁力，由上游返回）
 // SearchResources 资源检索（新版站点契约）：
 // GET /res/search?q=标题 匹配影片（inlist.i=影片ID, d=目录 mv/tv/ac）→
-// GET /res/downurl/{d}/{i} 取资源分组（清晰度标签 + 资源条数）。
-// 新版站点资源直链为二次换取的 hash 引用（downurl 仅返回混淆 hash），暂无法
-// 解出网盘/磁力直链，故命中影片时返回带说明的错误（登录与域名解析已修复）。
+// GET /res/downurl/{d}/{i} 取资源列表。响应含两段：
+//
+//	panlist：网盘分享（url/name/type/p 提取码/time/gid，url 空=待审）——直链明文；
+//	downlist：磁力/种子（m=infohash, u/t/s/e）。
+//
+// 映射为统一资源条目（provider=网盘类型或 magnet）。
 func (c *Client) SearchResources(ctx context.Context, title, mediaType string, tmdbID int64, year string) ([]map[string]any, error) {
 	c.refreshEndpoint()
-	u := fmt.Sprintf("%s/res/search?q=%s", c.baseURL, url.QueryEscape(strings.TrimSpace(title)))
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return nil, fmt.Errorf("观影检索需要标题")
+	}
+	u := fmt.Sprintf("%s/res/search?q=%s", c.baseURL, url.QueryEscape(title))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
@@ -365,23 +372,35 @@ func (c *Client) SearchResources(ctx context.Context, title, mediaType string, t
 	if isHTMLBody(body) {
 		return nil, upstreamPageError("搜索", status)
 	}
-	var resp struct {
+	var sr struct {
 		Inlist map[string]any `json:"inlist"`
 	}
-	if err := json.Unmarshal(body, &resp); err != nil {
+	if err := json.Unmarshal(body, &sr); err != nil {
 		return nil, fmt.Errorf("观影搜索响应解析失败：%s", truncate(body, 160))
 	}
-	if len(resp.Inlist) == 0 {
+	if len(sr.Inlist) == 0 {
 		return nil, fmt.Errorf("观影未收录该片：%s", title)
 	}
-	ids, _ := resp.Inlist["i"].([]any)
-	dirs, _ := resp.Inlist["d"].([]any)
+	// 标题校验：/res/search 为模糊匹配，标题完全无关时按未收录处理
+	hay := ""
+	for _, k := range []string{"title", "name", "ename"} {
+		if arr, ok := sr.Inlist[k].([]any); ok && len(arr) > 0 {
+			if v, ok := arr[0].(string); ok {
+				hay += strings.ToLower(v) + " "
+			}
+		}
+	}
+	if hay != "" && !strings.Contains(hay, strings.ToLower(title)) {
+		return nil, fmt.Errorf("观影未收录精确匹配：《%s》", title)
+	}
+	ids, _ := sr.Inlist["i"].([]any)
+	dirs, _ := sr.Inlist["d"].([]any)
 	if len(ids) == 0 || len(dirs) == 0 {
 		return nil, fmt.Errorf("观影已收录《%s》但影片标识缺失", title)
 	}
 	filmID, _ := ids[0].(string)
 	dir, _ := dirs[0].(string)
-	// 取资源分组（downurl 契约：code=200, downlist.type.a=清晰度标签, downlist.list.m=资源 hash 列表）
+
 	du := fmt.Sprintf("%s/res/downurl/%s/%s", c.baseURL, dir, filmID)
 	req2, err := http.NewRequestWithContext(ctx, http.MethodGet, du, nil)
 	if err != nil {
@@ -389,26 +408,137 @@ func (c *Client) SearchResources(ctx context.Context, title, mediaType string, t
 	}
 	req2.Header.Set("Accept", "application/json")
 	req2.Header.Set("User-Agent", userAgentText)
-	body2, _, err := c.do(req2)
-	groupCount, resCount := 0, 0
-	if err == nil && !isHTMLBody(body2) {
-		var dl struct {
-			Code     int `json:"code"`
-			Downlist struct {
-				Type struct {
-					A []string `json:"a"`
-				} `json:"type"`
-				List struct {
-					M []string `json:"m"`
-				} `json:"list"`
-			} `json:"downlist"`
+	body2, status2, err := c.do(req2)
+	if err != nil {
+		return nil, err
+	}
+	if isHTMLBody(body2) {
+		return nil, upstreamPageError("资源获取", status2)
+	}
+	var dl struct {
+		Code     int `json:"code"`
+		Downlist struct {
+			List struct {
+				U []string `json:"u"`
+				M []string `json:"m"`
+				T []string `json:"t"`
+				S []any    `json:"s"`
+			} `json:"list"`
+		} `json:"downlist"`
+		Panlist struct {
+			ID   []any    `json:"id"`
+			Name []string `json:"name"`
+			URL  []string `json:"url"`
+			Type []int    `json:"type"`
+			P    []string `json:"p"`
+			Time []string `json:"time"`
+			GID  []int    `json:"gid"`
+		} `json:"panlist"`
+		Msg string `json:"msg"`
+	}
+	if err := json.Unmarshal(body2, &dl); err != nil {
+		return nil, fmt.Errorf("观影资源响应解析失败：%s", truncate(body2, 160))
+	}
+	if dl.Code != 0 && dl.Code != 200 && dl.Msg != "" {
+		return nil, fmt.Errorf("观影资源获取失败：%s", dl.Msg)
+	}
+	items := make([]map[string]any, 0, len(dl.Panlist.URL)+len(dl.Downlist.List.M))
+	// 网盘分享（直链明文）
+	for n, link := range dl.Panlist.URL {
+		if strings.TrimSpace(link) == "" {
+			continue // 待审/无链接
 		}
-		if json.Unmarshal(body2, &dl) == nil {
-			groupCount = len(dl.Downlist.Type.A)
-			resCount = len(dl.Downlist.List.M)
+		if n < len(dl.Panlist.GID) && dl.Panlist.GID[n] == 6 {
+			continue // 已失效（站点划线标记）
+		}
+		name := ""
+		if n < len(dl.Panlist.Name) {
+			name = dl.Panlist.Name[n]
+		}
+		panType := panTypeFromLink(link)
+		if panType == "" {
+			panType = "guanying"
+		}
+		remark := ""
+		if n < len(dl.Panlist.Time) {
+			remark = dl.Panlist.Time[n]
+		}
+		if n < len(dl.Panlist.P) && strings.TrimSpace(dl.Panlist.P[n]) != "" {
+			remark = strings.TrimSpace(remark + " 提取码 " + dl.Panlist.P[n])
+		}
+		items = append(items, map[string]any{
+			"title":     name,
+			"share_url": link,
+			"provider":  panType,
+			"pan_type":  panType,
+			"slug":      fmt.Sprintf("pan:%v", anyAt(dl.Panlist.ID, n)),
+			"remark":    strings.TrimSpace(remark),
+		})
+	}
+	// 磁力（downlist.list.m=infohash）
+	for n, ih := range dl.Downlist.List.M {
+		if strings.TrimSpace(ih) == "" {
+			continue
+		}
+		name := sliceAt(dl.Downlist.List.T, n)
+		items = append(items, map[string]any{
+			"title":     name,
+			"share_url": "magnet:?xt=urn:btih:" + ih,
+			"provider":  "magnet",
+			"pan_type":  "magnet",
+			"slug":      sliceAt(dl.Downlist.List.U, n),
+			"remark":    "BT 磁力",
+		})
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("观影暂无《%s》的有效资源", title)
+	}
+	return items, nil
+}
+
+func anyAt(list []any, n int) string {
+	if n >= 0 && n < len(list) {
+		if v, ok := list[n].(string); ok {
+			return v
+		}
+		if list[n] != nil {
+			return fmt.Sprintf("%v", list[n])
 		}
 	}
-	return nil, fmt.Errorf("观影新版站点已匹配《%s》（%d 个清晰度分组 / %d 条资源），但资源直链需二次换取暂未适配，关联资源暂不可用", title, groupCount, resCount)
+	return ""
+}
+
+func sliceAt(list []string, n int) string {
+	if n >= 0 && n < len(list) {
+		return list[n]
+	}
+	return ""
+}
+
+// panTypeFromLink 从网盘链接推断类型（provider 标签用）
+func panTypeFromLink(link string) string {
+	l := strings.ToLower(link)
+	switch {
+	case strings.Contains(l, "115.com"), strings.Contains(l, "115vod"), strings.Contains(l, "anxia.com"):
+		return "115"
+	case strings.Contains(l, "123pan"), strings.Contains(l, "123684.com"), strings.Contains(l, "123965.com"), strings.Contains(l, "123"):
+		return "123"
+	case strings.Contains(l, "quark.cn"):
+		return "quark"
+	case strings.Contains(l, "alipan.com"), strings.Contains(l, "aliyundrive.com"):
+		return "aliyun"
+	case strings.Contains(l, "pan.xunlei.com"), strings.Contains(l, "xunlei.com"):
+		return "xunlei"
+	case strings.Contains(l, "cloud.189.cn"):
+		return "tianyi"
+	case strings.Contains(l, "caiyun.139.com"), strings.Contains(l, "caiyun.com"):
+		return "mobile"
+	case strings.Contains(l, "pan.baidu.com"):
+		return "baidu"
+	case strings.HasPrefix(l, "magnet:"):
+		return "magnet"
+	}
+	return ""
 }
 
 // --- 通用请求 ---
