@@ -278,9 +278,42 @@ func HiveCheckinAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: msg, Data: gin.H{"success": true, "account_id": acc.ID}})
 }
 
-// RunHiveCheckin 执行单个账号签到并落库（供 API 与定时任务共用；历史触发来源按 manual 记账）
+// RunHiveCheckin 执行单个账号签到并落库（供 API 与定时任务共用；历史触发来源按 manual 记账）。
+// 主账号通道故障时自动回退尝试其它已授权账号（如 symedia 中转通道）。
 func RunHiveCheckin(ctx context.Context, acc *models.HiveOAuthAccount, mode hdhive.CheckinMode) (bool, string) {
-	return RunHiveCheckinWithTrigger(ctx, acc, mode, "manual")
+	return performHiveCheckinWithFallback(ctx, acc, mode, "manual")
+}
+
+// checkinFallbackRetryable 可通过切换通道挽回的签到失败（token 失效/未授权/上游返回异常页）
+func checkinFallbackRetryable(msg string) bool {
+	for _, k := range []string{"未授权", "刷新", "解析RE0", "invalid character", "已撤销", "REAUTH", "签到请求失败", "签到失败", "access token"} {
+		if strings.Contains(msg, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// performHiveCheckinWithFallback 执行签到；指定账号失败且属通道故障类错误时，
+// 依次尝试表内其它启用且已授权的账号（记录仍按实际签到成功的账号落库）。
+func performHiveCheckinWithFallback(ctx context.Context, acc *models.HiveOAuthAccount, mode hdhive.CheckinMode, trigger string) (bool, string) {
+	ok, msg := RunHiveCheckinWithTrigger(ctx, acc, mode, trigger)
+	if ok || !checkinFallbackRetryable(msg) {
+		return ok, msg
+	}
+	subs, _ := models.ListHiveSubAccounts()
+	for i := range subs {
+		cand := &subs[i]
+		if cand.ID == acc.ID || !cand.Enabled || !cand.Authorized {
+			continue
+		}
+		ok2, msg2 := RunHiveCheckinWithTrigger(ctx, cand, mode, trigger+"-fallback")
+		if ok2 {
+			helpers.AppLogger.Infof("RE0签到通道回退成功：%s → %s：%s", acc.Label, cand.Label, msg2)
+			return true, msg2 + "（经 " + cand.Label + " 通道）"
+		}
+	}
+	return ok, msg
 }
 
 // RunHiveCheckinWithTrigger 执行单个账号签到并落库 + 写入签到历史（S3）。
@@ -741,12 +774,8 @@ func RunHiveDailyCheckins() {
 
 // execScheduledCheckin 定时签到统一执行点：加载最新账号 → 未授权/已签直接跳过 → 执行 → 失败阶梯重试（S4）。
 func execScheduledCheckin(accountID uint, mode hdhive.CheckinMode, trigger, today string) {
-	// RE0 已迁移 tgto123 反代：授权与会话由 tgto123 侧维护（token 自动续期），
-	// 本项目直连 re0.me 的旧 OAuth 通道已失效，跳过定时签到避免重试风暴。
-	if discovery.Tgto123ProxyEnabled() {
-		helpers.AppLogger.Infof("RE0定时签到：已迁移 tgto123 反代（签到由 tgto123 侧维护），跳过直连签到")
-		return
-	}
+	// 签到走项目自持的官方 OpenAPI 通道（re0.me X-API-Key + Bearer token，过期自动刷新）；
+	// 账号无有效官方 token 时由 RunHiveCheckinWithTrigger 给出「未授权」提示。
 	acc, err := models.GetHiveAccountByID(accountID)
 	if err != nil {
 		return
@@ -762,7 +791,7 @@ func execScheduledCheckin(accountID uint, mode hdhive.CheckinMode, trigger, toda
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	ok, msg := RunHiveCheckinWithTrigger(ctx, acc, mode, trigger)
+	ok, msg := performHiveCheckinWithFallback(ctx, acc, mode, trigger)
 	cancel()
 	if ok {
 		helpers.AppLogger.Infof("RE0定时签到（%s）：%s 签到成功（%s）", trigger, acc.Label, msg)

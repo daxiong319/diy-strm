@@ -415,78 +415,85 @@ func (c *Client) SearchResources(ctx context.Context, title, mediaType string, t
 	if isHTMLBody(body2) {
 		return nil, upstreamPageError("资源获取", status2)
 	}
-	var dl struct {
-		Code     int `json:"code"`
-		Downlist struct {
-			List struct {
-				U []string `json:"u"`
-				M []string `json:"m"`
-				T []string `json:"t"`
-				S []any    `json:"s"`
-			} `json:"list"`
-		} `json:"downlist"`
-		Panlist struct {
-			ID   []any    `json:"id"`
-			Name []string `json:"name"`
-			URL  []string `json:"url"`
-			Type []int    `json:"type"`
-			P    []string `json:"p"`
-			Time []string `json:"time"`
-			GID  []int    `json:"gid"`
-		} `json:"panlist"`
-		Msg string `json:"msg"`
-	}
+	dl := map[string]any{}
 	if err := json.Unmarshal(body2, &dl); err != nil {
 		return nil, fmt.Errorf("观影资源响应解析失败：%s", truncate(body2, 160))
 	}
-	if dl.Code != 0 && dl.Code != 200 && dl.Msg != "" {
-		return nil, fmt.Errorf("观影资源获取失败：%s", dl.Msg)
+	if code := jsonNum(dl["code"]); code != 0 && code != 200 {
+		if msg, _ := dl["msg"].(string); msg != "" {
+			return nil, fmt.Errorf("观影资源获取失败：%s", msg)
+		}
 	}
-	items := make([]map[string]any, 0, len(dl.Panlist.URL)+len(dl.Downlist.List.M))
+	// panlist 与 downlist 分别宽容解析：任一结构异常不影响另一段
+	var panlist struct {
+		ID   []any    `json:"id"`
+		Name []string `json:"name"`
+		URL  []string `json:"url"`
+		Type []any    `json:"type"`
+		P    []string `json:"p"`
+		Time []string `json:"time"`
+		GID  []any    `json:"gid"`
+	}
+	if raw, err := json.Marshal(dl["panlist"]); err == nil && len(raw) > 0 && string(raw) != "null" {
+		_ = json.Unmarshal(raw, &panlist)
+	}
+	var downlist struct {
+		List struct {
+			U []any `json:"u"`
+			M []any `json:"m"`
+			T []any `json:"t"`
+			K []any `json:"k"`
+		} `json:"list"`
+	}
+	if raw, err := json.Marshal(dl["downlist"]); err == nil && len(raw) > 0 && string(raw) != "null" {
+		_ = json.Unmarshal(raw, &downlist)
+	}
+	items := make([]map[string]any, 0, len(panlist.URL)+len(downlist.List.M))
 	// 网盘分享（直链明文）
-	for n, link := range dl.Panlist.URL {
+	for n, link := range panlist.URL {
 		if strings.TrimSpace(link) == "" {
 			continue // 待审/无链接
 		}
-		if n < len(dl.Panlist.GID) && dl.Panlist.GID[n] == 6 {
+		if n < len(panlist.GID) && jsonNum(panlist.GID[n]) == 6 {
 			continue // 已失效（站点划线标记）
 		}
 		name := ""
-		if n < len(dl.Panlist.Name) {
-			name = dl.Panlist.Name[n]
+		if n < len(panlist.Name) {
+			name = panlist.Name[n]
 		}
 		panType := panTypeFromLink(link)
 		if panType == "" {
 			panType = "guanying"
 		}
 		remark := ""
-		if n < len(dl.Panlist.Time) {
-			remark = dl.Panlist.Time[n]
+		if n < len(panlist.Time) {
+			remark = panlist.Time[n]
 		}
-		if n < len(dl.Panlist.P) && strings.TrimSpace(dl.Panlist.P[n]) != "" {
-			remark = strings.TrimSpace(remark + " 提取码 " + dl.Panlist.P[n])
+		if n < len(panlist.P) && strings.TrimSpace(panlist.P[n]) != "" {
+			remark = strings.TrimSpace(remark + " 提取码 " + panlist.P[n])
 		}
 		items = append(items, map[string]any{
 			"title":     name,
 			"share_url": link,
 			"provider":  panType,
 			"pan_type":  panType,
-			"slug":      fmt.Sprintf("pan:%v", anyAt(dl.Panlist.ID, n)),
+			"slug":      fmt.Sprintf("pan:%v", anyAt(panlist.ID, n)),
 			"remark":    strings.TrimSpace(remark),
 		})
 	}
 	// 磁力（downlist.list.m=infohash）
-	for n, ih := range dl.Downlist.List.M {
+	for n := range downlist.List.M {
+		ih := anyAt(downlist.List.M, n)
 		if strings.TrimSpace(ih) == "" {
 			continue
 		}
-		name := sliceAt(dl.Downlist.List.T, n)
+		name := anyAt(downlist.List.T, n)
 		items = append(items, map[string]any{
 			"title":     name,
 			"share_url": "magnet:?xt=urn:btih:" + ih,
 			"provider":  "magnet",
 			"pan_type":  "magnet",
-			"slug":      sliceAt(dl.Downlist.List.U, n),
+			"slug":      anyAt(downlist.List.U, n),
 			"remark":    "BT 磁力",
 		})
 	}
@@ -494,6 +501,21 @@ func (c *Client) SearchResources(ctx context.Context, title, mediaType string, t
 		return nil, fmt.Errorf("观影暂无《%s》的有效资源", title)
 	}
 	return items, nil
+}
+
+// jsonNum 宽容数字提取（json 解析后为 float64/string/nil）
+func jsonNum(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case string:
+		var i int
+		_, _ = fmt.Sscanf(strings.TrimSpace(n), "%d", &i)
+		return i
+	}
+	return 0
 }
 
 func anyAt(list []any, n int) string {

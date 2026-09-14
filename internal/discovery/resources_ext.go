@@ -183,12 +183,12 @@ func tgchannelNormalizeChannel(s string) string {
 
 // TGResource 频道资源匹配结果
 type TGResource struct {
-	Provider   string             `json:"provider"` // 网盘组（123/guangya/pan139）
-	Channel    string             `json:"channel"`
-	PostID     string             `json:"post_id"`
-	MessageURL string             `json:"message_url"`
-	PostText   string             `json:"post_text"`
-	PostTime   string             `json:"post_time"`
+	Provider   string              `json:"provider"` // 网盘组（123/guangya/pan139）
+	Channel    string              `json:"channel"`
+	PostID     string              `json:"post_id"`
+	MessageURL string              `json:"message_url"`
+	PostText   string              `json:"post_text"`
+	PostTime   string              `json:"post_time"`
 	Link       tgchannel.ShareLink `json:"-"`
 }
 
@@ -218,7 +218,7 @@ func SearchTGChannelResources(ctx context.Context, title string, aliases []strin
 	cacheKey := tgSearchCacheKey(channelsByProvider, terms, year)
 	if raw := externalCacheGet(cacheKey); raw != "" {
 		var cached struct {
-			Items  []TGResource   `json:"items"`
+			Items  []TGResource    `json:"items"`
 			Errors []TGSearchError `json:"errors"`
 		}
 		if jsonUnmarshal([]byte(raw), &cached) == nil {
@@ -287,6 +287,11 @@ func searchOneTGChannel(ctx context.Context, provider, channel string, terms []s
 				continue
 			}
 			seenPost[post.PostID] = true
+			// 标题复核：TG 站内搜索对中文按 token 模糊匹配，会命中含相同词素
+			// （如"信号"）的其他影片帖；要求帖子正文归一化后确实包含检索词才采信
+			if nt := normalizeTitleTerm(term); nt != "" && !strings.Contains(normalizeTitleTerm(post.Text), nt) {
+				continue
+			}
 			// 年份过滤（帖子含其它年份且不含目标年份时跳过）
 			if year != "" && strings.Contains(post.Text, year) == false && containsOtherYear(post.Text, year) {
 				continue
@@ -508,3 +513,17 @@ func sha1Sum(data []byte) []byte {
 
 // 资源搜索缓存 TTL（对齐参考实现 5 分钟会话缓存语义）
 const resourceSearchCacheTTL = 5 * time.Minute
+
+// normalizeTitleTerm 标题归一化：小写并仅保留字母/数字/CJK 字符（去空格、标点、emoji、全角符号）
+func normalizeTitleTerm(text string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(text) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r >= 0x4e00 && r <= 0x9fff: // CJK 统一表意文字
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}

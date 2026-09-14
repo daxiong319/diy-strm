@@ -78,8 +78,24 @@ func HiveClientForAccount(acc *HiveOAuthAccount) hdhive.ChannelClient {
 		}
 		return client
 	}
-	// 直连通道 备用通道：注入 AccessToken（优先）或 InstallID 作为 Feed 授权标识，
-	// 否则 HDHive 对资源查询返回误导性的 "Premium membership required"。
+	// 直连通道 备用通道：账号已持有官方 OpenAPI JWT（re0.me access token）时走 OfficialClient
+	// （X-API-Key + Bearer，过期自动 refresh 并持久化）——签到等写操作只能走这条官方通道；
+	// 否则退回旧 OAuthClient。
+	if strings.HasPrefix(strings.TrimSpace(acc.AccessToken), "eyJ") {
+		client := hdhive.NewOfficialClient(acc.AccessToken, acc.RefreshToken, tokenExpiresOrZero(acc))
+		client.OnTokenRefresh = func(accessToken, refreshToken string, expiresAt time.Time) error {
+			acc.AccessToken = accessToken
+			acc.RefreshToken = refreshToken
+			acc.TokenExpiresAt = &expiresAt
+			if err := SaveHiveAccount(acc); err != nil {
+				helpers.AppLogger.Errorf("保存官方通道刷新 Token 失败：%v", err)
+				return err
+			}
+			helpers.AppLogger.Infof("官方通道 Access Token 已刷新并持久化（过期时间 %s）", expiresAt.Format("2006-01-02 15:04:05"))
+			return nil
+		}
+		return client
+	}
 	oc := hdhive.NewOAuthClient(acc.InstallID)
 	oc.AccessToken = acc.AccessToken
 	return oc

@@ -366,6 +366,41 @@
       </div>
     </section>
 
+    <!-- 区块：签到记录（每日积分明细） -->
+    <section class="mv-sec">
+      <div class="mv-sec-head">
+        <h3 class="mv-sec-title">签到记录</h3>
+        <p class="mv-sec-desc">RE0 账号每日签到明细：获得积分、签到后余额与连续签到天数</p>
+        <el-button size="small" :loading="checkinHistoryLoading" @click="loadCheckinHistory">刷新</el-button>
+      </div>
+      <div class="mv-sec-body">
+        <el-table :data="checkinHistory" size="small" empty-text="暂无签到记录" style="width: 100%">
+          <el-table-column label="时间" width="170">
+            <template #default="s">{{ fmtCheckinTime(s.row.checkin_at) }}</template>
+          </el-table-column>
+          <el-table-column prop="label" label="账号" width="110" show-overflow-tooltip />
+          <el-table-column label="结果" width="80">
+            <template #default="s">
+              <el-tag size="small" :type="s.row.ok ? 'success' : 'danger'" effect="light">{{ s.row.ok ? '成功' : '失败' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="获得积分" width="90">
+            <template #default="s">
+              <span v-if="s.row.points !== null && s.row.points !== undefined" :class="(s.row.points ?? 0) >= 0 ? 'mv-pts-plus' : 'mv-pts-minus'">{{ (s.row.points ?? 0) >= 0 ? '+' : '' }}{{ s.row.points }}</span>
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="余额" width="90">
+            <template #default="s">{{ s.row.balance ?? '—' }}</template>
+          </el-table-column>
+          <el-table-column label="连签" width="70">
+            <template #default="s">{{ s.row.streak ? s.row.streak + ' 天' : '—' }}</template>
+          </el-table-column>
+          <el-table-column prop="message" label="说明" min-width="220" show-overflow-tooltip />
+        </el-table>
+      </div>
+    </section>
+
     <!-- 区块：订阅默认参数模板（U1） -->
     <section class="mv-sec">
       <div class="mv-sec-head">
@@ -421,6 +456,22 @@ import { useHttpClient } from '@/http/client'
 
 const http = useHttpClient()
 const router = useRouter()
+
+// ---- 签到记录（每日积分明细） ----
+const checkinHistory = ref<any[]>([])
+const checkinHistoryLoading = ref(false)
+const loadCheckinHistory = async () => {
+  checkinHistoryLoading.value = true
+  try {
+    const resp = await http.get('/api/cloud/hive/checkin/records', { params: { limit: 60 } })
+    if (resp.data?.code === 200) checkinHistory.value = resp.data.data || []
+  } catch {
+    /* 静默：区块加载失败不打扰 */
+  } finally {
+    checkinHistoryLoading.value = false
+  }
+}
+const fmtCheckinTime = (v: string) => (v ? new Date(v).toLocaleString('zh-CN', { hour12: false }) : '—')
 
 const form = reactive({
   hive_enabled: true,
@@ -888,6 +939,7 @@ onMounted(async () => {
   load()
   loadChannels()
   loadAuth()
+  loadCheckinHistory()
   // 频道摘要
   try {
     const resp = await http.get('/api/cloud/channels', { params: { source_type: 'hdhive' } })
@@ -1049,4 +1101,7 @@ onMounted(async () => {
   display: flex;
   gap: 6px;
 }
+
+.mv-pts-plus { color: #2e7d32; font-weight: 600; }
+.mv-pts-minus { color: #c62828; font-weight: 600; }
 </style>

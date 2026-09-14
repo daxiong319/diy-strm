@@ -87,6 +87,13 @@ func checkOneOnce(account *models.Account) (bool, string) {
 		}
 	case models.SourceTypePan139:
 		if _, err := account.GetPan139Client().GetFiles(ctx, "root"); err != nil {
+			// 并发令牌轮转误报：另一调用点刷新后旧 token 已被服务端作废（4006），
+			// DB 中已是新 token——重读最新凭据复核一次，避免把有效账号标成失效
+			if refreshed, rerr := models.GetAccountById(account.ID); rerr == nil && refreshed != nil && refreshed.Token != "" && refreshed.Token != account.Token {
+				if _, err2 := refreshed.GetPan139Client().GetFiles(ctx, "root"); err2 == nil {
+					return true, ""
+				}
+			}
 			return false, err.Error()
 		}
 	case models.SourceTypeGuangYaPan:
