@@ -220,6 +220,24 @@ OAuth 回调参数收集：
 
 后端返回的 `upload_phase`、`upload_result` 和 `source_cleanup_status` 保持机器值，前端在这里统一映射为用户可读文案；例如上传状态 `5` 对应的 `remote_completed_pending_finalize` 显示为“等待完成处理”，状态 `6` 对应的 `remote_completed_finalizing` 显示为“正在完成处理”。不要把展示文案回写到接口字段或数据库字段。
 
+## tmdbSearchUtils.ts
+
+TMDB 影视搜索辅助。云盘频道订阅、影巢搜索 / 订阅等页面都通过 `/scrape/tmdb-search`
+同时查询电影和电视剧：
+
+- `TmdbSearchItem`
+- `parseTmdbQuery(raw)`：把 `交锋 (2026)`、`交锋（2026）`、`交锋 2026` 拆成片名和年份。
+- `searchTmdbMulti(http, raw, { limit })`：合并电影和电视剧结果。
+- `fetchTmdbTvDetail(http, tmdbId)`：按 TMDB ID 取剧集详情（含季列表和总集数）。
+
+TMDB 的 `query` 会把标题里的年份当成片名的一部分，直接搜 `交锋 (2026)` 会查无结果。
+因此年份必须先剥离，再通过后端 `year` 参数匹配；带年份无结果时会自动去掉年份兜底重查一次，
+避免未上映或改档导致漏结果。有年份时优先展示年份最接近的结果，其次按评分排序。
+
+`http` 需传入组件内 `useHttpClient()` 取得的实例，以保持依赖注入契约，不要在工具内直接
+引用 HTTP 单例。后端 `TmdbSearchResp` 的详情分支字段名是 `number_of_episodes`，
+`fetchTmdbTvDetail` 会归一化为 `total_episodes`，调用方不要直接读后端原始字段。
+
 ## timeUtils.ts
 
 时间、存储空间和状态样式辅助。业务时间统一使用后端返回的 Unix 秒，并在前端按浏览器本地环境格式化；日志字符串保持原始日志格式，不强制转换。新接口如需毫秒时间或耗时，字段名必须使用 `_ms` 后缀，例如 `duration_ms`、`event_time_ms`。

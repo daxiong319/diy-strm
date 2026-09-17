@@ -326,6 +326,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getCSRFTokenFromCookie } from '@/utils/csrf'
+import { searchTmdbMulti } from '@/utils/tmdbSearchUtils'
 import {
   CircleCheckFilled, Clock, Download, Film, Loading, Search, Star, TopRight, WarningFilled,
 } from '@element-plus/icons-vue'
@@ -425,15 +426,9 @@ const identify = async (t: string) => {
   tmdbError.value = ''
   candidates.value = []
   try {
-    const [movieResp, tvResp] = await Promise.all([
-      http.get('/api/scrape/tmdb-search', { params: { name: t, type: 'movie' } }),
-      http.get('/api/scrape/tmdb-search', { params: { name: t, type: 'tvshow' } }),
-    ])
-    const merge = (resp: any, type: 'movie' | 'tvshow') =>
-      Array.isArray(resp.data?.data) ? resp.data.data.map((d: any) => ({ ...d, media_type: type })) : []
-    const items = [...merge(movieResp, 'movie'), ...merge(tvResp, 'tvshow')]
-      .sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0))
-      .slice(0, 12)
+    // 内部会剥离「xxx (2026)」这类输入里的年份并走 TMDB year 参数，
+    // 带年份无结果时自动去掉年份兜底重查，电影与电视剧结果合并返回
+    const items = await searchTmdbMulti(http, t, { limit: 12 })
     candidates.value = items
     if (!items.length) {
       tmdbError.value = 'TMDB 没有匹配到影视'

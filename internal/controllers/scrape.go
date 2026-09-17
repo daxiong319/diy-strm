@@ -1280,15 +1280,15 @@ func GetScrapeStrmPaths(c *gin.Context) {
 }
 
 type TmdbSearchResp struct {
-	TmdbID        int     `json:"tmdb_id"`
-	Title         string  `json:"title"`
-	OriginalTitle string  `json:"original_title"`
-	Year          int     `json:"year"`
-	PosterUrl     string  `json:"poster_url"`
-	Overview      string  `json:"overview"`
-	VoteAverage   float64 `json:"vote_average"`
-	Seasons       []tmdb.Season `json:"seasons,omitempty"`       // 剧集季列表（含每季集数）
-	NumberOfEpisodes int    `json:"number_of_episodes"`           // 剧集总集数
+	TmdbID           int           `json:"tmdb_id"`
+	Title            string        `json:"title"`
+	OriginalTitle    string        `json:"original_title"`
+	Year             int           `json:"year"`
+	PosterUrl        string        `json:"poster_url"`
+	Overview         string        `json:"overview"`
+	VoteAverage      float64       `json:"vote_average"`
+	Seasons          []tmdb.Season `json:"seasons,omitempty"`  // 剧集季列表（含每季集数）
+	NumberOfEpisodes int           `json:"number_of_episodes"` // 剧集总集数
 }
 
 func TmdbSearch(c *gin.Context) {
@@ -1325,6 +1325,7 @@ func TmdbSearch(c *gin.Context) {
 					Year:          helpers.ParseYearFromDate(r.ReleaseDate),
 					PosterUrl:     models.GetTmdbImageUrl(r.PosterPath),
 					Overview:      r.Overview,
+					VoteAverage:   r.VoteAverage,
 				})
 			}
 			c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "搜索电影成功", Data: tmdbResp})
@@ -1344,6 +1345,7 @@ func TmdbSearch(c *gin.Context) {
 				Year:          helpers.ParseYearFromDate(resp.ReleaseDate),
 				PosterUrl:     models.GetTmdbImageUrl(resp.PosterPath),
 				Overview:      resp.Overview,
+				VoteAverage:   resp.VoteAverage,
 			})
 			c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "获取电影详情成功", Data: tmdbResp})
 			return
@@ -1370,6 +1372,7 @@ func TmdbSearch(c *gin.Context) {
 					Year:          helpers.ParseYearFromDate(r.FirstAirDate),
 					PosterUrl:     models.GetTmdbImageUrl(r.PosterPath),
 					Overview:      r.Overview,
+					VoteAverage:   r.VoteAverage,
 				})
 			}
 			c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "搜索电视剧成功", Data: tmdbResp})
@@ -1383,13 +1386,14 @@ func TmdbSearch(c *gin.Context) {
 			tmdbResp := make([]TmdbSearchResp, 0)
 			// 转换为响应结构体
 			tmdbResp = append(tmdbResp, TmdbSearchResp{
-				TmdbID:        int(resp.ID),
-				Title:         resp.Name,
-				OriginalTitle: resp.OriginalName,
-				Year:          helpers.ParseYearFromDate(resp.FirstAirDate),
-				PosterUrl:     models.GetTmdbImageUrl(resp.PosterPath),
-				Overview:      resp.Overview,
-				Seasons:       resp.Seasons,
+				TmdbID:           int(resp.ID),
+				Title:            resp.Name,
+				OriginalTitle:    resp.OriginalName,
+				Year:             helpers.ParseYearFromDate(resp.FirstAirDate),
+				PosterUrl:        models.GetTmdbImageUrl(resp.PosterPath),
+				Overview:         resp.Overview,
+				VoteAverage:      resp.VoteAverage,
+				Seasons:          resp.Seasons,
 				NumberOfEpisodes: resp.NumberOfEpisodes,
 			})
 			c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "获取电视剧详情成功", Data: tmdbResp})

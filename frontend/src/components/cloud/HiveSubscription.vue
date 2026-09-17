@@ -447,6 +447,7 @@ import {
 } from '@element-plus/icons-vue'
 import { useHttpClient } from '@/http/client'
 import { isMobile } from '@/utils/deviceUtils'
+import { searchTmdbMulti, type TmdbSearchItem } from '@/utils/tmdbSearchUtils'
 import CloudDirPicker from './CloudDirPicker.vue'
 import HiveSubParamsForm, { emptyParams, type HiveSubParams } from './HiveSubParamsForm.vue'
 
@@ -767,18 +768,11 @@ const metaLine2 = (t: any) => {
 // ---------------------------------------------------------------------------
 // TMDB 选片与添加
 // ---------------------------------------------------------------------------
-interface PickItem {
-  tmdb_id: number
-  title: string
-  original_title: string
-  year: number
-  poster_url: string
-  overview: string
-  vote_average: number
-  media_type: 'movie' | 'tvshow'
-  genres?: string[]
-  seasons?: { season_number: number; name: string; episode_count: number }[]
-}
+// 与 tmdbSearchUtils 的条目类型保持一致；seasons 只用到季号和集数
+type PickItem = Pick<
+  TmdbSearchItem,
+  'tmdb_id' | 'title' | 'original_title' | 'year' | 'poster_url' | 'overview' | 'vote_average' | 'media_type' | 'seasons'
+> & { genres?: string[] }
 
 const addVisible = ref(false)
 const pickKeyword = ref('')
@@ -838,18 +832,11 @@ const doPickSearch = async () => {
   pickSearched.value = false
   pickResults.value = []
   try {
-    const [movieResp, tvResp] = await Promise.all([
-      http.get('/api/scrape/tmdb-search', { params: { name: q, type: 'movie' } }),
-      http.get('/api/scrape/tmdb-search', { params: { name: q, type: 'tvshow' } }),
-    ])
-    const merge = (resp: any, type: 'movie' | 'tvshow') =>
-      resp.data?.code === 200 && Array.isArray(resp.data.data)
-        ? resp.data.data.map((d: any) => ({ ...d, media_type: type }))
-        : []
-    const items = [...merge(movieResp, 'movie'), ...merge(tvResp, 'tvshow')]
-      .sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0))
-      .slice(0, 12)
-    pickResults.value = items
+    // 内部会剥离「xxx (2026)」这类输入里的年份并走 TMDB year 参数，
+    // 带年份无结果时自动去掉年份兜底重查，电影与电视剧结果合并返回
+    const items = await searchTmdbMulti(http, q, { limit: 12 })
+    // PickItem 是 TmdbSearchItem 的子集投影，字段形状一致，可安全断言
+    pickResults.value = items as PickItem[]
   } catch (e: any) {
     ElMessage.error('查询失败：' + (e?.message || ''))
   } finally {

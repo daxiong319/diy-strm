@@ -447,6 +447,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Document, EditPen, Film, RefreshLeft, Star, VideoPlay } from '@element-plus/icons-vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { isMobile } from '@/utils/deviceUtils'
+import { fetchTmdbTvDetail, searchTmdbMulti, type TmdbSearchItem } from '@/utils/tmdbSearchUtils'
 import CloudDirPicker from './CloudDirPicker.vue'
 
 const props = defineProps<{
@@ -626,19 +627,8 @@ const onDirSelected = (path: string) => {
 }
 
 // ---- TMDB 选片 ----
-interface PickItem {
-  tmdb_id: number
-  title: string
-  original_title: string
-  year: number
-  poster_url: string
-  overview: string
-  vote_average: number
-  media_type: 'movie' | 'tvshow'
-  seasons?: { season_number: number; name: string; episode_count: number; air_date: string }[]
-  total_seasons?: number
-  total_episodes?: number
-}
+// 复用 tmdbSearchUtils 的条目类型，避免两处维护同一份字段形状
+type PickItem = TmdbSearchItem
 
 const pickKeyword = ref('')
 const pickSearching = ref(false)
@@ -686,19 +676,9 @@ const doPickSearch = async () => {
   pickSearching.value = true
   pickResults.value = []
   try {
-    const [movieResp, tvResp] = await Promise.all([
-      http.get('/api/scrape/tmdb-search', { params: { name: q, type: 'movie' } }),
-      http.get('/api/scrape/tmdb-search', { params: { name: q, type: 'tvshow' } }),
-    ])
-    const merge = (resp: any, type: 'movie' | 'tvshow') => {
-      if (resp.data?.code === 200 && Array.isArray(resp.data.data)) {
-        return resp.data.data.map((d: any) => ({ ...d, media_type: type }))
-      }
-      return []
-    }
-    const items = [...merge(movieResp, 'movie'), ...merge(tvResp, 'tvshow')]
-      .sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0))
-      .slice(0, 12)
+    // 内部会剥离「交锋 (2026)」这类片名里的年份并走 TMDB year 参数，
+    // 带年份无结果时自动去掉年份兜底重查，电影与电视剧结果合并返回
+    const items = await searchTmdbMulti(http, q, { limit: 12 })
     if (!items.length) {
       ElMessage.warning('TMDB 没有找到相关影片')
       return
@@ -715,22 +695,11 @@ const chooseMedia = async (item: PickItem) => {
   selectedSeason.value = 0
   pickResults.value = []
   if (item.media_type === 'tvshow') {
-    try {
-      const resp = await http.get('/api/scrape/tmdb-search', {
-        params: { type: 'tvshow', tmdb_id: item.tmdb_id },
-      })
-      if (resp.data?.code === 200 && resp.data.data?.length) {
-        const detail = resp.data.data[0]
-        selectedMedia.value = {
-          ...item,
-          seasons: detail.seasons || [],
-          total_seasons: (detail.seasons || []).length,
-          total_episodes: detail.number_of_episodes || 0,
-        }
-        return
-      }
-    } catch {
-      /* 详情获取失败也允许用搜索结果 */
+    // 拉取剧集详情补全季列表和总集数；失败时回退到搜索结果
+    const detail = await fetchTmdbTvDetail(http, item.tmdb_id)
+    if (detail) {
+      selectedMedia.value = { ...item, ...detail }
+      return
     }
   }
   selectedMedia.value = item

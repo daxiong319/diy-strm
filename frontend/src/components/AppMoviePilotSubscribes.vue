@@ -305,6 +305,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Film, Plus, Search, VideoPause, VideoPlay } from '@element-plus/icons-vue'
 import { SERVER_URL } from '@/const'
 import { useHttpClient } from '@/http/client'
+import { parseTmdbQuery } from '@/utils/tmdbSearchUtils'
 
 const http = useHttpClient()
 const activeTab = ref('subscribes')
@@ -545,7 +546,10 @@ const tmdbSearch = async () => {
   }
   tmdbSearching.value = true
   try {
-    const params: Record<string, string | number> = { name: searchKeyword.value, type: searchType.value }
+    // 剥离「xxx (2026)」这类输入里的年份并走 year 参数，避免 TMDB 把年份当片名一部分
+    const { name, year } = parseTmdbQuery(searchKeyword.value)
+    const params: Record<string, string | number> = { name, type: searchType.value }
+    if (year > 0) params.year = year
     const response = await http.get(`${SERVER_URL}/scrape/tmdb-search`, { params, timeout: 30000 })
     const data = response?.data?.data
     const list = Array.isArray(data) ? data : data?.list || []
@@ -573,7 +577,10 @@ const quickSearch = async () => {
   }
   quickSearching.value = true
   try {
-    const params: Record<string, string | number> = { name: quickKeyword.value.trim(), type: quickType.value === 'movie' ? 'movie' : 'tvshow' }
+    // 剥离「xxx (2026)」这类输入里的年份并走 year 参数，避免 TMDB 把年份当片名一部分
+    const { name, year } = parseTmdbQuery(quickKeyword.value)
+    const params: Record<string, string | number> = { name, type: quickType.value === 'movie' ? 'movie' : 'tvshow' }
+    if (year > 0) params.year = year
     const response = await http.get(`${SERVER_URL}/scrape/tmdb-search`, { params, timeout: 30000 })
     const data = response?.data?.data
     const list = Array.isArray(data) ? data : data?.list || []
