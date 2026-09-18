@@ -13,22 +13,25 @@ import (
 	"diy-strm/internal/moviepilot"
 )
 
-// autoOrganizeWatchInterval 自动整理监控间隔（与频道订阅引擎一致）
-const autoOrganizeWatchInterval = 5 * time.Minute
+// autoOrganizeTick 监控调度 tick：每分钟检查一次各账号是否到扫描间隔（账号各自可配置）
+const autoOrganizeTick = time.Minute
 
-// autoOrganizeRunMu 防止同一账号并发整理（监控轮询与手动触发互斥）
+// autoOrganizeLastRunAt 各账号上次定时扫描时间（监控轮询内存态；进程重启后从上次运行时间恢复，缺失则视为立即到期）
 var (
 	autoOrganizeRunMu sync.Mutex
 	autoOrganizeBusy  = make(map[uint]bool)
+	// autoOrganizeLastRunAt 仅记录定时轮询的执行时刻；手动/转存联动触发不更新此表
+	autoOrganizeLastRunAt = make(map[uint]time.Time)
 )
 
 // StartAutoOrganizeWatcher 启动云盘自动整理后台监控：
-// 定期扫描启用自动整理的账号，发现待整理目录新增资源后按账号分类策略整理。
+// 按各账号配置的扫描间隔（scan_interval_minutes，默认 5 分钟）定期扫描启用自动整理的账号，
+// 发现待整理目录新增资源后按账号分类策略整理。间隔改动在下一个 tick（≤1 分钟）内生效。
 func StartAutoOrganizeWatcher(ctx context.Context) {
 	go func() {
-		// 启动后先执行一轮
+		// 启动后先执行一轮（首run会写入各账号 lastRun 基准）
 		runAllAutoOrganizeOnce(ctx)
-		ticker := time.NewTicker(autoOrganizeWatchInterval)
+		ticker := time.NewTicker(autoOrganizeTick)
 		defer ticker.Stop()
 		for {
 			select {
@@ -39,10 +42,11 @@ func StartAutoOrganizeWatcher(ctx context.Context) {
 			}
 		}
 	}()
-	helpers.AppLogger.Info("已启动云盘自动整理监控（每 5 分钟扫描一次待整理目录）")
+	helpers.AppLogger.Info("已启动云盘自动整理监控（按账号配置的扫描间隔轮询，默认 5 分钟）")
 }
 
-// runAllAutoOrganizeOnce 跑一轮所有启用自动整理的账号（串行执行，避免触发网盘限流）
+// runAllAutoOrganizeOnce 跑一轮所有启用自动整理且到达各自扫描间隔的账号（串行执行，避免触发网盘限流）。
+// 旧版全局固定 5 分钟 ticker；现改为 1 分钟 tick + 每账号到点判定，间隔可按账号自定义。
 func runAllAutoOrganizeOnce(ctx context.Context) {
 	configs, err := models.ListEnabledAutoOrganizeConfigs()
 	if err != nil {
@@ -52,15 +56,34 @@ func runAllAutoOrganizeOnce(ctx context.Context) {
 	if len(configs) == 0 {
 		return
 	}
+	now := time.Now()
+	autoOrganizeRunMu.Lock()
+	due := make([]models.AutoOrganizeConfig, 0, len(configs))
 	for _, cfg := range configs {
+		interval := time.Duration(cfg.NormalizedScanIntervalMinutes()) * time.Minute
+		last, seen := autoOrganizeLastRunAt[cfg.AccountID]
+		if !seen {
+			// 进程内未见该账号（首次/新增/重启）：视为到期，立即扫描
+			autoOrganizeLastRunAt[cfg.AccountID] = now
+			due = append(due, cfg)
+			continue
+		}
+		if now.Sub(last) >= interval {
+			autoOrganizeLastRunAt[cfg.AccountID] = now
+			due = append(due, cfg)
+		}
+	}
+	autoOrganizeRunMu.Unlock()
+	for i := range due {
+		cfg := &due[i]
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
 		// 定时违规扫描（P1-2）：按账号配置的 cron 触发，到点扫描已整理库并可选连带洗版整理
-		maybeRunWashScanScheduled(ctx, &cfg)
-		runAutoOrganizeForConfig(ctx, &cfg)
+		maybeRunWashScanScheduled(ctx, cfg)
+		runAutoOrganizeForConfig(ctx, cfg)
 	}
 }
 
@@ -135,6 +158,8 @@ func SaveAutoOrganizeConfig(c *gin.Context) {
 		c.JSON(200, APIResponse[any]{Code: BadRequest, Message: "该网盘类型暂不支持自动整理", Data: nil})
 		return
 	}
+	// 扫描间隔夹紧（0=默认 5；合法范围 1-1440 分钟），防止过短间隔打爆网盘 API
+	cfg.ScanIntervalMinutes = cfg.NormalizedScanIntervalMinutes()
 	if err := models.SaveAutoOrganizeConfig(&cfg); err != nil {
 		c.JSON(200, APIResponse[any]{Code: BadRequest, Message: "保存失败：" + err.Error(), Data: nil})
 		return

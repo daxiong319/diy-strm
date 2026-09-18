@@ -179,7 +179,20 @@
             <div>
               <el-switch v-model="formOf(account.id).enabled" active-text="已启用" inactive-text="已禁用" />
             </div>
-            <p class="mv-field-desc">启用后每 5 分钟扫描「待整理目录」新增资源；关闭不扫描（已保存配置保留）。</p>
+            <p class="mv-field-desc">启用后按下方「扫描间隔」定期扫描「待整理目录」新增资源；关闭不扫描（已保存配置保留）。</p>
+          </div>
+
+          <div class="mv-field">
+            <div class="mv-field-label">扫描间隔（分钟）</div>
+            <el-input-number
+              v-model="formOf(account.id).scan_interval_minutes"
+              :min="1"
+              :max="1440"
+              :step="5"
+              controls-position="right"
+              class="mv-num"
+            />
+            <p class="mv-field-desc">监控扫描待整理目录的时间间隔（1-1440 分钟，默认 5；转存成功后的即时整理不受此限制）。</p>
           </div>
 
           <div class="mv-field">
@@ -486,6 +499,7 @@ interface AutoOrganizeConfig {
   id?: number
   account_id: number
   enabled: boolean
+  scan_interval_minutes: number
   pending_dir: string
   organized_root: string
   failed_dir: string
@@ -634,6 +648,7 @@ const formOf = (accountId: number): AutoOrganizeConfig => {
     form[accountId] = {
       account_id: accountId,
       enabled: false,
+      scan_interval_minutes: 5,
       pending_dir: '',
       organized_root: '',
       failed_dir: '',
@@ -744,6 +759,7 @@ const loadData = async () => {
         id: c.id,
         account_id: c.account_id,
         enabled: c.enabled,
+        scan_interval_minutes: c.scan_interval_minutes ?? 5,
         pending_dir: c.pending_dir || '',
         organized_root: c.organized_root || '',
         failed_dir: c.failed_dir || '',
@@ -813,6 +829,7 @@ const saveConfig = async (accountId: number) => {
       id: existing?.id || 0,
       account_id: accountId,
       enabled: f.enabled,
+      scan_interval_minutes: f.scan_interval_minutes ?? 5,
       pending_dir: f.pending_dir.trim(),
       organized_root: f.organized_root.trim(),
       failed_dir: f.failed_dir.trim(),

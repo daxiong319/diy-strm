@@ -16,6 +16,9 @@ type AutoOrganizeConfig struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	AccountID uint      `gorm:"index:idx_auto_organize_account,unique" json:"account_id"` // 网盘账号 ID
 	Enabled   bool      `gorm:"default:false" json:"enabled"`                             // 是否启用自动整理
+	// ScanIntervalMinutes 监控扫描间隔（分钟，1-1440；0=默认 5 分钟）。
+	// 转存联动整理（TriggerAutoOrganizeForAccount）不受此间隔影响，转存成功仍即刻触发。
+	ScanIntervalMinutes int `gorm:"default:5" json:"scan_interval_minutes"`
 	// PendingDir 待整理目录（监控扫描目录），如 媒体库/待整理
 	PendingDir string `gorm:"size:255" json:"pending_dir"`
 	// OrganizedRoot 已整理根目录（新资源整理到其下分类目录），
@@ -185,4 +188,27 @@ func UpdateAutoOrganizeLastScan(accountID uint, resultJSON string) {
 	if err := db.Db.Model(&AutoOrganizeConfig{}).Where("account_id = ?", accountID).Updates(updates).Error; err != nil {
 		helpers.AppLogger.Warnf("更新违规扫描时间失败（账号 %d）：%v", accountID, err)
 	}
+}
+
+// DefaultAutoOrganizeScanInterval 监控扫描默认间隔（分钟，兼容未配置的存量数据）
+const DefaultAutoOrganizeScanInterval = 5
+
+// AutoOrganizeScanIntervalMin 监控扫描间隔下限（分钟；下限 1 防止 API 打爆网盘）
+const AutoOrganizeScanIntervalMin = 1
+
+// AutoOrganizeScanIntervalMax 监控扫描间隔上限（分钟，1 天）
+const AutoOrganizeScanIntervalMax = 1440
+
+// NormalizedScanIntervalMinutes 归一化扫描间隔：未配置回落默认 5，越界夹紧到 [1, 1440]
+func (c AutoOrganizeConfig) NormalizedScanIntervalMinutes() int {
+	if c.ScanIntervalMinutes <= 0 {
+		return DefaultAutoOrganizeScanInterval
+	}
+	if c.ScanIntervalMinutes < AutoOrganizeScanIntervalMin {
+		return AutoOrganizeScanIntervalMin
+	}
+	if c.ScanIntervalMinutes > AutoOrganizeScanIntervalMax {
+		return AutoOrganizeScanIntervalMax
+	}
+	return c.ScanIntervalMinutes
 }

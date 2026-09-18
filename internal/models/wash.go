@@ -288,9 +288,12 @@ func DeleteHiveCheckinRecords(accountID uint, ids []uint) error {
 	return q.Where("1 = 1").Delete(&HiveCheckinRecord{}).Error
 }
 
-// HasCheckedInToday 账号今日是否已签到（防重复签到/补签判断）
+// HasCheckedInToday 账号今日是否已签到（防重复签到/补签判断）。
+// 注意：必须用本地时区「今天的 0 点」，不能用 Truncate(24h)——后者按 UTC 截断，
+// 在 UTC+8 下得到的是本地 08:00，08:00 前的签到会被误判为「昨天」导致重复签到。
 func HasCheckedInToday(accountID uint) bool {
-	start := time.Now().Truncate(24 * time.Hour)
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	var n int64
 	db.Db.Model(&HiveCheckinRecord{}).
 		Where("account_id = ? AND checkin_at >= ? AND ok = ?", accountID, start, true).

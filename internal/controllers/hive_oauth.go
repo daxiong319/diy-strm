@@ -296,6 +296,7 @@ func checkinFallbackRetryable(msg string) bool {
 
 // performHiveCheckinWithFallback 执行签到；指定账号失败且属通道故障类错误时，
 // 依次尝试表内其它启用且已授权的账号（记录仍按实际签到成功的账号落库）。
+// 回退成功时，为其它同日未签到的启用账号补写成功记录，防止每小时整点兜底重复触发回退签到。
 func performHiveCheckinWithFallback(ctx context.Context, acc *models.HiveOAuthAccount, mode hdhive.CheckinMode, trigger string) (bool, string) {
 	ok, msg := RunHiveCheckinWithTrigger(ctx, acc, mode, trigger)
 	if ok || !checkinFallbackRetryable(msg) {
@@ -310,6 +311,20 @@ func performHiveCheckinWithFallback(ctx context.Context, acc *models.HiveOAuthAc
 		ok2, msg2 := RunHiveCheckinWithTrigger(ctx, cand, mode, trigger+"-fallback")
 		if ok2 {
 			helpers.AppLogger.Infof("RE0签到通道回退成功：%s → %s：%s", acc.Label, cand.Label, msg2)
+			// 除实际签到的账号外，为同日未成功签到的账号补成功记录（含发起方），
+			// 让 HasCheckedInToday 对全部账号成立，阻断后续整点重复触发。
+			if !models.HasCheckedInToday(acc.ID) {
+				writeHiveCheckinRecordForID(acc.ID, mode, trigger, "已由 "+cand.Label+" 通道完成签到")
+			}
+			for j := range subs {
+				other := &subs[j]
+				if other.ID == cand.ID || other.ID == acc.ID || !other.Enabled {
+					continue
+				}
+				if !models.HasCheckedInToday(other.ID) {
+					writeHiveCheckinRecordForID(other.ID, mode, trigger, "已由 "+cand.Label+" 通道完成签到")
+				}
+			}
 			return true, msg2 + "（经 " + cand.Label + " 通道）"
 		}
 	}
@@ -463,6 +478,17 @@ func writeHiveCheckinRecord(acc *models.HiveOAuthAccount, mode hdhive.CheckinMod
 	if err := models.AddHiveCheckinRecord(rec); err != nil {
 		helpers.AppLogger.Warnf("写入签到历史失败（账号 %d）：%v", acc.ID, err)
 	}
+}
+
+// writeHiveCheckinRecordForID 按账号 ID 写一条签到历史快照（回退签到成功时，为其它同日未签账号
+// 补记「已由其他通道完成」成功记录——否则 HasCheckedInToday 对这些账号恒为 false，
+// 每小时的整点兜底会再次触发回退签到，造成签到记录每小时重复）。
+func writeHiveCheckinRecordForID(accountID uint, mode hdhive.CheckinMode, trigger, message string) {
+	acc, err := models.GetHiveAccountByID(accountID)
+	if err != nil || acc == nil {
+		return
+	}
+	writeHiveCheckinRecord(acc, mode, trigger, true, message, nil, nil, 0)
 }
 
 // HiveCheckinRecordsAPI 签到历史（GET /cloud/hive/checkin/records?account_id=&limit=）
