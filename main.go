@@ -571,12 +571,12 @@ func initOthers() {
 		qps = 2
 	}
 	v115open.SetGlobalExecutorConfig(qps, qps*60, qps*3600)
-	models.LoadScrapeSettings()                                // 从数据库加载刮削设置
-	models.InitDQ()                                            // 初始化下载队列
-	models.InitUQ()                                            // 初始化上传队列
-	models.InitNotificationManager()                           // 初始化通知管理器
-	controllers.StartListenTelegramBot()                       // 初始化 Telegram Bot 监听
-	controllers.StartChannelWatcher(context.Background())      // 启动 TG 频道订阅引擎
+	models.LoadScrapeSettings()                           // 从数据库加载刮削设置
+	models.InitDQ()                                       // 初始化下载队列
+	models.InitUQ()                                       // 初始化上传队列
+	models.InitNotificationManager()                      // 初始化通知管理器
+	controllers.StartListenTelegramBot()                  // 初始化 Telegram Bot 监听
+	controllers.StartChannelWatcher(context.Background()) // 启动 TG 频道订阅引擎
 	// controllers.StartHiveWatcher(context.Background())      // RE0 订阅引擎已迁移到 tgto123 对齐引擎（discovery.StartDiscoveryWorkers）
 	moviepilot.StartMoviePilotWatcher()                        // 启动 MoviePilot 订阅下载检测
 	controllers.StartAutoOrganizeWatcher(context.Background()) // 启动云盘自动整理监控
@@ -813,65 +813,65 @@ func setRouter(r *gin.Engine) {
 		// api.GET("/setting/telegram", controllers.GetTelegram)                                      // 获取 Telegram 消息通知配置
 		// api.POST("/setting/telegram", controllers.UpdateTelegram)                                  // 更改 Telegram 消息通知配置
 		// api.POST("/telegram/test", controllers.TestTelegram)                                       // 测试 Telegram 连通性
-		api.GET("/setting/notification/channels", controllers.GetNotificationChannels)              // 获取所有通知渠道
-		api.GET("/setting/moviepilot", controllers.GetMoviePilotConfig)                             // 获取 MoviePilot 配置
-		api.PUT("/setting/moviepilot", controllers.UpdateMoviePilotConfig)                          // 更新 MoviePilot 配置
-		api.POST("/setting/moviepilot/test", controllers.TestMoviePilotConnection)                  // 测试 MoviePilot 连接
-		api.GET("/moviepilot/subscribes", controllers.ListMoviePilotSubscribes)                     // 查询 MoviePilot 订阅列表
-		api.POST("/moviepilot/subscribes", controllers.CreateMoviePilotSubscribe)                   // 添加 MoviePilot 订阅
-		api.POST("/moviepilot/subscribes/:id/search", controllers.SearchMoviePilotSubscribe)        // 触发订阅搜索
-		api.DELETE("/moviepilot/subscribes/:id", controllers.DeleteMoviePilotSubscribe)             // 删除订阅
-		api.PUT("/moviepilot/subscribes/:id/status", controllers.UpdateMoviePilotSubscribeStatus)   // 更新订阅状态
-		api.GET("/moviepilot/downloads", controllers.ListMoviePilotDownloads)                       // 查询 MoviePilot 下载任务
-		api.GET("/moviepilot/trending", controllers.TrendingMoviePilot)                             // TMDB 热门趋势（发现页）
-		api.GET("/moviepilot/upload-tasks", controllers.ListMoviePilotUploadTasks)                  // 查询 139 上传任务
-		api.POST("/moviepilot/upload-tasks/:id/retry", controllers.RetryMoviePilotUploadTask)       // 重试上传任务
-		api.POST("/moviepilot/upload-tasks/:id/cancel", controllers.CancelMoviePilotUploadTask)     // 取消上传任务
+		api.GET("/setting/notification/channels", controllers.GetNotificationChannels)                     // 获取所有通知渠道
+		api.GET("/setting/moviepilot", controllers.GetMoviePilotConfig)                                    // 获取 MoviePilot 配置
+		api.PUT("/setting/moviepilot", controllers.UpdateMoviePilotConfig)                                 // 更新 MoviePilot 配置
+		api.POST("/setting/moviepilot/test", controllers.TestMoviePilotConnection)                         // 测试 MoviePilot 连接
+		api.GET("/moviepilot/subscribes", controllers.ListMoviePilotSubscribes)                            // 查询 MoviePilot 订阅列表
+		api.POST("/moviepilot/subscribes", controllers.CreateMoviePilotSubscribe)                          // 添加 MoviePilot 订阅
+		api.POST("/moviepilot/subscribes/:id/search", controllers.SearchMoviePilotSubscribe)               // 触发订阅搜索
+		api.DELETE("/moviepilot/subscribes/:id", controllers.DeleteMoviePilotSubscribe)                    // 删除订阅
+		api.PUT("/moviepilot/subscribes/:id/status", controllers.UpdateMoviePilotSubscribeStatus)          // 更新订阅状态
+		api.GET("/moviepilot/downloads", controllers.ListMoviePilotDownloads)                              // 查询 MoviePilot 下载任务
+		api.GET("/moviepilot/trending", controllers.TrendingMoviePilot)                                    // TMDB 热门趋势（发现页）
+		api.GET("/moviepilot/upload-tasks", controllers.ListMoviePilotUploadTasks)                         // 查询 139 上传任务
+		api.POST("/moviepilot/upload-tasks/:id/retry", controllers.RetryMoviePilotUploadTask)              // 重试上传任务
+		api.POST("/moviepilot/upload-tasks/:id/cancel", controllers.CancelMoviePilotUploadTask)            // 取消上传任务
 		api.GET("/moviepilot/upload-tasks/:id/cloud-check", controllers.GetMoviePilotUploadTaskCloudCheck) // 片源云盘存在性校验
-		api.GET("/moviepilot/failed-files", controllers.ListMoviePilotFailedFiles)                  // 查询识别失败文件
-		api.POST("/moviepilot/failed-files/:id/identify", controllers.IdentifyMoviePilotFailedFile) // AI 识别失败文件
-		api.POST("/moviepilot/failed-files/:id/resolve", controllers.ResolveMoviePilotFailedFile)   // 确认整理失败文件
-		api.POST("/moviepilot/failed-files/:id/skip", controllers.SkipMoviePilotFailedFile)         // 跳过失败文件
-		api.GET("/auto-organize/configs", controllers.GetAutoOrganizeConfigs)                       // 查询云盘自动整理配置
-		api.POST("/auto-organize/config", controllers.SaveAutoOrganizeConfig)                       // 保存云盘自动整理配置
-		api.POST("/auto-organize/config/:id/delete", controllers.DeleteAutoOrganizeConfig)          // 删除云盘自动整理配置
-		api.POST("/auto-organize/run", controllers.RunAutoOrganizeNow)                              // 手动触发云盘自动整理
-		api.GET("/wash/items", controllers.ListWashItemsAPI)                                        // 查询待洗版清单
-		api.GET("/wash/stats", controllers.WashStatsAPI)                                            // 洗版统计（各账号待洗版数量）
-		api.POST("/wash/items/status", controllers.SetWashItemStatusAPI)                            // 批量放弃/恢复待洗版条目
-		api.POST("/wash/scan", controllers.ScanWashNowAPI)                                          // 手动触发违规扫描
-		api.POST("/wash/run", controllers.RunWashNowAPI)                                            // 一键洗版（执行一轮整理）
-		api.GET("/wash/logs", controllers.ListWashLogsAPI)                                          // 查询洗版日志
-		api.DELETE("/wash/logs", controllers.ClearWashLogsAPI)                                      // 清空洗版日志
-		api.POST("/setting/notification/channels/telegram", controllers.CreateTelegramChannel)      // 创建 Telegram 渠道
-		api.GET("/setting/notification/channels/telegram/:id", controllers.GetTelegramChannel)      // 查询 Telegram 渠道
-		api.PUT("/setting/notification/channels/telegram", controllers.UpdateTelegramChannel)       // 更新 Telegram 渠道
-		api.POST("/setting/notification/channels/meow", controllers.CreateMeoWChannel)              // 创建 MeoW 渠道
-		api.GET("/setting/notification/channels/meow/:id", controllers.GetMeoWChannel)              // 查询 MeoW 渠道
-		api.PUT("/setting/notification/channels/meow", controllers.UpdateMeoWChannel)               // 更新 MeoW 渠道
-		api.POST("/setting/notification/channels/bark", controllers.CreateBarkChannel)              // 创建 Bark 渠道
-		api.GET("/setting/notification/channels/bark/:id", controllers.GetBarkChannel)              // 查询 Bark 渠道
-		api.PUT("/setting/notification/channels/bark", controllers.UpdateBarkChannel)               // 更新 Bark 渠道
-		api.POST("/setting/notification/channels/serverchan", controllers.CreateServerChanChannel)  // 创建 Server 酱渠道
-		api.GET("/setting/notification/channels/serverchan/:id", controllers.GetServerChanChannel)  // 查询 Server 酱渠道
-		api.PUT("/setting/notification/channels/serverchan", controllers.UpdateServerChanChannel)   // 更新 Server 酱渠道
-		api.POST("/setting/notification/channels/webhook", controllers.CreateCustomWebhookChannel)  // 创建自定义 Webhook 渠道
-		api.GET("/setting/notification/channels/webhook/:id", controllers.GetCustomWebhookChannel)  // 查询自定义 Webhook 渠道
-		api.PUT("/setting/notification/channels/webhook", controllers.UpdateCustomWebhookChannel)   // 更新自定义 Webhook 渠道
-		api.POST("/setting/notification/channels/status", controllers.UpdateChannelStatus)          // 启用/禁用渠道
-		api.DELETE("/setting/notification/channels/:id", controllers.DeleteChannel)                 // 删除渠道
-		api.GET("/setting/notification/rules", controllers.GetNotificationRules)                    // 获取通知规则
-		api.PUT("/setting/notification/rules", controllers.UpdateNotificationRule)                  // 更新通知规则
-		api.POST("/setting/notification/channels/test", controllers.TestChannelConnection)          // 测试通知渠道连接
-		api.GET("/setting/strm-config", controllers.GetStrmConfig)                                  // 获取 STRM 配置
-		api.POST("/setting/strm-config", controllers.UpdateStrmConfig)                              // 更新 STRM 配置
-		api.GET("/setting/cron", controllers.GetCronNextTime)                                       // 获取 Cron 表达式的下 5 次执行时间
-		api.POST("/cron/validate", controllers.ValidateCron)                                        // 验证 Cron 表达式并返回描述
-		api.POST("/setting/emby/parse", controllers.ParseEmby)                                      // 解析 Emby 媒体信息
-		api.GET("/setting/emby-config", controllers.GetEmbyConfig)                                  // 获取新的 Emby 配置
-		api.POST("/setting/emby-config", controllers.UpdateEmbyConfig)                              // 更新新的 Emby 配置
-		api.POST("/setting/threads", controllers.UpdateThreads)                                     // 更新线程数
-		api.GET("/setting/threads", controllers.GetThreads)                                         // 获取线程数
+		api.GET("/moviepilot/failed-files", controllers.ListMoviePilotFailedFiles)                         // 查询识别失败文件
+		api.POST("/moviepilot/failed-files/:id/identify", controllers.IdentifyMoviePilotFailedFile)        // AI 识别失败文件
+		api.POST("/moviepilot/failed-files/:id/resolve", controllers.ResolveMoviePilotFailedFile)          // 确认整理失败文件
+		api.POST("/moviepilot/failed-files/:id/skip", controllers.SkipMoviePilotFailedFile)                // 跳过失败文件
+		api.GET("/auto-organize/configs", controllers.GetAutoOrganizeConfigs)                              // 查询云盘自动整理配置
+		api.POST("/auto-organize/config", controllers.SaveAutoOrganizeConfig)                              // 保存云盘自动整理配置
+		api.POST("/auto-organize/config/:id/delete", controllers.DeleteAutoOrganizeConfig)                 // 删除云盘自动整理配置
+		api.POST("/auto-organize/run", controllers.RunAutoOrganizeNow)                                     // 手动触发云盘自动整理
+		api.GET("/wash/items", controllers.ListWashItemsAPI)                                               // 查询待洗版清单
+		api.GET("/wash/stats", controllers.WashStatsAPI)                                                   // 洗版统计（各账号待洗版数量）
+		api.POST("/wash/items/status", controllers.SetWashItemStatusAPI)                                   // 批量放弃/恢复待洗版条目
+		api.POST("/wash/scan", controllers.ScanWashNowAPI)                                                 // 手动触发违规扫描
+		api.POST("/wash/run", controllers.RunWashNowAPI)                                                   // 一键洗版（执行一轮整理）
+		api.GET("/wash/logs", controllers.ListWashLogsAPI)                                                 // 查询洗版日志
+		api.DELETE("/wash/logs", controllers.ClearWashLogsAPI)                                             // 清空洗版日志
+		api.POST("/setting/notification/channels/telegram", controllers.CreateTelegramChannel)             // 创建 Telegram 渠道
+		api.GET("/setting/notification/channels/telegram/:id", controllers.GetTelegramChannel)             // 查询 Telegram 渠道
+		api.PUT("/setting/notification/channels/telegram", controllers.UpdateTelegramChannel)              // 更新 Telegram 渠道
+		api.POST("/setting/notification/channels/meow", controllers.CreateMeoWChannel)                     // 创建 MeoW 渠道
+		api.GET("/setting/notification/channels/meow/:id", controllers.GetMeoWChannel)                     // 查询 MeoW 渠道
+		api.PUT("/setting/notification/channels/meow", controllers.UpdateMeoWChannel)                      // 更新 MeoW 渠道
+		api.POST("/setting/notification/channels/bark", controllers.CreateBarkChannel)                     // 创建 Bark 渠道
+		api.GET("/setting/notification/channels/bark/:id", controllers.GetBarkChannel)                     // 查询 Bark 渠道
+		api.PUT("/setting/notification/channels/bark", controllers.UpdateBarkChannel)                      // 更新 Bark 渠道
+		api.POST("/setting/notification/channels/serverchan", controllers.CreateServerChanChannel)         // 创建 Server 酱渠道
+		api.GET("/setting/notification/channels/serverchan/:id", controllers.GetServerChanChannel)         // 查询 Server 酱渠道
+		api.PUT("/setting/notification/channels/serverchan", controllers.UpdateServerChanChannel)          // 更新 Server 酱渠道
+		api.POST("/setting/notification/channels/webhook", controllers.CreateCustomWebhookChannel)         // 创建自定义 Webhook 渠道
+		api.GET("/setting/notification/channels/webhook/:id", controllers.GetCustomWebhookChannel)         // 查询自定义 Webhook 渠道
+		api.PUT("/setting/notification/channels/webhook", controllers.UpdateCustomWebhookChannel)          // 更新自定义 Webhook 渠道
+		api.POST("/setting/notification/channels/status", controllers.UpdateChannelStatus)                 // 启用/禁用渠道
+		api.DELETE("/setting/notification/channels/:id", controllers.DeleteChannel)                        // 删除渠道
+		api.GET("/setting/notification/rules", controllers.GetNotificationRules)                           // 获取通知规则
+		api.PUT("/setting/notification/rules", controllers.UpdateNotificationRule)                         // 更新通知规则
+		api.POST("/setting/notification/channels/test", controllers.TestChannelConnection)                 // 测试通知渠道连接
+		api.GET("/setting/strm-config", controllers.GetStrmConfig)                                         // 获取 STRM 配置
+		api.POST("/setting/strm-config", controllers.UpdateStrmConfig)                                     // 更新 STRM 配置
+		api.GET("/setting/cron", controllers.GetCronNextTime)                                              // 获取 Cron 表达式的下 5 次执行时间
+		api.POST("/cron/validate", controllers.ValidateCron)                                               // 验证 Cron 表达式并返回描述
+		api.POST("/setting/emby/parse", controllers.ParseEmby)                                             // 解析 Emby 媒体信息
+		api.GET("/setting/emby-config", controllers.GetEmbyConfig)                                         // 获取新的 Emby 配置
+		api.POST("/setting/emby-config", controllers.UpdateEmbyConfig)                                     // 更新新的 Emby 配置
+		api.POST("/setting/threads", controllers.UpdateThreads)                                            // 更新线程数
+		api.GET("/setting/threads", controllers.GetThreads)                                                // 获取线程数
 
 		api.POST("/emby/sync/start", controllers.StartEmbySync)     // 手动启动 Emby 同步
 		api.GET("/emby/sync/status", controllers.GetEmbySyncStatus) // 获取 Emby 同步状态
@@ -980,38 +980,39 @@ func setRouter(r *gin.Engine) {
 		api.POST("/media-discovery/guanying/relogin", controllers.ReloginGuanyingAPI)              // 凭据自动恢复
 		api.POST("/media-discovery/guanying/test", controllers.TestGuanyingAPI)                    // 会话有效性测试
 		api.DELETE("/media-discovery/guanying/session", controllers.ClearGuanyingSessionAPI)       // 清除会话与凭据
+		api.GET("/media-discovery/guanying/catalog", controllers.GetGuanyingCatalogAPI)            // 观影最近更新目录
 		// 影视发现复刻扩展（对齐 tgto123 media_discovery 全功能）：目录流/演员/搜索/详情/猫眼/订阅/Emby
-		api.GET("/media-discovery/explore/douban/catalog", controllers.GetMediaExploreDoubanCatalog) // 豆瓣目录流
-		api.GET("/media-discovery/anime/catalog", controllers.GetMediaAnimeCatalog)                  // 动漫目录流（AniList/Bangumi）
-		api.GET("/media-discovery/actors", controllers.GetMediaActors)                               // 热门演员
-		api.GET("/media-discovery/actors/:id/works", controllers.GetMediaActorWorks)                 // 演员作品列表
-		api.GET("/media-discovery/search", controllers.GetMediaSearch)                               // 统一搜索（movie/tv/person）
-		api.GET("/media-discovery/details/:source/:type/:id", controllers.GetMediaDetails)           // 作品/人物详情
-		api.GET("/media-discovery/rankings/maoyan", controllers.GetMediaRankingsMaoyan)              // 猫眼榜单
-		api.POST("/media-discovery/resources/offline", controllers.OfflineMediaResourceAPI)          // 资源离线（磁力→qB）
-		api.POST("/media-discovery/resources/transfer", controllers.TransferMediaResourceAPI)        // 资源转存（解锁→网盘目录）
-		api.POST("/media-discovery/resources/torrent", controllers.TorrentMediaResourceAPI)          // 种子文件→磁力→离线
-		api.GET("/media-discovery/subscriptions", controllers.MediaSubscriptionsAPI)                 // 订阅列表
-		api.POST("/media-discovery/subscriptions", controllers.MediaSubscriptionsAPI)                // 创建订阅
-		api.PATCH("/media-discovery/subscriptions/:id", controllers.MediaSubscriptionDetailAPI)      // 更新订阅
-		api.DELETE("/media-discovery/subscriptions/:id", controllers.MediaSubscriptionDetailAPI)     // 删除订阅
-		api.POST("/media-discovery/subscriptions/:id/run", controllers.MediaSubscriptionRunAPI)      // 立即检查
-		api.POST("/media-discovery/subscriptions/run-due", controllers.MediaSubscriptionRunDueAPI)   // 执行到期订阅
-		api.GET("/media-discovery/subscriptions/history", controllers.MediaSubscriptionHistoryAPI)   // 执行历史
-		api.GET("/media-discovery/subscriptions/events", controllers.MediaSubscriptionEventsAPI)     // 订阅事件流
-		api.GET("/media-discovery/subscriptions/candidates", controllers.MediaSubscriptionCandidatesAPI) // 候选审阅
-		api.POST("/media-discovery/emby/cards", controllers.EmbyCardsAPI)                            // Emby 批量入库徽章
-		api.POST("/media-discovery/emby/tv-progress/preheat", controllers.TvProgressPreheatAPI)      // 剧集进度预热
-		api.POST("/media-discovery/emby/test", controllers.EmbyTestMediaAPI)                         // 发现 Emby 连接测试
-		api.GET("/media-discovery/emby-missing/status", controllers.EmbyMissingStatusAPI)            // 缺集扫描状态
-		api.GET("/media-discovery/re0/status", controllers.MediaDiscoveryRE0Status)                        // RE0 授权状态（反代 tgto123）
-		api.GET("/media-discovery/emby-missing/libraries", controllers.EmbyMissingLibrariesAPI)      // 电视剧库列表
-		api.GET("/media-discovery/emby-missing/scans", controllers.EmbyMissingScansAPI)              // 扫描历史
-		api.POST("/media-discovery/emby-missing/scans", controllers.EmbyMissingScansAPI)             // 启动扫描
-		api.GET("/media-discovery/emby-missing/results", controllers.EmbyMissingResultsAPI)          // 缺集结果
-		api.GET("/media-discovery/emby-missing/events", controllers.EmbyMissingEventsAPI)            // 缺集事件流
-		api.GET("/media-discovery/emby-missing/subscriptions", controllers.EmbyMissingSubscriptionsAPI)   // 补档订阅列表
-		api.POST("/media-discovery/emby-missing/subscriptions", controllers.EmbyMissingSubscriptionsAPI)  // 创建补档订阅
+		api.GET("/media-discovery/explore/douban/catalog", controllers.GetMediaExploreDoubanCatalog)               // 豆瓣目录流
+		api.GET("/media-discovery/anime/catalog", controllers.GetMediaAnimeCatalog)                                // 动漫目录流（AniList/Bangumi）
+		api.GET("/media-discovery/actors", controllers.GetMediaActors)                                             // 热门演员
+		api.GET("/media-discovery/actors/:id/works", controllers.GetMediaActorWorks)                               // 演员作品列表
+		api.GET("/media-discovery/search", controllers.GetMediaSearch)                                             // 统一搜索（movie/tv/person）
+		api.GET("/media-discovery/details/:source/:type/:id", controllers.GetMediaDetails)                         // 作品/人物详情
+		api.GET("/media-discovery/rankings/maoyan", controllers.GetMediaRankingsMaoyan)                            // 猫眼榜单
+		api.POST("/media-discovery/resources/offline", controllers.OfflineMediaResourceAPI)                        // 资源离线（磁力→qB）
+		api.POST("/media-discovery/resources/transfer", controllers.TransferMediaResourceAPI)                      // 资源转存（解锁→网盘目录）
+		api.POST("/media-discovery/resources/torrent", controllers.TorrentMediaResourceAPI)                        // 种子文件→磁力→离线
+		api.GET("/media-discovery/subscriptions", controllers.MediaSubscriptionsAPI)                               // 订阅列表
+		api.POST("/media-discovery/subscriptions", controllers.MediaSubscriptionsAPI)                              // 创建订阅
+		api.PATCH("/media-discovery/subscriptions/:id", controllers.MediaSubscriptionDetailAPI)                    // 更新订阅
+		api.DELETE("/media-discovery/subscriptions/:id", controllers.MediaSubscriptionDetailAPI)                   // 删除订阅
+		api.POST("/media-discovery/subscriptions/:id/run", controllers.MediaSubscriptionRunAPI)                    // 立即检查
+		api.POST("/media-discovery/subscriptions/run-due", controllers.MediaSubscriptionRunDueAPI)                 // 执行到期订阅
+		api.GET("/media-discovery/subscriptions/history", controllers.MediaSubscriptionHistoryAPI)                 // 执行历史
+		api.GET("/media-discovery/subscriptions/events", controllers.MediaSubscriptionEventsAPI)                   // 订阅事件流
+		api.GET("/media-discovery/subscriptions/candidates", controllers.MediaSubscriptionCandidatesAPI)           // 候选审阅
+		api.POST("/media-discovery/emby/cards", controllers.EmbyCardsAPI)                                          // Emby 批量入库徽章
+		api.POST("/media-discovery/emby/tv-progress/preheat", controllers.TvProgressPreheatAPI)                    // 剧集进度预热
+		api.POST("/media-discovery/emby/test", controllers.EmbyTestMediaAPI)                                       // 发现 Emby 连接测试
+		api.GET("/media-discovery/emby-missing/status", controllers.EmbyMissingStatusAPI)                          // 缺集扫描状态
+		api.GET("/media-discovery/re0/status", controllers.MediaDiscoveryRE0Status)                                // RE0 授权状态（反代 tgto123）
+		api.GET("/media-discovery/emby-missing/libraries", controllers.EmbyMissingLibrariesAPI)                    // 电视剧库列表
+		api.GET("/media-discovery/emby-missing/scans", controllers.EmbyMissingScansAPI)                            // 扫描历史
+		api.POST("/media-discovery/emby-missing/scans", controllers.EmbyMissingScansAPI)                           // 启动扫描
+		api.GET("/media-discovery/emby-missing/results", controllers.EmbyMissingResultsAPI)                        // 缺集结果
+		api.GET("/media-discovery/emby-missing/events", controllers.EmbyMissingEventsAPI)                          // 缺集事件流
+		api.GET("/media-discovery/emby-missing/subscriptions", controllers.EmbyMissingSubscriptionsAPI)            // 补档订阅列表
+		api.POST("/media-discovery/emby-missing/subscriptions", controllers.EmbyMissingSubscriptionsAPI)           // 创建补档订阅
 		api.POST("/media-discovery/emby-missing/subscriptions/:id/run", controllers.EmbyMissingSubscriptionRunAPI) // 立即检查补档
 		// 弹幕联动（Misaka Danmaku）：配置 + 302 播放自动导入下一集（钩子在 emby302）
 		api.GET("/danmu/config", controllers.GetDanmuConfigAPI)   // 弹幕配置
@@ -1104,9 +1105,9 @@ func setRouter(r *gin.Engine) {
 		api.GET("/cloud/hive/oauth/status", controllers.HiveOAuthStatusAPI)                // OAuth 授权状态
 		api.POST("/cloud/hive/oauth/refresh", controllers.HiveOAuthRefreshAPI)             // 刷新授权状态
 		api.POST("/cloud/hive/oauth/auth-url", controllers.HiveOAuthAuthURLAPI)            // 生成授权 URL
-	api.POST("/cloud/hive/oauth/checkin", controllers.HiveCheckinAPI)                  // 手动签到
+		api.POST("/cloud/hive/oauth/checkin", controllers.HiveCheckinAPI)                  // 手动签到
 		api.POST("/cloud/hive/oauth/checkin-all", controllers.HiveCheckinAllAPI)           // 全部账号签到
-	api.GET("/cloud/hive/checkin/records", controllers.HiveCheckinRecordsAPI)          // 签到历史（S3）
+		api.GET("/cloud/hive/checkin/records", controllers.HiveCheckinRecordsAPI)          // 签到历史（S3）
 		api.DELETE("/cloud/hive/checkin/records", controllers.HiveCheckinRecordsDeleteAPI) // 删除签到历史（S3）
 
 		// RE0手动搜索（SSE 流式）/ 解锁 / 手动转存

@@ -84,6 +84,8 @@ func resourceProviderLabel(panType string) string {
 		return "磁力"
 	case "ed2k":
 		return "ED2K"
+	case "online":
+		return "在线播放"
 	case "139":
 		return "移动云盘"
 	default:
@@ -424,7 +426,6 @@ func searchSeedhubResources(ctx context.Context, mediaType string, tmdbID int64,
 	}
 	return items, nil
 }
-
 
 // normalizeProviderFilter 网盘过滤键归一
 func normalizeProviderFilter(p string) string {

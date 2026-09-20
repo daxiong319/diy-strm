@@ -1,8 +1,12 @@
 package controllers
 
 import (
+	"context"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"diy-strm/internal/discovery"
 	"diy-strm/internal/guanying"
@@ -98,8 +102,8 @@ func GuanyingCaptchaAPI(c *gin.Context) {
 // GuanyingCaptchaVerifyAPI POST /media-discovery/guanying/captcha/verify {attempt_id, points}
 func GuanyingCaptchaVerifyAPI(c *gin.Context) {
 	var req struct {
-		AttemptID string                 `json:"attempt_id"`
-		Points    []map[string]float64   `json:"points"`
+		AttemptID string               `json:"attempt_id"`
+		Points    []map[string]float64 `json:"points"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.AttemptID == "" {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误"})
@@ -173,4 +177,63 @@ func ClearGuanyingSessionAPI(c *gin.Context) {
 		_ = uerr
 	}
 	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "观影登录信息已清除", Data: guanying.SessionStatus()})
+}
+
+// GetGuanyingCatalogAPI GET /media-discovery/guanying/catalog?media_type=movie|tv&page=N
+// 观影最近更新目录（影视探索「观影」源）：page=1 解析站点首页板块，page≥2 走翻页接口。
+// 条目映射为发现页卡片结构（source=guanying，external_id=观影影片 ID，detail_url=观影站详情页）。
+func GetGuanyingCatalogAPI(c *gin.Context) {
+	if !guanyingEnabled() {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "观影未启用：请先在发现-基础配置中开启观影"})
+		return
+	}
+	ty := "mv"
+	if c.Query("media_type") == "tv" {
+		ty = "tv"
+	}
+	page, _ := strconv.Atoi(c.Query("page"))
+	if page < 1 {
+		page = 1
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+	recents, hasNext, err := guanying.SharedClient().RecentUpdates(ctx, ty, page)
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "观影目录加载失败：" + err.Error()})
+		return
+	}
+	items := make([]gin.H, 0, len(recents))
+	for _, r := range recents {
+		vote := r.Douban
+		if vote == 0 {
+			vote = r.IMDB
+		}
+		if vote == 0 {
+			vote = r.MAL
+		}
+		meta := r.Status
+		if len(r.Quality) > 0 {
+			meta = strings.TrimSpace(meta + " " + strings.Join(r.Quality, " "))
+		}
+		items = append(items, gin.H{
+			"source":      "guanying",
+			"media_type":  map[string]string{"mv": "movie", "tv": "tv", "ac": "tv"}[r.Dir],
+			"entity_key":  fmt.Sprintf("guanying:%s:%s", r.Dir, r.ID),
+			"external_id": r.ID,
+			"title":       r.Title,
+			"poster":      r.Poster,
+			"vote_avg":    vote,
+			"year":        r.Year,
+			"rank":        0,
+			"genres":      r.Quality,
+			"overview":    meta,
+			"detail_url":  r.DetailURL,
+			"air_date":    "",
+		})
+	}
+	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "", Data: gin.H{
+		"items":         items,
+		"has_next_page": hasNext,
+		"page":          page,
+	}})
 }

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -581,10 +582,384 @@ func (c *Client) SearchResources(ctx context.Context, title, mediaType string, t
 			"remark":    "BT 磁力",
 		})
 	}
+	// 在线播放线路（playlist：站点自带播放器，跳转 /py/{线路i}/{第N集} 播放页）
+	if plays := parsePlayLines(dl["playlist"]); len(plays) > 0 {
+		for _, pl := range plays {
+			lineID, _ := pl["i"].(string)
+			lineTitle, _ := pl["t"].(string)
+			episodes := playLineEpisodes(pl["list"])
+			first := playLineFirstEpisode(pl["list"])
+			remark := "在线观看"
+			if episodes > 0 {
+				remark = fmt.Sprintf("在线观看 · %d 集", episodes)
+			}
+			items = append(items, map[string]any{
+				"title":     lineTitle,
+				"share_url": fmt.Sprintf("%s/py/%s/%d", c.baseURL, lineID, first),
+				"provider":  "online",
+				"pan_type":  "online",
+				"slug":      "play:" + lineID,
+				"remark":    remark,
+				"play_url":  true,
+			})
+		}
+	}
 	if len(items) == 0 {
 		return nil, fmt.Errorf("观影暂无《%s》的有效资源", title)
 	}
 	return items, nil
+}
+
+// parsePlayLines 宽容解析 downurl 响应中的 playlist 在线播放线路
+func parsePlayLines(raw any) []map[string]any {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	lines := make([]map[string]any, 0, len(arr))
+	for _, e := range arr {
+		m, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := m["i"].(string)
+		title, _ := m["t"].(string)
+		if id == "" || title == "" {
+			continue
+		}
+		lines = append(lines, map[string]any{"i": id, "t": title, "list": m["list"]})
+	}
+	return lines
+}
+
+// playLineEpisodes 统计线路总集数：list 形如 [[["第","集"],[1,26]],[["第","集完结"],26]]
+// 第二段为集数区间数组（[start,end]）或标量（完结集号）。
+func playLineEpisodes(raw any) int {
+	ranges, ok := raw.([]any)
+	if !ok {
+		return 0
+	}
+	total := 0
+	for _, r := range ranges {
+		pair, ok := r.([]any)
+		if !ok || len(pair) < 2 {
+			continue
+		}
+		// 标量集号（如完结篇 [..., 26]）
+		if f, isNum := pair[1].(float64); isNum {
+			if f >= 1 {
+				total++
+			}
+			continue
+		}
+		bounds, ok := pair[1].([]any)
+		if !ok {
+			continue
+		}
+		switch len(bounds) {
+		case 1:
+			if _, ok := bounds[0].(float64); ok {
+				total++
+			}
+		case 2:
+			start, ok1 := bounds[0].(float64)
+			end, ok2 := bounds[1].(float64)
+			if ok1 && ok2 && end >= start {
+				total += int(end) - int(start) + 1
+			}
+		}
+	}
+	return total
+}
+
+// playLineFirstEpisode 取线路首个可播放集号（默认 1）
+func playLineFirstEpisode(raw any) int {
+	ranges, ok := raw.([]any)
+	if !ok || len(ranges) == 0 {
+		return 1
+	}
+	pair, ok := ranges[0].([]any)
+	if !ok || len(pair) < 2 {
+		return 1
+	}
+	if f, isNum := pair[1].(float64); isNum {
+		return int(f)
+	}
+	bounds, ok := pair[1].([]any)
+	if !ok || len(bounds) == 0 {
+		return 1
+	}
+	if f, ok := bounds[0].(float64); ok {
+		return int(f)
+	}
+	return 1
+}
+
+// RecentItem 观影「最近更新」条目（首页 inlist 板块与 /res/change 翻页共用结构）
+type RecentItem struct {
+	Dir       string   `json:"dir"` // mv/tv/ac
+	ID        string   `json:"id"`  // 影片 ID（详情页 /{dir}/{id}）
+	Title     string   `json:"title"`
+	Status    string   `json:"status"` // 集数状态（全26集/第5集，电影为空）
+	Year      int      `json:"year,omitempty"`
+	Douban    float64  `json:"douban,omitempty"`
+	IMDB      float64  `json:"imdb,omitempty"`
+	MAL       float64  `json:"mal,omitempty"`
+	Heat      float64  `json:"heat,omitempty"`
+	Quality   []string `json:"quality,omitempty"` // 4K/BD 标签
+	OnlineN   int      `json:"online_count"`      // 在线播放源数
+	MagnetN   int      `json:"magnet_count"`      // 磁力数
+	PanN      int      `json:"pan_count"`         // 网盘数
+	Poster    string   `json:"poster"`
+	DetailURL string   `json:"detail_url"` // 观影站详情页
+}
+
+// RecentUpdates 观影最近更新（影视探索目录源）。
+// page=1 抓站点首页解析 _obj.inlist（电影/剧集/动漫三个板块），page≥2 走 /res/change/{ty}/{page}。
+// ty 为 mv/tv；动漫（ac）暂不接入（发现页已有 AniList/Bangumi 动漫源）。
+func (c *Client) RecentUpdates(ctx context.Context, ty string, page int) ([]RecentItem, bool, error) {
+	c.refreshEndpoint()
+	if ty != "mv" && ty != "tv" && ty != "ac" {
+		return nil, false, fmt.Errorf("观影目录类型不支持：%s", ty)
+	}
+	if page < 1 {
+		page = 1
+	}
+	var blocks []map[string]any
+	hasNext := false
+	if page == 1 {
+		body, status, err := c.doJSONGet(ctx, c.baseURL+"/")
+		if err != nil {
+			return nil, false, err
+		}
+		// 首页 PoW 验证过期返回安全验证挑战页（HTML）或 419 JSON，两种形态都需重验后重试
+		if isPoWExpiredJSON(body) || powChallengeRe.Match(body) {
+			if !c.recoverPoW(ctx) {
+				return nil, false, fmt.Errorf("观影安全验证已过期且自动恢复失败，请稍后重试")
+			}
+			body, status, err = c.doJSONGet(ctx, c.baseURL+"/")
+			if err != nil {
+				return nil, false, err
+			}
+		}
+		if isHTMLBody(body) && status == 404 {
+			return nil, false, upstreamPageError("首页", status)
+		}
+		blocks = parseHomepageInlist(body)
+	} else {
+		body, status, err := c.getWithPoWRecovery(ctx, fmt.Sprintf("/res/change/%s/%d", ty, page))
+		if err != nil {
+			return nil, false, err
+		}
+		if isHTMLBody(body) {
+			return nil, false, upstreamPageError("目录翻页", status)
+		}
+		block := map[string]any{}
+		if err := json.Unmarshal(body, &block); err != nil {
+			return nil, false, fmt.Errorf("观影目录翻页响应解析失败：%s", truncate(body, 160))
+		}
+		block["ty"] = ty
+		blocks = []map[string]any{block}
+		// 站点最多翻 5 页（首页"加载更多"按钮在 p<5 时显示）
+		hasNext = page < 5
+	}
+	items := make([]RecentItem, 0)
+	for _, b := range blocks {
+		blockTy, _ := b["ty"].(string)
+		if blockTy == "" {
+			blockTy = ty
+		}
+		if page == 1 && ty != "ac" && blockTy != ty {
+			continue // 首页含 mv/tv/ac 三个板块，按请求类型过滤
+		}
+		items = append(items, recentItemsFromBlock(blockTy, b)...)
+	}
+	if page == 1 {
+		// 首页板块固定 12 条，更多内容走翻页接口
+		hasNext = len(items) > 0
+	}
+	return items, hasNext, nil
+}
+
+// parseHomepageInlist 从站点首页 HTML 提取 _obj.inlist=[...] 板块数组
+// （JS 对象字面量：键无引号、字符串单/双引号混合，需归一化为合法 JSON）
+func parseHomepageInlist(html []byte) []map[string]any {
+	re := regexp.MustCompile(`_obj\.inlist=(\[\{.*?\}\])\s*;`)
+	m := re.FindSubmatch(html)
+	if m == nil {
+		return nil
+	}
+	normalized := jsLiteralToJSON(string(m[1]))
+	var blocks []map[string]any
+	if err := json.Unmarshal([]byte(normalized), &blocks); err != nil {
+		helpers.AppLogger.Warnf("观影首页 inlist 解析失败：%v（前 160 字符 %s）", err, truncate(m[1], 160))
+		return nil
+	}
+	return blocks
+}
+
+// jsLiteralToJSON 把 JS 对象字面量粗归一化为 JSON：键加引号、单引号串转双引号。
+// 观影首页数据的字符串值不含引号转义（标题/状态文本），简单替换足够可靠。
+func jsLiteralToJSON(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 256)
+	i := 0
+	for i < len(s) {
+		ch := s[i]
+		switch {
+		case ch == '\'':
+			// 单引号字符串 → 双引号
+			j := i + 1
+			for j < len(s) && s[j] != '\'' {
+				j++
+			}
+			b.WriteByte('"')
+			b.WriteString(s[i+1 : j])
+			b.WriteByte('"')
+			i = j + 1
+		case ch == '"':
+			// 双引号字符串原样拷贝（处理转义）
+			j := i + 1
+			for j < len(s) {
+				if s[j] == '\\' && j+1 < len(s) {
+					j += 2
+					continue
+				}
+				if s[j] == '"' {
+					break
+				}
+				j++
+			}
+			b.WriteString(s[i : j+1])
+			i = j + 1
+		case (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '_' && ch <= '_'):
+			// 裸标识符：读取整词，若后面紧跟冒号则是键 → 加引号；true/false/null 除外
+			j := i
+			for j < len(s) && (isJSWordByte(s[j])) {
+				j++
+			}
+			word := s[i:j]
+			k := j
+			for k < len(s) && (s[k] == ' ' || s[k] == '\t' || s[k] == '\n' || s[k] == '\r') {
+				k++
+			}
+			if k < len(s) && s[k] == ':' && word != "true" && word != "false" && word != "null" {
+				b.WriteByte('"')
+				b.WriteString(word)
+				b.WriteByte('"')
+			} else {
+				b.WriteString(word)
+			}
+			i = j
+		default:
+			b.WriteByte(ch)
+			i++
+		}
+	}
+	return b.String()
+}
+
+func isJSWordByte(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '$'
+}
+
+// recentItemsFromBlock 把首页板块/翻页响应的字段数组转为条目列表
+func recentItemsFromBlock(dir string, block map[string]any) []RecentItem {
+	titles, _ := block["t"].([]any)
+	ids, _ := block["i"].([]any)
+	if len(titles) == 0 || len(ids) == 0 {
+		return nil
+	}
+	statuses, _ := block["g"].([]any)
+	years, _ := block["a"].([]any)
+	doubans, _ := block["d"].([]any)
+	imdbs, _ := block["im"].([]any)
+	mals, _ := block["my"].([]any)
+	heats, _ := block["r"].([]any)
+	onlines, _ := block["z"].([]any)
+	magnets, _ := block["b"].([]any)
+	pans, _ := block["w"].([]any)
+	qualities, _ := block["q"].([]any)
+
+	items := make([]RecentItem, 0, len(ids))
+	for n := range ids {
+		id, _ := ids[n].(string)
+		title, _ := titles[n].(string)
+		if id == "" || title == "" {
+			continue
+		}
+		it := RecentItem{
+			Dir:       dir,
+			ID:        id,
+			Title:     title,
+			Poster:    fmt.Sprintf("https://s.tutu.pm/img/%s/%s.webp", dir, id),
+			DetailURL: fmt.Sprintf("%s/%s/%s", currentGuanyingBase(), dir, id),
+		}
+		if n < len(statuses) {
+			it.Status, _ = statuses[n].(string)
+		}
+		if n < len(years) {
+			if arr, ok := years[n].([]any); ok && len(arr) > 0 {
+				it.Year = int(anyFloat(arr[0]))
+			}
+		}
+		if n < len(doubans) {
+			it.Douban = anyFloat(doubans[n])
+		}
+		if n < len(imdbs) {
+			it.IMDB = anyFloat(imdbs[n])
+		}
+		if n < len(mals) {
+			it.MAL = anyFloat(mals[n])
+		}
+		if n < len(heats) {
+			it.Heat = anyFloat(heats[n])
+		}
+		if n < len(onlines) {
+			it.OnlineN = int(anyFloat(onlines[n]))
+		}
+		if n < len(magnets) {
+			it.MagnetN = int(anyFloat(magnets[n]))
+		}
+		if n < len(pans) {
+			it.PanN = int(anyFloat(pans[n]))
+		}
+		if n < len(qualities) {
+			if qs, ok := qualities[n].([]any); ok {
+				for _, q := range qs {
+					if s, ok := q.(string); ok && s != "" {
+						it.Quality = append(it.Quality, s)
+					}
+				}
+			}
+		}
+		items = append(items, it)
+	}
+	return items
+}
+
+func anyFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	case string:
+		var f float64
+		_, _ = fmt.Sscanf(strings.TrimSpace(n), "%g", &f)
+		return f
+	}
+	return 0
+}
+
+// currentGuanyingBase 共享客户端当前站点（详情页跳转用）
+func currentGuanyingBase() string {
+	if shared != nil {
+		sharedMu.Lock()
+		defer sharedMu.Unlock()
+		return shared.baseURL
+	}
+	return EnsureFreshBaseURL(context.Background(), false)
 }
 
 // jsonNum 宽容数字提取（json 解析后为 float64/string/nil）

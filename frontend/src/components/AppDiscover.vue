@@ -173,6 +173,7 @@ const errorMessage = ref('')
 const librarySources = [
   { key: 'tmdb', label: 'TMDB 片库' },
   { key: 'douban', label: '豆瓣' },
+  { key: 'guanying', label: '观影' },
   { key: 'anilist', label: 'AniList 动漫' },
   { key: 'bangumi', label: 'Bangumi 动漫' },
   { key: 'actors', label: '热门演员' },
@@ -780,6 +781,8 @@ const buildLibraryUrl = (force: boolean) => {
   switch (librarySource.value) {
     case 'douban':
       return `${SERVER_URL}/media-discovery/explore/douban/catalog?media_type=${exploreMediaType.value}&tag=${encodeURIComponent(exploreDoubanTag.value)}&sort=${exploreDoubanSort.value}&${pageParam}${forceParam}${waitParam}`
+    case 'guanying':
+      return `${SERVER_URL}/media-discovery/guanying/catalog?media_type=${exploreMediaType.value}&${pageParam}`
     case 'anilist':
     case 'bangumi':
       return `${SERVER_URL}/media-discovery/anime/catalog?source=${librarySource.value}&genre=${encodeURIComponent(exploreAnimeGenre.value)}&region=${exploreAnimeRegion.value}&year=${exploreAnimeYear.value}&sort=${exploreAnimeSort.value}&${pageParam}${forceParam}${waitParam}`
@@ -1389,6 +1392,7 @@ const resourceSourceChoices = computed(() => {
 
 const resourceProviderKey = (item: ResourceItem) => {
   const p = String(item.provider || '').toLowerCase()
+  if (p === 'online') return 'online'
   if (p.includes('guangya') || p === 'gy') return 'guangya'
   if (p === 'pan139' || p === '139') return 'pan139'
   if (p.includes('123')) return '123'
@@ -1404,6 +1408,7 @@ const detailResourceChoices = computed(() => {
   }
   const defs: { key: string; label: string }[] = [
     { key: 'all', label: '全部类型' },
+    { key: 'online', label: '在线播放' },
     { key: '123', label: '123' },
     { key: 'guangya', label: '光鸭' },
     { key: 'pan139', label: '139' },
@@ -1461,6 +1466,7 @@ const episodeTagOf = (item: ResourceItem) => {
 }
 
 const pointTextOf = (item: ResourceItem) => {
+  if (item.link_type === 'online') return '在线播放'
   const offline = item.link_type === 'magnet' || item.link_type === 'ed2k'
   if (offline) {
     return item.supported_targets?.length
@@ -1481,7 +1487,7 @@ const specTagsOf = (item: ResourceItem) => item.resource_spec_tags || []
 
 const resourceTransferDisabled = (item: ResourceItem) => {
   const key = resourceProviderKey(item)
-  if (key === 'magnet') return false
+  if (key === 'magnet' || key === 'online') return false
   const target = detailData.value?.transfer_targets?.[key]
   return !target?.configured
 }
@@ -1496,7 +1502,19 @@ const resourceTargetLabel = (item: ResourceItem) => {
 const sourceLabelOf = (label: string) =>
   label === 're0' ? 'RE0' : label === 'guanying' ? '观影' : label === 'tg' ? 'TG 频道' : label
 
+// openOnlinePlay 跳转观影站在线播放页（站点自带播放器，含全部集数线路切换）
+const openOnlinePlay = (item: ResourceItem) => {
+  const u = item.share_url || item.slug
+  if (u) window.open(u, '_blank')
+}
+
 const openDetailWithResources = async (item: DiscoverItem) => {
+  // 观影源条目：跳转观影站详情页（在线播放/资源在站点详情页内）
+  if (item.source === 'guanying' && (item as any).detail_url) {
+    window.open((item as any).detail_url, '_blank')
+    ElMessage.info('已打开观影站详情页，可在站内在线播放')
+    return
+  }
   detailPage.value = true
   detailLoading.value = true
   detailError.value = ''
@@ -2323,7 +2341,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- 筛选面板（TMDB / 豆瓣 / 动漫） -->
-      <div v-if="librarySource === 'tmdb' || librarySource === 'douban' || librarySource === 'anilist' || librarySource === 'bangumi'" class="md-library-filter-panel">
+      <div v-if="librarySource === 'tmdb' || librarySource === 'douban' || librarySource === 'guanying' || librarySource === 'anilist' || librarySource === 'bangumi'" class="md-library-filter-panel">
         <div class="md-library-filter-panel-head">
           <div>
             <span class="md-kicker">EXPLORE FILTERS</span>
@@ -2417,6 +2435,24 @@ onBeforeUnmount(() => {
                 @click="exploreSort = opt.value; page = 1; load()"
               >
                 {{ opt.label }}
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <!-- 观影源（最近更新：电影/剧集） -->
+        <template v-else-if="librarySource === 'guanying'">
+          <div class="md-library-filter-row">
+            <span class="md-library-filter-label">类别</span>
+            <div class="md-library-filter-options">
+              <button
+                v-for="mt in (['movie', 'tv'] as const)"
+                :key="mt"
+                class="md-library-filter-chip"
+                :class="{ 'is-active': exploreMediaType === mt }"
+                @click="exploreMediaType = mt; page = 1; load()"
+              >
+                {{ mt === 'movie' ? '最近更新的电影' : '最近更新的剧集' }}
               </button>
             </div>
           </div>
@@ -2657,6 +2693,7 @@ onBeforeUnmount(() => {
                   <template v-if="item.original_title && item.original_title !== item.title"> · {{ item.original_title }}</template>
                 </small>
                 <small v-else-if="item.providers && item.providers.length">{{ item.providers.join(' / ') }}</small>
+                <small v-if="item.source === 'guanying' && item.overview" class="md-tile-status">{{ item.overview }}</small>
               </div>
             </article>
           </div>
@@ -3581,6 +3618,13 @@ onBeforeUnmount(() => {
                     <div class="md-resource-actions">
                       <button type="button" class="md-btn is-small" @click="copyResourceLink(item)">复制链接</button>
                       <button
+                        v-if="item.link_type === 'online'"
+                        type="button"
+                        class="md-btn is-small is-primary"
+                        @click="openOnlinePlay(item)"
+                      >在线播放</button>
+                      <button
+                        v-else
                         type="button"
                         class="md-btn is-small is-primary"
                         :disabled="resourceTransferDisabled(item)"
