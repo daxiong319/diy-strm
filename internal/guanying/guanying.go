@@ -79,6 +79,8 @@ func settingSet(key, value string) error {
 type Client struct {
 	http    *http.Client
 	baseURL string
+	// powRecover PoW 验证过期自愈动作（默认 recoverPoW；测试可注入桩）
+	powRecover func(ctx context.Context) bool
 }
 
 // SharedClient 返回带已保存会话的共享客户端（无会话也可用，仅限公开接口）。
@@ -92,6 +94,7 @@ func SharedClient() *Client {
 			http:    &http.Client{Timeout: defaultTimeout, Jar: jar},
 			baseURL: EnsureFreshBaseURL(context.Background(), false),
 		}
+		shared.powRecover = shared.recoverPoW
 		// 注入域名解析阶段取得的 PoW 验证 cookie（未过 PoW 时业务接口全部 404）
 		injectResolutionCookies(shared)
 		// 恢复会话（Session.Cookies 为加密存储，需先解密）
@@ -188,6 +191,94 @@ func serializeCookiesAt(jar http.CookieJar, baseURL string) string {
 func isHTMLBody(body []byte) bool {
 	s := strings.TrimSpace(strings.ToLower(string(body)))
 	return strings.HasPrefix(s, "<!doctype html") || strings.HasPrefix(s, "<html")
+}
+
+// isPoWExpiredJSON 响应是否为 filejin PoW「浏览器验证已过期」419 JSON。
+// 这类响应是合法 JSON 但不含业务数据（inlist 为空），若不识别会被误报成「未收录该片」。
+func isPoWExpiredJSON(body []byte) bool {
+	var e struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if json.Unmarshal(body, &e) != nil {
+		return false
+	}
+	return e.Code == 419 || strings.Contains(e.Msg, "浏览器验证已过期")
+}
+
+// getWithPoWRecovery 带验证过期自愈的 JSON GET（path 相对 baseURL）：
+// 命中 419（PoW 验证过期）时强制重解析（含 PoW 求解）注入新验证 cookie 后重试一次；
+// 重试以恢复后的 baseURL 重建请求（域名可能已更换），仍 419 则明确报验证失败而非未收录。
+func (c *Client) getWithPoWRecovery(ctx context.Context, path string) ([]byte, int, error) {
+	body, status, err := c.doJSONGet(ctx, c.baseURL+path)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !isPoWExpiredJSON(body) {
+		return body, status, nil
+	}
+	recoverFn := c.powRecover
+	if recoverFn == nil {
+		recoverFn = c.recoverPoW
+	}
+	if !recoverFn(ctx) {
+		return nil, 0, fmt.Errorf("观影安全验证已过期且自动恢复失败，请稍后重试或重新验证")
+	}
+	body2, status2, err2 := c.doJSONGet(ctx, c.baseURL+path)
+	if err2 != nil {
+		return nil, 0, err2
+	}
+	if isPoWExpiredJSON(body2) {
+		return nil, 0, fmt.Errorf("观影安全验证重试后仍过期，请稍后重试")
+	}
+	return body2, status2, nil
+}
+
+// doJSONGet 发起带统一头的 JSON GET
+func (c *Client) doJSONGet(ctx context.Context, u string) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", userAgentText)
+	return c.do(req)
+}
+
+// recoverPoW PoW 验证过期自愈：强制重解析域名（探活发现验证墙会重新求解 RSW），
+// 无论域名是否变化都注入最新的验证 cookie。账号会话 cookie 与 PoW 验证相互独立，不受影响。
+func (c *Client) recoverPoW(ctx context.Context) bool {
+	InvalidateDomainCache()
+	res := ResolveBaseURL(ctx, true)
+	if res == nil || res.BaseURL == "" {
+		return false
+	}
+	sharedMu.Lock()
+	if res.BaseURL != c.baseURL {
+		c.baseURL = res.BaseURL
+	}
+	sharedMu.Unlock()
+	if res.Cookies == "" {
+		return false
+	}
+	// 注入新 PoW 验证 cookie（直接使用本次解析结果，避免依赖缓存读取路径）
+	var pairs []struct {
+		Name   string `json:"name"`
+		Value  string `json:"value"`
+		Domain string `json:"domain"`
+		Path   string `json:"path"`
+	}
+	if json.Unmarshal([]byte(res.Cookies), &pairs) != nil || len(pairs) == 0 {
+		return false
+	}
+	u, _ := url.Parse(c.baseURL + "/")
+	cookies := make([]*http.Cookie, 0, len(pairs))
+	for _, p := range pairs {
+		cookies = append(cookies, &http.Cookie{Name: p.Name, Value: p.Value, Domain: p.Domain, Path: p.Path})
+	}
+	c.http.Jar.SetCookies(u, cookies)
+	helpers.AppLogger.Infof("观影 PoW 验证已过期，自动重验通过（站点 %s）", c.baseURL)
+	return true
 }
 
 // upstreamPageError 上游返回 HTML 页面时的统一友好错误（不透传整页 HTML 到前端）
@@ -358,14 +449,8 @@ func (c *Client) SearchResources(ctx context.Context, title, mediaType string, t
 	if title == "" {
 		return nil, fmt.Errorf("观影检索需要标题")
 	}
-	u := fmt.Sprintf("%s/res/search?q=%s", c.baseURL, url.QueryEscape(title))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", userAgentText)
-	body, status, err := c.do(req)
+	u := fmt.Sprintf("/res/search?q=%s", url.QueryEscape(title))
+	body, status, err := c.getWithPoWRecovery(ctx, u)
 	if err != nil {
 		return nil, err
 	}
@@ -373,10 +458,15 @@ func (c *Client) SearchResources(ctx context.Context, title, mediaType string, t
 		return nil, upstreamPageError("搜索", status)
 	}
 	var sr struct {
+		Code   int            `json:"code"`
+		Msg    string         `json:"msg"`
 		Inlist map[string]any `json:"inlist"`
 	}
 	if err := json.Unmarshal(body, &sr); err != nil {
 		return nil, fmt.Errorf("观影搜索响应解析失败：%s", truncate(body, 160))
+	}
+	if (sr.Code != 0 && sr.Code != 200) && sr.Msg != "" {
+		return nil, fmt.Errorf("观影搜索失败：%s", sr.Msg)
 	}
 	if len(sr.Inlist) == 0 {
 		return nil, fmt.Errorf("观影未收录该片：%s", title)
@@ -401,14 +491,8 @@ func (c *Client) SearchResources(ctx context.Context, title, mediaType string, t
 	filmID, _ := ids[0].(string)
 	dir, _ := dirs[0].(string)
 
-	du := fmt.Sprintf("%s/res/downurl/%s/%s", c.baseURL, dir, filmID)
-	req2, err := http.NewRequestWithContext(ctx, http.MethodGet, du, nil)
-	if err != nil {
-		return nil, err
-	}
-	req2.Header.Set("Accept", "application/json")
-	req2.Header.Set("User-Agent", userAgentText)
-	body2, status2, err := c.do(req2)
+	du := fmt.Sprintf("/res/downurl/%s/%s", dir, filmID)
+	body2, status2, err := c.getWithPoWRecovery(ctx, du)
 	if err != nil {
 		return nil, err
 	}
