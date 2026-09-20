@@ -587,6 +587,18 @@ func checkDownloadHistory() error {
 		}
 		localPath := resolveHistoryLocalPath(h, cfg)
 		if localPath == "" {
+			if isVirtualMountPath(h.Path) {
+				// MP 侧虚拟挂载路径（alist 等网盘协议前缀）：
+				// 文件经 MP 内部挂载/转移链路处理，不在本地下载目录，
+				// 本地路径匹配必然失败且重试无意义——Debug 留痕并推进游标，
+				// 避免每次重启全量重扫历史时重复刷屏告警。
+				if h.ID > maxID {
+					maxID = h.ID
+				}
+				helpers.AppLogger.Debugf("MoviePilot 下载历史 %s（%s）为虚拟挂载路径（%s），文件不在本地下载目录，跳过创建上传任务",
+					h.Title, h.DownloadHash[:min(12, len(h.DownloadHash))], h.Path)
+				continue
+			}
 			historyMu.Lock()
 			historyAttempts[h.DownloadHash] = time.Now()
 			historyMu.Unlock()
@@ -651,6 +663,22 @@ func checkDownloadHistory() error {
 		helpers.AppLogger.Infof("MoviePilot 下载历史检测完成：新增 %d 个上传任务", processed)
 	}
 	return nil
+}
+
+// virtualMountPathPrefixes MP 侧虚拟挂载/网盘协议前缀：以这类前缀开头的下载历史 path
+// 表示文件经 MP 内部挂载或转移链路处理（如 alist:/中国移动云盘/...），不在本地下载目录，
+// 本地路径匹配对其必然失败，创建上传任务也无从谈起。
+var virtualMountPathPrefixes = []string{"alist:"}
+
+// isVirtualMountPath 判断 MP 下载历史的 path 是否为虚拟挂载/网盘协议路径。
+func isVirtualMountPath(p string) bool {
+	trimmed := strings.TrimSpace(p)
+	for _, prefix := range virtualMountPathPrefixes {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveHistoryLocalPath 从下载历史记录定位容器内可访问的本地路径。
