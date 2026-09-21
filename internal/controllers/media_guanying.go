@@ -237,3 +237,23 @@ func GetGuanyingCatalogAPI(c *gin.Context) {
 		"page":          page,
 	}})
 }
+
+// GetGuanyingPlayPageAPI GET /guanying/play/:line/:episode
+// 观影在线播放内嵌代理：后端带会话抓取观影站播放页 HTML 原样返回，
+// 静态资源走 filejin CDN、HLS 直连外站，项目域内直接渲染播放器（免登录）。
+func GetGuanyingPlayPageAPI(c *gin.Context) {
+	if !guanyingEnabled() {
+		c.String(http.StatusForbidden, "观影未启用：请先在发现-基础配置中开启观影")
+		return
+	}
+	line := c.Param("line")
+	episode, _ := strconv.Atoi(c.Param("episode"))
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+	html, err := guanying.SharedClient().PlayPageHTML(ctx, line, episode)
+	if err != nil {
+		c.String(http.StatusBadGateway, "观影播放页加载失败：%s", err.Error())
+		return
+	}
+	c.Data(http.StatusOK, "text/html; charset=utf-8", html)
+}

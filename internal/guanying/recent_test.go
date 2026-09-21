@@ -49,8 +49,8 @@ func TestParseHomepageInlist(t *testing.T) {
 	if len(tv) != 2 || tv[0].Status != "全6集" {
 		t.Fatalf("剧集板块解析错误：%+v", tv)
 	}
-	// 海报与详情页 URL 构造
-	if !strings.Contains(mv[0].Poster, "/img/mv/vAPPx.webp") {
+	// 海报与详情页 URL 构造（海报带 _Aimg 尺寸后缀 384）
+	if !strings.Contains(mv[0].Poster, "/img/mv/vAPPx/384.webp") {
 		t.Fatalf("海报 URL 错误：%s", mv[0].Poster)
 	}
 }

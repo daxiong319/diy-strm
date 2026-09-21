@@ -695,6 +695,39 @@ func playLineFirstEpisode(raw any) int {
 	return 1
 }
 
+// PlayPageHTML 获取观影站播放页 HTML（内嵌播放代理）。
+// 站点播放页静态资源走 filejin CDN（公开）、HLS 直连外站（无鉴权），
+// 后端带会话抓取 HTML 原样返回即可在项目域内渲染播放器（免登录、免跳转）。
+// lineID 为线路标识（西瓜线路 BmmZpq 等），episode 从 1 开始。
+func (c *Client) PlayPageHTML(ctx context.Context, lineID string, episode int) ([]byte, error) {
+	c.refreshEndpoint()
+	lineID = strings.TrimSpace(lineID)
+	if lineID == "" {
+		return nil, fmt.Errorf("播放线路标识不能为空")
+	}
+	if episode < 1 {
+		episode = 1
+	}
+	u := fmt.Sprintf("/py/%s/%d", url.PathEscape(lineID), episode)
+	body, status, err := c.doJSONGet(ctx, c.baseURL+u)
+	if err != nil {
+		return nil, err
+	}
+	if isPoWExpiredJSON(body) || powChallengeRe.Match(body) {
+		if !c.recoverPoW(ctx) {
+			return nil, fmt.Errorf("观影安全验证已过期且自动恢复失败，请稍后重试")
+		}
+		body, status, err = c.doJSONGet(ctx, c.baseURL+u)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !isHTMLBody(body) {
+		return nil, fmt.Errorf("观影播放页返回异常（HTTP %d）：%s", status, truncate(body, 160))
+	}
+	return body, nil
+}
+
 // RecentItem 观影「最近更新」条目（首页 inlist 板块与 /res/change 翻页共用结构）
 type RecentItem struct {
 	Dir       string   `json:"dir"` // mv/tv/ac
@@ -892,7 +925,7 @@ func recentItemsFromBlock(dir string, block map[string]any) []RecentItem {
 			Dir:       dir,
 			ID:        id,
 			Title:     title,
-			Poster:    fmt.Sprintf("https://s.tutu.pm/img/%s/%s.webp", dir, id),
+			Poster:    fmt.Sprintf("https://s.tutu.pm/img/%s/%s/384.webp", dir, id), // _Aimg 尺寸后缀（PC 取 384）
 			DetailURL: fmt.Sprintf("%s/%s/%s", currentGuanyingBase(), dir, id),
 		}
 		if n < len(statuses) {

@@ -981,6 +981,7 @@ func setRouter(r *gin.Engine) {
 		api.POST("/media-discovery/guanying/test", controllers.TestGuanyingAPI)                    // 会话有效性测试
 		api.DELETE("/media-discovery/guanying/session", controllers.ClearGuanyingSessionAPI)       // 清除会话与凭据
 		api.GET("/media-discovery/guanying/catalog", controllers.GetGuanyingCatalogAPI)            // 观影最近更新目录
+		api.GET("/guanying/play/:line/:episode", controllers.GetGuanyingPlayPageAPI)               // 观影在线播放内嵌代理（免登录渲染播放器）
 		// 影视发现复刻扩展（对齐 tgto123 media_discovery 全功能）：目录流/演员/搜索/详情/猫眼/订阅/Emby
 		api.GET("/media-discovery/explore/douban/catalog", controllers.GetMediaExploreDoubanCatalog)               // 豆瓣目录流
 		api.GET("/media-discovery/anime/catalog", controllers.GetMediaAnimeCatalog)                                // 动漫目录流（AniList/Bangumi）

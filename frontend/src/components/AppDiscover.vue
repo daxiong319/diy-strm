@@ -1502,9 +1502,15 @@ const resourceTargetLabel = (item: ResourceItem) => {
 const sourceLabelOf = (label: string) =>
   label === 're0' ? 'RE0' : label === 'guanying' ? '观影' : label === 'tg' ? 'TG 频道' : label
 
-// openOnlinePlay 跳转观影站在线播放页（站点自带播放器，含全部集数线路切换）
+// openOnlinePlay 项目内嵌播放：后端代理观影播放页（带会话），项目域内渲染播放器，
+// 免登录免跳转外站；slug 形如 play:{lineID}，share_url 为观影站播放页（备用）。
 const openOnlinePlay = (item: ResourceItem) => {
-  const u = item.share_url || item.slug
+  const m = /^play:(.+)$/.exec(item.slug || '')
+  if (m) {
+    window.open(`${SERVER_URL}/guanying/play/${encodeURIComponent(m[1])}/1`, '_blank')
+    return
+  }
+  const u = item.share_url
   if (u) window.open(u, '_blank')
 }
 
