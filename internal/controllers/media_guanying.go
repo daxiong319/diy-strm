@@ -292,6 +292,7 @@ func GetGuanyingImageAPI(c *gin.Context) {
 }
 
 // GetGuanyingResProxyAPI GET /guanying/res/*path — 观影站 /res/* 通配代理（内嵌详情/播放页内 JS 的站内 API 调用）。
+// gin 通配参数 path 为 /guanying/res/ 之后的部分（如 /downurl/tv/xxx），代理时补回 /res 前缀。
 func GetGuanyingResProxyAPI(c *gin.Context) {
 	if !guanyingEnabled() {
 		c.String(http.StatusForbidden, "观影未启用")
@@ -299,7 +300,7 @@ func GetGuanyingResProxyAPI(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
-	body, ct, err := guanying.SharedClient().ProxyRes(ctx, c.Param("path"))
+	body, ct, err := guanying.SharedClient().ProxyRes(ctx, "/res"+c.Param("path"))
 	if err != nil {
 		c.String(http.StatusBadGateway, "观影接口代理失败：%s", err.Error())
 		return

@@ -707,6 +707,11 @@ func setRouter(r *gin.Engine) {
 	r.GET("/openlist/url", controllers.GetOpenListFileUrl) // 查询 OpenList 直链
 
 	r.GET("/proxy-115", controllers.Proxy115) // 115 CDN 反代路由
+	// 观影内嵌详情/播放页的站内接口代理：观影 SPA 的外部 JS（filejin CDN 加载）以
+	// 相对路径调 /res/*，浏览器把项目域当当前域 → 必须挂根路径同名代理。
+	// 与 api 组同样 JWT 保护（cookie 会话）；GET 免 CSRF。
+	r.GET("/res/*path", controllers.JWTAuthMiddleware(), controllers.GetGuanyingResProxyAPI)
+
 	// 需要 JWT 验证的 API 路由
 	api := r.Group("/api")
 	api.Use(controllers.JWTAuthMiddleware())
