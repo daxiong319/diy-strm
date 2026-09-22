@@ -257,3 +257,52 @@ func GetGuanyingPlayPageAPI(c *gin.Context) {
 	}
 	c.Data(http.StatusOK, "text/html; charset=utf-8", html)
 }
+
+// GetGuanyingDetailPageAPI GET /guanying/detail/:dir/:id — 内嵌详情代理（免登录渲染观影详情页）。
+func GetGuanyingDetailPageAPI(c *gin.Context) {
+	if !guanyingEnabled() {
+		c.String(http.StatusForbidden, "观影未启用：请先在发现-基础配置中开启观影")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+	html, err := guanying.SharedClient().DetailPageHTML(ctx, c.Param("dir"), c.Param("id"))
+	if err != nil {
+		c.String(http.StatusBadGateway, "观影详情页加载失败：%s", err.Error())
+		return
+	}
+	c.Data(http.StatusOK, "text/html; charset=utf-8", html)
+}
+
+// GetGuanyingImageAPI GET /guanying/img/:dir/:id/:size — 海报代理（tutu.pm 防盗链：带观影域 Referer 抓图转发）。
+func GetGuanyingImageAPI(c *gin.Context) {
+	if !guanyingEnabled() {
+		c.String(http.StatusForbidden, "观影未启用")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	body, ct, err := guanying.SharedClient().FetchImage(ctx, c.Param("dir"), c.Param("id"), c.Param("size"))
+	if err != nil {
+		c.String(http.StatusBadGateway, "%s", err.Error())
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=86400") // 海报缓存 1 天
+	c.Data(http.StatusOK, ct, body)
+}
+
+// GetGuanyingResProxyAPI GET /guanying/res/*path — 观影站 /res/* 通配代理（内嵌详情/播放页内 JS 的站内 API 调用）。
+func GetGuanyingResProxyAPI(c *gin.Context) {
+	if !guanyingEnabled() {
+		c.String(http.StatusForbidden, "观影未启用")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+	body, ct, err := guanying.SharedClient().ProxyRes(ctx, c.Param("path"))
+	if err != nil {
+		c.String(http.StatusBadGateway, "观影接口代理失败：%s", err.Error())
+		return
+	}
+	c.Data(http.StatusOK, ct, body)
+}

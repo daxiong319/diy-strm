@@ -695,6 +695,106 @@ func playLineFirstEpisode(raw any) int {
 	return 1
 }
 
+// DetailPageHTML 获取观影站详情页 HTML（内嵌详情代理，与播放页同构）。
+// dir 为 mv/tv/ac，id 为影片 ID（详情页 /{dir}/{id}）。
+func (c *Client) DetailPageHTML(ctx context.Context, dir, id string) ([]byte, error) {
+	c.refreshEndpoint()
+	if dir != "mv" && dir != "tv" && dir != "ac" {
+		return nil, fmt.Errorf("详情类型非法：%s", dir)
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || strings.Contains(id, "/") {
+		return nil, fmt.Errorf("影片 ID 非法")
+	}
+	u := fmt.Sprintf("/%s/%s", dir, url.PathEscape(id))
+	body, status, err := c.doJSONGet(ctx, c.baseURL+u)
+	if err != nil {
+		return nil, err
+	}
+	if isPoWExpiredJSON(body) || powChallengeRe.Match(body) {
+		if !c.recoverPoW(ctx) {
+			return nil, fmt.Errorf("观影安全验证已过期且自动恢复失败，请稍后重试")
+		}
+		body, status, err = c.doJSONGet(ctx, c.baseURL+u)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !isHTMLBody(body) {
+		return nil, fmt.Errorf("观影详情页返回异常（HTTP %d）：%s", status, truncate(body, 160))
+	}
+	return rewriteResPaths(body), nil
+}
+
+// rewriteResPaths 把代理 HTML 里的 '/res/ 与 `/res/ 调用前缀改写为项目代理路径
+// （观影 SPA 内 JS 以相对路径调站内接口，需改写到 /api/guanying/res/* 才能命中项目代理）。
+func rewriteResPaths(html []byte) []byte {
+	s := string(html)
+	s = strings.ReplaceAll(s, `'/res/`, `'/api/guanying/res/`)
+	s = strings.ReplaceAll(s, "`/res/", "`/api/guanying/res/")
+	return []byte(s)
+}
+
+// FetchImage 抓观影海报（tutu.pm 有 Referer 防盗链：仅放行观影域 Referer）。
+// size 为 _Aimg 尺寸段（128/256/384）。返回图片字节与 Content-Type。
+func (c *Client) FetchImage(ctx context.Context, dir, id, size string) ([]byte, string, error) {
+	dir = strings.TrimSpace(dir)
+	id = strings.TrimSpace(id)
+	if size == "" {
+		size = "384"
+	}
+	if dir == "" || id == "" || strings.Contains(dir, "/") || strings.Contains(id, "/") || strings.Contains(size, "/") {
+		return nil, "", fmt.Errorf("图片参数非法")
+	}
+	u := fmt.Sprintf("https://s.tutu.pm/img/%s/%s/%s.webp", dir, id, size)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	// 图床防盗链校验 Referer 的域（观影域放行、外域 403）
+	req.Header.Set("Referer", currentGuanyingBase()+"/")
+	req.Header.Set("User-Agent", userAgentText)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("海报获取失败（HTTP %d）", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, "", err
+	}
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "image/webp"
+	}
+	return body, ct, nil
+}
+
+// ProxyRes 通配代理观影站 /res/* JSON 接口（详情页/播放页内 content.js 的站内 API 调用，
+// 如 /res/downurl/{dir}/{id}；浏览器把项目域当当前域时会打到项目侧 /api/guanying/res/*）。
+// 返回（响应体, Content-Type, error）；带会话 + PoW 自愈。
+func (c *Client) ProxyRes(ctx context.Context, path string) ([]byte, string, error) {
+	c.refreshEndpoint()
+	if !strings.HasPrefix(path, "/res/") || strings.Contains(path, "..") {
+		return nil, "", fmt.Errorf("代理路径非法")
+	}
+	body, status, err := c.getWithPoWRecovery(ctx, path)
+	if err != nil {
+		return nil, "", err
+	}
+	if status >= 500 {
+		return nil, "", fmt.Errorf("观影上游接口异常（HTTP %d）", status)
+	}
+	ct := "application/json"
+	if isHTMLBody(body) {
+		ct = "text/html; charset=utf-8"
+	}
+	return body, ct, nil
+}
+
 // PlayPageHTML 获取观影站播放页 HTML（内嵌播放代理）。
 // 站点播放页静态资源走 filejin CDN（公开）、HLS 直连外站（无鉴权），
 // 后端带会话抓取 HTML 原样返回即可在项目域内渲染播放器（免登录、免跳转）。
@@ -725,7 +825,7 @@ func (c *Client) PlayPageHTML(ctx context.Context, lineID string, episode int) (
 	if !isHTMLBody(body) {
 		return nil, fmt.Errorf("观影播放页返回异常（HTTP %d）：%s", status, truncate(body, 160))
 	}
-	return body, nil
+	return rewriteResPaths(body), nil
 }
 
 // RecentItem 观影「最近更新」条目（首页 inlist 板块与 /res/change 翻页共用结构）
@@ -925,8 +1025,8 @@ func recentItemsFromBlock(dir string, block map[string]any) []RecentItem {
 			Dir:       dir,
 			ID:        id,
 			Title:     title,
-			Poster:    fmt.Sprintf("https://s.tutu.pm/img/%s/%s/384.webp", dir, id), // _Aimg 尺寸后缀（PC 取 384）
-			DetailURL: fmt.Sprintf("%s/%s/%s", currentGuanyingBase(), dir, id),
+			Poster:    fmt.Sprintf("/api/guanying/img/%s/%s/384", dir, id), // 项目内海报代理（tutu.pm 防盗链）
+			DetailURL: fmt.Sprintf("/api/guanying/detail/%s/%s", dir, id),  // 项目内嵌详情代理（免登录）
 		}
 		if n < len(statuses) {
 			it.Status, _ = statuses[n].(string)
