@@ -20,7 +20,7 @@ type Migrator struct {
 	VersionCode int `json:"version_code"` // 版本号
 }
 
-var MaxVersionCode = 82
+var MaxVersionCode = 83
 var AllTables = []any{
 	Migrator{},
 	BackupConfig{}, BackupRecord{},
@@ -957,6 +957,15 @@ func Migrate() {
 			return
 		}
 		helpers.AppLogger.Info("AI 识别缓存表已就绪")
+		migrator.UpdateVersionCode(db.Db)
+	}
+	if migrator.VersionCode == 82 {
+		// 夸克秒传 pre_hash 落库：上传时计算前 4×4MB 分块 MD5 存入上传任务表
+		if err := db.Db.Migrator().AddColumn(&DbUploadTask{}, "pre_hash"); err != nil {
+			helpers.AppLogger.Errorf("迁移 DbUploadTask.pre_hash 列失败：%v", err)
+			return
+		}
+		helpers.AppLogger.Info("DbUploadTask.pre_hash 列已就绪")
 		migrator.UpdateVersionCode(db.Db)
 	}
 	helpers.AppLogger.Infof("当前数据库版本 %d", migrator.VersionCode)
