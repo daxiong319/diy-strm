@@ -22,11 +22,11 @@ func displayAccountName(account *models.Account) string {
 
 // Status 单个网盘账号的授权检测结果
 type Status struct {
-	Valid     bool   `json:"valid"`       // 本次检测授权是否有效
-	CheckedAt int64  `json:"checked_at"`  // 检测时间（unix 秒，0 表示从未检测）
-	Detail    string `json:"detail"`      // 失效原因 / 成功详情
-	Notified  bool   `json:"notified"`    // 当前失效状态是否已通知过
-	Checking  bool   `json:"checking"`    // 是否正在检测（仅内存瞬时状态，不持久化语义）
+	Valid     bool   `json:"valid"`      // 本次检测授权是否有效
+	CheckedAt int64  `json:"checked_at"` // 检测时间（unix 秒，0 表示从未检测）
+	Detail    string `json:"detail"`     // 失效原因 / 成功详情
+	Notified  bool   `json:"notified"`   // 当前失效状态是否已通知过
+	Checking  bool   `json:"checking"`   // 是否正在检测（仅内存瞬时状态，不持久化语义）
 }
 
 // store 全部账号的授权状态缓存（accountID → Status）
@@ -98,6 +98,10 @@ func checkOneOnce(account *models.Account) (bool, string) {
 		}
 	case models.SourceTypeGuangYaPan:
 		if _, err := account.GetGuangYaPanClient().GetFiles(ctx, ""); err != nil {
+			return false, err.Error()
+		}
+	case models.SourceTypeCloud189:
+		if _, err := account.GetCloud189Client().ListFiles(ctx, "-11"); err != nil {
 			return false, err.Error()
 		}
 	case models.SourceTypeBaiduPan:

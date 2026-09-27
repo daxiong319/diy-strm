@@ -24,6 +24,7 @@ import (
 	emby302https "diy-strm/emby302/util/https"
 	"diy-strm/emby302/web"
 	"diy-strm/internal/backup"
+	"diy-strm/internal/casengine"
 	"diy-strm/internal/controllers"
 	"diy-strm/internal/db"
 	"diy-strm/internal/db/database"
@@ -276,6 +277,9 @@ func ensureDiscoveryTables() {
 		return
 	}
 	helpers.AppLogger.Info("影视发现表已就绪（设置/收藏/目录缓存）")
+	// CAS 清单表（cas_manifests）
+	casengine.EnsureTable()
+	helpers.AppLogger.Info("CAS 清单表已就绪")
 }
 
 // registerRe0AliasRoutes 注册 /api/re0/* 与 /api/re0_proxy/* 别名路由。
@@ -986,10 +990,23 @@ func setRouter(r *gin.Engine) {
 		api.POST("/media-discovery/guanying/test", controllers.TestGuanyingAPI)                    // 会话有效性测试
 		api.DELETE("/media-discovery/guanying/session", controllers.ClearGuanyingSessionAPI)       // 清除会话与凭据
 		api.GET("/media-discovery/guanying/catalog", controllers.GetGuanyingCatalogAPI)            // 观影最近更新目录
-		api.GET("/guanying/play/:line/:episode", controllers.GetGuanyingPlayPageAPI)               // 观影在线播放内嵌代理（免登录渲染播放器）
-		api.GET("/guanying/detail/:dir/:id", controllers.GetGuanyingDetailPageAPI)                 // 观影详情内嵌代理（免登录渲染详情页）
-		api.GET("/guanying/img/:dir/:id/:size", controllers.GetGuanyingImageAPI)                   // 观影海报代理（tutu.pm 防盗链转发）
-		api.GET("/guanying/res/*path", controllers.GetGuanyingResProxyAPI)                         // 观影站 /res/* 通配代理（内嵌页 JS 站内调用）
+
+		// 天翼云盘（cloud189）+ CAS 秒传体系
+		api.POST("/cloud189/login", controllers.Cloud189LoginAPI)                    // 天翼账号密码登录（支持验证码）
+		api.POST("/cloud189/login-cookie", controllers.Cloud189LoginByCookieAPI)     // 天翼 SSON Cookie 登录
+		api.GET("/cloud189/files", controllers.Cloud189FilesAPI)                     // 天翼文件列表
+		api.POST("/cas/run", controllers.CasRunOnceAPI)                              // 手动触发 CAS 化
+		api.GET("/cas/records", controllers.CasRecordsAPI)                           // CAS 记录列表
+		api.POST("/cas/restore", controllers.CasRestoreTextAPI)                      // 粘贴 CAS 一键秒传恢复
+		api.POST("/cas/records/:id/restore", controllers.CasRestoreRecordAPI)        // 从记录秒传恢复
+		api.GET("/cas/records/:id/export", controllers.CasExportAPI)                 // 导出 .cas 文件
+		api.DELETE("/cas/records/:id", controllers.CasDeleteRecordAPI)               // 删除 CAS 记录
+		api.GET("/cas/config", controllers.CasConfigAPI)                             // CAS 配置读取
+		api.POST("/cas/config", controllers.CasConfigAPI)                            // CAS 配置保存
+		api.GET("/guanying/play/:line/:episode", controllers.GetGuanyingPlayPageAPI) // 观影在线播放内嵌代理（免登录渲染播放器）
+		api.GET("/guanying/detail/:dir/:id", controllers.GetGuanyingDetailPageAPI)   // 观影详情内嵌代理（免登录渲染详情页）
+		api.GET("/guanying/img/:dir/:id/:size", controllers.GetGuanyingImageAPI)     // 观影海报代理（tutu.pm 防盗链转发）
+		api.GET("/guanying/res/*path", controllers.GetGuanyingResProxyAPI)           // 观影站 /res/* 通配代理（内嵌页 JS 站内调用）
 		// 影视发现复刻扩展（对齐 tgto123 media_discovery 全功能）：目录流/演员/搜索/详情/猫眼/订阅/Emby
 		api.GET("/media-discovery/explore/douban/catalog", controllers.GetMediaExploreDoubanCatalog)               // 豆瓣目录流
 		api.GET("/media-discovery/anime/catalog", controllers.GetMediaAnimeCatalog)                                // 动漫目录流（AniList/Bangumi）

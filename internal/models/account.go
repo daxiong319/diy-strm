@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"diy-strm/internal/baidupan"
+	"diy-strm/internal/cloud189"
 	"diy-strm/internal/db"
 	"diy-strm/internal/guangyapan"
 	"diy-strm/internal/helpers"
@@ -39,7 +40,7 @@ type Account struct {
 const (
 	BuiltIn115AppQ115STRM       = "Q115-STRM"
 	BuiltIn115AppMQMediaLibrary = "MQ的媒体库"
-	BuiltIn115AppDiyStrm     = "diy-strm"
+	BuiltIn115AppDiyStrm        = "diy-strm"
 	Custom115AppName            = "自定义"
 )
 
@@ -166,6 +167,39 @@ func (account *Account) GetPan139Client() *pan139.Client {
 		account.UpdatePan139Login(newAuth, "")
 	})
 	return client
+}
+
+// GetCloud189Client 创建天翼云盘客户端
+// Token=accessToken、RefreshToken=refreshToken 恢复会话；令牌变化回调持久化
+func (account *Account) GetCloud189Client() *cloud189.Client {
+	client := cloud189.NewClient(account.Username, account.Password, account.Token)
+	// Token 字段复用为 SSON Cookie（cookie 登录）或 accessToken（密码登录后回调覆盖）
+	if account.Token != "" && account.RefreshToken != "" {
+		client.SetTokenStore(account.Token, account.RefreshToken, time.Unix(account.TokenExpiriesTime, 0))
+	}
+	client.SetOnTokenChange(func(sess cloud189.TokenSession) {
+		account.UpdateCloud189Login(sess.AccessToken, sess.RefreshToken)
+	})
+	return client
+}
+
+// UpdateCloud189Login 持久化天翼云盘令牌（accessToken/refreshToken）
+func (account *Account) UpdateCloud189Login(accessToken, refreshToken string) bool {
+	account.Token = accessToken
+	account.RefreshToken = refreshToken
+	account.TokenExpiriesTime = time.Now().Add(6 * 24 * time.Hour).Unix()
+	account.TokenFailedReason = ""
+	err := db.Db.Model(account).Where("id = ?", account.ID).Updates(map[string]any{
+		"token":               accessToken,
+		"refresh_token":       refreshToken,
+		"token_expiries_time": account.TokenExpiriesTime,
+		"token_failed_reason": "",
+	}).Error
+	if err != nil {
+		helpers.AppLogger.Errorf("更新天翼云盘账号令牌失败：%v", err)
+		return false
+	}
+	return true
 }
 
 // UpdatePan139Login 更新中国移动云盘账号登录凭据（Authorization/账号名）

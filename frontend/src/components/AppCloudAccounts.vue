@@ -601,6 +601,12 @@
     :account-name="selectedAccountName"
     @confirmed="loadAccounts"
   />
+  <Cloud189AuthDialog
+    v-model:visible="showCloud189AuthDialog"
+    :account-id="selectedAccountId ?? null"
+    :account-name="selectedAccountName"
+    @confirmed="loadAccounts"
+  />
 </template>
 
 <script setup lang="ts">
@@ -609,6 +615,7 @@ import V115AuthorizationDialog from '@/components/cloud-auth/V115AuthorizationDi
 import Pan123AuthDialog from '@/components/cloud-auth/Pan123AuthDialog.vue'
 import GuangYaPanAuthDialog from '@/components/cloud-auth/GuangYaPanAuthDialog.vue'
 import Pan139AuthDialog from '@/components/cloud-auth/Pan139AuthDialog.vue'
+import Cloud189AuthDialog from '@/components/cloud-auth/Cloud189AuthDialog.vue'
 import V115AppSelector from '@/components/cloud-auth/V115AppSelector.vue'
 import type { AxiosError } from 'axios'
 import { ref, computed, onMounted } from 'vue'
@@ -736,6 +743,7 @@ const selectedAccountName = ref('')
 const showPan123AuthDialog = ref(false)
 const showGuangYaAuthDialog = ref(false)
 const showPan139AuthDialog = ref(false)
+const showCloud189AuthDialog = ref(false)
 const selectedV115Account = ref<CloudAccount | null>(null)
 const showV115AuthDialog = ref(false)
 
@@ -1149,6 +1157,12 @@ const handleAuthorize = (row: CloudAccount) => {
     selectedAccountId.value = row.id
     selectedAccountName.value = row.name || ''
     showPan139AuthDialog.value = true
+    return
+  }
+  if (row.source_type === 'cloud189') {
+    selectedAccountId.value = row.id
+    selectedAccountName.value = row.name || ''
+    showCloud189AuthDialog.value = true
     return
   }
   if (row.source_type === 'baidupan') {

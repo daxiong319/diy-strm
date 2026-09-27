@@ -28,6 +28,7 @@ const (
 	SourceTypeEmbyMedia  SourceType = "emby_media" // Emby 媒体信息提取专用
 	SourceTypeGuangYaPan SourceType = "guangyapan"
 	SourceTypePan139     SourceType = "pan139"
+	SourceTypeCloud189   SourceType = "cloud189" // 天翼云盘（CAS 秒传体系）
 )
 
 func (s SourceType) String() string {
@@ -48,6 +49,8 @@ func (s SourceType) String() string {
 		return "光鸭云盘"
 	case SourceTypePan139:
 		return "中国移动云盘"
+	case SourceTypeCloud189:
+		return "天翼云盘"
 	default:
 		return string(s)
 	}

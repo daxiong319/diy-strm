@@ -1,0 +1,291 @@
+package cloud189
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// ---------------------------------------------------------------------------
+// CAS 清单（对齐 CasFileService：V1/V2/管道符/Base64/协议头全格式）
+// ---------------------------------------------------------------------------
+
+// CasManifest V1 清单
+type CasManifest struct {
+	FileName   string `json:"fileName"`
+	FileSize   int64  `json:"fileSize"`
+	FileMd5    string `json:"fileMd5"`
+	SliceMd5   string `json:"sliceMd5"`
+	UploadTime string `json:"uploadTime,omitempty"`
+}
+
+// CasManifestV2 V2 多网盘多维特征清单
+type CasManifestV2 struct {
+	Version  int    `json:"version"`
+	FileName string `json:"fileName"`
+	FileSize int64  `json:"fileSize"`
+	Hashes   struct {
+		Md5      string `json:"md5,omitempty"`
+		SliceMd5 string `json:"sliceMd5,omitempty"`
+		Sha1     string `json:"sha1,omitempty"`
+		PreHash  string `json:"preHash,omitempty"`
+		Gcid     string `json:"gcid,omitempty"`
+		Sha115   string `json:"sha115,omitempty"`
+	} `json:"hashes"`
+	SourceDrive string `json:"sourceDrive,omitempty"`
+	CreatedAt   string `json:"createdAt,omitempty"`
+}
+
+// ParseManifest 解析 V1 清单
+func ParseManifest(data map[string]any) (CasManifest, error) {
+	fileObj := data
+	if f, ok := data["file"].(map[string]any); ok {
+		fileObj = f
+	} else if d, ok := data["data"].(map[string]any); ok {
+		fileObj = d
+	}
+	get := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := fileObj[k].(string); ok && v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	m := CasManifest{
+		FileName:   get("fileName", "name", "filename"),
+		FileMd5:    strings.ToUpper(get("fileMd5", "md5", "file_md5")),
+		SliceMd5:   strings.ToUpper(get("sliceMd5", "slice_md5")),
+		UploadTime: get("uploadTime", "lastOpTime"),
+	}
+	if m.UploadTime == "" {
+		m.UploadTime = time.Now().Format(time.RFC3339)
+	}
+	sizeStr := get("fileSize", "size", "length")
+	if sizeStr != "" {
+		m.FileSize, _ = strconv.ParseInt(sizeStr, 10, 64)
+	} else if v, ok := fileObj["fileSize"].(float64); ok {
+		m.FileSize = int64(v)
+	} else if v, ok := fileObj["size"].(float64); ok {
+		m.FileSize = int64(v)
+	}
+	if m.FileName == "" || m.FileSize <= 0 || m.FileMd5 == "" || m.SliceMd5 == "" {
+		return m, fmt.Errorf("CAS 文件内容不完整，缺少 name/size/md5/sliceMd5")
+	}
+	return m, nil
+}
+
+// ParseManifestText 解析 CAS 文本（JSON 或 Base64）
+func ParseManifestText(text string) (CasManifest, error) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return CasManifest{}, fmt.Errorf("CAS 清单内容为空")
+	}
+	if strings.HasPrefix(trimmed, "{") {
+		var data map[string]any
+		if err := json.Unmarshal([]byte(trimmed), &data); err != nil {
+			return CasManifest{}, fmt.Errorf("解析 CAS JSON 失败: %w", err)
+		}
+		return ParseManifest(data)
+	}
+	// Base64
+	if decoded, err := base64.StdEncoding.DecodeString(compactBase64(trimmed)); err == nil {
+		s := strings.TrimSpace(string(decoded))
+		if strings.HasPrefix(s, "{") {
+			return ParseManifestText(s)
+		}
+	}
+	return CasManifest{}, fmt.Errorf("无法识别的 CAS 文件内容格式")
+}
+
+// ParseManifestV2 解析 V2 清单（管道符/Base64/cloud189:// 协议头/V1 自动升级）
+func ParseManifestV2(text string) (CasManifestV2, error) {
+	raw := strings.TrimSpace(text)
+	if raw == "" {
+		return CasManifestV2{}, fmt.Errorf("CAS 清单内容为空")
+	}
+
+	// 1. 管道符格式：文件名|文件大小|MD5|SliceMD5
+	if strings.Contains(raw, "|") {
+		parts := strings.Split(raw, "|")
+		if len(parts) >= 4 {
+			name := strings.TrimSpace(parts[0])
+			size, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+			md5 := strings.TrimSpace(parts[2])
+			sliceMd5 := strings.TrimSpace(parts[3])
+			if name != "" && err == nil && isMd5(md5) && isMd5(sliceMd5) {
+				m := CasManifestV2{
+					Version:     2,
+					FileName:    name,
+					FileSize:    size,
+					SourceDrive: "cloud189",
+					CreatedAt:   time.Now().Format(time.RFC3339),
+				}
+				m.Hashes.Md5 = strings.ToUpper(md5)
+				m.Hashes.SliceMd5 = strings.ToUpper(sliceMd5)
+				return m, nil
+			}
+		}
+	}
+
+	// 2. 去协议头 + Base64
+	clean := raw
+	if strings.HasPrefix(strings.ToLower(clean), "cloud189://") {
+		clean = strings.TrimSpace(clean[len("cloud189://"):])
+	}
+	jsonText := clean
+	if !strings.HasPrefix(clean, "{") && !strings.HasPrefix(clean, "[") {
+		if decoded, err := base64.StdEncoding.DecodeString(compactBase64(clean)); err == nil {
+			s := string(decoded)
+			s = strings.TrimPrefix(s, "\ufeff") // 去 UTF-8 BOM
+			s = strings.TrimSpace(s)
+			if strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[") {
+				jsonText = s
+			} else if strings.Contains(s, "|") {
+				return ParseManifestV2(s)
+			}
+		}
+	}
+
+	var data any
+	if err := json.Unmarshal([]byte(jsonText), &data); err != nil {
+		return CasManifestV2{}, fmt.Errorf("解析 CAS 失败: 既非有效 JSON 也非合法 Base64/管道符格式 (%v)", err)
+	}
+	// 数组取第一条
+	if arr, ok := data.([]any); ok {
+		if len(arr) == 0 {
+			return CasManifestV2{}, fmt.Errorf("CAS JSON 数组为空")
+		}
+		data = arr[0]
+	}
+	obj, ok := data.(map[string]any)
+	if !ok {
+		return CasManifestV2{}, fmt.Errorf("CAS JSON 结构非法")
+	}
+
+	// V2 结构
+	if ver, _ := obj["version"].(float64); ver == 2 {
+		if hashes, ok := obj["hashes"].(map[string]any); ok {
+			m := CasManifestV2{
+				Version:     2,
+				FileName:    anyString(obj["fileName"]),
+				FileSize:    int64(anyFloat(obj["fileSize"])),
+				SourceDrive: anyString(obj["sourceDrive"]),
+				CreatedAt:   anyString(obj["createdAt"]),
+			}
+			if m.FileName == "" {
+				m.FileName = anyString(obj["name"])
+			}
+			if m.CreatedAt == "" {
+				m.CreatedAt = time.Now().Format(time.RFC3339)
+			}
+			m.Hashes.Md5 = strings.ToUpper(anyString(hashes["md5"]))
+			m.Hashes.SliceMd5 = strings.ToUpper(anyString(hashes["sliceMd5"]))
+			m.Hashes.Sha1 = strings.ToUpper(anyString(hashes["sha1"]))
+			m.Hashes.PreHash = strings.ToUpper(anyString(hashes["preHash"]))
+			m.Hashes.Gcid = anyString(hashes["gcid"])
+			m.Hashes.Sha115 = strings.ToUpper(firstNonEmpty(anyString(hashes["sha115"]), anyString(hashes["sha1_115"])))
+			if m.FileName == "" || m.FileSize <= 0 {
+				return m, fmt.Errorf("CAS V2 清单缺少 fileName/fileSize")
+			}
+			return m, nil
+		}
+	}
+
+	// V1 升级
+	v1, err := ParseManifest(obj)
+	if err != nil {
+		return CasManifestV2{}, err
+	}
+	return UpgradeToV2(v1), nil
+}
+
+// UpgradeToV2 V1 升级 V2
+func UpgradeToV2(m CasManifest) CasManifestV2 {
+	v := CasManifestV2{
+		Version:     2,
+		FileName:    m.FileName,
+		FileSize:    m.FileSize,
+		SourceDrive: "cloud189",
+		CreatedAt:   m.UploadTime,
+	}
+	if v.CreatedAt == "" {
+		v.CreatedAt = time.Now().Format(time.RFC3339)
+	}
+	v.Hashes.Md5 = strings.ToUpper(m.FileMd5)
+	v.Hashes.SliceMd5 = strings.ToUpper(m.SliceMd5)
+	return v
+}
+
+// EncodeManifestV1 编码 V1 JSON
+func EncodeManifestV1(m CasManifest) string {
+	if m.UploadTime == "" {
+		m.UploadTime = time.Now().Format(time.RFC3339)
+	}
+	b, _ := json.MarshalIndent(m, "", "  ")
+	return string(b)
+}
+
+// EncodeManifestV2 编码 V2 JSON
+func EncodeManifestV2(m CasManifestV2) string {
+	b, _ := json.MarshalIndent(m, "", "  ")
+	return string(b)
+}
+
+// IsCasFileName 判断 .cas 文件名
+func IsCasFileName(name string) bool {
+	return strings.HasSuffix(strings.ToLower(name), ".cas")
+}
+
+// VirtualFileName 去掉 .cas 后缀
+func VirtualFileName(casName string) string {
+	if IsCasFileName(casName) {
+		return casName[:len(casName)-4]
+	}
+	return casName
+}
+
+func compactBase64(s string) string {
+	s = strings.Join(strings.Fields(s), "")
+	if pad := (4 - len(s)%4) % 4; pad > 0 {
+		s += strings.Repeat("=", pad)
+	}
+	return s
+}
+
+var md5Re = regexp.MustCompile(`^[A-Fa-f0-9]{32}$`)
+
+func isMd5(s string) bool {
+	return md5Re.MatchString(s)
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// anyFloat 宽容数值提取（float64/int/string）
+func anyFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case json.Number:
+		f, _ := n.Float64()
+		return f
+	case string:
+		var f float64
+		_, _ = fmt.Sscanf(strings.TrimSpace(n), "%g", &f)
+		return f
+	}
+	return 0
+}

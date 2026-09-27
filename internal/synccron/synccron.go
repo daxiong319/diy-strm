@@ -8,6 +8,7 @@ import (
 
 	"diy-strm/internal/authcheck"
 	"diy-strm/internal/baidupan"
+	"diy-strm/internal/casengine"
 	"diy-strm/internal/db"
 	"diy-strm/internal/emby"
 	"diy-strm/internal/helpers"
@@ -280,6 +281,17 @@ func InitTokenCron() {
 	// 每 30 分钟检测一次全部网盘账号授权有效性，失效时经通知渠道告警
 	TokenCron.AddFunc("@every 30m", func() {
 		authcheck.CheckAll(false)
+	})
+	// 每小时执行一轮 CAS 化：影视上传满 N 天自动生成 .cas 并删除云端源视频
+	TokenCron.AddFunc("@every 1h", func() {
+		generated, deleted, _, failed, err := casengine.RunOnce(context.Background())
+		if err != nil {
+			helpers.AppLogger.Warnf("CAS 化定时任务异常：%v", err)
+			return
+		}
+		if generated > 0 {
+			helpers.AppLogger.Infof("CAS 化定时任务：生成 %d 个清单，删除 %d 个源视频，失败 %d 个", generated, deleted, failed)
+		}
 	})
 	TokenCron.Start()
 }

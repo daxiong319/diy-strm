@@ -160,6 +160,10 @@ const AppMonitorHistory = createAsyncRouteComponent(
   'AppMonitorHistory',
   () => import('@/components/AppMonitorHistory.vue'),
 )
+const AppCasManager = createAsyncRouteComponent(
+  'AppCasManager',
+  () => import('@/components/AppCasManager.vue'),
+)
 const HiveSymediaCallback = createAsyncRouteComponent(
   'HiveSymediaCallback',
   () => import('@/components/HiveSymediaCallback.vue'),
@@ -434,6 +438,17 @@ const routes = [
       title: '监控历史',
       requiresAuth: true,
       icon: 'Monitor',
+      showInMenu: true,
+    },
+  },
+  {
+    path: '/cas-manager',
+    name: 'cas-manager',
+    component: AppCasManager,
+    meta: {
+      title: 'CAS 秒传',
+      requiresAuth: true,
+      icon: 'Film',
       showInMenu: true,
     },
   },
