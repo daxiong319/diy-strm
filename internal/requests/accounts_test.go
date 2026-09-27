@@ -1,4 +1,4 @@
-﻿package requests
+package requests
 
 import (
 	"testing"
@@ -98,4 +98,19 @@ func TestAPIKeyRequestValidate(t *testing.T) {
 			t.Fatal("Validate() error = nil, want error")
 		}
 	})
+}
+
+// TestCreateAccountRequestValidateCloud189Quark cloud189/quark 类型通过校验
+func TestCreateAccountRequestValidateCloud189Quark(t *testing.T) {
+	for _, st := range []models.SourceType{models.SourceTypeCloud189, models.SourceTypeQuark} {
+		req := CreateAccountRequest{SourceType: st, Name: "test"}
+		if err := req.Validate(); err != nil {
+			t.Fatalf("source_type=%s 应通过校验：%v", st, err)
+		}
+	}
+	// 非法类型仍拒绝
+	req := CreateAccountRequest{SourceType: models.SourceType("invalid"), Name: "test"}
+	if err := req.Validate(); err == nil {
+		t.Fatal("非法 source_type 应被拒绝")
+	}
 }

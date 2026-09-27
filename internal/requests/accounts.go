@@ -27,6 +27,8 @@ func (r CreateAccountRequest) Validate() error {
 		string(models.SourceType123),
 		string(models.SourceTypeGuangYaPan),
 		string(models.SourceTypePan139),
+		string(models.SourceTypeCloud189),
+		string(models.SourceTypeQuark),
 	}); err != nil {
 		return err
 	}
@@ -71,16 +73,16 @@ func (r GuangYaPanLoginRequest) Validate() error {
 	if phoneMode {
 		if err := validation.NonBlank("phone_number", r.PhoneNumber); err != nil {
 			return err
-	}
+		}
 		if err := validation.NonBlank("verification_code", r.VerificationCode); err != nil {
 			return err
-	}
+		}
 		if err := validation.NonBlank("verification_id", r.VerificationID); err != nil {
 			return err
-	}
+		}
 		if err := validation.Length("phone_number", r.PhoneNumber, 1, 32); err != nil {
 			return err
-	}
+		}
 		return validation.Length("verification_code", r.VerificationCode, 1, 16)
 	}
 	if err := validation.NonBlank("access_token", r.AccessToken); err != nil {

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"diy-strm/internal/casengine"
@@ -283,4 +284,69 @@ func QuarkLoginAPI(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "登录成功", Data: gin.H{"account_id": account.ID}})
+}
+
+// ---------------------------------------------------------------------------
+// 夸克扫码登录（会话内存态，轮询期间保持 cookie jar）
+// ---------------------------------------------------------------------------
+
+// quarkQrSessions 扫码登录会话（sessionID → QrSession）
+var quarkQrSessions = sync.Map{}
+
+// QuarkQrInitAPI POST /api/quark/qrcode — 生成夸克扫码登录二维码
+func QuarkQrInitAPI(c *gin.Context) {
+	sess := quark.NewQrSession()
+	token, qrURL, err := sess.QrInit(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "生成二维码失败：" + err.Error()})
+		return
+	}
+	sessionID := token
+	quarkQrSessions.Store(sessionID, sess)
+	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "", Data: gin.H{
+		"session_id": sessionID,
+		"qr_url":     qrURL,
+	}})
+}
+
+// QuarkQrPollAPI POST /api/quark/qrcode/poll — 轮询扫码状态
+// body: {session_id}
+func QuarkQrPollAPI(c *gin.Context) {
+	var req struct {
+		SessionID string `json:"session_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error()})
+		return
+	}
+	v, ok := quarkQrSessions.Load(req.SessionID)
+	if !ok {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "扫码会话不存在或已过期，请重新生成"})
+		return
+	}
+	sess := v.(*quark.QrSession)
+	status, cookie, err := sess.QrPollStatus(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: err.Error()})
+		return
+	}
+	if status == "success" {
+		// 登录成功：建账号落库
+		account := models.Account{
+			Name:       "夸克网盘(扫码)",
+			SourceType: models.SourceTypeQuark,
+			Token:      cookie,
+		}
+		if err := createAccountIfAbsent(&account); err != nil {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "登录成功但保存账号失败：" + err.Error()})
+			return
+		}
+		quarkQrSessions.Delete(req.SessionID)
+		c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "扫码登录成功", Data: gin.H{
+			"status":     "success",
+			"account_id": account.ID,
+		}})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "", Data: gin.H{"status": status}})
 }
