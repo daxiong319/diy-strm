@@ -272,7 +272,8 @@ func (c *Client) refreshToken(ctx context.Context, refreshToken string) (*TokenS
 	return &TokenSession{AccessToken: out.AccessToken, RefreshToken: out.RefreshToken}, nil
 }
 
-// getSessionForPC 获取会话（sessionKey + accessToken）
+// getSessionForPC 获取会话（对齐 litepan：GET api.cloud.189.cn/getSessionForPC.action）
+// param 支持 accessToken / redirectURL / refreshToken 任一。
 func (c *Client) getSessionForPC(ctx context.Context, param map[string]string) (*TokenSession, error) {
 	q := url.Values{
 		"appId":      {AppID},
@@ -285,9 +286,10 @@ func (c *Client) getSessionForPC(ctx context.Context, param map[string]string) (
 		q.Set(k, v)
 	}
 	u := APIURL + "/getSessionForPC.action?" + q.Encode()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Accept", "application/json;charset=UTF-8")
+	req.Header.Set("Referer", WebURL+"/")
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
@@ -301,10 +303,32 @@ func (c *Client) getSessionForPC(ctx context.Context, param map[string]string) (
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, err
 	}
-	if out.SessionKey == "" {
-		return nil, fmt.Errorf("获取会话失败: %s", truncateStr(string(body), 160))
+	if out.SessionKey == "" || out.SessionSecret == "" {
+		return nil, fmt.Errorf("获取会话失败: %s", truncateStr(string(body), 200))
 	}
 	return &out, nil
+}
+
+// LoginByAccessToken 用 accessToken 直接登录（绕开 open.e.189.cn，直连 api.cloud.189.cn）。
+// 用户在浏览器登录天翼后从 F12 拿 accessToken，后端调 getSessionForPC 换 sessionKey/secret。
+func (c *Client) LoginByAccessToken(ctx context.Context, accessToken string) (*LoginResult, error) {
+	sess, err := c.getSessionForPC(ctx, map[string]string{"accessToken": accessToken})
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	c.session = *sess
+	c.forceRefresh = false
+	c.store = &tokenStoreData{
+		AccessToken:  sess.AccessToken,
+		RefreshToken: sess.RefreshToken,
+		ExpiresAt:    time.Now().Add(7 * 24 * time.Hour),
+	}
+	c.mu.Unlock()
+	if c.onTokenChange != nil {
+		c.onTokenChange(*sess)
+	}
+	return &LoginResult{Success: true, Session: sess}, nil
 }
 
 // getAccessTokenBySsKey sessionKey 换 accessToken

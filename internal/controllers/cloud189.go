@@ -69,6 +69,45 @@ func Cloud189LoginAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "登录成功", Data: gin.H{"account_id": account.ID, "username": req.Username}})
 }
 
+// Cloud189LoginByTokenAPI POST /api/cloud189/login-token — accessToken 直连登录
+// （绕开 open.e.189.cn 认证网关；用户在浏览器登录天翼后从 F12 拿 accessToken）
+func Cloud189LoginByTokenAPI(c *gin.Context) {
+	var req struct {
+		Name        string `json:"name"`
+		AccessToken string `json:"access_token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error()})
+		return
+	}
+	client := cloud189.NewClient("", "", "")
+	res, err := client.LoginByAccessToken(c.Request.Context(), req.AccessToken)
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "登录失败：" + err.Error()})
+		return
+	}
+	if !res.Success || res.Session == nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "登录失败"})
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "天翼云盘(accessToken)"
+	}
+	account := models.Account{
+		Name:              name,
+		SourceType:        models.SourceTypeCloud189,
+		Token:             res.Session.AccessToken,
+		RefreshToken:      res.Session.RefreshToken,
+		TokenExpiriesTime: time.Now().Add(7 * 24 * time.Hour).Unix(),
+	}
+	if err := createAccountIfAbsent(&account); err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "保存账号失败：" + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "登录成功", Data: gin.H{"account_id": account.ID}})
+}
+
 // Cloud189LoginByCookieAPI POST /api/cloud189/login-cookie — SSON Cookie 登录
 func Cloud189LoginByCookieAPI(c *gin.Context) {
 	var req struct {

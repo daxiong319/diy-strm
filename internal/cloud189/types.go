@@ -2,11 +2,15 @@ package cloud189
 
 import "time"
 
-// TokenSession 登录/刷新后的会话令牌（sessionKey + accessToken 双轨）
+// TokenSession 登录/刷新后的会话令牌（对齐 litepan/天翼 getSessionForPC 响应）
 type TokenSession struct {
-	SessionKey   string `json:"sessionKey"`
-	AccessToken  string `json:"accessToken"`
-	RefreshToken string `json:"refreshToken"`
+	SessionKey          string `json:"sessionKey"`
+	SessionSecret       string `json:"sessionSecret"` // HMAC-SHA1 签名密钥（litepan 签名必需）
+	AccessToken         string `json:"accessToken"`
+	RefreshToken        string `json:"refreshToken"`
+	FamilySessionKey    string `json:"familySessionKey"`
+	FamilySessionSecret string `json:"familySessionSecret"`
+	LoginName           string `json:"loginName"`
 }
 
 // tokenStoreData 令牌持久化（账号表 token/refresh_token/token_expiries_time 复用）
