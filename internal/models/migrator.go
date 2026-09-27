@@ -960,8 +960,8 @@ func Migrate() {
 		migrator.UpdateVersionCode(db.Db)
 	}
 	if migrator.VersionCode == 82 {
-		// 夸克秒传 pre_hash 落库：上传时计算前 4×4MB 分块 MD5 存入上传任务表
-		if err := db.Db.Migrator().AddColumn(&DbUploadTask{}, "pre_hash"); err != nil {
+		// 夸克秒传 pre_hash 落库：DbUploadTask 新增 PreHash 字段（AutoMigrate 幂等加列）
+		if err := db.Db.AutoMigrate(&DbUploadTask{}); err != nil {
 			helpers.AppLogger.Errorf("迁移 DbUploadTask.pre_hash 列失败：%v", err)
 			return
 		}
