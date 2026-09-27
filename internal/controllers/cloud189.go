@@ -10,6 +10,7 @@ import (
 	"diy-strm/internal/cloud189"
 	"diy-strm/internal/db"
 	"diy-strm/internal/models"
+	"diy-strm/internal/quark"
 
 	"github.com/gin-gonic/gin"
 )
@@ -247,4 +248,39 @@ func createAccountIfAbsent(account *models.Account) error {
 		account.Name = account.Name + "-" + strconv.FormatInt(time.Now().Unix(), 10)
 	}
 	return db.Db.Create(account).Error
+}
+
+// QuarkLoginAPI POST /api/quark/login — 夸克网盘 Cookie 登录
+func QuarkLoginAPI(c *gin.Context) {
+	var req struct {
+		Name   string `json:"name"`
+		Cookie string `json:"cookie" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error()})
+		return
+	}
+	if !strings.Contains(req.Cookie, "__pu") {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "Cookie 无效：需包含 __pus/__puus 会话字段"})
+		return
+	}
+	client := quark.NewClient(req.Cookie)
+	if err := client.CheckHealth(c.Request.Context()); err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "夸克登录失败：" + err.Error()})
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "夸克网盘"
+	}
+	account := models.Account{
+		Name:       name,
+		SourceType: models.SourceTypeQuark,
+		Token:      req.Cookie, // Cookie 存 Token 字段
+	}
+	if err := createAccountIfAbsent(&account); err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "保存账号失败：" + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "登录成功", Data: gin.H{"account_id": account.ID}})
 }

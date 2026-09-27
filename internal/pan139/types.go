@@ -53,6 +53,9 @@ type fileItem struct {
 	Type      string `json:"type"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
+	// 秒传特征字段（列表 API 实测返回，CAS 化指纹来源）
+	ContentHash          string `json:"contentHash"`
+	ContentHashAlgorithm string `json:"contentHashAlgorithm"`
 }
 
 // toFile 转换原始条目为 File
@@ -65,6 +68,11 @@ func (i fileItem) toFile() File {
 		CTime:    parseTime(i.CreatedAt),
 		UTime:    parseTime(i.UpdatedAt),
 	}
+}
+
+// GetContentHash 返回秒传特征哈希（sha256）
+func (i fileItem) GetContentHash() string {
+	return i.ContentHash
 }
 
 // BaseResp 新个人盘接口通用响应
@@ -113,8 +121,8 @@ type RoutePolicyResp struct {
 	BaseResp
 	Data struct {
 		RoutePolicyList []struct {
-			ModName string `json:"modName"`
-			HttpUrl string `json:"httpUrl"`
+			ModName  string `json:"modName"`
+			HttpUrl  string `json:"httpUrl"`
 			HttpsUrl string `json:"httpsUrl"`
 		} `json:"routePolicyList"`
 	} `json:"data"`

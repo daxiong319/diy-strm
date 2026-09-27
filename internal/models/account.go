@@ -15,6 +15,7 @@ import (
 	"diy-strm/internal/openlist"
 	"diy-strm/internal/pan123"
 	"diy-strm/internal/pan139"
+	"diy-strm/internal/quark"
 	"diy-strm/internal/v115auth"
 	"diy-strm/internal/v115open"
 )
@@ -181,6 +182,11 @@ func (account *Account) GetCloud189Client() *cloud189.Client {
 		account.UpdateCloud189Login(sess.AccessToken, sess.RefreshToken)
 	})
 	return client
+}
+
+// GetQuarkClient 创建夸克网盘客户端（Cookie 认证，存 Token 字段）
+func (account *Account) GetQuarkClient() *quark.Client {
+	return quark.NewClient(account.Token)
 }
 
 // UpdateCloud189Login 持久化天翼云盘令牌（accessToken/refreshToken）

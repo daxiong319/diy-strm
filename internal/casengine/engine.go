@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"diy-strm/internal/cloud189"
@@ -17,32 +18,58 @@ import (
 // CAS 自动化引擎：影视上传满 N 天自动生成 .cas 并删除云端源视频
 // ---------------------------------------------------------------------------
 
-// CasManifestRecord CAS 清单记录（DB 持久化）
+// CasManifestRecord CAS 清单记录（DB 持久化，五哈希统一模型 + 秒传请求原文缓存）
 type CasManifestRecord struct {
 	models.BaseModel
-	UploadTaskID   uint   `json:"upload_task_id" gorm:"index"`
-	AccountID      uint   `json:"account_id" gorm:"index"`
-	SourceType     string `json:"source_type"`
-	FileName       string `json:"file_name" gorm:"size:512"`
-	FileSize       int64  `json:"file_size"`
-	FileMd5        string `json:"file_md5" gorm:"size:32"`
-	SliceMd5       string `json:"slice_md5" gorm:"size:32"`
-	RemoteFileID   string `json:"remote_file_id" gorm:"size:128"`
-	RemotePath     string `json:"remote_path" gorm:"size:1024"`
-	CasContent     string `json:"cas_content" gorm:"type:text"`
-	Status         string `json:"status" gorm:"size:32"` // active(源已删)/restored(已恢复)/pending
-	DeletedAt      int64  `json:"deleted_at"`            // 源视频删除时间（unix 秒）
-	RestoredAt     int64  `json:"restored_at"`
-	RestoredFileID string `json:"restored_file_id" gorm:"size:128"`
+	UploadTaskID    uint   `json:"upload_task_id" gorm:"index"`
+	AccountID       uint   `json:"account_id" gorm:"index"`
+	SourceType      string `json:"source_type"`
+	FileName        string `json:"file_name" gorm:"size:512"`
+	FileSize        int64  `json:"file_size"`
+	FileMd5         string `json:"file_md5" gorm:"size:32"`
+	SliceMd5        string `json:"slice_md5" gorm:"size:64"`
+	Sha1            string `json:"sha1" gorm:"size:40"`
+	Sha256          string `json:"sha256" gorm:"size:64"`
+	PreHash         string `json:"pre_hash" gorm:"size:256"` // 夸克 4×4MB 分块 MD5 预检串
+	Gcid            string `json:"gcid" gorm:"size:128"`
+	RemoteFileID    string `json:"remote_file_id" gorm:"size:128"`
+	RemotePath      string `json:"remote_path" gorm:"size:1024"`
+	CasContent      string `json:"cas_content" gorm:"type:text"`
+	RapidPayload    string `json:"rapid_payload" gorm:"type:text"`    // 秒传请求原文（cloud-auto-save-x 同款）
+	RapidDriveTypes string `json:"rapid_drive_types" gorm:"size:256"` // 可秒传到的盘（逗号分隔，如 cloud189,cloud139,quark）
+	Status          string `json:"status" gorm:"size:32"`             // active(源已删)/restored(已恢复)/pending
+	DeletedAt       int64  `json:"deleted_at"`                        // 源视频删除时间（unix 秒）
+	RestoredAt      int64  `json:"restored_at"`
+	RestoredFileID  string `json:"restored_file_id" gorm:"size:128"`
 }
 
 func (CasManifestRecord) TableName() string {
 	return "cas_manifests"
 }
 
+// RapidRecord 秒传请求原文缓存表（对齐 cloud-auto-save-x dl302_rapid_records）
+type RapidRecord struct {
+	models.BaseModel
+	DriveType     string `json:"drive_type" gorm:"index:idx_rapid_drive_file,unique"`
+	FileID        string `json:"file_id" gorm:"size:128;index:idx_rapid_drive_file,unique"`
+	Size          int64  `json:"size"`
+	FileMd5       string `json:"file_md5" gorm:"size:32"`
+	SliceMd5      string `json:"slice_md5" gorm:"size:64"`
+	Sha1          string `json:"sha1" gorm:"size:40"`
+	Sha256        string `json:"sha256" gorm:"size:64"`
+	PreHash       string `json:"pre_hash" gorm:"size:256"`
+	Gcid          string `json:"gcid" gorm:"size:128"`
+	Base64Payload string `json:"base64_payload" gorm:"type:text"` // 秒传请求原文（base64 编码 JSON）
+}
+
+func (RapidRecord) TableName() string {
+	return "cas_rapid_records"
+}
+
 // EnsureTable 建表
 func EnsureTable() {
 	_ = db.Db.AutoMigrate(&CasManifestRecord{})
+	_ = db.Db.AutoMigrate(&RapidRecord{})
 }
 
 // CasConfig CAS 自动化配置（存 discovery_settings 或 cloud_settings）
@@ -113,25 +140,29 @@ func RunOnce(ctx context.Context) (generated, deleted, skipped, failed int, err 
 			skipped++
 			continue
 		}
-		// 需要 fileMd5/sliceMd5：任务表没有，需要从网盘文件元数据取
+		// 从网盘文件元数据取统一五哈希指纹（免下载）
 		account, err := models.GetAccountById(task.AccountId)
 		if err != nil || account == nil {
 			failed++
 			continue
 		}
-		md5, sliceMd5, remotePath, ok := fetchCloudFingerprint(ctx, account, task)
+		hashes, remotePath, ok := fetchCloudFingerprint(ctx, account, task)
 		if !ok {
 			failed++
 			continue
 		}
-		manifest := cloud189.CasManifest{
-			FileName:   task.FileName,
-			FileSize:   task.FileSize,
-			FileMd5:    md5,
-			SliceMd5:   sliceMd5,
-			UploadTime: time.Unix(task.EndTime, 0).Format(time.RFC3339),
+		manifest := cloud189.CasManifestV2{
+			Version:     2,
+			FileName:    task.FileName,
+			FileSize:    task.FileSize,
+			Hashes:      hashes,
+			SourceDrive: string(account.SourceType),
+			CreatedAt:   time.Unix(task.EndTime, 0).Format(time.RFC3339),
 		}
-		casContent := cloud189.EncodeManifestV1(manifest)
+		casContent := cloud189.EncodeManifestV2(manifest)
+		// 秒传请求原文（恢复时重放）
+		rapidPayload := buildRapidPayload(account.SourceType, task, hashes)
+		rapidDriveTypes := deriveRapidDriveTypes(hashes)
 
 		// 可选写回网盘 .cas 文件
 		if cfg.WriteBackCloud {
@@ -141,17 +172,23 @@ func RunOnce(ctx context.Context) (generated, deleted, skipped, failed int, err 
 		// 删除云端源视频
 		delErr := deleteCloudSource(ctx, account, task.RemoteFileId)
 		rec := CasManifestRecord{
-			UploadTaskID: task.ID,
-			AccountID:    task.AccountId,
-			SourceType:   string(task.SourceType),
-			FileName:     task.FileName,
-			FileSize:     task.FileSize,
-			FileMd5:      md5,
-			SliceMd5:     sliceMd5,
-			RemoteFileID: task.RemoteFileId,
-			RemotePath:   remotePath,
-			CasContent:   casContent,
-			Status:       "active",
+			UploadTaskID:    task.ID,
+			AccountID:       task.AccountId,
+			SourceType:      string(task.SourceType),
+			FileName:        task.FileName,
+			FileSize:        task.FileSize,
+			FileMd5:         hashes.FileMd5,
+			SliceMd5:        hashes.SliceMd5,
+			Sha1:            hashes.Sha1,
+			Sha256:          hashes.Sha256,
+			PreHash:         hashes.PreHash,
+			Gcid:            hashes.Gcid,
+			RemoteFileID:    task.RemoteFileId,
+			RemotePath:      remotePath,
+			CasContent:      casContent,
+			RapidPayload:    rapidPayload,
+			RapidDriveTypes: rapidDriveTypes,
+			Status:          "active",
 		}
 		if delErr != nil {
 			rec.Status = "pending" // 删除失败，保留下轮重试
@@ -171,26 +208,116 @@ func RunOnce(ctx context.Context) (generated, deleted, skipped, failed int, err 
 	return generated, deleted, skipped, failed, nil
 }
 
-// fetchCloudFingerprint 从网盘文件元数据获取 fileMd5/sliceMd5/路径
-func fetchCloudFingerprint(ctx context.Context, account *models.Account, task models.DbUploadTask) (md5, sliceMd5, remotePath string, ok bool) {
+// fetchCloudFingerprint 从网盘文件元数据获取统一五哈希指纹（免下载重算）
+func fetchCloudFingerprint(ctx context.Context, account *models.Account, task models.DbUploadTask) (cloud189.HashSet, string, bool) {
+	var hs cloud189.HashSet
 	switch account.SourceType {
 	case models.SourceTypeCloud189:
 		client := account.GetCloud189Client()
 		files, err := client.ListFiles(ctx, task.RemotePathId)
 		if err != nil {
-			return "", "", "", false
+			return hs, "", false
 		}
 		for _, f := range files {
 			if f.ID == task.RemoteFileId || f.Name == task.FileName {
-				return f.MD5, f.SliceMD5, task.RemotePathId, true
+				hs.FileMd5 = strings.ToUpper(f.MD5)
+				hs.SliceMd5 = strings.ToUpper(f.SliceMD5)
+				return hs, task.RemotePathId, true
 			}
 		}
-		return "", "", "", false
+		return hs, "", false
+	case models.SourceTypePan139:
+		// 139 列表 API 返回 contentHash(sha256)——免下载取指纹
+		client := account.GetPan139Client()
+		sha256, ok := client.GetFileSHA256(ctx, task.RemoteFileId)
+		if !ok {
+			return hs, "", false
+		}
+		hs.Sha256 = strings.ToLower(sha256)
+		return hs, task.RemotePathId, true
+	case models.SourceTypeQuark:
+		// 夸克列表 API 返回 md5；pre_hash（4×4MB 分块 MD5）需从秒传记录/本地缓存取
+		client := account.GetQuarkClient()
+		md5, preHash, ok := client.GetFileHash(ctx, task.RemoteFileId)
+		if !ok {
+			return hs, "", false
+		}
+		hs.FileMd5 = strings.ToLower(md5)
+		hs.PreHash = strings.ToLower(preHash)
+		return hs, task.RemotePathId, true
 	default:
-		// 其他网盘（139/123/115/光鸭/百度/OpenList）的指纹获取：
-		// CAS 是天翼专属秒传协议，非天翼源不生成（云端命中也无意义——秒传恢复只对接天翼）
-		return "", "", "", false
+		// 其他网盘（123/115/光鸭/百度/OpenList）暂不接入 CAS（秒传特征各盘独立，后续按需扩展）
+		return hs, "", false
 	}
+}
+
+// deriveRapidDriveTypes 由五哈希非空字段推导可秒传到的盘
+func deriveRapidDriveTypes(hs cloud189.HashSet) string {
+	types := make([]string, 0, 3)
+	if hs.FileMd5 != "" || hs.SliceMd5 != "" {
+		types = append(types, "cloud189") // 天翼：fileMd5+sliceMd5
+	}
+	if hs.Sha256 != "" {
+		types = append(types, "cloud139") // 移动云盘：sha256
+	}
+	if hs.FileMd5 != "" && hs.PreHash != "" {
+		types = append(types, "quark") // 夸克：fileMd5+preHash
+	}
+	return strings.Join(types, ",")
+}
+
+// buildRapidPayload 生成秒传请求原文（cloud-auto-save-x 同款：恢复时重放）
+func buildRapidPayload(sourceType models.SourceType, task models.DbUploadTask, hs cloud189.HashSet) string {
+	switch sourceType {
+	case models.SourceTypeCloud189:
+		p := map[string]any{
+			"drive_type": "cloud189",
+			"kind":       "rapid_upload",
+			"name":       task.FileName,
+			"size":       task.FileSize,
+			"params": map[string]any{
+				"fileMd5":  hs.FileMd5,
+				"sliceMd5": hs.SliceMd5,
+			},
+		}
+		return marshalJSON(p)
+	case models.SourceTypePan139:
+		p := map[string]any{
+			"drive_type": "cloud139",
+			"kind":       "file.create",
+			"name":       task.FileName,
+			"size":       task.FileSize,
+			"params": map[string]any{
+				"contentHash":          hs.Sha256,
+				"contentHashAlgorithm": "SHA256",
+				"fileRenameMode":       "auto_rename",
+				"name":                 task.FileName,
+				"parentFileId":         "",
+				"size":                 task.FileSize,
+				"type":                 "file",
+			},
+		}
+		return marshalJSON(p)
+	case models.SourceTypeQuark:
+		p := map[string]any{
+			"drive_type": "quark",
+			"kind":       "file",
+			"name":       task.FileName,
+			"size":       task.FileSize,
+			"params": map[string]any{
+				"file_md5": hs.FileMd5,
+				"pre_hash": hs.PreHash,
+			},
+		}
+		return marshalJSON(p)
+	default:
+		return ""
+	}
+}
+
+func marshalJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 // deleteCloudSource 删除云端源视频（按网盘类型分发）
@@ -207,6 +334,8 @@ func deleteCloudSource(ctx context.Context, account *models.Account, remoteFileI
 		return account.GetPan139Client().Delete(ctx, []string{remoteFileID})
 	case models.SourceTypeGuangYaPan:
 		return account.GetGuangYaPanClient().Delete(ctx, []string{remoteFileID})
+	case models.SourceTypeQuark:
+		return account.GetQuarkClient().DeleteFile(ctx, []string{remoteFileID})
 	default:
 		return fmt.Errorf("该网盘类型暂不支持删除：%s", account.SourceType)
 	}

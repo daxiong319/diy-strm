@@ -35,6 +35,11 @@
           <el-tag :type="statusTag(row.status)">{{ statusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="可秒传盘" width="170">
+        <template #default="{ row }">
+          <span class="drive-types">{{ driveTypesLabel(row.rapid_drive_types) }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="删源时间" width="170">
         <template #default="{ row }">{{ row.deleted_at ? formatTime(row.deleted_at) : '—' }}</template>
       </el-table-column>
@@ -119,6 +124,8 @@ interface CasRecord {
   restored_at: number
   cas_content: string
   account_id: number
+  rapid_drive_types?: string
+  source_type?: string
 }
 
 const items = ref<CasRecord[]>([])
@@ -262,6 +269,11 @@ const formatSize = (n: number) => {
 const formatTime = (ts: number) => new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false })
 const statusLabel = (s: string) => ({ active: '已删源', restored: '已恢复', pending: '删除失败' }[s] || s)
 const statusTag = (s: string) => ({ active: 'success', restored: 'info', pending: 'danger' }[s] || 'info')
+const driveTypesLabel = (s?: string) => {
+  if (!s) return '—'
+  const map: Record<string, string> = { cloud189: '天翼', cloud139: '移动', quark: '夸克' }
+  return s.split(',').map((t) => map[t] || t).join(' / ')
+}
 
 onMounted(() => {
   load(1)
@@ -280,4 +292,5 @@ onMounted(() => {
 .cas-table { width: 100%; }
 .cas-pagination { margin-top: 14px; justify-content: flex-end; }
 .config-tip { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
+.drive-types { font-size: 12px; color: var(--el-text-color-regular); }
 </style>

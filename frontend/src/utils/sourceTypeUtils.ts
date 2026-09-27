@@ -20,6 +20,10 @@ export const sourceTypeOptions: Array<Record<string, string>> = [
     value: 'cloud189',
   },
   {
+    label: '夸克网盘',
+    value: 'quark',
+  },
+  {
     label: '百度网盘',
     value: 'baidupan',
   },
@@ -39,6 +43,7 @@ export const sourceTypeTagMap: Record<string, string> = {
   guangyapan: 'warning',
   pan139: 'danger',
   cloud189: 'success',
+  quark: 'warning',
   baidupan: 'danger',
   openlist: 'warning',
   local: 'info',
@@ -50,6 +55,7 @@ export const sourceTypeMap: Record<string, string> = {
   guangyapan: '光鸭云盘',
   pan139: '移动云盘',
   cloud189: '天翼云盘',
+  quark: '夸克网盘',
   baidupan: '百度网盘',
   openlist: 'OpenList',
   local: '本地目录',

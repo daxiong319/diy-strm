@@ -1,4 +1,4 @@
-package authcheck
+﻿package authcheck
 
 import (
 	"context"
@@ -102,6 +102,10 @@ func checkOneOnce(account *models.Account) (bool, string) {
 		}
 	case models.SourceTypeCloud189:
 		if _, err := account.GetCloud189Client().ListFiles(ctx, "-11"); err != nil {
+			return false, err.Error()
+		}
+	case models.SourceTypeQuark:
+		if err := account.GetQuarkClient().CheckHealth(ctx); err != nil {
 			return false, err.Error()
 		}
 	case models.SourceTypeBaiduPan:

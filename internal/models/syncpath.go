@@ -29,6 +29,7 @@ const (
 	SourceTypeGuangYaPan SourceType = "guangyapan"
 	SourceTypePan139     SourceType = "pan139"
 	SourceTypeCloud189   SourceType = "cloud189" // 天翼云盘（CAS 秒传体系）
+	SourceTypeQuark      SourceType = "quark"    // 夸克网盘（CAS 秒传体系）
 )
 
 func (s SourceType) String() string {
@@ -51,6 +52,8 @@ func (s SourceType) String() string {
 		return "中国移动云盘"
 	case SourceTypeCloud189:
 		return "天翼云盘"
+	case SourceTypeQuark:
+		return "夸克网盘"
 	default:
 		return string(s)
 	}

@@ -23,21 +23,50 @@ type CasManifest struct {
 	UploadTime string `json:"uploadTime,omitempty"`
 }
 
+// HashSet 统一五哈希指纹（对齐 cloud-auto-save-x 的多网盘多维特征模型）。
+// 一份清单同时服务多盘秒传：139 用 Sha256、夸克用 FileMd5+PreHash、天翼用 SliceMd5、115 用 Sha1/Gcid。
+type HashSet struct {
+	Sha1     string `json:"sha1,omitempty"`     // 115 秒传
+	Sha256   string `json:"sha256,omitempty"`   // 移动云盘(139) 秒传
+	FileMd5  string `json:"fileMd5,omitempty"`  // 天翼/123/夸克 全量 MD5
+	SliceMd5 string `json:"sliceMd5,omitempty"` // 天翼秒传切片 MD5（139 兼容占位）
+	PreHash  string `json:"preHash,omitempty"`  // 夸克 4×4MB 分块 MD5 预检串
+	Gcid     string `json:"gcid,omitempty"`     // 光鸭秒传 GCID
+	Sha115   string `json:"sha115,omitempty"`   // 115 专用 SHA1（保留兼容）
+}
+
+// NonEmpty 返回非空的哈希字段名列表（用于 rapid_drive_types 能力推导）
+func (h HashSet) NonEmpty() map[string]string {
+	out := map[string]string{}
+	if h.Sha1 != "" {
+		out["sha1"] = h.Sha1
+	}
+	if h.Sha256 != "" {
+		out["sha256"] = h.Sha256
+	}
+	if h.FileMd5 != "" {
+		out["fileMd5"] = h.FileMd5
+	}
+	if h.SliceMd5 != "" {
+		out["sliceMd5"] = h.SliceMd5
+	}
+	if h.PreHash != "" {
+		out["preHash"] = h.PreHash
+	}
+	if h.Gcid != "" {
+		out["gcid"] = h.Gcid
+	}
+	return out
+}
+
 // CasManifestV2 V2 多网盘多维特征清单
 type CasManifestV2 struct {
-	Version  int    `json:"version"`
-	FileName string `json:"fileName"`
-	FileSize int64  `json:"fileSize"`
-	Hashes   struct {
-		Md5      string `json:"md5,omitempty"`
-		SliceMd5 string `json:"sliceMd5,omitempty"`
-		Sha1     string `json:"sha1,omitempty"`
-		PreHash  string `json:"preHash,omitempty"`
-		Gcid     string `json:"gcid,omitempty"`
-		Sha115   string `json:"sha115,omitempty"`
-	} `json:"hashes"`
-	SourceDrive string `json:"sourceDrive,omitempty"`
-	CreatedAt   string `json:"createdAt,omitempty"`
+	Version     int     `json:"version"`
+	FileName    string  `json:"fileName"`
+	FileSize    int64   `json:"fileSize"`
+	Hashes      HashSet `json:"hashes"`
+	SourceDrive string  `json:"sourceDrive,omitempty"`
+	CreatedAt   string  `json:"createdAt,omitempty"`
 }
 
 // ParseManifest 解析 V1 清单
@@ -102,7 +131,7 @@ func ParseManifestText(text string) (CasManifest, error) {
 	return CasManifest{}, fmt.Errorf("无法识别的 CAS 文件内容格式")
 }
 
-// ParseManifestV2 解析 V2 清单（管道符/Base64/cloud189:// 协议头/V1 自动升级）
+// ParseManifestV2 解析 V2 清单（管道符/Base64/cloud189:// 协议头/V1 自动升级/cloud-auto-save-x 扁平格式）
 func ParseManifestV2(text string) (CasManifestV2, error) {
 	raw := strings.TrimSpace(text)
 	if raw == "" {
@@ -125,7 +154,7 @@ func ParseManifestV2(text string) (CasManifestV2, error) {
 					SourceDrive: "cloud189",
 					CreatedAt:   time.Now().Format(time.RFC3339),
 				}
-				m.Hashes.Md5 = strings.ToUpper(md5)
+				m.Hashes.FileMd5 = strings.ToUpper(md5)
 				m.Hashes.SliceMd5 = strings.ToUpper(sliceMd5)
 				return m, nil
 			}
@@ -167,7 +196,12 @@ func ParseManifestV2(text string) (CasManifestV2, error) {
 		return CasManifestV2{}, fmt.Errorf("CAS JSON 结构非法")
 	}
 
-	// V2 结构
+	// 3. cloud-auto-save-x 扁平格式：顶层 content_hash/hash_algorithm/sha256/sliceMd5/schema_version
+	if isFlatManifest(obj) {
+		return parseFlatManifestV2(obj), nil
+	}
+
+	// 4. V2 嵌套结构 {version:2, hashes:{...}}
 	if ver, _ := obj["version"].(float64); ver == 2 {
 		if hashes, ok := obj["hashes"].(map[string]any); ok {
 			m := CasManifestV2{
@@ -183,9 +217,10 @@ func ParseManifestV2(text string) (CasManifestV2, error) {
 			if m.CreatedAt == "" {
 				m.CreatedAt = time.Now().Format(time.RFC3339)
 			}
-			m.Hashes.Md5 = strings.ToUpper(anyString(hashes["md5"]))
+			m.Hashes.FileMd5 = strings.ToUpper(firstNonEmpty(anyString(hashes["fileMd5"]), anyString(hashes["md5"])))
 			m.Hashes.SliceMd5 = strings.ToUpper(anyString(hashes["sliceMd5"]))
 			m.Hashes.Sha1 = strings.ToUpper(anyString(hashes["sha1"]))
+			m.Hashes.Sha256 = strings.ToUpper(anyString(hashes["sha256"]))
 			m.Hashes.PreHash = strings.ToUpper(anyString(hashes["preHash"]))
 			m.Hashes.Gcid = anyString(hashes["gcid"])
 			m.Hashes.Sha115 = strings.ToUpper(firstNonEmpty(anyString(hashes["sha115"]), anyString(hashes["sha1_115"])))
@@ -204,6 +239,96 @@ func ParseManifestV2(text string) (CasManifestV2, error) {
 	return UpgradeToV2(v1), nil
 }
 
+// isFlatManifest 判断是否 cloud-auto-save-x 扁平格式。
+// 特征：顶层含 content_hash/hash_algorithm/schema_version，或 content_* 扁平哈希字段
+// （content_file_md5/content_pre_hash/content_sha256/content_sha1/content_slice_md5）。
+func isFlatManifest(obj map[string]any) bool {
+	if _, ok := obj["content_hash"]; ok {
+		return true
+	}
+	if _, ok := obj["hash_algorithm"]; ok {
+		return true
+	}
+	if _, ok := obj["schema_version"]; ok {
+		return true
+	}
+	for k := range obj {
+		if strings.HasPrefix(k, "content_") {
+			return true
+		}
+	}
+	return false
+}
+
+// parseFlatManifestV2 解析 cloud-auto-save-x 扁平格式：
+// {"content_hash":"...","hash_algorithm":"SHA256","sha256":"...","sliceMd5":"...","schema_version":2,"name","size"}
+func parseFlatManifestV2(obj map[string]any) CasManifestV2 {
+	name := anyString(obj["name"])
+	if name == "" {
+		name = anyString(obj["fileName"])
+	}
+	size := int64(anyFloat(obj["size"]))
+	if size == 0 {
+		size = int64(anyFloat(obj["fileSize"]))
+	}
+	m := CasManifestV2{
+		Version:     2,
+		FileName:    name,
+		FileSize:    size,
+		SourceDrive: anyString(obj["drive_type"]),
+		CreatedAt:   anyString(obj["create_time"]),
+	}
+	if m.CreatedAt == "" {
+		m.CreatedAt = anyString(obj["createdAt"])
+	}
+	if m.CreatedAt == "" {
+		m.CreatedAt = time.Now().Format(time.RFC3339)
+	}
+	// 顶层扁平哈希字段（小写 + 驼峰双兼容）
+	m.Hashes.Sha1 = strings.ToUpper(firstNonEmpty(anyString(obj["sha1"]), anyString(obj["content_sha1"])))
+	m.Hashes.Sha256 = strings.ToUpper(firstNonEmpty(anyString(obj["sha256"]), anyString(obj["content_sha256"])))
+	m.Hashes.FileMd5 = strings.ToUpper(firstNonEmpty(
+		anyString(obj["content_file_md5"]), anyString(obj["file_md5"]), anyString(obj["md5"]), anyString(obj["content_md5"])))
+	m.Hashes.SliceMd5 = strings.ToUpper(firstNonEmpty(anyString(obj["sliceMd5"]), anyString(obj["content_slice_md5"])))
+	m.Hashes.PreHash = strings.ToUpper(firstNonEmpty(anyString(obj["preHash"]), anyString(obj["content_pre_hash"])))
+	m.Hashes.Gcid = anyString(obj["gcid"])
+	// content_hash 兜底：无 hash_algorithm 时按长度推断
+	if ch := anyString(obj["content_hash"]); ch != "" {
+		algo := strings.ToUpper(anyString(obj["hash_algorithm"]))
+		switch algo {
+		case "SHA256":
+			if m.Hashes.Sha256 == "" {
+				m.Hashes.Sha256 = strings.ToUpper(ch)
+			}
+		case "MD5":
+			if m.Hashes.FileMd5 == "" {
+				m.Hashes.FileMd5 = strings.ToUpper(ch)
+			}
+		case "SHA1":
+			if m.Hashes.Sha1 == "" {
+				m.Hashes.Sha1 = strings.ToUpper(ch)
+			}
+		default:
+			// 按长度推断兜底
+			switch len(ch) {
+			case 32:
+				if m.Hashes.FileMd5 == "" {
+					m.Hashes.FileMd5 = strings.ToUpper(ch)
+				}
+			case 40:
+				if m.Hashes.Sha1 == "" {
+					m.Hashes.Sha1 = strings.ToUpper(ch)
+				}
+			case 64:
+				if m.Hashes.Sha256 == "" {
+					m.Hashes.Sha256 = strings.ToUpper(ch)
+				}
+			}
+		}
+	}
+	return m
+}
+
 // UpgradeToV2 V1 升级 V2
 func UpgradeToV2(m CasManifest) CasManifestV2 {
 	v := CasManifestV2{
@@ -216,7 +341,7 @@ func UpgradeToV2(m CasManifest) CasManifestV2 {
 	if v.CreatedAt == "" {
 		v.CreatedAt = time.Now().Format(time.RFC3339)
 	}
-	v.Hashes.Md5 = strings.ToUpper(m.FileMd5)
+	v.Hashes.FileMd5 = strings.ToUpper(m.FileMd5)
 	v.Hashes.SliceMd5 = strings.ToUpper(m.SliceMd5)
 	return v
 }
@@ -263,11 +388,13 @@ func isMd5(s string) bool {
 	return md5Re.MatchString(s)
 }
 
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
 	}
-	return b
+	return ""
 }
 
 // anyFloat 宽容数值提取（float64/int/string）

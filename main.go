@@ -994,6 +994,7 @@ func setRouter(r *gin.Engine) {
 		// 天翼云盘（cloud189）+ CAS 秒传体系
 		api.POST("/cloud189/login", controllers.Cloud189LoginAPI)                    // 天翼账号密码登录（支持验证码）
 		api.POST("/cloud189/login-cookie", controllers.Cloud189LoginByCookieAPI)     // 天翼 SSON Cookie 登录
+		api.POST("/quark/login", controllers.QuarkLoginAPI)                                  // 夸克网盘 Cookie 登录
 		api.GET("/cloud189/files", controllers.Cloud189FilesAPI)                     // 天翼文件列表
 		api.POST("/cas/run", controllers.CasRunOnceAPI)                              // 手动触发 CAS 化
 		api.GET("/cas/records", controllers.CasRecordsAPI)                           // CAS 记录列表

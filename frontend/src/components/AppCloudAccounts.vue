@@ -607,6 +607,12 @@
     :account-name="selectedAccountName"
     @confirmed="loadAccounts"
   />
+  <QuarkAuthDialog
+    v-model:visible="showQuarkAuthDialog"
+    :account-id="selectedAccountId ?? null"
+    :account-name="selectedAccountName"
+    @confirmed="loadAccounts"
+  />
 </template>
 
 <script setup lang="ts">
@@ -616,6 +622,7 @@ import Pan123AuthDialog from '@/components/cloud-auth/Pan123AuthDialog.vue'
 import GuangYaPanAuthDialog from '@/components/cloud-auth/GuangYaPanAuthDialog.vue'
 import Pan139AuthDialog from '@/components/cloud-auth/Pan139AuthDialog.vue'
 import Cloud189AuthDialog from '@/components/cloud-auth/Cloud189AuthDialog.vue'
+import QuarkAuthDialog from '@/components/cloud-auth/QuarkAuthDialog.vue'
 import V115AppSelector from '@/components/cloud-auth/V115AppSelector.vue'
 import type { AxiosError } from 'axios'
 import { ref, computed, onMounted } from 'vue'
@@ -744,6 +751,7 @@ const showPan123AuthDialog = ref(false)
 const showGuangYaAuthDialog = ref(false)
 const showPan139AuthDialog = ref(false)
 const showCloud189AuthDialog = ref(false)
+const showQuarkAuthDialog = ref(false)
 const selectedV115Account = ref<CloudAccount | null>(null)
 const showV115AuthDialog = ref(false)
 
@@ -1163,6 +1171,12 @@ const handleAuthorize = (row: CloudAccount) => {
     selectedAccountId.value = row.id
     selectedAccountName.value = row.name || ''
     showCloud189AuthDialog.value = true
+    return
+  }
+  if (row.source_type === 'quark') {
+    selectedAccountId.value = row.id
+    selectedAccountName.value = row.name || ''
+    showQuarkAuthDialog.value = true
     return
   }
   if (row.source_type === 'baidupan') {

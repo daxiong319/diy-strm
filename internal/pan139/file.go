@@ -325,3 +325,40 @@ func (c *Client) CopyBatch(ctx context.Context, fileIDs []string, toParentFileID
 	}
 	return nil
 }
+
+// GetFileSHA256 按文件 ID 获取秒传特征 SHA256（contentHash）。
+// 通过列父目录匹配 fileId 拿 contentHash；返回 (sha256, found)。
+func (c *Client) GetFileSHA256(ctx context.Context, fileID string) (string, bool) {
+	if strings.TrimSpace(fileID) == "" {
+		return "", false
+	}
+	// 列表 API 的 fileId 精确匹配：先列 root，再逐目录下钻一层（文件通常在 root 直属或一层子目录）
+	candidates := []string{"root"}
+	visited := map[string]bool{"root": true}
+	for len(candidates) > 0 {
+		parentID := candidates[0]
+		candidates = candidates[1:]
+		var out ListResp
+		if err := c.Request(ctx, APIFileList, map[string]interface{}{
+			"orderBy":        "updated_at",
+			"orderDirection": "DESC",
+			"pageInfo":       map[string]interface{}{"pageCursor": "", "pageSize": PageSize},
+			"parentFileId":   parentID,
+		}, &out); err != nil {
+			continue
+		}
+		if !out.Success {
+			continue
+		}
+		for _, item := range out.Data.Items {
+			if item.FileId == fileID {
+				return item.ContentHash, item.ContentHash != ""
+			}
+			if item.Type == "folder" && !visited[item.FileId] {
+				visited[item.FileId] = true
+				candidates = append(candidates, item.FileId)
+			}
+		}
+	}
+	return "", false
+}
