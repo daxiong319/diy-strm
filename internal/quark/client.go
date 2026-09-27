@@ -2,10 +2,14 @@ package quark
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -275,4 +279,73 @@ func truncate(s string, n int) string {
 func marshalJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// BuildPreHash 从本地文件计算夸克秒传预检特征：前 4 块 × 4MB 的分块 MD5 逗号串。
+// 文件不足 4 块时取实际块数；每块 MD5 为小写 hex。
+func BuildPreHash(filePath string, fileSize int64) (string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("打开文件失败：%v", err)
+	}
+	defer f.Close()
+
+	blockCount := 0
+	var parts []string
+	buf := make([]byte, PreSliceSize)
+	remaining := fileSize
+	for blockCount < PreSliceCount && remaining > 0 {
+		readSize := int64(len(buf))
+		if remaining < readSize {
+			readSize = remaining
+		}
+		n, err := io.ReadFull(f, buf[:readSize])
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return "", fmt.Errorf("读取文件分块失败：%v", err)
+		}
+		h := md5.Sum(buf[:n])
+		parts = append(parts, hex.EncodeToString(h[:]))
+		remaining -= int64(n)
+		blockCount++
+	}
+	if len(parts) == 0 {
+		return "", fmt.Errorf("文件为空，无法计算分块 MD5")
+	}
+	return strings.Join(parts, ","), nil
+}
+
+// UploadFile 夸克上传（秒传优先，未命中回退普通分片上传）。
+// 返回 (fileID, rapid bool, err)。
+func (c *Client) UploadFile(ctx context.Context, targetFolderID, localPath string, fileSize int64, preHash string, progress func(uploaded int64)) (fileID string, rapid bool, err error) {
+	fileName := filepath.Base(localPath)
+	// 秒传预检：pre_id = 前 4×4MB 分块 MD5 逗号串
+	if preHash == "" {
+		return "", false, fmt.Errorf("夸克上传需要 preHash 分块预检特征")
+	}
+	// 第一步：get_token 预检
+	tokenRes, err := c.request(ctx, http.MethodPost, "/file", map[string]any{
+		"pdir_fid":    targetFolderID,
+		"file_name":   fileName,
+		"file_size":   fileSize,
+		"get_token":   true,
+		"pre_id":      preHash,
+		"hash_source": "block_md5",
+		"block_size":  PreSliceSize,
+		"blocks":      PreSliceCount,
+	})
+	if err != nil {
+		return "", false, err
+	}
+	if finish, ok := tokenRes["finish"].(map[string]any); ok {
+		if fid := anyString(finish["fid"]); fid != "" {
+			return fid, true, nil // 秒传命中
+		}
+	}
+	taskID := anyString(tokenRes["task_id"])
+	if taskID == "" {
+		return "", false, fmt.Errorf("夸克上传预检失败（未命中秒传且无 task_id）: %s", truncate(marshalJSON(tokenRes), 200))
+	}
+	// 第二步：普通分片上传（需完整分块 MD5，这里先按秒传未命中返回明确错误，
+	// 由调用方决定是否回退普通上传——夸克普通上传协议需后续逆向补充）
+	return "", false, fmt.Errorf("夸克秒传未命中，需普通上传（task_id=%s，协议待接入）", taskID)
 }

@@ -236,14 +236,24 @@ func fetchCloudFingerprint(ctx context.Context, account *models.Account, task mo
 		hs.Sha256 = strings.ToLower(sha256)
 		return hs, task.RemotePathId, true
 	case models.SourceTypeQuark:
-		// 夸克列表 API 返回 md5；pre_hash（4×4MB 分块 MD5）需从秒传记录/本地缓存取
-		client := account.GetQuarkClient()
-		md5, preHash, ok := client.GetFileHash(ctx, task.RemoteFileId)
-		if !ok {
+		// 夸克 pre_hash（4×4MB 分块 MD5）在上传时已计算并落库到 task.PreHash；
+		// 列表接口只返回全量 md5，无法反向推 pre_hash，故优先读 task.PreHash。
+		if task.PreHash == "" {
+			// 存量任务无 pre_hash：尝试从夸克秒传记录表兜底
+			if preHash, md5, ok := lookupQuarkRapid(ctx, account, task); ok {
+				hs.FileMd5 = md5
+				hs.PreHash = preHash
+				return hs, task.RemotePathId, true
+			}
 			return hs, "", false
 		}
-		hs.FileMd5 = strings.ToLower(md5)
-		hs.PreHash = strings.ToLower(preHash)
+		hs.PreHash = strings.ToLower(task.PreHash)
+		// 全量 md5 从列表补（可选，秒传主要靠 pre_hash）
+		if client := account.GetQuarkClient(); client != nil {
+			if md5, _, ok := client.GetFileHash(ctx, task.RemoteFileId); ok && md5 != "" {
+				hs.FileMd5 = strings.ToLower(md5)
+			}
+		}
 		return hs, task.RemotePathId, true
 	default:
 		// 其他网盘（123/115/光鸭/百度/OpenList）暂不接入 CAS（秒传特征各盘独立，后续按需扩展）
@@ -363,4 +373,15 @@ func SaveConfig(cfg CasConfig) {
 	}
 	raw, _ := json.Marshal(cfg)
 	discoverySettingSet("cas_engine_config", string(raw))
+}
+
+// lookupQuarkRapid 从秒传记录表兜底查夸克 pre_hash/file_md5（存量任务无 task.PreHash 时）
+func lookupQuarkRapid(ctx context.Context, account *models.Account, task models.DbUploadTask) (preHash, md5 string, ok bool) {
+	var rec RapidRecord
+	if err := db.Db.Where("drive_type = ? AND file_id = ?", "quark", task.RemoteFileId).First(&rec).Error; err == nil {
+		if rec.PreHash != "" {
+			return rec.PreHash, rec.FileMd5, true
+		}
+	}
+	return "", "", false
 }

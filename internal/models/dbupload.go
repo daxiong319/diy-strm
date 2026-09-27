@@ -13,6 +13,7 @@ import (
 	"diy-strm/internal/db"
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/pan123"
+	"diy-strm/internal/quark"
 	"diy-strm/internal/realtime"
 	"diy-strm/internal/v115open"
 
@@ -98,6 +99,7 @@ type DbUploadTask struct {
 	RapidWaitUntil        int64                     `json:"rapid_wait_until" gorm:"default:0"`                 // 秒传等待截止时间
 	CompletedRemoteFileId string                    `json:"completed_remote_file_id" gorm:"size:128"`          // 完成后的远端文件 ID
 	CompletedPickCode     string                    `json:"completed_pick_code" gorm:"size:128"`               // 完成后的 pickcode
+	PreHash               string                    `json:"pre_hash" gorm:"size:256"`                          // 夸克秒传分块 MD5 预检串（前 4×4MB 逗号分隔，上传时计算落库）
 	Error                 string                    `json:"error"`                                             // 错误信息
 	StartTime             int64                     `json:"start_time"`                                        // 开始时间
 	EndTime               int64                     `json:"end_time"`                                          // 结束时间
@@ -750,6 +752,37 @@ func (task *DbUploadTask) tryLocalFingerprintRapid() bool {
 		fileID, _, rapid, err := client.UploadFile(context.Background(), task.uploadPan139ParentID(), task.FileName, fileInfo.Size(), fileSHA256, file, nil)
 		if err != nil {
 			helpers.AppLogger.Warnf("[上传] 中国移动云盘秒传尝试失败，回退普通上传：%v", err)
+			return false
+		}
+		if !rapid {
+			return false
+		}
+		task.Uploading()
+		task.UploadResult = UploadResultRapidUpload
+		task.CompletedRemoteFileId = fileID
+		task.FileSize = fileInfo.Size()
+		task.UploadedBytes = fileInfo.Size()
+		task.applyUploadQueueDisplayFields(nil)
+		return true
+	case SourceTypeQuark:
+		// 夸克：计算前 4×4MB 分块 MD5（preHash）落库 + 秒传预检
+		client := account.GetQuarkClient()
+		if client == nil {
+			return false
+		}
+		preHash, err := quark.BuildPreHash(task.LocalFullPath, fileInfo.Size())
+		if err != nil {
+			helpers.AppLogger.Warnf("[上传] 夸克分块 MD5 计算失败：%v", err)
+			return false
+		}
+		// 无论秒传是否命中，先落库 preHash（CAS 化指纹来源）
+		task.PreHash = preHash
+		if err := db.Db.Model(task).Where("id = ?", task.ID).Update("pre_hash", preHash).Error; err != nil {
+			helpers.AppLogger.Warnf("[上传] 夸克 preHash 落库失败：%v", err)
+		}
+		fileID, rapid, err := client.UploadFile(context.Background(), task.RemoteFileId, task.LocalFullPath, fileInfo.Size(), preHash, nil)
+		if err != nil {
+			helpers.AppLogger.Warnf("[上传] 夸克秒传尝试失败，回退普通上传：%v", err)
 			return false
 		}
 		if !rapid {
