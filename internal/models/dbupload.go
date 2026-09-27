@@ -484,6 +484,10 @@ func (task *DbUploadTask) Upload() {
 		if !task.UploadPan139File() {
 			return
 		}
+	case SourceTypeQuark:
+		if !task.UploadQuarkFile() {
+			return
+		}
 	default:
 		task.Fail(fmt.Errorf("未知的上传来源类型 %s", task.SourceType))
 		return
@@ -782,14 +786,15 @@ func (task *DbUploadTask) tryLocalFingerprintRapid() bool {
 		}
 		fileID, rapid, err := client.UploadFile(context.Background(), task.RemoteFileId, task.LocalFullPath, fileInfo.Size(), preHash, nil)
 		if err != nil {
-			helpers.AppLogger.Warnf("[上传] 夸克秒传尝试失败，回退普通上传：%v", err)
-			return false
-		}
-		if !rapid {
+			helpers.AppLogger.Warnf("[上传] 夸克上传失败（秒传未命中且普通上传失败）：%v", err)
 			return false
 		}
 		task.Uploading()
-		task.UploadResult = UploadResultRapidUpload
+		if rapid {
+			task.UploadResult = UploadResultRapidUpload
+		} else {
+			task.UploadResult = UploadResultMultipartUploaded
+		}
 		task.CompletedRemoteFileId = fileID
 		task.FileSize = fileInfo.Size()
 		task.UploadedBytes = fileInfo.Size()
@@ -1031,6 +1036,44 @@ func (task *DbUploadTask) UploadPan139File() bool {
 	} else {
 		task.UploadResult = UploadResultMultipartUploaded
 	}
+	task.FileSize = fileInfo.Size()
+	task.UploadedBytes = fileInfo.Size()
+	task.applyUploadQueueDisplayFields(nil)
+	publishUploadQueueChanged(task, "progress")
+	return true
+}
+
+// UploadQuarkFile 夸克普通上传（无 preHash 兜底；秒传在 tryLocalFingerprintRapid 已尝试）
+func (task *DbUploadTask) UploadQuarkFile() bool {
+	account := task.GetAccount()
+	if account == nil {
+		task.Fail(fmt.Errorf("账户 %d 不存在", task.AccountId))
+		return false
+	}
+	client := account.GetQuarkClient()
+	if client == nil {
+		task.Fail(fmt.Errorf("账户 %s 夸克客户端不存在", account.Name))
+		return false
+	}
+	fileInfo, err := os.Stat(task.LocalFullPath)
+	if err != nil {
+		task.Fail(fmt.Errorf("读取本地文件 %s 失败：%v", task.LocalFullPath, err))
+		return false
+	}
+	task.Uploading()
+	fileID, err := client.UploadFilePlain(context.Background(), task.RemoteFileId, task.LocalFullPath, fileInfo.Size(), func(done int64) {
+		task.UploadedBytes = done
+		if err := db.Db.Model(task).Update("uploaded_bytes", done).Error; err != nil {
+			helpers.AppLogger.Warnf("[上传] 保存夸克上传进度失败：%s", err.Error())
+		}
+		publishUploadQueueChanged(task, "progress")
+	})
+	if err != nil {
+		task.Fail(fmt.Errorf("夸克上传文件 %s 失败：%v", task.FileName, err))
+		return false
+	}
+	task.CompletedRemoteFileId = fileID
+	task.UploadResult = UploadResultMultipartUploaded
 	task.FileSize = fileInfo.Size()
 	task.UploadedBytes = fileInfo.Size()
 	task.applyUploadQueueDisplayFields(nil)

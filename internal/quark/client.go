@@ -44,6 +44,49 @@ func NewClient(cookie string) *Client {
 }
 
 // request 通用请求（POST JSON / GET）
+// requestFull 同 request 但返回完整响应 JSON（含 data + metadata 等外层字段），
+// 用于需要 metadata（如 part_size）的上传预检场景。
+func (c *Client) requestFull(ctx context.Context, method, uri string, body any) (map[string]any, error) {
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reader = strings.NewReader(string(b))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, APIBase+uri, reader)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("Cookie", c.cookie)
+	req.Header.Set("Referer", Referer)
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("pr", "ucpro")
+	q.Set("fr", "pc")
+	req.URL.RawQuery = q.Encode()
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("夸克接口响应解析失败: %s", truncate(string(raw), 160))
+	}
+	if status, _ := m["status"].(float64); status >= 400 {
+		return nil, fmt.Errorf("夸克接口错误 [%v]: %s", status, firstNonEmpty(anyString(m["message"]), truncate(string(raw), 200)))
+	}
+	return m, nil
+}
+
 func (c *Client) request(ctx context.Context, method, uri string, body any) (map[string]any, error) {
 	var reader io.Reader
 	if body != nil {
@@ -316,13 +359,14 @@ func BuildPreHash(filePath string, fileSize int64) (string, error) {
 
 // UploadFile 夸克上传（秒传优先，未命中回退普通分片上传）。
 // 返回 (fileID, rapid bool, err)。
+// UploadFile 夸克完整上传：秒传预检优先，未命中回退 OSS 分片普通上传。
+// 协议对齐 alist quark_uc 驱动（/file/upload/pre → 分片 PUT → /file/upload/finish）。
 func (c *Client) UploadFile(ctx context.Context, targetFolderID, localPath string, fileSize int64, preHash string, progress func(uploaded int64)) (fileID string, rapid bool, err error) {
 	fileName := filepath.Base(localPath)
-	// 秒传预检：pre_id = 前 4×4MB 分块 MD5 逗号串
 	if preHash == "" {
 		return "", false, fmt.Errorf("夸克上传需要 preHash 分块预检特征")
 	}
-	// 第一步：get_token 预检
+	// 第一步：秒传预检（get_token + pre_id block_md5）
 	tokenRes, err := c.request(ctx, http.MethodPost, "/file", map[string]any{
 		"pdir_fid":    targetFolderID,
 		"file_name":   fileName,
@@ -342,10 +386,200 @@ func (c *Client) UploadFile(ctx context.Context, targetFolderID, localPath strin
 		}
 	}
 	taskID := anyString(tokenRes["task_id"])
-	if taskID == "" {
-		return "", false, fmt.Errorf("夸克上传预检失败（未命中秒传且无 task_id）: %s", truncate(marshalJSON(tokenRes), 200))
+	// 秒传未命中 → 普通分片上传（OSS multipart）
+	pre, err := c.uploadPre(ctx, targetFolderID, localPath, fileSize)
+	if err != nil {
+		return "", false, err
 	}
-	// 第二步：普通分片上传（需完整分块 MD5，这里先按秒传未命中返回明确错误，
-	// 由调用方决定是否回退普通上传——夸克普通上传协议需后续逆向补充）
-	return "", false, fmt.Errorf("夸克秒传未命中，需普通上传（task_id=%s，协议待接入）", taskID)
+	if pre.Data.TaskID == "" {
+		if taskID != "" {
+			pre.Data.TaskID = taskID
+		} else {
+			return "", false, fmt.Errorf("夸克上传预检失败：无 task_id")
+		}
+	}
+	fid, err := c.uploadParts(ctx, pre, localPath, fileSize, progress)
+	if err != nil {
+		return "", false, err
+	}
+	return fid, false, nil
+}
+
+// uploadPreResp 上传预检响应（OSS multipart 凭证）
+type uploadPreResp struct {
+	Data struct {
+		TaskID    string `json:"task_id"`
+		UploadID  string `json:"upload_id"`
+		ObjKey    string `json:"obj_key"`
+		UploadURL string `json:"upload_url"`
+		Bucket    string `json:"bucket"`
+		AuthInfo  string `json:"auth_info"`
+		Fid       string `json:"fid"`
+	} `json:"data"`
+	Metadata struct {
+		PartSize int `json:"part_size"`
+	} `json:"metadata"`
+}
+
+// uploadAuthResp 上传分片签名响应
+type uploadAuthResp struct {
+	Data struct {
+		AuthKey string `json:"auth_key"`
+	} `json:"data"`
+}
+
+// uploadPre 获取 OSS 上传凭证（用完整响应，含 data + metadata.part_size）
+func (c *Client) uploadPre(ctx context.Context, targetFolderID, localPath string, fileSize int64) (*uploadPreResp, error) {
+	fileName := filepath.Base(localPath)
+	now := time.Now()
+	raw, err := c.requestFull(ctx, http.MethodPost, "/file/upload/pre", map[string]any{
+		"ccp_hash_update": true,
+		"dir_name":        "",
+		"file_name":       fileName,
+		"format_type":     "video/mp4",
+		"l_created_at":    now.UnixMilli(),
+		"l_updated_at":    now.UnixMilli(),
+		"pdir_fid":        targetFolderID,
+		"size":            fileSize,
+	})
+	if err != nil {
+		return nil, err
+	}
+	data, _ := raw["data"].(map[string]any)
+	metadata, _ := raw["metadata"].(map[string]any)
+	pre := &uploadPreResp{}
+	pre.Data.TaskID = anyString(data["task_id"])
+	pre.Data.UploadID = anyString(data["upload_id"])
+	pre.Data.ObjKey = anyString(data["obj_key"])
+	pre.Data.UploadURL = anyString(data["upload_url"])
+	pre.Data.Bucket = anyString(data["bucket"])
+	pre.Data.AuthInfo = anyString(data["auth_info"])
+	pre.Data.Fid = anyString(data["fid"])
+	if metadata != nil {
+		pre.Metadata.PartSize = int(anyFloat(metadata["part_size"]))
+	}
+	return pre, nil
+}
+
+// uploadParts 分片上传 OSS + finish
+func (c *Client) uploadParts(ctx context.Context, pre *uploadPreResp, localPath string, fileSize int64, progress func(uploaded int64)) (string, error) {
+	partSize := int64(pre.Metadata.PartSize)
+	if partSize <= 0 {
+		partSize = 10 * 1024 * 1024 // 默认 10MB
+	}
+	f, err := os.Open(localPath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	buf := make([]byte, partSize)
+	partNumber := 1
+	var uploaded int64
+	for uploaded < fileSize {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+		remaining := fileSize - uploaded
+		readSize := partSize
+		if remaining < partSize {
+			readSize = remaining
+		}
+		n, err := io.ReadFull(f, buf[:readSize])
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return "", fmt.Errorf("读取文件分片失败：%v", err)
+		}
+		if err := c.uploadPart(ctx, pre, partNumber, buf[:n]); err != nil {
+			return "", err
+		}
+		uploaded += int64(n)
+		partNumber++
+		if progress != nil {
+			progress(uploaded)
+		}
+	}
+	// finish
+	return c.uploadFinish(ctx, pre)
+}
+
+// uploadPart 上传单个 OSS 分片
+func (c *Client) uploadPart(ctx context.Context, pre *uploadPreResp, partNumber int, data []byte) error {
+	timeStr := time.Now().UTC().Format(http.TimeFormat)
+	mimeType := "video/mp4"
+	raw, err := c.request(ctx, http.MethodPost, "/file/upload/auth", map[string]any{
+		"auth_info": pre.Data.AuthInfo,
+		"auth_meta": fmt.Sprintf("PUT\n\n%s\n%s\nx-oss-date:%s\nx-oss-user-agent:aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit\n/%s/%s?partNumber=%d&uploadId=%s",
+			mimeType, timeStr, timeStr, pre.Data.Bucket, pre.Data.ObjKey, partNumber, pre.Data.UploadID),
+		"task_id": pre.Data.TaskID,
+	})
+	if err != nil {
+		return err
+	}
+	// request() 返回 data，auth_key 平铺
+	authKey := anyString(raw["auth_key"])
+	// PUT 到 OSS
+	host := strings.TrimPrefix(pre.Data.UploadURL, "https://")
+	if !strings.HasPrefix(host, "https://") {
+		host = strings.TrimPrefix(pre.Data.UploadURL, "http://")
+	}
+	u := fmt.Sprintf("https://%s.%s/%s", pre.Data.Bucket, host, pre.Data.ObjKey)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, strings.NewReader(string(data)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", authKey)
+	req.Header.Set("Content-Type", mimeType)
+	req.Header.Set("Referer", Referer)
+	req.Header.Set("x-oss-date", timeStr)
+	req.Header.Set("x-oss-user-agent", "aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit")
+	q := req.URL.Query()
+	q.Set("partNumber", fmt.Sprintf("%d", partNumber))
+	q.Set("uploadId", pre.Data.UploadID)
+	req.URL.RawQuery = q.Encode()
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("夸克分片上传失败（HTTP %d）: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+	return nil
+}
+
+// uploadFinish 完成 OSS 分片上传
+func (c *Client) uploadFinish(ctx context.Context, pre *uploadPreResp) (string, error) {
+	raw, err := c.request(ctx, http.MethodPost, "/file/upload/finish", map[string]any{
+		"obj_key": pre.Data.ObjKey,
+		"task_id": pre.Data.TaskID,
+	})
+	if err != nil {
+		return "", err
+	}
+	fid := anyString(raw["fid"])
+	if fid == "" {
+		if data, ok := raw["data"].(map[string]any); ok {
+			fid = anyString(data["fid"])
+		}
+	}
+	if fid == "" {
+		return "", fmt.Errorf("夸克完成上传失败：未返回 fid（%s）", truncate(marshalJSON(raw), 200))
+	}
+	return fid, nil
+}
+
+// UploadFilePlain 夸克纯普通上传（不尝试秒传，用于无 preHash 的兜底场景）。
+func (c *Client) UploadFilePlain(ctx context.Context, targetFolderID, localPath string, fileSize int64, progress func(uploaded int64)) (fileID string, err error) {
+	pre, err := c.uploadPre(ctx, targetFolderID, localPath, fileSize)
+	if err != nil {
+		return "", err
+	}
+	if pre.Data.TaskID == "" {
+		return "", fmt.Errorf("夸克上传预检失败：无 task_id")
+	}
+	return c.uploadParts(ctx, pre, localPath, fileSize, progress)
 }
