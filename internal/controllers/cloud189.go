@@ -389,3 +389,70 @@ func QuarkQrPollAPI(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "", Data: gin.H{"status": status}})
 }
+
+// ---------------------------------------------------------------------------
+// 天翼云盘扫码登录（会话内存态，轮询期间保持 cookie jar）
+// ---------------------------------------------------------------------------
+
+// cloud189QrSessions 扫码登录会话（sessionID → QrSession）
+var cloud189QrSessions = sync.Map{}
+
+// Cloud189QrInitAPI POST /api/cloud189/qrcode — 生成天翼扫码登录二维码
+func Cloud189QrInitAPI(c *gin.Context) {
+	sess := cloud189.NewQrSession()
+	qrContent, err := sess.QrInit(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "生成二维码失败：" + err.Error()})
+		return
+	}
+	// 用 uuid 作为 sessionID（uuid 本身唯一）
+	sessionID := qrContent
+	cloud189QrSessions.Store(sessionID, sess)
+	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "", Data: gin.H{
+		"session_id": sessionID,
+		"qr_content": qrContent, // uuid，前端编码成二维码图片
+	}})
+}
+
+// Cloud189QrPollAPI POST /api/cloud189/qrcode/poll — 轮询扫码状态
+func Cloud189QrPollAPI(c *gin.Context) {
+	var req struct {
+		SessionID string `json:"session_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error()})
+		return
+	}
+	v, ok := cloud189QrSessions.Load(req.SessionID)
+	if !ok {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "扫码会话不存在或已过期，请重新生成"})
+		return
+	}
+	sess := v.(*cloud189.QrSession)
+	status, session, err := sess.QrPollStatus(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: err.Error()})
+		return
+	}
+	if status == "success" {
+		// 登录成功：建账号落库
+		account := models.Account{
+			Name:              "天翼云盘(扫码)",
+			SourceType:        models.SourceTypeCloud189,
+			Token:             session.AccessToken,
+			RefreshToken:      session.RefreshToken,
+			TokenExpiriesTime: time.Now().Add(7 * 24 * time.Hour).Unix(),
+		}
+		if err := createAccountIfAbsent(&account); err != nil {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "登录成功但保存账号失败：" + err.Error()})
+			return
+		}
+		cloud189QrSessions.Delete(req.SessionID)
+		c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "扫码登录成功", Data: gin.H{
+			"status":     "success",
+			"account_id": account.ID,
+		}})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "", Data: gin.H{"status": status}})
+}

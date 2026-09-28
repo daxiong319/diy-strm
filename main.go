@@ -995,6 +995,8 @@ func setRouter(r *gin.Engine) {
 		api.POST("/cloud189/login", controllers.Cloud189LoginAPI)                    // 天翼账号密码登录（支持验证码）
 		api.POST("/cloud189/login-cookie", controllers.Cloud189LoginByCookieAPI)     // 天翼 SSON Cookie 登录
 		api.POST("/cloud189/login-token", controllers.Cloud189LoginByTokenAPI)                 // 天翼 accessToken 直连登录（绕开 open.e.189.cn）
+		api.POST("/cloud189/qrcode", controllers.Cloud189QrInitAPI)                     // 天翼扫码登录：生成二维码
+		api.POST("/cloud189/qrcode/poll", controllers.Cloud189QrPollAPI)                // 天翼扫码登录：轮询状态
 		api.POST("/quark/login", controllers.QuarkLoginAPI)                                  // 夸克网盘 Cookie 登录
 		api.POST("/quark/qrcode", controllers.QuarkQrInitAPI)                             // 夸克扫码登录：生成二维码
 		api.POST("/quark/qrcode/poll", controllers.QuarkQrPollAPI)                      // 夸克扫码登录：轮询状态

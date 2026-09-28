@@ -7,6 +7,17 @@
     @update:model-value="emit('update:visible', $event)"
   >
     <el-tabs v-model="mode">
+      <el-tab-pane label="扫码登录" name="qr">
+        <div v-if="!qrDataUrl" class="qr-empty">
+          <el-button type="primary" :loading="qrLoading" @click="startQr">生成二维码</el-button>
+        </div>
+        <div v-else class="qr-box">
+          <img :src="qrDataUrl" class="qr-img" alt="天翼登录二维码" />
+          <p class="qr-tip">用「天翼云盘 App / 小翼管家 / 支付宝」扫码登录</p>
+          <p class="qr-status" :class="qrStatus">{{ qrStatusText }}</p>
+          <el-button size="small" @click="startQr">重新生成</el-button>
+        </div>
+      </el-tab-pane>
       <el-tab-pane label="AccessToken 登录" name="token">
         <el-form label-width="90px">
           <el-form-item label="备注名">
@@ -70,13 +81,13 @@
     </el-tabs>
     <template #footer>
       <el-button @click="emit('update:visible', false)">取消</el-button>
-      <el-button type="primary" :loading="submitting" @click="submit">{{ submitting ? '登录中…' : '登录' }}</el-button>
+      <el-button v-if="mode !== 'qr'" type="primary" :loading="submitting" @click="submit">{{ submitting ? '登录中…' : '登录' }}</el-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { http } from '@/http/client'
 import { SERVER_URL } from '@/const'
@@ -84,12 +95,97 @@ import { SERVER_URL } from '@/const'
 const props = defineProps<{ visible: boolean; accountId?: number | null; accountName?: string }>()
 const emit = defineEmits<{ 'update:visible': [boolean]; confirmed: [] }>()
 
-const mode = ref<'token' | 'password' | 'cookie'>('token')
+const mode = ref<'qr' | 'token' | 'password' | 'cookie'>('qr')
 const submitting = ref(false)
 const captchaImage = ref('')
 const form = ref({ name: '', username: '', password: '', validateCode: '' })
 const cookieForm = ref({ name: '', cookie: '' })
 const tokenForm = ref({ name: '', accessToken: '' })
+
+const qrLoading = ref(false)
+const qrDataUrl = ref('')
+const qrStatus = ref('')
+const qrStatusText = ref('')
+const qrSessionId = ref('')
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+const startQr = async () => {
+  stopPoll()
+  qrLoading.value = true
+  qrStatus.value = ''
+  qrStatusText.value = ''
+  try {
+    const resp = await http.post(`${SERVER_URL}/cloud189/qrcode`)
+    const data = resp?.data
+    if (data?.code === 200) {
+      qrSessionId.value = data.data.session_id
+      qrDataUrl.value = await renderQr(data.data.qr_content)
+      startPoll()
+    } else {
+      ElMessage.error(data?.message || '生成二维码失败')
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '生成二维码失败')
+  } finally {
+    qrLoading.value = false
+  }
+}
+
+const renderQr = async (content: string): Promise<string> => {
+  try {
+    const QRCode = (await import('qrcode')).default
+    return await QRCode.toDataURL(content, { width: 220, margin: 1 })
+  } catch {
+    return ''
+  }
+}
+
+const startPoll = () => {
+  pollTimer = setInterval(async () => {
+    if (!qrSessionId.value) return
+    try {
+      const resp = await http.post(`${SERVER_URL}/cloud189/qrcode/poll`, { session_id: qrSessionId.value })
+      const data = resp?.data
+      if (data?.code === 200) {
+        const status = data.data.status
+        if (status === 'success') {
+          stopPoll()
+          qrStatus.value = 'success'
+          qrStatusText.value = '登录成功'
+          ElMessage.success(data.message || '扫码登录成功')
+          emit('confirmed')
+          emit('update:visible', false)
+        } else if (status === 'expired') {
+          stopPoll()
+          qrStatus.value = 'error'
+          qrStatusText.value = '二维码已过期，请重新生成'
+        } else if (status === 'failed') {
+          stopPoll()
+          qrStatus.value = 'error'
+          qrStatusText.value = '登录失败'
+        } else {
+          qrStatus.value = 'waiting'
+          qrStatusText.value = '等待扫码…'
+        }
+      } else {
+        qrStatus.value = 'error'
+        qrStatusText.value = data?.message || '轮询失败'
+        stopPoll()
+      }
+    } catch {
+      // 网络瞬断不中断轮询
+    }
+  }, 2000)
+}
+
+const stopPoll = () => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+onUnmounted(stopPoll)
 
 const submit = async () => {
   if (mode.value === 'token') {
@@ -180,4 +276,12 @@ const submit = async () => {
 <style scoped>
 .captcha-row { display: flex; gap: 12px; align-items: center; width: 100%; }
 .captcha-img { height: 40px; border: 1px solid var(--el-border-color); border-radius: 4px; cursor: pointer; }
+.qr-box { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 0; }
+.qr-img { width: 220px; height: 220px; border: 1px solid var(--el-border-color); border-radius: 8px; }
+.qr-empty { display: flex; justify-content: center; padding: 40px 0; }
+.qr-tip { margin: 0; color: var(--el-text-color-secondary); font-size: 13px; }
+.qr-status { margin: 0; font-size: 13px; }
+.qr-status.waiting { color: var(--el-color-info); }
+.qr-status.success { color: var(--el-color-success); }
+.qr-status.error { color: var(--el-color-danger); }
 </style>
