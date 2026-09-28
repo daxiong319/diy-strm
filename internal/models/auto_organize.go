@@ -13,9 +13,9 @@ import (
 // 监控程序发现「待整理目录」新增资源后，按该账号配置的分类策略 yaml
 // 把资源整理到「已整理根目录」下的分类目录，并重命名（保留质量标签）。
 type AutoOrganizeConfig struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	AccountID uint      `gorm:"index:idx_auto_organize_account,unique" json:"account_id"` // 网盘账号 ID
-	Enabled   bool      `gorm:"default:false" json:"enabled"`                             // 是否启用自动整理
+	ID        uint `gorm:"primaryKey" json:"id"`
+	AccountID uint `gorm:"index:idx_auto_organize_account,unique" json:"account_id"` // 网盘账号 ID
+	Enabled   bool `gorm:"default:false" json:"enabled"`                             // 是否启用自动整理
 	// ScanIntervalMinutes 监控扫描间隔（分钟，1-1440；0=默认 5 分钟）。
 	// 转存联动整理（TriggerAutoOrganizeForAccount）不受此间隔影响，转存成功仍即刻触发。
 	ScanIntervalMinutes int `gorm:"default:5" json:"scan_interval_minutes"`
@@ -90,8 +90,20 @@ type AutoOrganizeConfig struct {
 	LastRunAt time.Time `json:"last_run_at"`
 	// LastResult 最近一次自动整理结果摘要（JSON 文本，前端展示）
 	LastResult string `gorm:"type:text" json:"last_result"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+
+	// ---- CAS 模式（对齐 cloud-auto-save-x / OpenList-CAS）----
+	// CASMode 开启后：整理成功 → 生成 .cas → 可选删源 → STRM 指向 /cas/play
+	// （每账号独立开关；关闭=走常规影视整理，现有逻辑不变）
+	CASMode bool `gorm:"default:false" json:"cas_mode"`
+	// CASOrganizedRoot CAS 已整理根目录（独立于常规影视已整理目录，避免混淆）
+	CASOrganizedRoot string `gorm:"size:255" json:"cas_organized_root"`
+	// CASDeleteSource CAS 化成功后是否删除云端源文件释放空间（默认 false 安全模式）
+	CASDeleteSource bool `gorm:"default:false" json:"cas_delete_source"`
+	// CASDelayDeleteHours 播放恢复后延时删除恢复的文件（小时，默认 2；0=不自动删）
+	CASDelayDeleteHours int `gorm:"default:2" json:"cas_delay_delete_hours"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // TableName 指定表名

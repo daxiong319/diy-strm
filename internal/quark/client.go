@@ -583,3 +583,80 @@ func (c *Client) UploadFilePlain(ctx context.Context, targetFolderID, localPath 
 	}
 	return c.uploadParts(ctx, pre, localPath, fileSize, progress)
 }
+
+// UploadTextFile 上传小文本文件（如 .cas 指纹文件）到指定目录。
+// 走普通分片上传链路（小文件单分片）。
+func (c *Client) UploadTextFile(ctx context.Context, parentFID, fileName, content string) string {
+	fid, err := c.uploadText(ctx, parentFID, fileName, content)
+	if err != nil {
+		return ""
+	}
+	return fid
+}
+
+// uploadText 上传小文本内容到网盘
+func (c *Client) uploadText(ctx context.Context, parentFID, fileName, content string) (string, error) {
+	// 夸克上传小文本：走 uploadPre → 分片 PUT → finish（单分片即可）
+	pre, err := c.uploadPre(ctx, parentFID, fileName, int64(len(content)))
+	if err != nil {
+		return "", err
+	}
+	if pre.Data.TaskID == "" {
+		return "", fmt.Errorf("夸克上传预检失败：无 task_id")
+	}
+	// 单分片上传
+	timeStr := time.Now().UTC().Format(http.TimeFormat)
+	mimeType := "text/plain"
+	raw, err := c.request(ctx, http.MethodPost, "/file/upload/auth", map[string]any{
+		"auth_info": pre.Data.AuthInfo,
+		"auth_meta": fmt.Sprintf("PUT\n\n%s\n%s\nx-oss-date:%s\nx-oss-user-agent:aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit\n/%s/%s?partNumber=1&uploadId=%s",
+			mimeType, timeStr, timeStr, pre.Data.Bucket, pre.Data.ObjKey, pre.Data.UploadID),
+		"task_id": pre.Data.TaskID,
+	})
+	if err != nil {
+		return "", err
+	}
+	authKey := anyString(raw["auth_key"])
+	if authKey == "" {
+		return "", fmt.Errorf("获取上传签名失败")
+	}
+	host := strings.TrimPrefix(pre.Data.UploadURL, "https://")
+	host = strings.TrimPrefix(host, "http://")
+	u := fmt.Sprintf("https://%s.%s/%s", pre.Data.Bucket, host, pre.Data.ObjKey)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, strings.NewReader(content))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", authKey)
+	req.Header.Set("Content-Type", mimeType)
+	req.Header.Set("Referer", Referer)
+	req.Header.Set("x-oss-date", timeStr)
+	q := req.URL.Query()
+	q.Set("partNumber", "1")
+	q.Set("uploadId", pre.Data.UploadID)
+	req.URL.RawQuery = q.Encode()
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("夸克分片上传失败 HTTP %d", resp.StatusCode)
+	}
+	// finish
+	raw2, err := c.request(ctx, http.MethodPost, "/file/upload/finish", map[string]any{
+		"obj_key": pre.Data.ObjKey,
+		"task_id": pre.Data.TaskID,
+	})
+	if err != nil {
+		return "", err
+	}
+	fid := anyString(raw2["fid"])
+	if fid == "" {
+		if d, ok := raw2["data"].(map[string]any); ok {
+			fid = anyString(d["fid"])
+		}
+	}
+	return fid, nil
+}

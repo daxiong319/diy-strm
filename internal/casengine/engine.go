@@ -37,6 +37,7 @@ type CasManifestRecord struct {
 	CasContent      string `json:"cas_content" gorm:"type:text"`
 	RapidPayload    string `json:"rapid_payload" gorm:"type:text"`    // 秒传请求原文（cloud-auto-save-x 同款）
 	RapidDriveTypes string `json:"rapid_drive_types" gorm:"size:256"` // 可秒传到的盘（逗号分隔，如 cloud189,cloud139,quark）
+	CasFileID       string `json:"cas_file_id" gorm:"size:128"`       // 网盘里 .cas 文件的 ID（用于恢复后删除 .cas）
 	Status          string `json:"status" gorm:"size:32"`             // active(源已删)/restored(已恢复)/pending
 	DeletedAt       int64  `json:"deleted_at"`                        // 源视频删除时间（unix 秒）
 	RestoredAt      int64  `json:"restored_at"`

@@ -2,6 +2,7 @@ package pan139
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -361,4 +362,16 @@ func (c *Client) GetFileSHA256(ctx context.Context, fileID string) (string, bool
 		}
 	}
 	return "", false
+}
+
+// UploadTextFile 上传小文本文件（如 .cas 指纹文件）到指定目录。
+// 内部计算 SHA256 后走 UploadFile（可能秒传命中也可能真传）。
+func (c *Client) UploadTextFile(ctx context.Context, parentFileID, fileName, content string) string {
+	sha256Hex := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+	reader := strings.NewReader(content)
+	fileID, _, _, err := c.UploadFile(ctx, parentFileID, fileName, int64(len(content)), sha256Hex, reader, nil)
+	if err != nil {
+		return ""
+	}
+	return fileID
 }

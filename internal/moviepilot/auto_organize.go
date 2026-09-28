@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"diy-strm/internal/casengine"
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/mediaparse"
 	"diy-strm/internal/models"
@@ -194,6 +195,12 @@ func RunAutoOrganize(ctx context.Context, cfg *models.AutoOrganizeConfig) *AutoO
 	organizedRoot := strings.Trim(cfg.OrganizedRoot, "/")
 	if organizedRoot == "" {
 		organizedRoot = organizeRootPath(pendingDir)
+	}
+	// CAS 模式：整理目标目录切换为 CAS 专用已整理目录（独立于常规影视，避免混淆）
+	casMode := cfg.CASMode && strings.TrimSpace(cfg.CASOrganizedRoot) != ""
+	if casMode {
+		organizedRoot = strings.Trim(cfg.CASOrganizedRoot, "/")
+		helpers.AppLogger.Infof("CAS 整理模式已启用：账号 %d 已整理根目录=%s 删源=%v", cfg.AccountID, organizedRoot, cfg.CASDeleteSource)
 	}
 	// 失败目录留空时默认使用 待整理目录同级/整理失败（运行时生效，不写回配置；不存在会自动创建）
 	effectiveCfg := *cfg
@@ -668,6 +675,19 @@ func organizeAutoVideoFile(ctx context.Context, account *models.Account, cfg *mo
 		targetFullPath := strings.TrimRight(organizedRoot, "/") + "/" + relDir + "/" + newName
 		result.Details = append(result.Details, fmt.Sprintf("✓ 整理成功：%s => %s", sourcePath, targetFullPath))
 		helpers.AppLogger.Infof("自动整理成功：%s => %s", sourcePath, targetFullPath)
+		// CAS 模式：整理成功后生成 .cas 并可选删源
+		if cfg.CASMode {
+			go func() {
+				casCtx, casCancel := context.WithTimeout(context.Background(), 60*time.Second)
+				defer casCancel()
+				casRes, casErr := casengine.GenerateCASForFile(casCtx, account, targetDirID, newName, entry.ID, entry.Size, cfg.CASDeleteSource)
+				if casErr != nil {
+					helpers.AppLogger.Warnf("CAS 化失败：%s：%v", newName, casErr)
+				} else if !casRes.Skipped {
+					helpers.AppLogger.Infof("CAS 化成功：%s（删源=%v）", newName, cfg.CASDeleteSource)
+				}
+			}()
+		}
 		result.Items = append(result.Items, OrganizedItem{
 			Title:        officialTitle,
 			Year:         year,
