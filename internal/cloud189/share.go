@@ -38,7 +38,7 @@ func (c *Client) getShareInfoByCode(ctx context.Context, shareCode string) (*Sha
 		"shareCode": {shareCode},
 		"noCache":   {fmt.Sprintf("%d", time.Now().UnixMilli())},
 	}
-	body, err := c.signedGet(ctx, WebURL, "/api/open/share/getShareInfoByCodeV2.action", q, nil)
+	body, err := c.signedGet(ctx, APIURL, "/getShareInfoByCodeV2.action", q, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +64,7 @@ func (c *Client) checkShareAccessCode(ctx context.Context, shareID, accessCode s
 		"shareId":    {shareID},
 		"accessCode": {accessCode},
 	}
-	body, err := c.signedPost(ctx, WebURL, "/api/open/share/checkAccessCode.action", form, nil)
+	body, err := c.signedPost(ctx, APIURL, "/checkAccessCode.action", form, nil)
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func (c *Client) ListShareDir(ctx context.Context, shareID, parentFileID, access
 		"orderDesc":      {"1"},
 		"accessCode_":    {""},
 	}
-	body, err := c.signedPost(ctx, WebURL, "/api/open/share/listShareDir.action", form, nil)
+	body, err := c.signedPost(ctx, APIURL, "/listShareDir.action", form, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func (c *Client) createShareSaveBatchTask(ctx context.Context, shareID, targetFo
 		"taskInfos":      {string(infosJSON)},
 		"targetFolderId": {targetFolderID},
 	}
-	body, err := c.signedPost(ctx, WebURL, "/api/open/batch/createBatchTask.action", form, nil)
+	body, err := c.signedPost(ctx, APIURL, "/createBatchTask.action", form, nil)
 	if err != nil {
 		return "", err
 	}
@@ -170,7 +170,7 @@ func (c *Client) checkBatchTask(ctx context.Context, taskID string) (bool, error
 		"type":   {"SHARE_SAVE"},
 		"taskId": {taskID},
 	}
-	body, err := c.signedPost(ctx, WebURL, "/api/open/batch/checkBatchTask.action", form, nil)
+	body, err := c.signedPost(ctx, APIURL, "/checkBatchTask.action", form, nil)
 	if err != nil {
 		return false, err
 	}

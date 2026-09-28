@@ -20,7 +20,7 @@ func (c *Client) UploadSmallText(ctx context.Context, parentFolderID, fileName, 
 		return "", fmt.Errorf("文件过大")
 	}
 	// 1. createUploadFile 申请上传
-	body, err := c.signedPost(ctx, WebURL, "/api/open/file/createUploadFile.action", url.Values{
+	body, err := c.signedPost(ctx, APIURL, "/createUploadFile.action", url.Values{
 		"parentFolderID": {parentFolderID},
 		"fileName":       {fileName},
 		"size":           {fmt.Sprintf("%d", len(content))},
@@ -59,7 +59,7 @@ func (c *Client) UploadSmallText(ctx context.Context, parentFolderID, fileName, 
 		return "", fmt.Errorf("上传内容失败：%w", err)
 	}
 	// 3. commit 提交
-	body3, err := c.signedPost(ctx, WebURL, "/api/open/file/commitMultiUploadFile.action", url.Values{
+	body3, err := c.signedPost(ctx, APIURL, "/commitMultiUploadFile.action", url.Values{
 		"uploadFileId": {create.Data.UploadFileID},
 		"isLog":        {"0"},
 		"opertype":     {"1"},

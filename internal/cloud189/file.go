@@ -18,13 +18,16 @@ import (
 func (c *Client) ListFiles(ctx context.Context, folderID string) ([]FileInfo, error) {
 	q := url.Values{
 		"folderId":   {folderID},
-		"mediaType":  {"0"},
-		"orderBy":    {"lastOpTime"},
-		"descending": {"true"},
+		"fileType":   {"0"},
+		"mediaAttr":  {"0"},
+		"iconOption": {"5"},
+		"recursive":  {"0"},
+		"orderBy":    {"filename"},
+		"descending": {"false"},
 		"pageNum":    {"1"},
 		"pageSize":   {"1000"},
 	}
-	body, err := c.signedGet(ctx, WebURL, "/api/open/file/listFiles.action", q, nil)
+	body, err := c.signedGet(ctx, APIURL, "/listFiles.action", q, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -33,10 +36,24 @@ func (c *Client) ListFiles(ctx context.Context, folderID string) ([]FileInfo, er
 
 func parseFileList(body []byte) ([]FileInfo, error) {
 	var out struct {
-		ResCode    int    `json:"res_code"`
-		ResMsg     string `json:"res_msg"`
+		ResCode    json.RawMessage `json:"res_code"`
+		ResMsg     string          `json:"res_message"`
 		FileListAO struct {
+			FolderList []struct {
+				ID       json.Number `json:"id"`
+				Name     string      `json:"name"`
+				ParentID json.Number `json:"parentId"`
+			} `json:"folderList"`
 			FileList []struct {
+				ID         json.Number `json:"id"`
+				Name       string      `json:"name"`
+				Size       json.Number `json:"size"`
+				MD5        string      `json:"md5"`
+				ParentID   json.Number `json:"parentFolderId"`
+				LastOpTime any         `json:"lastOpTime"`
+			} `json:"fileList"`
+			// 旧端点结构（兼容）
+			FileListOld []struct {
 				ID             json.Number `json:"id"`
 				Name           string      `json:"name"`
 				Size           json.Number `json:"size"`
@@ -44,33 +61,38 @@ func parseFileList(body []byte) ([]FileInfo, error) {
 				MD5            string      `json:"md5"`
 				SliceMD5       string      `json:"sliceMd5"`
 				ParentFolderID json.Number `json:"parentFolderId"`
-				CreateDate     string      `json:"createDate"`
-				LastOpTime     string      `json:"lastOpTime"`
-			} `json:"fileList"`
+			} `json:"fileListAO_list"`
 		} `json:"fileListAO"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, fmt.Errorf("解析文件列表失败: %w", err)
+		return nil, err
 	}
-	if out.ResCode != 0 {
-		return nil, fmt.Errorf("天翼云盘接口错误: %s (code=%d)", out.ResMsg, out.ResCode)
+	if !successResCodeRaw(out.ResCode) {
+		msg := strings.TrimSpace(out.ResMsg)
+		if msg == "" {
+			msg = truncateStr(string(body), 120)
+		}
+		return nil, fmt.Errorf("%s", msg)
 	}
-	items := make([]FileInfo, 0, len(out.FileListAO.FileList))
-	for _, f := range out.FileListAO.FileList {
-		size, _ := f.Size.Int64()
-		items = append(items, FileInfo{
-			ID:         f.ID.String(),
-			Name:       f.Name,
-			Size:       size,
-			IsDir:      f.IsFolder,
-			MD5:        f.MD5,
-			SliceMD5:   f.SliceMD5,
-			ParentID:   f.ParentFolderID.String(),
-			CreateDate: parseCloudTime(f.CreateDate),
-			LastOpTime: parseCloudTime(f.LastOpTime),
+	files := make([]FileInfo, 0, len(out.FileListAO.FileList)+len(out.FileListAO.FolderList))
+	for _, f := range out.FileListAO.FolderList {
+		files = append(files, FileInfo{
+			ID:       f.ID.String(),
+			Name:     f.Name,
+			IsDir:    true,
+			ParentID: f.ParentID.String(),
 		})
 	}
-	return items, nil
+	for _, f := range out.FileListAO.FileList {
+		files = append(files, FileInfo{
+			ID:       f.ID.String(),
+			Name:     f.Name,
+			Size:     sizeInt(f.Size),
+			MD5:      strings.ToUpper(f.MD5),
+			ParentID: f.ParentID.String(),
+		})
+	}
+	return files, nil
 }
 
 func parseCloudTime(s string) time.Time {
@@ -88,7 +110,7 @@ func (c *Client) CreateFolder(ctx context.Context, parentFolderID, folderName st
 		"parentFolderId": {parentFolderID},
 		"folderName":     {folderName},
 	}
-	body, err := c.signedPost(ctx, WebURL, "/api/open/file/createFolder.action", form, nil)
+	body, err := c.signedPost(ctx, APIURL, "/createFolder.action", form, nil)
 	if err != nil {
 		return "", err
 	}
@@ -142,7 +164,7 @@ func (c *Client) RenameFile(ctx context.Context, fileID, destName string) error 
 		"fileId":       {fileID},
 		"destFileName": {destName},
 	}
-	body, err := c.signedPost(ctx, WebURL, "/api/open/file/renameFile.action", form, nil)
+	body, err := c.signedPost(ctx, APIURL, "/renameFile.action", form, nil)
 	if err != nil {
 		return err
 	}
@@ -162,7 +184,7 @@ func (c *Client) RenameFile(ctx context.Context, fileID, destName string) error 
 // DeleteFile 删除文件（个人网盘）
 func (c *Client) DeleteFile(ctx context.Context, fileID string) error {
 	form := url.Values{"fileId": {fileID}}
-	body, err := c.signedPost(ctx, WebURL, "/api/open/file/deleteFile.action", form, nil)
+	body, err := c.signedPost(ctx, APIURL, "/deleteFile.action", form, nil)
 	if err != nil {
 		return err
 	}
@@ -191,7 +213,7 @@ func (c *Client) GetDownloadLink(ctx context.Context, fileID string, shareID str
 		"type":    {typ},
 		"dt":      {"1"},
 	}
-	body, err := c.signedGet(ctx, WebURL, "/api/portal/getNewVlcVideoPlayUrl.action", q, nil)
+	body, err := c.signedGet(ctx, APIURL, "/getNewVlcVideoPlayUrl.action", q, nil)
 	if err != nil {
 		return "", err
 	}
@@ -233,7 +255,7 @@ func (c *Client) GetDownloadLink(ctx context.Context, fileID string, shareID str
 
 // GetFamilyInfo 获取家庭云信息（第一个 userRole==1 的家庭）
 func (c *Client) GetFamilyInfo(ctx context.Context) (*FamilyInfo, error) {
-	body, err := c.signedGet(ctx, APIURL, "/open/family/manage/getFamilyList.action", nil, nil)
+	body, err := c.signedGet(ctx, APIURL, "/getFamilyList.action", nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -253,4 +275,17 @@ func (c *Client) GetFamilyInfo(ctx context.Context) (*FamilyInfo, error) {
 		}
 	}
 	return nil, fmt.Errorf("无可用家庭云")
+}
+
+// sizeInt json.Number 宽容转 int64
+func sizeInt(n json.Number) int64 {
+	v, err := n.Int64()
+	if err == nil {
+		return v
+	}
+	f, err := n.Float64()
+	if err == nil {
+		return int64(f)
+	}
+	return 0
 }
