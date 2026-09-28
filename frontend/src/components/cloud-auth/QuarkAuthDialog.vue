@@ -117,9 +117,12 @@ const startPoll = () => {
           ElMessage.success(data.message || '扫码登录成功')
           emit('confirmed')
           emit('update:visible', false)
-        } else if (status === 'scanned') {
-          qrStatus.value = 'scanned'
-          qrStatusText.value = '已扫码，请在手机上确认'
+        } else if (status === 'expired') {
+          // 二维码过期（token 约 3 分钟失效）：自动重新生成
+          stopPoll()
+          qrStatus.value = 'error'
+          qrStatusText.value = '二维码已过期，正在刷新…'
+          startQr()
         } else {
           qrStatus.value = 'waiting'
           qrStatusText.value = '等待扫码…'

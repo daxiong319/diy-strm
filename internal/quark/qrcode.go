@@ -110,6 +110,10 @@ func (q *QrSession) QrPollStatus(ctx context.Context) (status, cookie string, er
 	if err := json.Unmarshal(body, &out); err != nil {
 		return "", "", fmt.Errorf("解析扫码状态失败: %s", truncate(string(body), 200))
 	}
+	// 状态码语义（对齐夸克官方 web 端 JS）：
+	// 2000000=扫码成功；50004001=等待扫码（Query result is empty）；
+	// 50004002=Token Not Found=二维码已过期（官方约 3 分钟有效期）。
+	// 官方轮询只认 2000000，其余继续轮询；过期码显式返回 expired 触发前端刷新。
 	switch out.Status {
 	case 2000000:
 		// 已扫码成功，拿 service_ticket 兑换登录 Cookie
@@ -124,11 +128,11 @@ func (q *QrSession) QrPollStatus(ctx context.Context) (status, cookie string, er
 		return "success", cookie, nil
 	case 50004001:
 		return "waiting", "", nil // 未扫码
-	case 50004002, 50004003:
-		return "scanned", "", nil // 已扫码待确认 / 已过期
+	case 50004002:
+		return "expired", "", nil // 二维码过期，前端需重新生成
 	default:
-		// 其他状态码：返回原始 message 供前端展示
-		return "waiting", "", fmt.Errorf("扫码状态异常（status=%d）：%s", out.Status, out.Message)
+		// 其他未知状态码：不中断轮询（官方行为），按等待处理
+		return "waiting", "", nil
 	}
 }
 
