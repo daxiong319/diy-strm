@@ -353,6 +353,7 @@ func QuarkQrInitAPI(c *gin.Context) {
 func QuarkQrPollAPI(c *gin.Context) {
 	var req struct {
 		SessionID string `json:"session_id" binding:"required"`
+		AccountID uint   `json:"account_id"` // 授权已有账号时传入：更新该账号凭据而非新建
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error()})
@@ -370,7 +371,27 @@ func QuarkQrPollAPI(c *gin.Context) {
 		return
 	}
 	if status == "success" {
-		// 登录成功：建账号落库
+		quarkQrSessions.Delete(req.SessionID)
+		// 授权已有账号：把新 Cookie 写回该账号（不新建重复账号）
+		if req.AccountID > 0 {
+			if account, aerr := models.GetAccountById(req.AccountID); aerr == nil && account != nil && account.SourceType == models.SourceTypeQuark {
+				account.Token = cookie
+				account.TokenFailedReason = ""
+				if uerr := db.Db.Model(account).Where("id = ?", account.ID).Updates(map[string]any{
+					"token":               cookie,
+					"token_failed_reason": "",
+				}).Error; uerr != nil {
+					c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "授权成功但更新账号凭据失败：" + uerr.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "扫码授权成功，账号凭据已更新", Data: gin.H{
+					"status":     "success",
+					"account_id": account.ID,
+				}})
+				return
+			}
+		}
+		// 无指定账号（新增场景）：新建账号落库
 		account := models.Account{
 			Name:       "夸克网盘(扫码)",
 			SourceType: models.SourceTypeQuark,
@@ -380,7 +401,6 @@ func QuarkQrPollAPI(c *gin.Context) {
 			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "登录成功但保存账号失败：" + err.Error()})
 			return
 		}
-		quarkQrSessions.Delete(req.SessionID)
 		c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "扫码登录成功", Data: gin.H{
 			"status":     "success",
 			"account_id": account.ID,
@@ -418,6 +438,7 @@ func Cloud189QrInitAPI(c *gin.Context) {
 func Cloud189QrPollAPI(c *gin.Context) {
 	var req struct {
 		SessionID string `json:"session_id" binding:"required"`
+		AccountID uint   `json:"account_id"` // 授权已有账号时传入：更新该账号凭据而非新建
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error()})
@@ -435,7 +456,31 @@ func Cloud189QrPollAPI(c *gin.Context) {
 		return
 	}
 	if status == "success" {
-		// 登录成功：建账号落库
+		cloud189QrSessions.Delete(req.SessionID)
+		// 授权已有账号：把新凭据写回该账号（不新建重复账号）
+		if req.AccountID > 0 {
+			if account, aerr := models.GetAccountById(req.AccountID); aerr == nil && account != nil && account.SourceType == models.SourceTypeCloud189 {
+				account.Token = session.AccessToken
+				account.RefreshToken = session.RefreshToken
+				account.TokenExpiriesTime = time.Now().Add(7 * 24 * time.Hour).Unix()
+				account.TokenFailedReason = ""
+				if uerr := db.Db.Model(account).Where("id = ?", account.ID).Updates(map[string]any{
+					"token":               session.AccessToken,
+					"refresh_token":       session.RefreshToken,
+					"token_expiries_time": account.TokenExpiriesTime,
+					"token_failed_reason": "",
+				}).Error; uerr != nil {
+					c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "授权成功但更新账号凭据失败：" + uerr.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "扫码授权成功，账号凭据已更新", Data: gin.H{
+					"status":     "success",
+					"account_id": account.ID,
+				}})
+				return
+			}
+		}
+		// 无指定账号（新增场景）：新建账号落库
 		account := models.Account{
 			Name:              "天翼云盘(扫码)",
 			SourceType:        models.SourceTypeCloud189,
@@ -447,7 +492,6 @@ func Cloud189QrPollAPI(c *gin.Context) {
 			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "登录成功但保存账号失败：" + err.Error()})
 			return
 		}
-		cloud189QrSessions.Delete(req.SessionID)
 		c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "扫码登录成功", Data: gin.H{
 			"status":     "success",
 			"account_id": account.ID,

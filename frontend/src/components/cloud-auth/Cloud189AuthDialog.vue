@@ -144,7 +144,7 @@ const startPoll = () => {
   pollTimer = setInterval(async () => {
     if (!qrSessionId.value) return
     try {
-      const resp = await http.post(`${SERVER_URL}/cloud189/qrcode/poll`, { session_id: qrSessionId.value })
+      const resp = await http.post(`${SERVER_URL}/cloud189/qrcode/poll`, { session_id: qrSessionId.value, account_id: props.accountId ?? 0 })
       const data = resp?.data
       if (data?.code === 200) {
         const status = data.data.status

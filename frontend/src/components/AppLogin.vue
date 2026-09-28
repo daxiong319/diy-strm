@@ -133,6 +133,9 @@ const handleLogin = async (payload: LoginSubmitPayload) => {
           'Content-Type': 'application/json',
         },
         skipAuthInvalidation: true,
+        // 登录涉及 bcrypt 哈希（弱 CPU NAS 上可达数秒），放宽到 30s 防止
+        // 前端超时丢弃 Set-Cookie 导致「登录成功但刷新变未登录」
+        timeout: 30000,
       },
     )
 
