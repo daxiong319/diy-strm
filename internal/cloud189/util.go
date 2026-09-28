@@ -96,3 +96,11 @@ func sha256Hex(data string) string {
 	sum := sha256.Sum256([]byte(data))
 	return hex.EncodeToString(sum[:])
 }
+
+// truncateStr 截断字符串（诊断输出用）
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}

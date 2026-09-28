@@ -207,10 +207,10 @@ func (c *Client) executeUploadRequest(ctx context.Context, requestURI string, pa
 		}
 		if msg, _ := out["res_message"].(string); msg != "" {
 			if attempt == 0 && (strings.Contains(msg, "SessionKey") || strings.Contains(msg, "KeyInvalid") || strings.Contains(msg, "INVALID_SESSION")) {
-				// SessionKey 失效：清缓存重试一次
+				// SessionKey 失效：清缓存重试一次（新架构：清 sessionKey/secret 后 apiRequest 会自动 doRefresh）
 				c.mu.Lock()
-				c.session.SessionKey = ""
-				c.forceRefresh = true
+				c.sessionKey = ""
+				c.sessionSecret = ""
 				c.mu.Unlock()
 				continue
 			}

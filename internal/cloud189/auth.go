@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -205,7 +204,7 @@ func (c *Client) LoginByPassword(ctx context.Context, username, password, valida
 		return &LoginResult{Success: false, Message: loginRes.Msg}, nil
 	}
 
-	sess, err := c.getSessionForPC(ctx, map[string]string{"redirectURL": loginRes.ToURL})
+	sess, err := c.LoginByRedirectURL(ctx, loginRes.ToURL)
 	if err != nil {
 		return nil, err
 	}
@@ -213,147 +212,3 @@ func (c *Client) LoginByPassword(ctx context.Context, username, password, valida
 }
 
 // loginByAccessToken accessToken 换 session
-func (c *Client) loginByAccessToken(ctx context.Context, accessToken string) (*TokenSession, error) {
-	return c.getSessionForPC(ctx, map[string]string{"accessToken": accessToken})
-}
-
-// loginBySsoCookie SSON Cookie 登录
-func (c *Client) loginBySsoCookie(ctx context.Context, cookie string) (*TokenSession, error) {
-	u := fmt.Sprintf("%s/api/portal/unifyLoginForPC.action?appId=%s&clientType=%s&returnURL=%s&timeStamp=%d",
-		WebURL, AppID, ClientType, url.QueryEscape(ReturnURL), time.Now().UnixMilli())
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	req.Header.Set("User-Agent", UserAgent)
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	// 跟随跳转（带 SSON cookie）
-	redirectURL := resp.Request.URL.String()
-	req2, _ := http.NewRequestWithContext(ctx, http.MethodGet, redirectURL, nil)
-	req2.Header.Set("User-Agent", UserAgent)
-	req2.Header.Set("Cookie", "SSON="+cookie)
-	resp2, err := c.http.Do(req2)
-	if err != nil {
-		return nil, err
-	}
-	defer resp2.Body.Close()
-	return c.getSessionForPC(ctx, map[string]string{"redirectURL": resp2.Request.URL.String()})
-}
-
-// refreshToken 刷新令牌
-func (c *Client) refreshToken(ctx context.Context, refreshToken string) (*TokenSession, error) {
-	form := url.Values{
-		"clientId":     {AppID},
-		"refreshToken": {refreshToken},
-		"grantType":    {"refresh_token"},
-		"format":       {"json"},
-	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, AuthURL+"/api/oauth2/refreshToken.do", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", UserAgent)
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	var out struct {
-		AccessToken  string `json:"accessToken"`
-		RefreshToken string `json:"refreshToken"`
-		ExpiresIn    int64  `json:"expiresIn"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	if out.AccessToken == "" {
-		return nil, fmt.Errorf("刷新令牌失败")
-	}
-	return &TokenSession{AccessToken: out.AccessToken, RefreshToken: out.RefreshToken}, nil
-}
-
-// getSessionForPC 获取会话（对齐 litepan：POST + clientSuffix，缺则只返回部分字段）
-// param 支持 accessToken / redirectURL / refreshToken 任一。
-func (c *Client) getSessionForPC(ctx context.Context, param map[string]string) (*TokenSession, error) {
-	q := url.Values{
-		"appId":      {AppID},
-		"clientType": {loginPCClientType},
-		"version":    {loginVersion},
-		"channelId":  {loginChannelID},
-		"rand":       {fmt.Sprintf("%d_%d", rand.Intn(100000), rand.Int63n(10000000000))},
-	}
-	for k, v := range param {
-		q.Set(k, v)
-	}
-	u := APIURL + "/getSessionForPC.action?" + q.Encode()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
-	req.Header.Set("User-Agent", UserAgent)
-	req.Header.Set("Accept", "application/json;charset=UTF-8")
-	req.Header.Set("Referer", WebURL)
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, err
-	}
-	var out TokenSession
-	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, err
-	}
-	if out.SessionKey == "" || out.SessionSecret == "" {
-		return nil, fmt.Errorf("获取会话失败: %s", truncateStr(string(body), 200))
-	}
-	return &out, nil
-}
-
-// LoginByAccessToken 用 accessToken 直接登录（绕开 open.e.189.cn，直连 api.cloud.189.cn）。
-// 用户在浏览器登录天翼后从 F12 拿 accessToken，后端调 getSessionForPC 换 sessionKey/secret。
-func (c *Client) LoginByAccessToken(ctx context.Context, accessToken string) (*LoginResult, error) {
-	sess, err := c.getSessionForPC(ctx, map[string]string{"accessToken": accessToken})
-	if err != nil {
-		return nil, err
-	}
-	c.mu.Lock()
-	c.session = *sess
-	c.forceRefresh = false
-	c.store = &tokenStoreData{
-		AccessToken:  sess.AccessToken,
-		RefreshToken: sess.RefreshToken,
-		ExpiresAt:    time.Now().Add(7 * 24 * time.Hour),
-	}
-	c.mu.Unlock()
-	if c.onTokenChange != nil {
-		c.onTokenChange(*sess)
-	}
-	return &LoginResult{Success: true, Session: sess}, nil
-}
-
-// getAccessTokenBySsKey sessionKey 换 accessToken
-func (c *Client) getAccessTokenBySsKey(ctx context.Context) (string, error) {
-	sessionKey, err := c.getSessionKeyLocked(ctx)
-	if err != nil {
-		return "", err
-	}
-	u := WebURL + "/api/open/oauth2/getAccessTokenBySsKey.action?sessionKey=" + url.QueryEscape(sessionKey)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	req.Header.Set("User-Agent", UserAgent)
-	req.Header.Set("Referer", WebURL+"/web/main/")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	var out struct {
-		AccessToken string `json:"accessToken"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
-	}
-	if out.AccessToken == "" {
-		return "", fmt.Errorf("获取 accessToken 失败")
-	}
-	return out.AccessToken, nil
-}
