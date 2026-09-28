@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -134,23 +135,26 @@ func (q *QrSession) QrPollStatus(ctx context.Context) (status string, session *T
 	}
 }
 
-// finalizeLogin redirectURL → getSessionForPC 换完整会话（sessionKey/sessionSecret/accessToken/refreshToken）
+// finalizeLogin redirectURL → getSessionForPC 换完整会话
+// 对齐 litepan：POST + clientSuffix（clientType=TELEPC/version/channelId/rand）；
+// 缺 clientSuffix 或用 GET 时天翼只返回部分字段（无 refreshToken），
+// 后续 API 签名（HMAC-SHA1 需 sessionSecret）与刷新均依赖完整四件套。
 func (q *QrSession) finalizeLogin(ctx context.Context, redirectURL string) (*TokenSession, error) {
 	params := url.Values{
 		"appId":       {AppID},
-		"clientType":  {loginClientType},
+		"clientType":  {loginPCClientType},
 		"version":     {loginVersion},
 		"channelId":   {loginChannelID},
-		"rand":        {strconv.FormatInt(time.Now().UnixMilli(), 10)},
+		"rand":        {fmt.Sprintf("%d_%d", rand.Intn(100000), rand.Int63n(10000000000))},
 		"redirectURL": {redirectURL},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, APIURL+"/getSessionForPC.action?"+params.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, APIURL+"/getSessionForPC.action?"+params.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Accept", "application/json;charset=UTF-8")
-	req.Header.Set("Referer", WebURL+"/")
+	req.Header.Set("Referer", WebURL)
 	resp, err := q.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("换取会话失败：%w", err)
@@ -166,6 +170,9 @@ func (q *QrSession) finalizeLogin(ctx context.Context, redirectURL string) (*Tok
 	}
 	if out.SessionKey == "" || out.SessionSecret == "" {
 		return nil, fmt.Errorf("换取会话失败：%s", truncateStr(string(body), 200))
+	}
+	if out.RefreshToken == "" {
+		return nil, fmt.Errorf("登录完成但未收到 refreshToken：%s", truncateStr(string(body), 200))
 	}
 	return &out, nil
 }

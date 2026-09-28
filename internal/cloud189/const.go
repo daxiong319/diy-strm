@@ -15,7 +15,8 @@ const (
 	OpenAppKey  = "600100422"
 
 	// 登录补充参数
-	loginClientType = "TELEPC"
-	loginVersion    = "6.2"
-	loginChannelID  = "web_cloud.189.cn"
+	loginClientType   = "TELEPC"
+	loginPCClientType = "TELEPC"
+	loginVersion      = "6.2"
+	loginChannelID    = "web_cloud.189.cn"
 )

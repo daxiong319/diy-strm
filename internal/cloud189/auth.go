@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -272,24 +272,24 @@ func (c *Client) refreshToken(ctx context.Context, refreshToken string) (*TokenS
 	return &TokenSession{AccessToken: out.AccessToken, RefreshToken: out.RefreshToken}, nil
 }
 
-// getSessionForPC 获取会话（对齐 litepan：GET api.cloud.189.cn/getSessionForPC.action）
+// getSessionForPC 获取会话（对齐 litepan：POST + clientSuffix，缺则只返回部分字段）
 // param 支持 accessToken / redirectURL / refreshToken 任一。
 func (c *Client) getSessionForPC(ctx context.Context, param map[string]string) (*TokenSession, error) {
 	q := url.Values{
 		"appId":      {AppID},
-		"clientType": {loginClientType},
+		"clientType": {loginPCClientType},
 		"version":    {loginVersion},
 		"channelId":  {loginChannelID},
-		"rand":       {strconv.FormatInt(time.Now().UnixMilli(), 10)},
+		"rand":       {fmt.Sprintf("%d_%d", rand.Intn(100000), rand.Int63n(10000000000))},
 	}
 	for k, v := range param {
 		q.Set(k, v)
 	}
 	u := APIURL + "/getSessionForPC.action?" + q.Encode()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
 	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Accept", "application/json;charset=UTF-8")
-	req.Header.Set("Referer", WebURL+"/")
+	req.Header.Set("Referer", WebURL)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
