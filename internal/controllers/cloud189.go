@@ -500,3 +500,51 @@ func Cloud189QrPollAPI(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "", Data: gin.H{"status": status}})
 }
+
+// QuarkSmsExchangeAPI POST /api/quark/sms/exchange — 短信验证码登录的 ticket 兑换
+// 前端 iframe 嵌官方 uop 手机登录页（transmission_mode=pm postMessage），收到
+// {status:20000, data:service_ticket} 后把 ticket 传到这里换登录 Cookie。
+func QuarkSmsExchangeAPI(c *gin.Context) {
+	var req struct {
+		ServiceTicket string `json:"service_ticket" binding:"required"`
+		AccountID     uint   `json:"account_id"` // 授权已有账号时传入：更新该账号凭据而非新建
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error()})
+		return
+	}
+	cookie, err := quark.ExchangeServiceTicket(c.Request.Context(), req.ServiceTicket)
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "兑换登录态失败：" + err.Error()})
+		return
+	}
+	// 授权已有账号：更新凭据
+	if req.AccountID > 0 {
+		if account, aerr := models.GetAccountById(req.AccountID); aerr == nil && account != nil && account.SourceType == models.SourceTypeQuark {
+			if uerr := db.Db.Model(account).Where("id = ?", account.ID).Updates(map[string]any{
+				"token":               cookie,
+				"token_failed_reason": "",
+			}).Error; uerr != nil {
+				c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "登录成功但更新账号凭据失败：" + uerr.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "短信登录成功，账号凭据已更新", Data: gin.H{
+				"account_id": account.ID,
+			}})
+			return
+		}
+	}
+	// 新增场景：新建账号
+	account := models.Account{
+		Name:       "夸克网盘(短信)",
+		SourceType: models.SourceTypeQuark,
+		Token:      cookie,
+	}
+	if err := createAccountIfAbsent(&account); err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "登录成功但保存账号失败：" + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "短信验证码登录成功", Data: gin.H{
+		"account_id": account.ID,
+	}})
+}

@@ -18,6 +18,19 @@
           <el-button size="small" @click="startQr">重新生成</el-button>
         </div>
       </el-tab-pane>
+      <el-tab-pane label="短信验证码登录" name="sms">
+        <div class="sms-box">
+          <iframe
+            v-if="mode === 'sms'"
+            class="sms-iframe"
+            :src="smsLoginUrl"
+            frameborder="no"
+            scrolling="no"
+          ></iframe>
+          <p class="qr-tip">在上方页面输入手机号获取验证码并登录，成功后自动写入账号</p>
+          <p class="qr-status" :class="smsStatus">{{ smsStatusText }}</p>
+        </div>
+      </el-tab-pane>
       <el-tab-pane label="Cookie 登录" name="cookie">
         <el-form label-width="90px">
           <el-form-item label="备注名">
@@ -45,7 +58,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { http } from '@/http/client'
 import { SERVER_URL } from '@/const'
@@ -53,9 +66,72 @@ import { SERVER_URL } from '@/const'
 const props = defineProps<{ visible: boolean; accountId?: number | null; accountName?: string }>()
 const emit = defineEmits<{ 'update:visible': [boolean]; confirmed: [] }>()
 
-const mode = ref<'qr' | 'cookie'>('qr')
+const mode = ref<'qr' | 'sms' | 'cookie'>('qr')
 const submitting = ref(false)
 const form = ref({ name: '', cookie: '' })
+
+// 短信验证码登录：iframe 嵌官方 uop 手机登录页（transmission_mode=pm），
+// 官方页登录成功后 postMessage({status:20000, data:service_ticket}) 给父窗口
+const SMS_LOGIN_URL =
+  'https://uop.quark.cn/cas/custom/login?custom_login_type=mobile&client_id=532&display=pc&transmission_mode=pm'
+const smsLoginUrl = SMS_LOGIN_URL
+const smsStatus = ref('')
+const smsStatusText = ref('等待登录…')
+let smsMessageHandler: ((e: MessageEvent) => void) | null = null
+
+const exchangeSmsTicket = async (serviceTicket: string) => {
+  smsStatus.value = 'waiting'
+  smsStatusText.value = '登录成功，正在写入账号…'
+  try {
+    const resp = await http.post(`${SERVER_URL}/quark/sms/exchange`, {
+      service_ticket: serviceTicket,
+      account_id: props.accountId ?? 0,
+    })
+    const data = resp?.data
+    if (data?.code === 200) {
+      smsStatus.value = 'success'
+      smsStatusText.value = '登录成功'
+      ElMessage.success(data.message || '短信验证码登录成功')
+      emit('confirmed')
+      emit('update:visible', false)
+    } else {
+      smsStatus.value = 'error'
+      smsStatusText.value = data?.message || '兑换登录态失败'
+      ElMessage.error(data?.message || '兑换登录态失败')
+    }
+  } catch (e: any) {
+    smsStatus.value = 'error'
+    smsStatusText.value = e?.response?.data?.message || '兑换登录态失败'
+    ElMessage.error(smsStatusText.value)
+  }
+}
+
+const onSmsMessage = (e: MessageEvent) => {
+  // 官方页 postMessagePrivate(data) → data={status:20000, data:service_ticket}
+  try {
+    const payload = typeof e.data === 'string' ? JSON.parse(e.data) : e.data
+    if (payload && payload.status === 20000 && payload.data) {
+      void exchangeSmsTicket(String(payload.data))
+    } else if (payload && payload.status && payload.status !== 20000 && payload.message) {
+      smsStatus.value = 'error'
+      smsStatusText.value = String(payload.message)
+    }
+  } catch {
+    // 非 JSON message 忽略
+  }
+}
+
+const bindSmsListener = () => {
+  if (smsMessageHandler) return
+  smsMessageHandler = onSmsMessage
+  window.addEventListener('message', onSmsMessage)
+}
+const unbindSmsListener = () => {
+  if (smsMessageHandler) {
+    window.removeEventListener('message', smsMessageHandler)
+    smsMessageHandler = null
+  }
+}
 
 const qrLoading = ref(false)
 const qrUrl = ref('')
@@ -145,7 +221,21 @@ const stopPoll = () => {
   }
 }
 
-onUnmounted(stopPoll)
+onUnmounted(() => {
+  stopPoll()
+  unbindSmsListener()
+})
+
+// 进入短信 tab 时绑定 message 监听，离开时解绑
+watch(mode, (m) => {
+  if (m === 'sms') {
+    smsStatus.value = ''
+    smsStatusText.value = '等待登录…'
+    bindSmsListener()
+  } else {
+    unbindSmsListener()
+  }
+})
 
 const submitCookie = async () => {
   if (!form.value.cookie) {
@@ -184,4 +274,6 @@ const submitCookie = async () => {
 .qr-status.scanned { color: var(--el-color-warning); }
 .qr-status.success { color: var(--el-color-success); }
 .qr-status.error { color: var(--el-color-danger); }
+.sms-box { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 8px 0; }
+.sms-iframe { width: 100%; max-width: 460px; height: 420px; border: 1px solid var(--el-border-color); border-radius: 8px; background: #fff; }
 </style>

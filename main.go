@@ -1002,6 +1002,7 @@ func setRouter(r *gin.Engine) {
 		api.POST("/quark/login", controllers.QuarkLoginAPI)                          // 夸克网盘 Cookie 登录
 		api.POST("/quark/qrcode", controllers.QuarkQrInitAPI)                        // 夸克扫码登录：生成二维码
 		api.POST("/quark/qrcode/poll", controllers.QuarkQrPollAPI)                   // 夸克扫码登录：轮询状态
+		api.POST("/quark/sms/exchange", controllers.QuarkSmsExchangeAPI)             // 夸克短信登录：ticket 兑换 Cookie
 		api.GET("/cloud189/files", controllers.Cloud189FilesAPI)                     // 天翼文件列表
 		api.POST("/cas/run", controllers.CasRunOnceAPI)                              // 手动触发 CAS 化
 		api.GET("/cas/records", controllers.CasRecordsAPI)                           // CAS 记录列表

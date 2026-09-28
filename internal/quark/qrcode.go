@@ -169,3 +169,39 @@ func (q *QrSession) exchangeTicket(ctx context.Context, serviceTicket string) (s
 	}
 	return strings.Join(parts, "; "), nil
 }
+
+// ExchangeServiceTicket 独立的 ticket→Cookie 兑换（供短信验证码登录等场景复用）
+// service_ticket → pan.quark.cn/account/info?st= → __pus/__puus 完整 Cookie
+func ExchangeServiceTicket(ctx context.Context, serviceTicket string) (string, error) {
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Timeout: 30 * time.Second, Jar: jar}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, qrExchangeURL+"?st="+url.QueryEscape(serviceTicket), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("Referer", "https://pan.quark.cn/passport/login")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	_, _ = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	u, _ := url.Parse("https://pan.quark.cn")
+	cookies := client.Jar.Cookies(u)
+	if len(cookies) == 0 {
+		return "", fmt.Errorf("兑换登录态失败：未获取到 Cookie")
+	}
+	parts := make([]string, 0, len(cookies))
+	hasPus := false
+	for _, ck := range cookies {
+		if ck.Name == "__pus" || ck.Name == "__puus" {
+			hasPus = true
+		}
+		parts = append(parts, ck.Name+"="+ck.Value)
+	}
+	if !hasPus {
+		return "", fmt.Errorf("兑换登录态失败：Cookie 中缺少 __pus/__puus")
+	}
+	return strings.Join(parts, "; "), nil
+}
