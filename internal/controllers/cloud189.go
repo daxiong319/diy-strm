@@ -460,17 +460,9 @@ func Cloud189QrPollAPI(c *gin.Context) {
 		// 授权已有账号：把新凭据写回该账号（不新建重复账号）
 		if req.AccountID > 0 {
 			if account, aerr := models.GetAccountById(req.AccountID); aerr == nil && account != nil && account.SourceType == models.SourceTypeCloud189 {
-				account.Token = session.AccessToken
-				account.RefreshToken = session.RefreshToken
-				account.TokenExpiriesTime = time.Now().Add(7 * 24 * time.Hour).Unix()
-				account.TokenFailedReason = ""
-				if uerr := db.Db.Model(account).Where("id = ?", account.ID).Updates(map[string]any{
-					"token":               session.AccessToken,
-					"refresh_token":       session.RefreshToken,
-					"token_expiries_time": account.TokenExpiriesTime,
-					"token_failed_reason": "",
-				}).Error; uerr != nil {
-					c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "授权成功但更新账号凭据失败：" + uerr.Error()})
+				// 走 UpdateCloud189Login（含空值保护），避免与其它写点并发时交替清空
+				if !account.UpdateCloud189Login(session.AccessToken, session.RefreshToken) {
+					c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "授权成功但凭据不完整（token/refreshToken 缺失），已保留原值"})
 					return
 				}
 				c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "扫码授权成功，账号凭据已更新", Data: gin.H{

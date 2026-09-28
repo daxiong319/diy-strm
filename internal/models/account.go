@@ -191,6 +191,12 @@ func (account *Account) GetQuarkClient() *quark.Client {
 
 // UpdateCloud189Login 持久化天翼云盘令牌（accessToken/refreshToken）
 func (account *Account) UpdateCloud189Login(accessToken, refreshToken string) bool {
+	// 防御：禁止空值覆盖已有凭据（历史上出现过交替清空导致「授权后变未授权」）
+	if accessToken == "" || refreshToken == "" {
+		helpers.AppLogger.Warnf("拒绝写入天翼云盘不完整凭据：账号 %d accessToken=%d位 refreshToken=%d位（保留原值）",
+			account.ID, len(accessToken), len(refreshToken))
+		return false
+	}
 	account.Token = accessToken
 	account.RefreshToken = refreshToken
 	account.TokenExpiriesTime = time.Now().Add(6 * 24 * time.Hour).Unix()
