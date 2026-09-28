@@ -248,6 +248,42 @@
           </div>
 
           <div class="mv-field">
+            <div class="mv-field-label">CAS 模式（指纹归档）</div>
+            <div style="display: flex; align-items: center; gap: 12px">
+              <el-switch v-model="formOf(account.id).cas_mode" @change="() => formOf(account.id).cas_mode" />
+              <span style="font-size: 12px; color: var(--text-tertiary)">整理成功后自动生成 .cas 指纹文件</span>
+            </div>
+            <p class="mv-field-desc">
+              开启后整理目标切换到「CAS 已整理目录」，整理成功 → 网盘同目录生成 .cas →
+              可选删源释放空间；Emby 点播时经 /cas/play 秒传恢复真实文件播放，播完延时删除。
+            </p>
+          </div>
+
+          <div class="mv-field" v-if="formOf(account.id).cas_mode">
+            <div class="mv-field-label">CAS 已整理目录</div>
+            <div style="display: flex; gap: 8px">
+              <el-input v-model="formOf(account.id).cas_organized_root" placeholder="例如 媒体库/CAS已整理（独立于常规影视）" class="mv-text" />
+              <el-button @click="openPicker(account.id, 'cas_organized_root')">选择</el-button>
+            </div>
+            <p class="mv-field-desc">CAS 模式下的整理目标根目录，建议与常规影视已整理目录区分开。</p>
+          </div>
+
+          <div class="mv-field" v-if="formOf(account.id).cas_mode">
+            <div class="mv-field-label">CAS 删源</div>
+            <div style="display: flex; align-items: center; gap: 12px">
+              <el-switch v-model="formOf(account.id).cas_delete_source" />
+              <span style="font-size: 12px; color: var(--danger)">开启后 .cas 生成成功即删除云端源文件释放空间</span>
+            </div>
+            <p class="mv-field-desc">关闭 = 保留源文件仅归档指纹（安全模式）；开启 = 源文件删除、播放时自动秒传恢复。同时需设置下方延时删除时长。</p>
+          </div>
+
+          <div class="mv-field" v-if="formOf(account.id).cas_mode && formOf(account.id).cas_delete_source">
+            <div class="mv-field-label">播放后延时删除（小时）</div>
+            <el-input-number v-model="formOf(account.id).cas_delay_delete_hours" :min="1" :max="72" class="mv-text" />
+            <p class="mv-field-desc">Emby 点播触发秒传恢复后，延时该时长自动删除恢复的源文件（回收 .cas 化空间），默认 2 小时。</p>
+          </div>
+
+          <div class="mv-field">
             <div class="mv-field-label">追更模式</div>
             <div>
               <el-switch v-model="formOf(account.id).track_renewal" active-text="开启" inactive-text="关闭" />
@@ -525,6 +561,10 @@ interface AutoOrganizeConfig {
   last_wash_scan_result?: string
   last_run_at?: string
   last_result?: string
+  cas_mode: boolean
+  cas_organized_root: string
+  cas_delete_source: boolean
+  cas_delay_delete_hours: number
 }
 
 interface WashItem {
@@ -616,6 +656,7 @@ const pickerLabel = computed(() => {
     case 'failed_dir':
       return '失败目录'
     case 'strm_local_dir':
+    case 'cas_organized_root':
       return 'STRM 联动输出目录'
     default:
       return ''
@@ -651,6 +692,10 @@ const formOf = (accountId: number): AutoOrganizeConfig => {
       scan_interval_minutes: 5,
       pending_dir: '',
       organized_root: '',
+      cas_mode: false,
+      cas_organized_root: '',
+      cas_delete_source: false,
+      cas_delay_delete_hours: 2,
       failed_dir: '',
       strm_local_dir: '',
       category_config: defaultCategoryYaml,
@@ -785,6 +830,10 @@ const loadData = async () => {
         last_wash_scan_result: c.last_wash_scan_result,
         last_run_at: c.last_run_at,
         last_result: c.last_result,
+        cas_mode: c.cas_mode || false,
+        cas_organized_root: c.cas_organized_root || '',
+        cas_delete_source: c.cas_delete_source || false,
+        cas_delay_delete_hours: c.cas_delay_delete_hours ?? 2,
       }
     }
   } catch (error) {
@@ -1104,7 +1153,7 @@ const clearLogs = async () => {
 }
 
 // ---- 目录选择器 ----
-const openPicker = (accountId: number, field: 'pending_dir' | 'organized_root' | 'failed_dir' | 'strm_local_dir') => {
+const openPicker = (accountId: number, field: 'pending_dir' | 'organized_root' | 'failed_dir' | 'strm_local_dir' | 'cas_organized_root') => {
   pickerAccountId.value = accountId
   pickerField.value = field
   pickerDir.value = null
@@ -1115,7 +1164,7 @@ const openPicker = (accountId: number, field: 'pending_dir' | 'organized_root' |
 const onDirPicked = () => {
   const f = formOf(pickerAccountId.value)
   if (pickerDir.value?.path) {
-    const field = pickerField.value as 'pending_dir' | 'organized_root' | 'failed_dir'
+    const field = pickerField.value as 'pending_dir' | 'organized_root' | 'failed_dir' | 'cas_organized_root'
     f[field] = pickerDir.value.path
     ElMessage.success(`已选择：${pickerDir.value.path}`)
   }
