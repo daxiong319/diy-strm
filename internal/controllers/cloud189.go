@@ -548,3 +548,99 @@ func QuarkSmsExchangeAPI(c *gin.Context) {
 		"account_id": account.ID,
 	}})
 }
+
+// ---------------------------------------------------------------------------
+// 夸克短信验证码登录（后端全代理：会话 cookie jar 在服务端，绕开第三方 cookie 限制）
+// ---------------------------------------------------------------------------
+
+// QuarkSmsSendAPI POST /api/quark/sms/send — 发送短信验证码
+// body: {session_id, phone, sig, nc_session_id, token, key, nvc_data, captcha_data}
+// sig/nc_session_id 由前端阿里云滑块回调产生
+func QuarkSmsSendAPI(c *gin.Context) {
+	var req struct {
+		SessionID   string `json:"session_id" binding:"required"`
+		Phone       string `json:"phone" binding:"required"`
+		Sig         string `json:"sig"`
+		NcSession   string `json:"nc_session_id"`
+		Token       string `json:"token"`
+		Key         string `json:"key"`
+		NvcData     string `json:"nvc_data"`
+		CaptchaData string `json:"captcha_data"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error()})
+		return
+	}
+	sess := quark.GetSmsSession(req.SessionID)
+	if sess == nil {
+		sess = quark.NewSmsSession(req.SessionID)
+	}
+	ok, needSlider, msg := sess.SendSmsCode(c.Request.Context(), req.Phone, req.Sig, req.NcSession, req.Token, req.Key, req.NvcData, req.CaptchaData)
+	if !ok {
+		c.JSON(http.StatusOK, APIResponse[gin.H]{Code: BadRequest, Message: msg, Data: gin.H{
+			"need_slider": needSlider,
+		}})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "验证码已发送"})
+}
+
+// QuarkSmsCommitAPI POST /api/quark/sms/commit — 提交验证码登录
+func QuarkSmsCommitAPI(c *gin.Context) {
+	var req struct {
+		SessionID   string `json:"session_id" binding:"required"`
+		Phone       string `json:"phone" binding:"required"`
+		SmsCode     string `json:"sms_code" binding:"required"`
+		AccountID   uint   `json:"account_id"`
+		Sig         string `json:"sig"`
+		NcSession   string `json:"nc_session_id"`
+		Token       string `json:"token"`
+		Key         string `json:"key"`
+		NvcData     string `json:"nvc_data"`
+		CaptchaData string `json:"captcha_data"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error()})
+		return
+	}
+	sess := quark.GetSmsSession(req.SessionID)
+	if sess == nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "登录会话不存在或已过期，请重新发送验证码"})
+		return
+	}
+	ticket, err := sess.CommitSmsLogin(c.Request.Context(), req.Phone, req.SmsCode, req.Sig, req.NcSession, req.Token, req.Key, req.NvcData, req.CaptchaData)
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: err.Error()})
+		return
+	}
+	cookie, err := quark.ExchangeServiceTicket(c.Request.Context(), ticket)
+	if err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "兑换登录态失败：" + err.Error()})
+		return
+	}
+	quark.DeleteSmsSession(req.SessionID)
+	// 授权已有账号
+	if req.AccountID > 0 {
+		if account, aerr := models.GetAccountById(req.AccountID); aerr == nil && account != nil && account.SourceType == models.SourceTypeQuark {
+			if uerr := db.Db.Model(account).Where("id = ?", account.ID).Updates(map[string]any{
+				"token":               cookie,
+				"token_failed_reason": "",
+			}).Error; uerr != nil {
+				c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "登录成功但更新账号凭据失败：" + uerr.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "短信登录成功，账号凭据已更新", Data: gin.H{"account_id": account.ID}})
+			return
+		}
+	}
+	account := models.Account{
+		Name:       "夸克网盘(短信)",
+		SourceType: models.SourceTypeQuark,
+		Token:      cookie,
+	}
+	if err := createAccountIfAbsent(&account); err != nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "登录成功但保存账号失败：" + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "短信验证码登录成功", Data: gin.H{"account_id": account.ID}})
+}

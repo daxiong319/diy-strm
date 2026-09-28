@@ -19,17 +19,24 @@
         </div>
       </el-tab-pane>
       <el-tab-pane label="短信验证码登录" name="sms">
-        <div class="sms-box">
-          <iframe
-            v-if="mode === 'sms'"
-            class="sms-iframe"
-            :src="smsLoginUrl"
-            frameborder="no"
-            scrolling="no"
-          ></iframe>
-          <p class="qr-tip">在上方页面输入手机号获取验证码并登录，成功后自动写入账号</p>
+        <el-form label-width="90px">
+          <el-form-item label="手机号">
+            <el-input v-model="smsForm.phone" placeholder="夸克绑定的手机号" maxlength="11" />
+          </el-form-item>
+          <el-form-item label="验证码">
+            <div style="display: flex; gap: 8px; width: 100%">
+              <el-input v-model="smsForm.code" placeholder="短信验证码" maxlength="6" />
+              <el-button :disabled="smsCountdown > 0 || smsSending" :loading="smsSending" @click="sendSms">
+                {{ smsCountdown > 0 ? `${smsCountdown}s` : '获取验证码' }}
+              </el-button>
+            </div>
+          </el-form-item>
+          <div id="captcha-element" class="captcha-element"></div>
           <p class="qr-status" :class="smsStatus">{{ smsStatusText }}</p>
-        </div>
+          <el-alert type="info" :closable="false" show-icon>
+            <p>点击「获取验证码」按提示完成滑块验证后，短信将发送到手机。收到验证码后点「登录」。</p>
+          </el-alert>
+        </el-form>
       </el-tab-pane>
       <el-tab-pane label="Cookie 登录" name="cookie">
         <el-form label-width="90px">
@@ -53,6 +60,7 @@
     <template #footer>
       <el-button @click="emit('update:visible', false)">取消</el-button>
       <el-button v-if="mode === 'cookie'" type="primary" :loading="submitting" @click="submitCookie">{{ submitting ? '登录中…' : '登录' }}</el-button>
+      <el-button v-else-if="mode === 'sms'" type="primary" @click="commitSmsLogin">登录</el-button>
     </template>
   </el-dialog>
 </template>
@@ -70,21 +78,149 @@ const mode = ref<'qr' | 'sms' | 'cookie'>('qr')
 const submitting = ref(false)
 const form = ref({ name: '', cookie: '' })
 
-// 短信验证码登录：iframe 嵌官方 uop 手机登录页（transmission_mode=pm），
-// 官方页登录成功后 postMessage({status:20000, data:service_ticket}) 给父窗口
-const SMS_LOGIN_URL =
-  'https://uop.quark.cn/cas/custom/login?custom_login_type=mobile&client_id=532&display=pc&transmission_mode=pm'
-const smsLoginUrl = SMS_LOGIN_URL
+// 短信验证码登录：后端全代理（会话 cookie 在服务端），前端嵌阿里云滑块收集 captchaVerifyParam
+const smsForm = ref({ phone: '', code: '' })
 const smsStatus = ref('')
-const smsStatusText = ref('等待登录…')
-let smsMessageHandler: ((e: MessageEvent) => void) | null = null
+const smsStatusText = ref('')
+const smsSending = ref(false)
+const smsCountdown = ref(0)
+const smsSessionId = `sms_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+let smsCountdownTimer: ReturnType<typeof setInterval> | null = null
+// 阿里云验证码 2.0 回调产物（滑块/无感验证通过后的 captchaVerifyParam）
+let captchaVerifyParam = ''
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const anyWin = window as any
 
-const exchangeSmsTicket = async (serviceTicket: string) => {
-  smsStatus.value = 'waiting'
-  smsStatusText.value = '登录成功，正在写入账号…'
+const CAPTCHA_CONFIG = {
+  prefix: 'gd0da3',
+  sceneId: '1ml1ondj',
+  slideSceneId: 'y9x7vx0s',
+  region: 'cn',
+  appKey: 'FFFF0N0000000000ABDE',
+  element: '#captcha-element',
+  mode: 'embed',
+}
+
+const loadCaptchaScript = (): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (anyWin.initAliyunCaptcha) return resolve()
+    ;(anyWin as Record<string, unknown>).AliyunCaptchaConfig = {
+      region: CAPTCHA_CONFIG.region,
+      prefix: CAPTCHA_CONFIG.prefix,
+    }
+    const el = document.createElement('script')
+    el.src = 'https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js'
+    el.charset = 'utf-8'
+    el.onload = () => {
+      const timer = setInterval(() => {
+        if (anyWin.initAliyunCaptcha) {
+          clearInterval(timer)
+          resolve()
+        }
+      }, 100)
+      setTimeout(() => {
+        clearInterval(timer)
+        reject(new Error('阿里云验证码 SDK 加载超时'))
+      }, 8000)
+    }
+    el.onerror = () => reject(new Error('阿里云验证码 SDK 加载失败'))
+    document.head.appendChild(el)
+  })
+
+const initCaptcha = async () => {
   try {
-    const resp = await http.post(`${SERVER_URL}/quark/sms/exchange`, {
-      service_ticket: serviceTicket,
+    await loadCaptchaScript()
+    if (anyWin.AliyunCaptchaV2?.captchaInstance) return
+    anyWin.initAliyunCaptcha({
+      ...CAPTCHA_CONFIG,
+      captchaVerifyCallback: async (param: string) => {
+        captchaVerifyParam = param
+        return { captchaResult: true, bizResult: true }
+      },
+      onBizResultCallback: () => {},
+      getInstance: (instance: unknown) => {
+        anyWin.AliyunCaptchaV2 = anyWin.AliyunCaptchaV2 || {}
+        anyWin.AliyunCaptchaV2.captchaInstance = instance
+      },
+    })
+  } catch (e: any) {
+    smsStatus.value = 'error'
+    smsStatusText.value = e?.message || '滑块组件加载失败'
+  }
+}
+
+const startCountdown = () => {
+  smsCountdown.value = 60
+  smsCountdownTimer = setInterval(() => {
+    smsCountdown.value -= 1
+    if (smsCountdown.value <= 0 && smsCountdownTimer) {
+      clearInterval(smsCountdownTimer)
+      smsCountdownTimer = null
+    }
+  }, 1000)
+}
+
+const sendSms = async () => {
+  const phone = smsForm.value.phone.trim()
+  if (!/^1\d{10}$/.test(phone)) {
+    ElMessage.warning('请输入正确的手机号')
+    return
+  }
+  if (!captchaVerifyParam) {
+    ElMessage.warning('请先完成滑块验证')
+    return
+  }
+  smsSending.value = true
+  smsStatus.value = 'waiting'
+  smsStatusText.value = '正在发送验证码…'
+  try {
+    const resp = await http.post(`${SERVER_URL}/quark/sms/send`, {
+      session_id: smsSessionId,
+      phone,
+      captcha_data: captchaVerifyParam,
+    })
+    const data = resp?.data
+    if (data?.code === 200) {
+      captchaVerifyParam = ''
+      smsStatus.value = 'waiting'
+      smsStatusText.value = '验证码已发送，请查收短信'
+      ElMessage.success('验证码已发送')
+      startCountdown()
+    } else {
+      smsStatus.value = 'error'
+      smsStatusText.value = data?.message || '发送失败'
+      ElMessage.error(data?.message || '发送失败')
+      // 重置滑块允许重试
+      captchaVerifyParam = ''
+      anyWin.AliyunCaptchaV2?.reset?.()
+    }
+  } catch (e: any) {
+    smsStatus.value = 'error'
+    smsStatusText.value = e?.response?.data?.message || '发送失败'
+    ElMessage.error(smsStatusText.value)
+  } finally {
+    smsSending.value = false
+  }
+}
+
+const commitSmsLogin = async () => {
+  const phone = smsForm.value.phone.trim()
+  const code = smsForm.value.code.trim()
+  if (!/^1\d{10}$/.test(phone)) {
+    ElMessage.warning('请输入正确的手机号')
+    return
+  }
+  if (!code) {
+    ElMessage.warning('请输入短信验证码')
+    return
+  }
+  smsStatus.value = 'waiting'
+  smsStatusText.value = '正在登录…'
+  try {
+    const resp = await http.post(`${SERVER_URL}/quark/sms/commit`, {
+      session_id: smsSessionId,
+      phone,
+      sms_code: code,
       account_id: props.accountId ?? 0,
     })
     const data = resp?.data
@@ -96,40 +232,13 @@ const exchangeSmsTicket = async (serviceTicket: string) => {
       emit('update:visible', false)
     } else {
       smsStatus.value = 'error'
-      smsStatusText.value = data?.message || '兑换登录态失败'
-      ElMessage.error(data?.message || '兑换登录态失败')
+      smsStatusText.value = data?.message || '登录失败'
+      ElMessage.error(data?.message || '登录失败')
     }
   } catch (e: any) {
     smsStatus.value = 'error'
-    smsStatusText.value = e?.response?.data?.message || '兑换登录态失败'
+    smsStatusText.value = e?.response?.data?.message || '登录失败'
     ElMessage.error(smsStatusText.value)
-  }
-}
-
-const onSmsMessage = (e: MessageEvent) => {
-  // 官方页 postMessagePrivate(data) → data={status:20000, data:service_ticket}
-  try {
-    const payload = typeof e.data === 'string' ? JSON.parse(e.data) : e.data
-    if (payload && payload.status === 20000 && payload.data) {
-      void exchangeSmsTicket(String(payload.data))
-    } else if (payload && payload.status && payload.status !== 20000 && payload.message) {
-      smsStatus.value = 'error'
-      smsStatusText.value = String(payload.message)
-    }
-  } catch {
-    // 非 JSON message 忽略
-  }
-}
-
-const bindSmsListener = () => {
-  if (smsMessageHandler) return
-  smsMessageHandler = onSmsMessage
-  window.addEventListener('message', onSmsMessage)
-}
-const unbindSmsListener = () => {
-  if (smsMessageHandler) {
-    window.removeEventListener('message', smsMessageHandler)
-    smsMessageHandler = null
   }
 }
 
@@ -223,17 +332,15 @@ const stopPoll = () => {
 
 onUnmounted(() => {
   stopPoll()
-  unbindSmsListener()
+  if (smsCountdownTimer) clearInterval(smsCountdownTimer)
 })
 
 // 进入短信 tab 时绑定 message 监听，离开时解绑
 watch(mode, (m) => {
   if (m === 'sms') {
     smsStatus.value = ''
-    smsStatusText.value = '等待登录…'
-    bindSmsListener()
-  } else {
-    unbindSmsListener()
+    smsStatusText.value = '输入手机号完成滑块后获取验证码'
+    void initCaptcha()
   }
 })
 
@@ -275,5 +382,5 @@ const submitCookie = async () => {
 .qr-status.success { color: var(--el-color-success); }
 .qr-status.error { color: var(--el-color-danger); }
 .sms-box { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 8px 0; }
-.sms-iframe { width: 100%; max-width: 460px; height: 420px; border: 1px solid var(--el-border-color); border-radius: 8px; background: #fff; }
+.captcha-element { width: 100%; min-height: 74px; margin-bottom: 8px; }
 </style>
