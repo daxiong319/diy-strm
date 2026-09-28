@@ -1,4 +1,4 @@
-﻿package controllers
+package controllers
 
 import (
 	"context"
@@ -846,7 +846,7 @@ func parseSourceTypeName(sourceType string) string {
 // ensureSourceTypeValid 校验网盘类型是否支持订阅
 func ensureSourceTypeValid(sourceType string) bool {
 	switch sourceType {
-	case string(models.SourceType123), string(models.SourceTypeGuangYaPan), string(models.SourceTypePan139):
+	case string(models.SourceType123), string(models.SourceTypeGuangYaPan), string(models.SourceTypePan139), string(models.SourceTypeCloud189), string(models.SourceTypeQuark):
 		return true
 	}
 	return false

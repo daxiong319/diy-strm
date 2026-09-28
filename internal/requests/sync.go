@@ -1,4 +1,4 @@
-﻿package requests
+package requests
 
 import (
 	"path/filepath"
@@ -119,6 +119,8 @@ func (r SyncPathRequest) Validate() error {
 		string(models.SourceTypeBaiduPan),
 		string(models.SourceTypeGuangYaPan),
 		string(models.SourceTypePan139),
+		string(models.SourceTypeCloud189),
+		string(models.SourceTypeQuark),
 	}
 	if err := validation.OneOfString("source_type", string(r.SourceType), allowedSources); err != nil {
 		return err

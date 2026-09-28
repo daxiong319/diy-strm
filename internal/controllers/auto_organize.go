@@ -153,7 +153,7 @@ func SaveAutoOrganizeConfig(c *gin.Context) {
 		return
 	}
 	switch account.SourceType {
-	case models.SourceType123, models.SourceType115, models.SourceTypePan139, models.SourceTypeGuangYaPan:
+	case models.SourceType123, models.SourceType115, models.SourceTypePan139, models.SourceTypeGuangYaPan, models.SourceTypeCloud189, models.SourceTypeQuark:
 	default:
 		c.JSON(200, APIResponse[any]{Code: BadRequest, Message: "该网盘类型暂不支持自动整理", Data: nil})
 		return

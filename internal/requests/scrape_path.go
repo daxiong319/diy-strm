@@ -1,4 +1,4 @@
-﻿package requests
+package requests
 
 import (
 	"diy-strm/internal/models"
@@ -75,6 +75,8 @@ func (r SaveScrapePathRequest) validate() error {
 		string(models.SourceTypeBaiduPan),
 		string(models.SourceTypeGuangYaPan),
 		string(models.SourceTypePan139),
+		string(models.SourceTypeCloud189),
+		string(models.SourceTypeQuark),
 	}
 	if err := validation.OneOfString("source_type", string(r.SourceType), sourceValues); err != nil {
 		return err

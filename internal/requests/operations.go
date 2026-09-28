@@ -1,4 +1,4 @@
-﻿package requests
+package requests
 
 import (
 	"path/filepath"
@@ -414,8 +414,8 @@ type NameAlignApplyItem struct {
 
 // NameAlignApplyRequest 命名对齐应用请求。
 type NameAlignApplyRequest struct {
-	AccountID uint                  `json:"account_id"`
-	ParentID  string                `json:"parent_id"`
+	AccountID uint                 `json:"account_id"`
+	ParentID  string               `json:"parent_id"`
 	Items     []NameAlignApplyItem `json:"items"`
 }
 
@@ -657,6 +657,8 @@ func validateSourceType(sourceType models.SourceType) error {
 		string(models.SourceTypeBaiduPan),
 		string(models.SourceTypeGuangYaPan),
 		string(models.SourceTypePan139),
+		string(models.SourceTypeCloud189),
+		string(models.SourceTypeQuark),
 	})
 }
 

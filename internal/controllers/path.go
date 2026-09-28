@@ -72,6 +72,10 @@ func GetPathList(c *gin.Context) {
 		pathes, err = GetGuangYaPanPathList(req.ParentID, req.ParentPath, req.AccountID)
 	case models.SourceTypePan139:
 		pathes, err = GetPan139PathList(req.ParentID, req.ParentPath, req.AccountID)
+	case models.SourceTypeCloud189:
+		pathes, err = GetCloud189PathList(req.ParentID, req.ParentPath, req.AccountID)
+	case models.SourceTypeQuark:
+		pathes, err = GetQuarkPathList(req.ParentID, req.ParentPath, req.AccountID)
 	default:
 		// 报错
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "未知的同步源类型", Data: nil})
@@ -283,11 +287,11 @@ func GetPan123PathList(parentId, parentPath string, accountId uint) ([]DirResp, 
 	folders := make([]DirResp, 0)
 	for _, item := range files {
 		if item.IsDir() {
-folders = append(folders, DirResp{
-			Id:   item.GetID(),
-			Name: item.FileName,
-			Path: joinNetdiskPath(parentPath, item.FileName),
-		})
+			folders = append(folders, DirResp{
+				Id:   item.GetID(),
+				Name: item.FileName,
+				Path: joinNetdiskPath(parentPath, item.FileName),
+			})
 		}
 	}
 	return folders, nil
@@ -319,6 +323,7 @@ func GetPan139PathList(parentId, parentPath string, accountId uint) ([]DirResp, 
 	}
 	return folders, nil
 }
+
 // GetGuangYaPanPathList 获取光鸭云盘目录列表
 func GetGuangYaPanPathList(parentId, parentPath string, accountId uint) ([]DirResp, error) {
 	account, err := models.GetAccountById(accountId)
@@ -1235,4 +1240,62 @@ func DeleteDir(c *gin.Context) {
 	}
 	invalidateNetFileCacheForDeletedPath(account.SourceType, req.AccountID, invalidateParentID, req.FileID)
 	c.JSON(http.StatusOK, APIResponse[any]{Code: Success, Message: "删除目录成功", Data: nil})
+}
+
+// GetCloud189PathList 获取天翼云盘目录列表
+func GetCloud189PathList(parentId, parentPath string, accountId uint) ([]DirResp, error) {
+	account, err := models.GetAccountById(accountId)
+	if err != nil {
+		return nil, err
+	}
+	client := account.GetCloud189Client()
+	if client == nil {
+		return nil, fmt.Errorf("天翼云盘客户端不可用")
+	}
+	ctx := context.Background()
+	files, err := client.ListFiles(ctx, parentId)
+	if err != nil {
+		helpers.AppLogger.Warnf("获取天翼云盘目录列表失败：父目录=%s，错误=%v", parentId, err)
+		return nil, err
+	}
+	folders := make([]DirResp, 0)
+	for _, item := range files {
+		if item.IsDir {
+			folders = append(folders, DirResp{
+				Id:   item.ID,
+				Name: item.Name,
+				Path: joinNetdiskPath(parentPath, item.Name),
+			})
+		}
+	}
+	return folders, nil
+}
+
+// GetQuarkPathList 获取夸克网盘目录列表
+func GetQuarkPathList(parentId, parentPath string, accountId uint) ([]DirResp, error) {
+	account, err := models.GetAccountById(accountId)
+	if err != nil {
+		return nil, err
+	}
+	client := account.GetQuarkClient()
+	if client == nil {
+		return nil, fmt.Errorf("夸克网盘客户端不可用")
+	}
+	ctx := context.Background()
+	files, err := client.ListFiles(ctx, parentId)
+	if err != nil {
+		helpers.AppLogger.Warnf("获取夸克网盘目录列表失败：父目录=%s，错误=%v", parentId, err)
+		return nil, err
+	}
+	folders := make([]DirResp, 0)
+	for _, item := range files {
+		if item.IsDir {
+			folders = append(folders, DirResp{
+				Id:   item.Fid,
+				Name: item.Name,
+				Path: joinNetdiskPath(parentPath, item.Name),
+			})
+		}
+	}
+	return folders, nil
 }
