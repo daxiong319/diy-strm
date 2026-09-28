@@ -118,6 +118,10 @@ func newSyncStrm(account *models.Account, syncPathId uint, sourcePath, sourcePat
 		syncDriver = NewGuangYaPanDriver(account.GetGuangYaPanClient())
 	case models.SourceTypePan139:
 		syncDriver = NewPan139Driver(account.GetPan139Client())
+	case models.SourceTypeCloud189:
+		syncDriver = NewCloud189Driver(account.GetCloud189Client())
+	case models.SourceTypeQuark:
+		syncDriver = NewQuarkDriver(account.GetQuarkClient())
 	}
 	pathWorkerMax := int64(models.SettingsGlobal.FileDetailThreads)
 	switch account.SourceType {

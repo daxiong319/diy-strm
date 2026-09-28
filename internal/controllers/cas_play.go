@@ -237,3 +237,124 @@ func scheduleCASRestoreCleanup(rec *casengine.CasManifestRecord) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 天翼/夸克直链 handler（STRM 播放代理，与 /pan139/url 同模式）
+// ---------------------------------------------------------------------------
+
+// GetCloud189Url GET /cloud189/url/*filename — 天翼云盘直链
+func GetCloud189Url(c *gin.Context) {
+	liveQuery, _ := url.ParseQuery(c.Request.URL.RawQuery)
+	fileId := strings.TrimSpace(liveQuery.Get("pickcode"))
+	if fileId == "" {
+		fileId = strings.TrimSpace(liveQuery.Get("fileid"))
+	}
+	if fileId == "" {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "pickcode：不能为空", Data: nil})
+		return
+	}
+	accID := strings.TrimSpace(liveQuery.Get("account"))
+	var account *models.Account
+	var err error
+	if accID != "" {
+		var id uint64
+		id, err = strconv.ParseUint(accID, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "账号 ID 无效", Data: nil})
+			return
+		}
+		account, err = models.GetAccountById(uint(id))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "账号 ID 不存在", Data: nil})
+			return
+		}
+	} else {
+		account = findAccountByType(models.SourceTypeCloud189)
+		if account == nil {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "未配置天翼云盘账号", Data: nil})
+			return
+		}
+	}
+	client := account.GetCloud189Client()
+	if client == nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "天翼云盘客户端不可用", Data: nil})
+		return
+	}
+	cacheKey := "cloud189url:" + fileId
+	if !keyLock.LockWithTimeout(cacheKey, 10*time.Second) {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取天翼云盘下载链接超时，请稍后重试", Data: nil})
+		return
+	}
+	defer keyLock.Unlock(cacheKey)
+	cachedUrl := string(db.Cache.Get(cacheKey))
+	if cachedUrl == "" {
+		cachedUrl, err = client.GetDownloadLink(c.Request.Context(), fileId, "")
+		if err != nil {
+			helpers.AppLogger.Warnf("获取天翼云盘下载链接失败：fileId=%s 错误：%v", fileId, err)
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取天翼云盘下载链接失败：" + err.Error(), Data: nil})
+			return
+		}
+		// 天翼直链有效期较短，缓存 10 分钟
+		db.Cache.Set(cacheKey, []byte(cachedUrl), 10*60)
+	}
+	helpers.AppLogger.Infof("302 重定向到天翼云盘下载链接：fileId=%s", fileId)
+	c.Redirect(http.StatusFound, cachedUrl)
+}
+
+// GetQuarkUrl GET /quark/url/*filename — 夸克网盘直链
+func GetQuarkUrl(c *gin.Context) {
+	liveQuery, _ := url.ParseQuery(c.Request.URL.RawQuery)
+	fileId := strings.TrimSpace(liveQuery.Get("pickcode"))
+	if fileId == "" {
+		fileId = strings.TrimSpace(liveQuery.Get("fileid"))
+	}
+	if fileId == "" {
+		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "pickcode：不能为空", Data: nil})
+		return
+	}
+	accID := strings.TrimSpace(liveQuery.Get("account"))
+	var account *models.Account
+	var err error
+	if accID != "" {
+		var id uint64
+		id, err = strconv.ParseUint(accID, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "账号 ID 无效", Data: nil})
+			return
+		}
+		account, err = models.GetAccountById(uint(id))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "账号 ID 不存在", Data: nil})
+			return
+		}
+	} else {
+		account = findAccountByType(models.SourceTypeQuark)
+		if account == nil {
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "未配置夸克网盘账号", Data: nil})
+			return
+		}
+	}
+	client := account.GetQuarkClient()
+	if client == nil {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "夸克网盘客户端不可用", Data: nil})
+		return
+	}
+	cacheKey := "quarkurl:" + fileId
+	if !keyLock.LockWithTimeout(cacheKey, 10*time.Second) {
+		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取夸克下载链接超时，请稍后重试", Data: nil})
+		return
+	}
+	defer keyLock.Unlock(cacheKey)
+	cachedUrl := string(db.Cache.Get(cacheKey))
+	if cachedUrl == "" {
+		cachedUrl, err = client.GetDownloadURL(c.Request.Context(), fileId)
+		if err != nil {
+			helpers.AppLogger.Warnf("获取夸克下载链接失败：fileId=%s 错误：%v", fileId, err)
+			c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "获取夸克下载链接失败：" + err.Error(), Data: nil})
+			return
+		}
+		db.Cache.Set(cacheKey, []byte(cachedUrl), 10*60)
+	}
+	helpers.AppLogger.Infof("302 重定向到夸克下载链接：fileId=%s", fileId)
+	c.Redirect(http.StatusFound, cachedUrl)
+}

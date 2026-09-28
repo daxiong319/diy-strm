@@ -708,8 +708,9 @@ func setRouter(r *gin.Engine) {
 	r.GET("/guangyapan/url/*filename", controllers.GetGuangYaPanUrlByPickCode) // 查询光鸭云盘直链，按文件 ID 查询，支持 ISO，路径最后一部分为 .扩展名格式
 	r.GET("/pan139/url/*filename", controllers.GetPan139UrlByFileId)           // 查询中国移动云盘直链，按文件 ID 查询，支持 ISO，路径最后一部分为 .扩展名格式
 	r.GET("/cas/play/*filename", controllers.GetCasPlayUrl)                    // CAS 播放恢复直链：查指纹→秒传恢复→302（延时删源）
-
-	r.GET("/openlist/url", controllers.GetOpenListFileUrl) // 查询 OpenList 直链
+	r.GET("/cloud189/url/*filename", controllers.GetCloud189Url)               // 天翼云盘直链，按文件 ID 查询
+	r.GET("/quark/url/*filename", controllers.GetQuarkUrl)                     // 夸克网盘直链，按文件 ID 查询
+	r.GET("/openlist/url", controllers.GetOpenListFileUrl)                     // 查询 OpenList 直链
 
 	r.GET("/proxy-115", controllers.Proxy115) // 115 CDN 反代路由
 	// 观影内嵌详情/播放页的站内接口代理：观影 SPA 的外部 JS（filejin CDN 加载）以
@@ -995,12 +996,12 @@ func setRouter(r *gin.Engine) {
 		// 天翼云盘（cloud189）+ CAS 秒传体系
 		api.POST("/cloud189/login", controllers.Cloud189LoginAPI)                    // 天翼账号密码登录（支持验证码）
 		api.POST("/cloud189/login-cookie", controllers.Cloud189LoginByCookieAPI)     // 天翼 SSON Cookie 登录
-		api.POST("/cloud189/login-token", controllers.Cloud189LoginByTokenAPI)                 // 天翼 accessToken 直连登录（绕开 open.e.189.cn）
-		api.POST("/cloud189/qrcode", controllers.Cloud189QrInitAPI)                     // 天翼扫码登录：生成二维码
-		api.POST("/cloud189/qrcode/poll", controllers.Cloud189QrPollAPI)                // 天翼扫码登录：轮询状态
-		api.POST("/quark/login", controllers.QuarkLoginAPI)                                  // 夸克网盘 Cookie 登录
-		api.POST("/quark/qrcode", controllers.QuarkQrInitAPI)                             // 夸克扫码登录：生成二维码
-		api.POST("/quark/qrcode/poll", controllers.QuarkQrPollAPI)                      // 夸克扫码登录：轮询状态
+		api.POST("/cloud189/login-token", controllers.Cloud189LoginByTokenAPI)       // 天翼 accessToken 直连登录（绕开 open.e.189.cn）
+		api.POST("/cloud189/qrcode", controllers.Cloud189QrInitAPI)                  // 天翼扫码登录：生成二维码
+		api.POST("/cloud189/qrcode/poll", controllers.Cloud189QrPollAPI)             // 天翼扫码登录：轮询状态
+		api.POST("/quark/login", controllers.QuarkLoginAPI)                          // 夸克网盘 Cookie 登录
+		api.POST("/quark/qrcode", controllers.QuarkQrInitAPI)                        // 夸克扫码登录：生成二维码
+		api.POST("/quark/qrcode/poll", controllers.QuarkQrPollAPI)                   // 夸克扫码登录：轮询状态
 		api.GET("/cloud189/files", controllers.Cloud189FilesAPI)                     // 天翼文件列表
 		api.POST("/cas/run", controllers.CasRunOnceAPI)                              // 手动触发 CAS 化
 		api.GET("/cas/records", controllers.CasRecordsAPI)                           // CAS 记录列表
