@@ -660,3 +660,46 @@ func (c *Client) uploadText(ctx context.Context, parentFID, fileName, content st
 	}
 	return fid, nil
 }
+
+// GetDownloadURL 获取文件下载直链（POST /file/download {fids:[fid]} → data[0].download_url）
+func (c *Client) GetDownloadURL(ctx context.Context, fid string) (string, error) {
+	raw, err := c.requestFull(ctx, http.MethodPost, "/file/download", map[string]any{
+		"fids": []string{fid},
+	})
+	if err != nil {
+		return "", err
+	}
+	data, _ := raw["data"].([]any)
+	if len(data) == 0 {
+		return "", fmt.Errorf("夸克下载链接为空")
+	}
+	first, _ := data[0].(map[string]any)
+	dl := anyString(first["download_url"])
+	if dl == "" {
+		return "", fmt.Errorf("夸克下载链接为空")
+	}
+	return dl, nil
+}
+
+// CreateFolder 创建目录（POST /file {dir_init_lock:false, file_name, pdir_fid} → data.fid）
+func (c *Client) CreateFolder(ctx context.Context, parentFID, dirName string) (string, error) {
+	raw, err := c.request(ctx, http.MethodPost, "/file", map[string]any{
+		"dir_init_lock": false,
+		"dir_path":      "",
+		"file_name":     dirName,
+		"pdir_fid":      parentFID,
+	})
+	if err != nil {
+		return "", err
+	}
+	fid := anyString(raw["fid"])
+	if fid == "" {
+		if d, ok := raw["data"].(map[string]any); ok {
+			fid = anyString(d["fid"])
+		}
+	}
+	if fid == "" {
+		return "", fmt.Errorf("夸克创建目录失败：无 fid")
+	}
+	return fid, nil
+}

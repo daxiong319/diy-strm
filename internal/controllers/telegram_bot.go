@@ -1,4 +1,4 @@
-﻿package controllers
+package controllers
 
 import (
 	"context"
@@ -8,9 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"diy-strm/internal/cloud189"
 	"diy-strm/internal/helpers"
 	"diy-strm/internal/models"
 	"diy-strm/internal/notificationmanager"
+	"diy-strm/internal/quark"
 	"diy-strm/internal/synccron"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -622,23 +624,24 @@ func StartListenTelegramBot() {
 		"scrape":          Scrape,
 		"get_strm_path":   getStrmPath,
 		"get_scrape_path": getScrapePath,
-		"订阅":             handleSubCommand,
+		"订阅":              handleSubCommand,
 		// "scrape_strm": ScrapeThenStrm,
 		// "strm_scrape": StrmThenScrape,
 	}
 
 	mgr.RegisterTelegramCommands(myCommands)
 	mgr.RegisterTelegramTextHandler(handleTelegramShareSave)
+	mgr.RegisterTelegramDocumentHandler(handleTelegramDocument)
 	mgr.StartAll()
 }
 
 const defaultPan123SaveDir = "/"
 
 var (
-	pan123ShareLinkPattern  = regexp.MustCompile(`(?:https?://)?(?:[a-z0-9\-]+\.)*(?:123pan\.com|123pan\.cn|123684\.com|123865\.com)/(?:s|123pan|share)/([A-Za-z0-9\-_]{6,})(?:\.html)?`)
-	pan123SharePwdPattern   = regexp.MustCompile(`(?i)(?:提取码\s*[:：]?\s*|\bpwd\s*[:：=]?\s*)([A-Za-z0-9]{4,6})`)
+	pan123ShareLinkPattern    = regexp.MustCompile(`(?:https?://)?(?:[a-z0-9\-]+\.)*(?:123pan\.com|123pan\.cn|123684\.com|123865\.com)/(?:s|123pan|share)/([A-Za-z0-9\-_]{6,})(?:\.html)?`)
+	pan123SharePwdPattern     = regexp.MustCompile(`(?i)(?:提取码\s*[:：]?\s*|\bpwd\s*[:：=]?\s*)([A-Za-z0-9]{4,6})`)
 	guangyaShareLinkPattern   = regexp.MustCompile(`(?:https?://)?(?:www\.)?guangyapan\.com/s/([A-Za-z0-9_\-]{6,})`)
-	guangYaExtractCodePattern  = regexp.MustCompile(`[?&](?:code|shareCode)=([^&\s]+)`)
+	guangYaExtractCodePattern = regexp.MustCompile(`[?&](?:code|shareCode)=([^&\s]+)`)
 )
 
 // parsePan123ShareText 从文本中解析 123 分享链接与提取码
@@ -755,6 +758,11 @@ func parsePan139ShareText(text string) (linkID, saveDir string) {
 func handleTelegramShareSave(text string, chatID int64, defaultDir string) helpers.CommandResponse {
 	trimmed := strings.TrimSpace(text)
 
+	// 天翼/夸克分享链接（CAS 转存链路）
+	if resp, handled := handleCASShareText(trimmed, chatID); handled {
+		return resp
+	}
+
 	if pan123ShareLinkPattern.MatchString(trimmed) {
 		return handlePan123ShareSave(text, chatID)
 	}
@@ -788,15 +796,16 @@ func handleTelegramShareSave(text string, chatID int64, defaultDir string) helpe
 	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 已转存分享「%s」共 %d 项到 %s", htmlEscape(title), total, htmlEscape(saveDir))}
 }
 
-
 // handleSubCommand TG 频道订阅命令
 // 用法：
-//   /订阅                    查看全部订阅
-//   /订阅 添加 <网盘类型> @频道 关键词... [/目标目录]   新增订阅
-//   /订阅 删除 #id           删除订阅
-//   /订阅 启用 #id           启用订阅
-//   /订阅 禁用 #id           暂停订阅
-//   /订阅 测试 @频道         预览频道最近内容（不转存）
+//
+//	/订阅                    查看全部订阅
+//	/订阅 添加 <网盘类型> @频道 关键词... [/目标目录]   新增订阅
+//	/订阅 删除 #id           删除订阅
+//	/订阅 启用 #id           启用订阅
+//	/订阅 禁用 #id           暂停订阅
+//	/订阅 测试 @频道         预览频道最近内容（不转存）
+//
 // 网盘类型：123 / 光鸭 / 139
 func handleSubCommand(args []string) helpers.CommandResponse {
 	if len(args) == 0 {
@@ -978,4 +987,279 @@ func truncateRunes(s string, max int) string {
 func htmlEscape(s string) string {
 	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
 	return r.Replace(s)
+}
+
+// ---------------------------------------------------------------------------
+// CAS 转存：TG 机器人收 .cas 文件 / 天翼·夸克分享链接
+// ---------------------------------------------------------------------------
+
+var (
+	// cloud189ShareLinkPattern 天翼分享链接（对齐 tgto123 逆向正则）
+	cloud189ShareLinkPattern = regexp.MustCompile(`(?:https?://)?cloud\.189\.cn/(?:t/([a-zA-Z0-9]+)|web/share\?code=([a-zA-Z0-9]+))`)
+	// quarkShareLinkPattern 夸克分享链接
+	quarkShareLinkPattern = regexp.MustCompile(`(?:https?://)?pan\.quark\.cn/s/([a-zA-Z0-9]+)`)
+	// casFileNamePattern .cas 文件名
+	casFileNamePattern = regexp.MustCompile(`(?i)\.cas$`)
+)
+
+// registerCASBotHandlers 注册 CAS 相关 handler（bot 初始化时调用）
+func registerCASBotHandlers(mgr *notificationmanager.EnhancedNotificationManager) {
+	mgr.RegisterTelegramDocumentHandler(handleTelegramDocument)
+}
+
+// handleTelegramDocument TG 文件消息处理：.cas 文件转存
+func handleTelegramDocument(fileName, fileID string, fileSize int64, chatID int64) helpers.CommandResponse {
+	if !casFileNamePattern.MatchString(fileName) {
+		return helpers.CommandResponse{} // 非 .cas 文件忽略
+	}
+	helpers.AppLogger.Infof("TG 收到 .cas 文件：%s（%d bytes）chatID=%d", fileName, fileSize, chatID)
+	// 下载 .cas 文件内容
+	content, err := downloadTelegramFile(fileID)
+	if err != nil {
+		return helpers.CommandResponse{Text: "❌ 下载 .cas 文件失败：" + htmlEscape(err.Error())}
+	}
+	return handleCasContent(content, fileName, chatID)
+}
+
+// handleCasContent 处理 .cas 内容：识别网盘 → 转存 .cas 到对应网盘的 CAS 待整理目录
+func handleCasContent(content, fileName string, chatID int64) helpers.CommandResponse {
+	// 1. 解析 .cas 清单（兼容 base64/JSON/扁平格式）
+	manifest, err := cloud189.ParseManifestV2(content)
+	if err != nil {
+		return helpers.CommandResponse{Text: "❌ 解析 .cas 失败：" + htmlEscape(err.Error())}
+	}
+	// 2. 识别网盘类型（按指纹里有什么哈希判断）
+	sourceType := detectDriveFromHashes(&manifest)
+	if sourceType == "" {
+		return helpers.CommandResponse{Text: "❌ 无法识别 .cas 对应的网盘类型（指纹不含可识别的哈希）"}
+	}
+	// 3. 找该网盘的账号
+	account := findAccountByType(sourceType)
+	if account == nil {
+		return helpers.CommandResponse{Text: fmt.Sprintf("❌ 未配置 %s 账号，无法转存", SourceTypeLabel(sourceType))}
+	}
+	// 4. CAS 待整理目录（用户在整理配置里设置；CAS 模式下用 PendingDir）
+	cfg, _ := models.GetAutoOrganizeConfigByAccount(account.ID)
+	if cfg == nil {
+		return helpers.CommandResponse{Text: "❌ 该账号未配置自动整理，无法确定 CAS 待整理目录"}
+	}
+	targetDir := cfg.PendingDir
+	// 5. 上传 .cas 文件到网盘待整理目录
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	casName := fileName
+	if !strings.HasSuffix(casName, ".cas") {
+		casName += ".cas"
+	}
+	uploadedID := uploadCasFile(ctx, account, targetDir, casName, content)
+	if uploadedID == "" {
+		return helpers.CommandResponse{Text: "❌ .cas 转存到网盘失败（上传失败）"}
+	}
+	helpers.AppLogger.Infof("CAS 转存成功：%s → %s(%s) 目录 %s", casName, account.Name, sourceType, targetDir)
+	// 6. 触发整理（CAS 模式下会走 CAS 整理流程）
+	TriggerAutoOrganizeForAccount(account.ID)
+	return helpers.CommandResponse{Text: fmt.Sprintf("✅ .cas 已转存到 %s「%s」\n📁 文件：%s\n🔄 已触发整理（CAS 模式）", SourceTypeLabel(sourceType), account.Name, htmlEscape(casName))}
+}
+
+// detectDriveFromHashes 按指纹哈希字段识别网盘类型
+func detectDriveFromHashes(m *cloud189.CasManifestV2) models.SourceType {
+	hs := m.Hashes
+	if hs.Sha256 != "" {
+		return models.SourceTypePan139 // 139 秒传用 SHA256
+	}
+	if hs.FileMd5 != "" && hs.SliceMd5 != "" {
+		return models.SourceTypeCloud189 // 天翼秒传用 fileMd5+sliceMd5
+	}
+	if hs.PreHash != "" {
+		return models.SourceTypeQuark // 夸克秒传用 preHash
+	}
+	return ""
+}
+
+// findAccountByType 找指定类型的第一个账号
+func findAccountByType(sourceType models.SourceType) *models.Account {
+	accounts, err := models.GetAllAccount()
+	if err != nil {
+		return nil
+	}
+	for i := range accounts {
+		if accounts[i].SourceType == sourceType {
+			return &accounts[i]
+		}
+	}
+	return nil
+}
+
+// SourceTypeLabel 网盘类型中文名
+func SourceTypeLabel(st models.SourceType) string {
+	switch st {
+	case models.SourceTypeCloud189:
+		return "天翼云盘"
+	case models.SourceTypePan139:
+		return "移动云盘"
+	case models.SourceTypeQuark:
+		return "夸克网盘"
+	}
+	return string(st)
+}
+
+// uploadCasFile 上传 .cas 内容到网盘目录（按类型分发）
+func uploadCasFile(ctx context.Context, account *models.Account, targetDirID, casName, content string) string {
+	// 解析目标目录 ID（路径 → ID）
+	var parentID string
+	var err error
+	switch account.SourceType {
+	case models.SourceTypeCloud189:
+		client := account.GetCloud189Client()
+		if client == nil {
+			return ""
+		}
+		// 天翼 EnsureFolderPath(rootID, path)：待整理目录是路径串，root 用根 "-11"
+		parentID, err = client.EnsureFolderPath(ctx, "-11", targetDirID)
+		if err != nil {
+			return ""
+		}
+		// 天翼 .cas 上传：走普通上传（小文件）
+		return uploadCasCloud189(ctx, client, parentID, casName, content)
+	case models.SourceTypePan139:
+		client := account.GetPan139Client()
+		defer client.Close()
+		parentID, err = client.GetPathIdByPath(ctx, targetDirID)
+		if err != nil {
+			return ""
+		}
+		return client.UploadTextFile(ctx, parentID, casName, content)
+	case models.SourceTypeQuark:
+		client := account.GetQuarkClient()
+		if client == nil {
+			return ""
+		}
+		parentID, err = quarkEnsureFolderPath(ctx, client, "0", targetDirID)
+		if err != nil {
+			return ""
+		}
+		return client.UploadTextFile(ctx, parentID, casName, content)
+	}
+	return ""
+}
+
+// uploadCasCloud189 天翼上传 .cas 小文本文件
+func uploadCasCloud189(ctx context.Context, client *cloud189.Client, parentID, casName, content string) string {
+	fid, err := client.UploadSmallText(ctx, parentID, casName, content)
+	if err != nil {
+		helpers.AppLogger.Warnf("天翼上传 .cas 失败：%v", err)
+		return ""
+	}
+	return fid
+}
+
+// quarkEnsureFolderPath 夸克逐级确保目录存在，返回最终目录 ID
+func quarkEnsureFolderPath(ctx context.Context, client *quark.Client, rootID, path string) (string, error) {
+	path = strings.Trim(path, "/")
+	if path == "" {
+		return rootID, nil
+	}
+	current := rootID
+	for _, seg := range strings.Split(path, "/") {
+		files, err := client.ListFiles(ctx, current)
+		if err != nil {
+			return "", err
+		}
+		var found string
+		for _, f := range files {
+			if f.IsDir && f.Name == seg {
+				found = f.Fid
+				break
+			}
+		}
+		if found == "" {
+			found, err = client.CreateFolder(ctx, current, seg)
+			if err != nil {
+				return "", err
+			}
+		}
+		current = found
+	}
+	return current, nil
+}
+
+// handleTelegramShareSaveText 扩展分享链接识别（挂到现有 TextHandler 前面）
+func handleCASShareText(text string, chatID int64) (helpers.CommandResponse, bool) {
+	// 天翼分享
+	if m := cloud189ShareLinkPattern.FindStringSubmatch(text); m != nil {
+		code := m[1]
+		if code == "" {
+			code = m[2]
+		}
+		return handleCloud189ShareSave(code, strings.TrimSpace(text), chatID), true
+	}
+	// 夸克分享
+	if m := quarkShareLinkPattern.FindStringSubmatch(text); m != nil {
+		return handleQuarkShareSave(m[1], strings.TrimSpace(text), chatID), true
+	}
+	return helpers.CommandResponse{}, false
+}
+
+// handleCloud189ShareSave 天翼分享转存到 CAS 待整理目录
+func handleCloud189ShareSave(shareCode, rawText string, chatID int64) helpers.CommandResponse {
+	account := findAccountByType(models.SourceTypeCloud189)
+	if account == nil {
+		return helpers.CommandResponse{Text: "❌ 未配置天翼云盘账号"}
+	}
+	cfg, _ := models.GetAutoOrganizeConfigByAccount(account.ID)
+	if cfg == nil || strings.TrimSpace(cfg.PendingDir) == "" {
+		return helpers.CommandResponse{Text: "❌ 天翼账号未配置自动整理待整理目录"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	client := account.GetCloud189Client()
+	title, total, err := client.SaveShareTransfer(ctx, shareCode, "", cfg.PendingDir)
+	if err != nil {
+		helpers.AppLogger.Errorf("天翼分享转存失败：code=%s：%v", shareCode, err)
+		return helpers.CommandResponse{Text: "❌ 天翼转存失败：" + htmlEscape(err.Error())}
+	}
+	TriggerAutoOrganizeForAccount(account.ID)
+	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 天翼分享「%s」共 %d 项已转存，已触发整理", htmlEscape(title), total)}
+}
+
+// handleQuarkShareSave 夸克分享转存到 CAS 待整理目录
+func handleQuarkShareSave(shareID, rawText string, chatID int64) helpers.CommandResponse {
+	account := findAccountByType(models.SourceTypeQuark)
+	if account == nil {
+		return helpers.CommandResponse{Text: "❌ 未配置夸克网盘账号"}
+	}
+	cfg, _ := models.GetAutoOrganizeConfigByAccount(account.ID)
+	if cfg == nil || strings.TrimSpace(cfg.PendingDir) == "" {
+		return helpers.CommandResponse{Text: "❌ 夸克账号未配置自动整理待整理目录"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	client := account.GetQuarkClient()
+	// 目标目录 ID（路径转 ID）
+	parentID, err := quarkEnsureFolderPath(ctx, client, "0", cfg.PendingDir)
+	if err != nil {
+		return helpers.CommandResponse{Text: "❌ 解析夸克待整理目录失败：" + htmlEscape(err.Error())}
+	}
+	title, total, err := client.SaveShareTransfer(ctx, shareID, "", parentID)
+	if err != nil {
+		helpers.AppLogger.Errorf("夸克分享转存失败：id=%s：%v", shareID, err)
+		return helpers.CommandResponse{Text: "❌ 夸克转存失败：" + htmlEscape(err.Error())}
+	}
+	TriggerAutoOrganizeForAccount(account.ID)
+	return helpers.CommandResponse{Text: fmt.Sprintf("✅ 夸克分享「%s」共 %d 项已转存，已触发整理", htmlEscape(title), total)}
+}
+
+// downloadTelegramFile 通过已注册渠道的 Bot 下载 TG 文件内容（.cas 文件很小）
+func downloadTelegramFile(fileID string) (string, error) {
+	mgr := notificationmanager.GlobalEnhancedNotificationManager
+	if mgr == nil {
+		return "", fmt.Errorf("通知管理器未初始化")
+	}
+	for _, bot := range mgr.GetAllTelegramBots() {
+		if bot == nil || bot.Client == nil {
+			continue
+		}
+		return bot.DownloadFileContent(fileID)
+	}
+	return "", fmt.Errorf("无可用的 Telegram Bot")
 }

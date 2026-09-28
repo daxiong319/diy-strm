@@ -1,4 +1,4 @@
-﻿package notificationmanager
+package notificationmanager
 
 import (
 	"bytes"
@@ -40,8 +40,9 @@ type TelegramChannelHandler struct {
 	listenToken        *struct{}
 	initBotFunc        func() error
 	startListeningFunc func(context.Context, map[string]func([]string) helpers.CommandResponse)
-	customCommands     map[string]func([]string) helpers.CommandResponse // 从外部注入的命令
-	textHandler        func(string, int64) helpers.CommandResponse       // 普通文本消息处理器
+	customCommands     map[string]func([]string) helpers.CommandResponse          // 从外部注入的命令
+	textHandler        func(string, int64) helpers.CommandResponse                // 普通文本消息处理器
+	documentHandler    func(string, string, int64, int64) helpers.CommandResponse // 文件消息处理器（.cas 转存）
 }
 
 func NewTelegramChannelHandler(config *notification.TelegramChannelConfig) *TelegramChannelHandler {
@@ -160,6 +161,11 @@ func (h *TelegramChannelHandler) SetTextHandler(handler func(string, int64) help
 	h.textHandler = handler
 }
 
+// SetDocumentHandler 设置文件消息处理器（.cas 指纹文件转存）
+func (h *TelegramChannelHandler) SetDocumentHandler(handler func(fileName, fileID string, fileSize int64, chatID int64) helpers.CommandResponse) {
+	h.documentHandler = handler
+}
+
 // Start 实现 BackgroundHandler 接口
 func (h *TelegramChannelHandler) Start(ctx context.Context) {
 	if ctx == nil {
@@ -217,6 +223,7 @@ func (h *TelegramChannelHandler) startListening(ctx context.Context, cmds map[st
 		return
 	}
 	h.bot.TextHandler = h.textHandler
+	h.bot.DocumentHandler = h.documentHandler
 	h.bot.StartListening(ctx, cmds)
 }
 
@@ -802,4 +809,12 @@ func (h *CustomWebhookChannelHandler) applyAuthAndHeaders(req *http.Request) {
 			}
 		}
 	}
+}
+
+// GetAllTelegramBots 返回所有已初始化的 Telegram Bot 实例（供文件下载等复用）
+func (h *TelegramChannelHandler) GetAllTelegramBots() []*helpers.TelegramBot {
+	if h.bot != nil {
+		return []*helpers.TelegramBot{h.bot}
+	}
+	return nil
 }

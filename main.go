@@ -707,6 +707,7 @@ func setRouter(r *gin.Engine) {
 	r.GET("/pan123/url/*filename", controllers.GetPan123UrlByPickCode)         // 查询 123 云盘直链，按文件 ID 查询，支持 ISO，路径最后一部分为 .扩展名格式
 	r.GET("/guangyapan/url/*filename", controllers.GetGuangYaPanUrlByPickCode) // 查询光鸭云盘直链，按文件 ID 查询，支持 ISO，路径最后一部分为 .扩展名格式
 	r.GET("/pan139/url/*filename", controllers.GetPan139UrlByFileId)           // 查询中国移动云盘直链，按文件 ID 查询，支持 ISO，路径最后一部分为 .扩展名格式
+	r.GET("/cas/play/*filename", controllers.GetCasPlayUrl)                    // CAS 播放恢复直链：查指纹→秒传恢复→302（延时删源）
 
 	r.GET("/openlist/url", controllers.GetOpenListFileUrl) // 查询 OpenList 直链
 

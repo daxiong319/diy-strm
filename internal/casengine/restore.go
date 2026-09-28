@@ -263,3 +263,39 @@ func ExportRecordText(recordID uint) (string, string, error) {
 }
 
 var _ = quark.NewClient
+
+// GetRecordByID 按 ID 取 CAS 清单记录
+func GetRecordByID(id uint) (*CasManifestRecord, error) {
+	var rec CasManifestRecord
+	if err := db.Db.First(&rec, id).Error; err != nil {
+		return nil, err
+	}
+	return &rec, nil
+}
+
+// DeleteRestoredSource 播放恢复后的延时清理：删除恢复的源文件（.cas 保留）
+func DeleteRestoredSource(ctx context.Context, accountID uint, remoteFileID string) error {
+	var account models.Account
+	if err := db.Db.First(&account, accountID).Error; err != nil {
+		return err
+	}
+	switch account.SourceType {
+	case models.SourceTypeCloud189:
+		client := account.GetCloud189Client()
+		if client == nil {
+			return fmt.Errorf("天翼客户端不可用")
+		}
+		return client.DeleteFile(ctx, remoteFileID)
+	case models.SourceTypePan139:
+		client := account.GetPan139Client()
+		defer client.Close()
+		return client.Delete(ctx, []string{remoteFileID})
+	case models.SourceTypeQuark:
+		client := account.GetQuarkClient()
+		if client == nil {
+			return fmt.Errorf("夸克客户端不可用")
+		}
+		return client.DeleteFile(ctx, []string{remoteFileID})
+	}
+	return fmt.Errorf("不支持的网盘类型：%s", account.SourceType)
+}

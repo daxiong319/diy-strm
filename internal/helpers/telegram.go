@@ -3,6 +3,7 @@ package helpers
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -18,6 +19,8 @@ type TelegramBot struct {
 	Client *tgbotapi.BotAPI
 	// TextHandler 普通文本消息处理器（非命令），返回回复文本；nil 时忽略普通文本
 	TextHandler func(text string, chatID int64) CommandResponse
+	// DocumentHandler 文件消息处理器（如 .cas 指纹文件转存），返回回复文本；nil 时忽略文件
+	DocumentHandler func(fileName, fileID string, fileSize int64, chatID int64) CommandResponse
 }
 
 // TelegramResponse Telegram API 响应结构
@@ -402,6 +405,19 @@ func (bot *TelegramBot) StartListening(ctx context.Context, handleCommand map[st
 				args = []string{}
 			}
 			chatID = update.CallbackQuery.Message.Chat.ID
+		} else if update.Message != nil && update.Message.Document != nil && bot.DocumentHandler != nil {
+			// 处理文件消息（如 .cas 指纹文件转存），交给业务处理器
+			doc := update.Message.Document
+			AppLogger.Infof("Telegram 收到文件消息：%s（%d bytes）chatID=%d", doc.FileName, doc.FileSize, update.Message.Chat.ID)
+			response := bot.DocumentHandler(doc.FileName, doc.FileID, int64(doc.FileSize), update.Message.Chat.ID)
+			if response.Text != "" {
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, response.Text)
+				msg.ParseMode = "HTML"
+				if _, err := bot.Client.Send(msg); err != nil {
+					AppLogger.Errorf("Telegram 发送文件回复失败：%v", err)
+				}
+			}
+			continue
 		} else if update.Message != nil && update.Message.Text != "" && bot.TextHandler != nil {
 			// 处理普通文本消息（如网盘分享链接），交给业务处理器
 			cmd = ""
@@ -524,4 +540,26 @@ func (bot *TelegramBot) SetMenuContent() {
 	if err != nil {
 		AppLogger.Errorf("设置 Bot 菜单失败：%v", err)
 	}
+}
+
+// DownloadFileContent 通过 Bot API 下载文件内容（.cas 文件很小，直接内存读，上限 10MB）
+func (bot *TelegramBot) DownloadFileContent(fileID string) (string, error) {
+	if bot.Client == nil {
+		return "", fmt.Errorf("Telegram Bot 未初始化")
+	}
+	tgFile, err := bot.Client.GetFile(tgbotapi.FileConfig{FileID: fileID})
+	if err != nil {
+		return "", err
+	}
+	u := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", bot.Token, tgFile.FilePath)
+	resp, err := http.Get(u)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }

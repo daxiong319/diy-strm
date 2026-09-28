@@ -1,4 +1,4 @@
-﻿package notificationmanager
+package notificationmanager
 
 import (
 	"context"
@@ -349,6 +349,18 @@ func (m *EnhancedNotificationManager) RegisterTelegramCommands(cmds map[string]f
 	}
 }
 
+// RegisterTelegramDocumentHandler 将文件消息处理器（.cas 转存）注入到所有 Telegram 渠道中
+func (m *EnhancedNotificationManager) RegisterTelegramDocumentHandler(handler func(fileName, fileID string, fileSize int64, chatID int64) helpers.CommandResponse) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, info := range m.handlers {
+		if tg, ok := info.handler.(*TelegramChannelHandler); ok {
+			tg.SetDocumentHandler(handler)
+		}
+	}
+}
+
 // RegisterTelegramTextHandler 将普通文本消息处理器注入到所有 Telegram 渠道中
 func (m *EnhancedNotificationManager) RegisterTelegramTextHandler(handler func(text string, chatID int64, saveDir string) helpers.CommandResponse) {
 	m.mu.Lock()
@@ -365,4 +377,17 @@ func (m *EnhancedNotificationManager) RegisterTelegramTextHandler(handler func(t
 			})
 		}
 	}
+}
+
+// GetAllTelegramBots 返回所有渠道的 Telegram Bot 实例
+func (m *EnhancedNotificationManager) GetAllTelegramBots() []*helpers.TelegramBot {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*helpers.TelegramBot, 0)
+	for _, info := range m.handlers {
+		if tg, ok := info.handler.(*TelegramChannelHandler); ok {
+			out = append(out, tg.GetAllTelegramBots()...)
+		}
+	}
+	return out
 }
