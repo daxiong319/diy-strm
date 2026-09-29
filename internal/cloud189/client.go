@@ -386,7 +386,10 @@ func (c *Client) signedJSON(ctx context.Context, method, rawURL string, params u
 		return nil, fmt.Errorf("天翼云盘认证会话已失效")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("天翼云盘 API HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 200))
+		c.mu.Lock()
+		kk := c.sessionKey
+		c.mu.Unlock()
+		return nil, fmt.Errorf("天翼云盘 API HTTP %d: %s（sessKey=%s）", resp.StatusCode, truncateStr(string(body), 200), truncateStr(kk, 12))
 	}
 	return body, nil
 }
