@@ -333,17 +333,10 @@ func (c *Client) QrLoginPoll(ctx context.Context, sessionID string) (string, str
 		qrLoginSessions.Unlock()
 		return "success", cookie, nil
 	case casStatusFail[cr.Status]:
-		// 50004002 偶发于扫码确认瞬间（uop 状态翻转窗口），宽限重试一次
-		if !sess.RetryDone {
-			sess.RetryDone = true
-			sess.Created = time.Now().Add(-lpQRTimeoutSec * time.Second / 2) // 续 90 秒宽限
-			return "waiting", "", nil
-		}
-		msg := cr.Message
-		if msg == "" {
-			msg = "扫码登录失败"
-		}
-		return "failed", "", fmt.Errorf("%s", msg)
+		// 实测：用户扫码确认后 uop 会先返回一次 50004002（Token Not Found），
+		// 下一次轮询才返回 2000000+ticket（状态翻转窗口）。因此 fail 一律
+		// 按等待处理，由 3 分钟总过期兜底——绝不提前报失败。
+		return "waiting", "", nil
 	default:
 		return "waiting", "", nil
 	}
