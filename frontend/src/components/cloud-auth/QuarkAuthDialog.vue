@@ -66,7 +66,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue'
+import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { http } from '@/http/client'
 import { SERVER_URL } from '@/const'
@@ -340,7 +340,9 @@ watch(mode, (m) => {
   if (m === 'sms') {
     smsStatus.value = ''
     smsStatusText.value = '输入手机号完成滑块后获取验证码'
-    void initCaptcha()
+    nextTick(() => {
+      setTimeout(() => void initCaptcha(), 100)
+    })
   }
 })
 
