@@ -420,3 +420,58 @@ func (d *Driver) putUploadPart(ctx context.Context, localPath string, part uploa
 	}
 	return nil
 }
+
+// RapidUploadByHashes CAS 五哈希秒传：移动云盘用 sha256 特征走 /file/create 秒传。
+func (d *Driver) RapidUploadByHashes(ctx context.Context, req driver.RapidUploadByHashesRequest) (*driver.RapidUploadResult, error) {
+	sha256 := strings.ToLower(strings.TrimSpace(req.Hashes[domain.HashSHA256]))
+	if sha256 == "" {
+		return nil, domain.Errorf(domain.CodeValidation, "移动云盘秒传缺少 sha256 特征")
+	}
+	parentID := d.normalizeParent(req.ParentID)
+	fileName := strings.TrimSpace(req.FileName)
+	parts := buildUploadParts(req.Size)
+	initialParts := parts
+	if len(initialParts) > maxPartsPerRequest {
+		initialParts = initialParts[:maxPartsPerRequest]
+	}
+	var created uploadCreateData
+	if err := d.apiRequest(ctx, pathCreate, map[string]any{
+		"contentHash":          sha256,
+		"contentHashAlgorithm": "SHA256",
+		"contentType":          "application/octet-stream",
+		"fileRenameMode":       "auto_rename",
+		"name":                 fileName,
+		"parallelUpload":       false,
+		"parentFileId":         parentID,
+		"partInfos":            initialParts,
+		"size":                 req.Size,
+		"type":                 "file",
+	}, &created); err != nil {
+		return nil, err
+	}
+	// 命中秒传（云端已存在同哈希 / rapidUpload）
+	if created.RapidUpload || created.Exist {
+		fileID := created.FileID.String()
+		if fileID == "" {
+			// 兜底：按名查目录内文件
+			if items, lerr := d.ListFiles(ctx, parentID); lerr == nil {
+				for _, it := range items {
+					if it.Name == fileName && !it.IsDir {
+						fileID = it.ID
+						break
+					}
+				}
+			}
+		}
+		if fileID == "" {
+			return nil, domain.Errorf(domain.CodeDriverError, "移动云盘秒传命中但未返回文件 ID")
+		}
+		return &driver.RapidUploadResult{
+			Reuse:    true,
+			FileID:   fileID,
+			ParentID: parentID,
+			Message:  "秒传命中",
+		}, nil
+	}
+	return &driver.RapidUploadResult{Reuse: false, ParentID: parentID, Message: "未命中秒传"}, nil
+}

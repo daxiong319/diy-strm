@@ -53,7 +53,7 @@ func GetRecordByID(id uint) (*CasManifestRecord, error) {
 }
 
 // DeleteRestoredSource 播放恢复后的延时清理：删除恢复的源文件（.cas 保留）
-func DeleteRestoredSource(ctx context.Context, accountID uint, sourceType, remoteFileID string) error {
+func DeleteRestoredSource(ctx context.Context, accountID int64, sourceType, remoteFileID string) error {
 	driver := driverResolver(accountID, sourceType)
 	if driver == nil {
 		return errNoDriver(sourceType)

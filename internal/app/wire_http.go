@@ -12,6 +12,7 @@ import (
 	"litepan/internal/backuprestore"
 	"litepan/internal/buildinfo"
 	"litepan/internal/cas"
+	caslitepan "litepan/internal/cas/litepan"
 	"litepan/internal/cache"
 	"litepan/internal/config"
 	"litepan/internal/coverextract"
@@ -42,7 +43,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	notifyDisp.Refresh(context.Background())
 
 	// 影视发现板块：初始化 GORM 数据层（复用主库），桥接 TMDB 配置，建表并启动后台 Worker。
-	if err := discoverInit(cfg, st, logs); err != nil {
+	if err := discoverInit(cfg, st, core, logs); err != nil {
 		return nil, err
 	}
 
@@ -193,7 +194,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 
 // discoverInit 初始化影视发现板块：GORM 数据层（复用主库）→ 桥接 TMDB 配置 → 建表 → 启动后台 Worker。
 // 失败仅记日志不阻断启动（发现板块为非核心增强功能）。
-func discoverInit(cfg config.Config, st *storeBundle, logs *logx.Manager) error {
+func discoverInit(cfg config.Config, st *storeBundle, core *coreBundle, logs *logx.Manager) error {
 	log := logs.For(logx.ModuleSystem)
 	if err := ddb.Init(cfg.DBPath, log); err != nil {
 		log.Warn("发现板块数据库初始化失败", "err", err)
@@ -206,9 +207,13 @@ func discoverInit(cfg config.Config, st *storeBundle, logs *logx.Manager) error 
 		log.Warn("发现板块建表失败", "err", err)
 		return err
 	}
-	// CAS 秒传：建表 + 配置桥接到 discovery_settings 表（对齐老 cas_engine_config 键）
+	// CAS 秒传：建表 + 配置桥接到 discovery_settings + 网盘驱动适配（LitePan 驱动 → cas.RapidDriver）
 	cas.EnsureTable()
 	cas.BindConfigStore(discoveryCASConfigGet, discoveryCASConfigSet)
+	casAdapter := &caslitepan.Adapter{Manager: core.drivers}
+	cas.BindDriverResolver(func(accountID int64, sourceType string) cas.RapidDriver {
+		return casAdapter.Resolve(context.Background(), accountID, sourceType)
+	})
 	discovery.StartDiscoveryWorkers()
 	log.Info("发现板块已初始化")
 	return nil

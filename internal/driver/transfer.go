@@ -28,6 +28,20 @@ type RapidUploader interface {
 	RapidUploadByHash(ctx context.Context, req RapidUploadRequest) (*RapidUploadResult, error)
 }
 
+// RapidUploadByHashesRequest CAS 五哈希秒传请求（多网盘多维指纹模型）。
+type RapidUploadByHashesRequest struct {
+	ParentID string
+	FileName string
+	Size     int64
+	// Hashes 五哈希指纹（domain.HashType → 值），驱动按自身秒传特征取用。
+	Hashes map[domain.HashType]string
+}
+
+// MultiHasher CAS 秒传：按五哈希指纹秒传（189:fileMd5+sliceMd5 / 139:sha256 / 夸克:md5+preHash）。
+type MultiHasher interface {
+	RapidUploadByHashes(ctx context.Context, req RapidUploadByHashesRequest) (*RapidUploadResult, error)
+}
+
 type RapidUploadProber interface {
 	SupportsRapidUploadProbe(method string) bool
 	ProbeRapidUploadByHash(ctx context.Context, req RapidUploadRequest) (*RapidUploadResult, error)

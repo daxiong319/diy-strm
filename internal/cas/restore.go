@@ -19,7 +19,7 @@ type RestoreResult struct {
 }
 
 // RestoreFromCasText 从 .cas 文本恢复（兼容 V1/V2），秒传到目标账号目录。
-func RestoreFromCasText(ctx context.Context, accountID uint, sourceType, targetFolderID, casText string) (*RestoreResult, error) {
+func RestoreFromCasText(ctx context.Context, accountID int64, sourceType, targetFolderID, casText string) (*RestoreResult, error) {
 	manifest, err := cloud189.ParseManifestV2(casText)
 	if err != nil {
 		v1, err2 := cloud189.ParseManifestText(casText)
@@ -99,7 +99,7 @@ func RestoreFromRecord(ctx context.Context, recordID uint, targetFolderID string
 }
 
 // RapidRestore 按网盘类型分发秒传（走 RapidDriver）
-func RapidRestore(ctx context.Context, accountID uint, sourceType, targetFolderID string, m cloud189.CasManifestV2) (string, error) {
+func RapidRestore(ctx context.Context, accountID int64, sourceType, targetFolderID string, m cloud189.CasManifestV2) (string, error) {
 	driver := driverResolver(accountID, sourceType)
 	if driver == nil {
 		return "", errNoDriver(sourceType)

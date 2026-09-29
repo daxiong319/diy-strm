@@ -690,3 +690,50 @@ func uploadPreToMap(pre *uploadPreData) map[string]any {
 func intString(n int) string {
 	return strconv.Itoa(n)
 }
+
+// RapidUploadByHashes CAS 五哈希秒传：夸克用 fileMD5 + sha1 走秒传预检 + update/hash。
+// 秒传特征取自 Hashes[HashMD5] 与 Hashes[HashSHA1]（夸克秒传基于全量 md5 + sha1）。
+func (d *Driver) RapidUploadByHashes(ctx context.Context, req driver.RapidUploadByHashesRequest) (*driver.RapidUploadResult, error) {
+	fileMD5 := strings.ToLower(strings.TrimSpace(req.Hashes[domain.HashMD5]))
+	fileSHA1 := strings.ToLower(strings.TrimSpace(req.Hashes[domain.HashSHA1]))
+	if fileMD5 == "" || fileSHA1 == "" {
+		return nil, domain.Errorf(domain.CodeValidation, "夸克秒传缺少 md5/sha1 特征")
+	}
+	parentID := strings.TrimSpace(req.ParentID)
+	if parentID == "" {
+		parentID = "0"
+	}
+	fileName := strings.TrimSpace(req.FileName)
+	mimeType := mime.TypeByExtension(strings.ToLower(filepath.Ext(fileName)))
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	now := time.Now().UnixMilli()
+	pre, _, err := d.requestUploadPre(ctx, parentID, fileName, req.Size, mimeType, now, now)
+	if err != nil {
+		return nil, err
+	}
+	if pre.TaskID == "" {
+		return nil, domain.Errorf(domain.CodeDriverError, "夸克秒传预处理未返回 task_id")
+	}
+	var hashOut updateHashData
+	if _, err := d.apiRequest(ctx, http.MethodPost, pathUpdateHash, nil, map[string]any{
+		"md5": fileMD5, "sha1": fileSHA1, "task_id": pre.TaskID,
+	}, &hashOut); err != nil {
+		return nil, err
+	}
+	if hashOut.Finish {
+		fileID := hashOut.FID
+		if fileID == "" {
+			fileID = pre.FID
+		}
+		resolvedID, resolvedName := d.resolveUploadedFile(ctx, parentID, fileName, req.Size, fileID)
+		return &driver.RapidUploadResult{
+			Reuse:    true,
+			FileID:   resolvedID,
+			ParentID: parentID,
+			Message:  "秒传命中 " + resolvedName,
+		}, nil
+	}
+	return &driver.RapidUploadResult{Reuse: false, ParentID: parentID, Message: "未命中秒传"}, nil
+}

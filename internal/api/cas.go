@@ -93,7 +93,7 @@ func (h *Handler) casRestoreRecord(w http.ResponseWriter, r *http.Request) {
 // casRestoreFromText 从 .cas 文本恢复
 func (h *Handler) casRestoreFromText(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		AccountID      uint   `json:"account_id"`
+		AccountID      int64  `json:"account_id"`
 		SourceType     string `json:"source_type"`
 		TargetFolderID string `json:"target_folder_id"`
 		CasText        string `json:"cas_text"`
