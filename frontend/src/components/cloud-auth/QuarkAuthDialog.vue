@@ -222,6 +222,7 @@ const commitSmsLogin = async () => {
       phone,
       sms_code: code,
       account_id: props.accountId ?? 0,
+      captcha_data: captchaVerifyParam,
     })
     const data = resp?.data
     if (data?.code === 200) {
