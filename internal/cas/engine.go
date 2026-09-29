@@ -15,8 +15,8 @@ import (
 // CasManifestRecord CAS 清单记录（五哈希统一模型 + 秒传请求原文缓存）
 type CasManifestRecord struct {
 	ID              uint   `gorm:"primaryKey" json:"id"`
-	UploadTaskID    uint   `gorm:"index" json:"upload_task_id"`
-	AccountID       uint   `gorm:"index" json:"account_id"`
+	UploadTaskID    int64   `gorm:"index" json:"upload_task_id"`
+	AccountID       int64   `gorm:"index" json:"account_id"`
 	SourceType      string `json:"source_type"`
 	FileName        string `gorm:"size:512" json:"file_name"`
 	FileSize        int64  `json:"file_size"`
@@ -186,10 +186,10 @@ type RapidDriver interface {
 }
 
 // driverResolver 由装配层注入：按账号 ID + sourceType 取网盘适配器
-var driverResolver = func(accountID uint, sourceType string) RapidDriver { return nil }
+var driverResolver = func(accountID int64, sourceType string) RapidDriver { return nil }
 
 // BindDriverResolver 注入驱动解析器
-func BindDriverResolver(resolver func(accountID uint, sourceType string) RapidDriver) {
+func BindDriverResolver(resolver func(accountID int64, sourceType string) RapidDriver) {
 	if resolver != nil {
 		driverResolver = resolver
 	}
@@ -203,13 +203,13 @@ func BindDriverResolver(resolver func(accountID uint, sourceType string) RapidDr
 type CASOrganizeResult struct {
 	Success      bool   `json:"success"`
 	RemoteFileID string `json:"remote_file_id"`
-	CasRecordID  uint   `json:"cas_record_id"`
+	CasRecordID  int64   `json:"cas_record_id"`
 	Skipped      bool   `json:"skipped"`
 }
 
 // GenerateCASForFile 对一个已整理到网盘的影视文件生成 .cas 并可选删源。
 // driver 为对应网盘的适配器（由调用方/装配层解析）。
-func GenerateCASForFile(ctx context.Context, accountID uint, sourceType, remoteParentID, fileName, remoteFileID string, fileSize int64, deleteSource bool) (*CASOrganizeResult, error) {
+func GenerateCASForFile(ctx context.Context, accountID int64, sourceType, remoteParentID, fileName, remoteFileID string, fileSize int64, deleteSource bool) (*CASOrganizeResult, error) {
 	result := &CASOrganizeResult{}
 
 	// 1. 已 CAS 化过跳过（account+remote_file_id 幂等）
@@ -286,7 +286,7 @@ func GenerateCASForFile(ctx context.Context, accountID uint, sourceType, remoteP
 	}
 	result.Success = true
 	result.RemoteFileID = remoteFileID
-	result.CasRecordID = rec.ID
+	result.CasRecordID = int64(rec.ID)
 	return result, nil
 }
 

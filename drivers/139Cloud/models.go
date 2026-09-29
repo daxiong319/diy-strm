@@ -32,16 +32,18 @@ type listData struct {
 }
 
 type fileEntry struct {
-	FileID        flexString       `json:"fileId"`
-	CatalogID     flexString       `json:"catalogId"`
-	Name          string           `json:"name"`
-	CatalogName   string           `json:"catalogName"`
-	Size          json.Number      `json:"size"`
-	Type          string           `json:"type"`
-	CreatedAt     any              `json:"createdAt"`
-	UpdatedAt     any              `json:"updatedAt"`
-	ThumbnailURLs []thumbnailEntry `json:"thumbnailUrls"`
-	ThumbnailURL  string           `json:"thumbnailURL"`
+	FileID               flexString       `json:"fileId"`
+	CatalogID            flexString       `json:"catalogId"`
+	Name                 string           `json:"name"`
+	CatalogName          string           `json:"catalogName"`
+	Size                 json.Number      `json:"size"`
+	Type                 string           `json:"type"`
+	CreatedAt            any              `json:"createdAt"`
+	UpdatedAt            any              `json:"updatedAt"`
+	ContentHash          string           `json:"contentHash"`          // 秒传特征（sha256）
+	ContentHashAlgorithm string           `json:"contentHashAlgorithm"` // 通常为 SHA256
+	ThumbnailURLs        []thumbnailEntry `json:"thumbnailUrls"`
+	ThumbnailURL         string           `json:"thumbnailURL"`
 }
 
 type thumbnailEntry struct {
@@ -67,7 +69,7 @@ func (e fileEntry) toFileItem() domain.FileItem {
 			}
 		}
 	}
-	return domain.FileItem{
+	item := domain.FileItem{
 		ID:      id,
 		Name:    name,
 		Size:    size,
@@ -76,6 +78,11 @@ func (e fileEntry) toFileItem() domain.FileItem {
 		Thumb:   thumb,
 		IDKind:  domain.IDStable,
 	}
+	// 秒传特征（sha256）填入 Hash，供 CAS 五哈希指纹取用
+	if ch := strings.ToLower(strings.TrimSpace(e.ContentHash)); ch != "" {
+		item.Hash = map[domain.HashType]string{domain.HashSHA256: ch}
+	}
+	return item
 }
 
 func parseCloudTime(raw any) time.Time {

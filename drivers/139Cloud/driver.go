@@ -43,6 +43,9 @@ var config = driver.Config{
 	TokenLifetime:          30 * 24 * time.Hour,
 	RefreshAdvance:         10 * time.Hour,
 	UploadConflictPolicies: []string{"overwrite", "rename", "skip", "fail"},
+	// CAS 秒传：移动云盘用 sha256 特征秒传（/file/create contentHash）
+	ProvideHashes:          []string{"sha256"},
+	RapidUploadHashes:      []string{"sha256"},
 	InternalExperimental:   true,
 }
 

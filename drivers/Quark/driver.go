@@ -41,6 +41,9 @@ var config = driver.Config{
 	AuthType:               driver.AuthCookie,
 	HealthCheckInterval:    70 * time.Minute,
 	SupportsAccountProfile: true,
+	// CAS 秒传：夸克用 fileMd5 + sha1 特征秒传（/file/update/hash）
+	ProvideHashes:          []string{"md5", "sha1"},
+	RapidUploadHashes:      []string{"md5", "sha1"},
 }
 
 func New() driver.Driver { return &Driver{} }
