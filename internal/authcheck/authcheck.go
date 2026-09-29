@@ -1,4 +1,4 @@
-﻿package authcheck
+package authcheck
 
 import (
 	"context"
@@ -22,11 +22,13 @@ func displayAccountName(account *models.Account) string {
 
 // Status 单个网盘账号的授权检测结果
 type Status struct {
-	Valid     bool   `json:"valid"`      // 本次检测授权是否有效
-	CheckedAt int64  `json:"checked_at"` // 检测时间（unix 秒，0 表示从未检测）
-	Detail    string `json:"detail"`     // 失效原因 / 成功详情
-	Notified  bool   `json:"notified"`   // 当前失效状态是否已通知过
-	Checking  bool   `json:"checking"`   // 是否正在检测（仅内存瞬时状态，不持久化语义）
+	Valid       bool   `json:"valid"`      // 本次检测授权是否有效
+	CheckedAt   int64  `json:"checked_at"` // 检测时间（unix 秒，0 表示从未检测）
+	Detail      string `json:"detail"`     // 失效原因 / 成功详情
+	Notified    bool   `json:"notified"`   // 当前失效状态是否已通知过
+	Checking    bool   `json:"checking"`   // 是否正在检测（仅内存瞬时状态，不持久化语义）
+	Attempts    int    `json:"-"`          // 连续失败次数（阶梯冷却用）
+	NextCheckAt int64  `json:"-"`          // 下次应检测的时间（unix 秒）
 }
 
 // store 全部账号的授权状态缓存（accountID → Status）
@@ -183,7 +185,13 @@ func CheckAll(force bool) map[uint]Status {
 			// 未授权账号不检测（前端已单独展示未授权状态）
 			continue
 		}
-		if prev, ok := getStatus(account.ID); ok && !force && prev.CheckedAt > 0 && now-prev.CheckedAt < int64(cacheTTL.Seconds()) {
+		// LitePan 式调度：按驱动类型的检测间隔（天翼 6d/移动 20d/夸克 70min），
+		// 非强制模式下未到期的账号跳过
+		if prev, ok := getStatus(account.ID); ok && prev.NextCheckAt > 0 {
+			if !force && now < prev.NextCheckAt {
+				continue
+			}
+		} else if !force && prev.CheckedAt > 0 && now-prev.CheckedAt < int64(cacheTTL.Seconds()) {
 			continue
 		}
 		// 标记检测中，便于前端展示瞬时状态
@@ -225,13 +233,27 @@ func applyResult(accountID uint, valid bool, detail string) {
 		return
 	}
 
+	now := time.Now().Unix()
+	prev, hadPrev := getStatus(accountID)
+	var attempts int
+	if !valid {
+		attempts = prev.Attempts + 1
+	}
+	// 阶梯冷却：失败后按连续失败次数延迟下次检查（LitePan SteppedCooldown）
+	nextCheck := now
+	if !valid {
+		nextCheck = now + int64(steppedCooldown(attempts).Seconds())
+	} else {
+		nextCheck = now + int64(authInterval(account.SourceType).Seconds())
+	}
 	store.Lock()
-	prev, hadPrev := store.m[accountID]
 	store.m[accountID] = Status{
-		Valid:     valid,
-		CheckedAt: time.Now().Unix(),
-		Detail:    detail,
-		Notified:  prev.Notified,
+		Valid:       valid,
+		CheckedAt:   now,
+		Detail:      detail,
+		Notified:    prev.Notified,
+		Attempts:    attempts,
+		NextCheckAt: nextCheck,
 	}
 	store.Unlock()
 
@@ -244,10 +266,14 @@ func applyResult(accountID uint, valid bool, detail string) {
 		return
 	}
 
-	// 失效：首次失效立即通知；持续失效按 renotifyInterval 节流
-	now := time.Now()
+	// 失效：首次失效立即通知；持续失效按 renotifyInterval 节流；
+	// 网络抖动（非认证拒绝）不发失效通知（LitePan failure_kind 思路）
 	shouldNotify := true
-	if hadPrev && !prev.Valid && prev.Notified && now.Unix()-prev.CheckedAt < int64(renotifyInterval.Seconds()) {
+	if !isAuthRejection(detail) {
+		helpers.AppLogger.Infof("账号 %d（%s）检测异常但非认证拒绝，跳过失效通知：%s", account.ID, displayAccountName(account), detail)
+		shouldNotify = false
+	}
+	if hadPrev && !prev.Valid && prev.Notified && now-prev.CheckedAt < int64(renotifyInterval.Seconds()) {
 		shouldNotify = false
 	}
 	helpers.AppLogger.Warnf("账号 %d（%s）授权检测失效：%s", account.ID, displayAccountName(account), detail)
