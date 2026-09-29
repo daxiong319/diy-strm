@@ -357,6 +357,10 @@ func NewRouter(d Deps) http.Handler {
 						r.Delete("/session", h.guanyingClearSession)
 						r.Get("/catalog", h.guanyingCatalog)
 					})
+					r.Route("/resources", func(r chi.Router) {
+						r.Post("/search", h.searchMediaResources)
+						r.Post("/copy-link", h.copyRe0ResourceLink)
+					})
 				})
 				r.Get("/announcement", h.getAnnouncement)
 				r.Post("/announcement/read", h.markAnnouncementRead)
