@@ -3,6 +3,7 @@
 package dmodels
 
 import (
+	"encoding/json"
 	"strings"
 	"sync"
 
@@ -117,4 +118,44 @@ func GetTmdbImageUrl(path string) string {
 		return base + "/original" + path
 	}
 	return base + "/t/p/original" + path
+}
+
+// ---------------------------------------------------------------------------
+// Emby 配置（发现板块 embycheck 用）：从 LitePan settings 的 emby_proxy_instances 读第一个实例
+// ---------------------------------------------------------------------------
+
+// EmbyConfig 对齐老 models.EmbyConfig 发现板块所需的字段子集。
+type EmbyConfig struct {
+	EmbyUrl    string
+	EmbyApiKey string
+}
+
+// embyProxyInstance 对应 LitePan embyproxy.Config 的 JSON 形态。
+type embyProxyInstance struct {
+	EmbyURL string `json:"emby_url"`
+	APIKey  string `json:"api_key"`
+}
+
+// GetEmbyConfig 返回第一个已配置 Emby/Jellyfin 实例的地址与 Key（对齐老 models.GetEmbyConfig）。
+// 未配置时返回 (nil, nil)，调用方判空。
+func GetEmbyConfig() (*EmbyConfig, error) {
+	settingsMu.RLock()
+	svc := settingsSvc
+	settingsMu.RUnlock()
+	if svc == nil {
+		return nil, nil
+	}
+	raw := svc.String("emby_proxy_instances")
+	if strings.TrimSpace(raw) == "" || raw == "[]" {
+		return nil, nil
+	}
+	var instances []embyProxyInstance
+	if err := json.Unmarshal([]byte(raw), &instances); err != nil || len(instances) == 0 {
+		return nil, nil
+	}
+	first := instances[0]
+	if first.EmbyURL == "" || first.APIKey == "" {
+		return nil, nil
+	}
+	return &EmbyConfig{EmbyUrl: first.EmbyURL, EmbyApiKey: first.APIKey}, nil
 }
