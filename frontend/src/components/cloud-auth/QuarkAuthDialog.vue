@@ -31,7 +31,6 @@
               </el-button>
             </div>
           </el-form-item>
-          <div id="captcha-element" class="captcha-element"></div>
           <p class="qr-status" :class="smsStatus">{{ smsStatusText }}</p>
           <el-alert type="info" :closable="false" show-icon>
             <p>点击「获取验证码」按提示完成滑块验证后，短信将发送到手机。收到验证码后点「登录」。</p>
@@ -97,8 +96,7 @@ const CAPTCHA_CONFIG = {
   slideSceneId: 'y9x7vx0s',
   region: 'cn',
   appKey: 'FFFF0N0000000000ABDE',
-  element: '#captcha-element',
-  mode: 'embed',
+  mode: 'popup',
 }
 
 const loadCaptchaScript = (): Promise<void> =>
