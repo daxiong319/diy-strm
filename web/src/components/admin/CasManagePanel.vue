@@ -6,6 +6,7 @@ import {
   fetchCasConfig,
   fetchCasRecords,
   restoreCasRecord,
+  runCasOnce,
   saveCasConfig,
   type CasConfig,
   type CasRecord,
@@ -35,6 +36,23 @@ const status = ref("");
 
 const cfg = reactive<CasConfig>({ enabled: true, age_days: 30, write_back_cloud: false });
 const cfgSaving = ref(false);
+const running = ref(false);
+
+// 手动触发一轮 CAS 化（扫描已完成影视上传任务）
+async function runOnce() {
+  running.value = true;
+  try {
+    const res = await runCasOnce();
+    toast.success(
+      `CAS 化完成：生成 ${res.generated} / 删源 ${res.deleted} / 跳过 ${res.skipped} / 失败 ${res.failed}`,
+    );
+    await load();
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "CAS 化执行失败"));
+  } finally {
+    running.value = false;
+  }
+}
 
 const restoreOpen = ref(false);
 const restoreTarget = ref<CasRecord | null>(null);
@@ -233,6 +251,9 @@ onMounted(() => {
         </label>
         <AppButton type="button" variant="primary" :disabled="cfgSaving" @click="saveConfig">
           {{ cfgSaving ? "保存中…" : "保存配置" }}
+        </AppButton>
+        <AppButton type="button" variant="secondary" :disabled="running" @click="runOnce">
+          {{ running ? "执行中…" : "立即执行 CAS 化" }}
         </AppButton>
       </div>
     </SettingsCard>

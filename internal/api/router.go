@@ -27,6 +27,7 @@ import (
 	"litepan/internal/automation"
 	"litepan/internal/backuprestore"
 	"litepan/internal/cache"
+	"litepan/internal/cas"
 	"litepan/internal/cacheretention"
 	"litepan/internal/classifyorganize"
 	"litepan/internal/coverextract"
@@ -92,6 +93,7 @@ type Deps struct {
 	SpaceCleanup      *spacecleanup.Service
 	CoverExtract      *coverextract.Service
 	NotifyChannels    *notifychannel.Service
+	CASRunner         *cas.Runner
 	DataDir           string
 	StrmDir           string
 	OnSettingsUpdated func(map[string]string)
@@ -134,6 +136,7 @@ type Handler struct {
 	spaceCleanup      *spacecleanup.Service
 	coverExtract      *coverextract.Service
 	notifyChannels    *notifychannel.Service
+	casRunner         *cas.Runner
 	dataDir           string
 	strmDir           string
 	onSettingsUpdated func(map[string]string)
@@ -185,6 +188,7 @@ func NewRouter(d Deps) http.Handler {
 		spaceCleanup:      d.SpaceCleanup,
 		coverExtract:      d.CoverExtract,
 		notifyChannels:    d.NotifyChannels,
+		casRunner:         d.CASRunner,
 		dataDir:           d.DataDir,
 		strmDir:           d.StrmDir,
 		onSettingsUpdated: d.OnSettingsUpdated,
@@ -371,6 +375,7 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/restore", h.casRestoreFromText)
 					r.Get("/config", h.casGetConfig)
 					r.Put("/config", h.casSaveConfig)
+					r.Post("/run-once", h.casRunOnce)
 				})
 				r.Get("/announcement", h.getAnnouncement)
 				r.Post("/announcement/read", h.markAnnouncementRead)
