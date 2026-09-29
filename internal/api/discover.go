@@ -5,8 +5,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"litepan/internal/discover/discovery"
+	"litepan/internal/domain"
 )
+
+// chiPathParam 读取 chi 路径参数。
+func chiPathParam(r *http.Request, name string) string { return chi.URLParam(r, name) }
 
 // ---------------------------------------------------------------------------
 // 影视发现（移植自 diy-strm media_discovery + discover 控制器）。
@@ -121,6 +127,182 @@ func (h *Handler) discoverAnimeSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeOK(w, result)
+}
+
+// discoverDoubanCatalog 豆瓣目录（分类/排序筛选 + 后台预抓 + TMDB 匹配）
+func (h *Handler) discoverDoubanCatalog(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	wait, _ := strconv.Atoi(q.Get("wait"))
+	force := q.Get("force") == "1" || q.Get("force") == "true"
+	result, err := discovery.DiscoverDoubanCatalog(q.Get("media_type"), q.Get("tag"), q.Get("sort"), page, wait, force)
+	if err != nil && (result == nil || len(result.Items) == 0) {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, result)
+}
+
+// discoverAnimeCatalog 动漫目录（source=anilist/bangumi，AniList 故障自动回退 Bangumi）
+func (h *Handler) discoverAnimeCatalog(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	wait, _ := strconv.Atoi(q.Get("wait"))
+	force := q.Get("force") == "1" || q.Get("force") == "true"
+	filter := discovery.AnimeBrowseFilter{
+		Genre:  q.Get("genre"),
+		Region: q.Get("region"),
+		Year:   q.Get("year"),
+		Sort:   q.Get("sort"),
+	}
+	result, err := discovery.DiscoverAnimeCatalog(r.Context(), q.Get("source"), filter, page, wait, force)
+	fallbackSource := ""
+	if err != nil && strings.EqualFold(strings.TrimSpace(q.Get("source")), "anilist") {
+		result, err = discovery.DiscoverAnimeCatalog(r.Context(), "bangumi", filter, page, wait, force)
+		if err == nil {
+			fallbackSource = "bangumi"
+		}
+	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	result.FallbackSource = fallbackSource
+	writeOK(w, result)
+}
+
+// discoverActors 热门演员
+func (h *Handler) discoverActors(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	force := q.Get("force") == "1" || q.Get("force") == "true"
+	result, err := discovery.Actors(page, force)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, result)
+}
+
+// discoverActorWorks 演员作品
+func (h *Handler) discoverActorWorks(w http.ResponseWriter, r *http.Request) {
+	actorID, err := parsePathInt64(r, "id")
+	if err != nil || actorID <= 0 {
+		writeErr(w, domain.Errorf(domain.CodeValidation, "无效的演员 ID"))
+		return
+	}
+	result, err := discovery.ActorWorks(actorID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, result)
+}
+
+// discoverSearch 统一搜索（TMDB 电影/剧集/演员）
+func (h *Handler) discoverSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	force := q.Get("force") == "1" || q.Get("force") == "true"
+	result, err := discovery.SearchMedia(r.Context(), q.Get("q"), q.Get("media_type"), page, force)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, result)
+}
+
+// discoverDetails 作品详情（附订阅状态与转存目标配置）
+func (h *Handler) discoverDetails(w http.ResponseWriter, r *http.Request) {
+	source := chiPathParam(r, "source")
+	entityType := chiPathParam(r, "type")
+	externalID := chiPathParam(r, "id")
+	result, err := discovery.MediaDetails(source, entityType, externalID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if entityKey, _ := result["entity_key"].(string); entityKey != "" {
+		if sub, err := discovery.GetSubscriptionByKey(entityKey); err == nil && sub != nil {
+			result["subscription"] = map[string]any{
+				"id": sub.ID, "status": sub.Status, "enabled": sub.Enabled,
+				"target_provider": sub.TargetProvider, "rules_count": len(sub.Rules),
+			}
+		}
+	}
+	result["transfer_targets"] = transferTargetsStatus()
+	writeOK(w, result)
+}
+
+// transferTargetsStatus 三网盘保存目录配置状态（详情页按钮 disabled 用）
+func transferTargetsStatus() map[string]any {
+	out := map[string]any{}
+	for _, provider := range []string{"123", "guangya", "pan139"} {
+		out[provider] = map[string]any{
+			"configured":  discovery.TransferTargetConfigured(provider),
+			"folder_name": discovery.TransferTargetDir(provider),
+		}
+	}
+	return out
+}
+
+// discoverMaoyanRankings 猫眼榜单（被验证墙拦截时按 pending 语义返回，前端自动重试）
+func (h *Handler) discoverMaoyanRankings(w http.ResponseWriter, r *http.Request) {
+	force := r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true"
+	category := r.URL.Query().Get("category")
+	groups, ok, err := discovery.MaoyanRankings(r.Context(), category, force)
+	if err != nil && !ok {
+		writeOK(w, map[string]any{
+			"provider": "maoyan", "provider_label": "猫眼",
+			"region": "CN", "category_label": maoyanCategoryLabelOf(category),
+			"groups": []any{}, "feed_status": "pending",
+			"message": err.Error(),
+			"items":   []any{},
+		})
+		return
+	}
+	writeOK(w, map[string]any{
+		"provider": "maoyan", "provider_label": "猫眼",
+		"region": "CN", "category_label": maoyanCategoryLabelOf(category),
+		"groups": groups, "feed_status": "ok", "is_stale": false,
+		"available_regions": []map[string]string{{"key": "CN", "label": "中国"}},
+	})
+}
+
+func maoyanCategoryLabelOf(category string) string {
+	switch category {
+	case "tv":
+		return "电视剧"
+	case "web_tv":
+		return "网剧"
+	case "variety":
+		return "综艺"
+	case "movie":
+		return "电影"
+	default:
+		return "热播榜"
+	}
+}
+
+// discoverAnimeMatch 番剧条目匹配 TMDB
+func (h *Handler) discoverAnimeMatch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		EntityKey string `json:"entity_key"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if req.EntityKey == "" {
+		writeErr(w, domain.Errorf(domain.CodeValidation, "缺少 entity_key"))
+		return
+	}
+	tmdbID, err := discovery.MatchAnimeTMDB(req.EntityKey)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, map[string]any{"entity_key": req.EntityKey, "tmdb_id": tmdbID})
 }
 
 // discoverFavorites 收藏列表
