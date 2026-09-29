@@ -10,6 +10,7 @@ import (
 	"diy-strm/internal/casengine"
 	"diy-strm/internal/cloud189"
 	"diy-strm/internal/db"
+	"diy-strm/internal/helpers"
 	"diy-strm/internal/models"
 	"diy-strm/internal/quark"
 
@@ -357,6 +358,8 @@ func QuarkQrPollAPI(c *gin.Context) {
 		return
 	}
 	status, cookie, err := quark.GlobalQrLogin().Poll(c.Request.Context(), req.SessionID)
+	helpers.AppLogger.Infof("[夸克扫码] poll: sid=%s status=%s cookieLen=%d err=%v accountID=%d",
+		helpers.TruncateID(req.SessionID), status, len(cookie), err, req.AccountID)
 	if err != nil {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: err.Error()})
 		return
