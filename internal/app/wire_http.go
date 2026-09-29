@@ -11,6 +11,7 @@ import (
 	"litepan/internal/apikey"
 	"litepan/internal/backuprestore"
 	"litepan/internal/buildinfo"
+	"litepan/internal/cas"
 	"litepan/internal/cache"
 	"litepan/internal/config"
 	"litepan/internal/coverextract"
@@ -205,9 +206,30 @@ func discoverInit(cfg config.Config, st *storeBundle, logs *logx.Manager) error 
 		log.Warn("发现板块建表失败", "err", err)
 		return err
 	}
+	// CAS 秒传：建表 + 配置桥接到 discovery_settings 表（对齐老 cas_engine_config 键）
+	cas.EnsureTable()
+	cas.BindConfigStore(discoveryCASConfigGet, discoveryCASConfigSet)
 	discovery.StartDiscoveryWorkers()
 	log.Info("发现板块已初始化")
 	return nil
+}
+
+// discoveryCASConfigGet/Set 读写 discovery_settings 表（CAS 配置存 cas_engine_config 键）。
+func discoveryCASConfigGet(key string) (string, bool) {
+	var row struct {
+		Value string
+	}
+	err := ddb.Db.Table("discovery_settings").Select("value").Where("`key` = ?", key).Take(&row).Error
+	if err != nil || row.Value == "" {
+		return "", false
+	}
+	return row.Value, true
+}
+
+func discoveryCASConfigSet(key, value string) {
+	_ = ddb.Db.Exec(
+		"INSERT INTO discovery_settings(`key`, value, updated_at) VALUES(?, ?, ?) ON CONFLICT(`key`) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at",
+		key, value, time.Now()).Error
 }
 
 func cacheSettingsHook(cacheSvc *cache.Service, settingsSvc *settings.Service, dataDir string) func(map[string]string) {
