@@ -235,9 +235,10 @@ type casResp struct {
 
 // qrLoginSession 扫码会话（token + CAS cookie）
 type qrLoginSession struct {
-	Token   string
-	Cookie  string
-	Created time.Time
+	Token     string
+	Cookie    string
+	Created   time.Time
+	RetryDone bool
 }
 
 var qrLoginSessions = struct {
@@ -332,6 +333,12 @@ func (c *Client) QrLoginPoll(ctx context.Context, sessionID string) (string, str
 		qrLoginSessions.Unlock()
 		return "success", cookie, nil
 	case casStatusFail[cr.Status]:
+		// 50004002 偶发于扫码确认瞬间（uop 状态翻转窗口），宽限重试一次
+		if !sess.RetryDone {
+			sess.RetryDone = true
+			sess.Created = time.Now().Add(-lpQRTimeoutSec * time.Second / 2) // 续 90 秒宽限
+			return "waiting", "", nil
+		}
 		msg := cr.Message
 		if msg == "" {
 			msg = "扫码登录失败"
