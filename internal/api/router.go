@@ -362,6 +362,16 @@ func NewRouter(d Deps) http.Handler {
 						r.Post("/copy-link", h.copyRe0ResourceLink)
 					})
 				})
+				r.Route("/cas", func(r chi.Router) {
+					r.Get("/records", h.casListRecords)
+					r.Get("/records/{id}", h.casGetRecord)
+					r.Delete("/records/{id}", h.casDeleteRecord)
+					r.Get("/records/{id}/export", h.casExportRecord)
+					r.Post("/records/{id}/restore", h.casRestoreRecord)
+					r.Post("/restore", h.casRestoreFromText)
+					r.Get("/config", h.casGetConfig)
+					r.Put("/config", h.casSaveConfig)
+				})
 				r.Get("/announcement", h.getAnnouncement)
 				r.Post("/announcement/read", h.markAnnouncementRead)
 				r.Route("/strm", func(r chi.Router) {
