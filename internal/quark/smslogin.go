@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -47,8 +48,14 @@ var SmsSessionStore = struct {
 // NewSmsSession 创建会话并登记
 func NewSmsSession(sessionID string) *SmsSession {
 	jar, _ := cookiejar.New(nil)
+	dialer := &net.Dialer{Timeout: 15 * time.Second}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "tcp4", addr) // 强制 IPv4：飞牛容器 IPv6 出口不稳定
+		},
+	}
 	s := &SmsSession{
-		client:  &http.Client{Timeout: 30 * time.Second, Jar: jar},
+		client:  &http.Client{Timeout: 30 * time.Second, Jar: jar, Transport: transport},
 		Created: time.Now(),
 	}
 	SmsSessionStore.Lock()
