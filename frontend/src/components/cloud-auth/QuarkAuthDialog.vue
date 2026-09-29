@@ -127,8 +127,14 @@ const loadCaptchaScript = (): Promise<void> =>
 
 const initCaptcha = async () => {
   try {
+    smsStatus.value = 'waiting'
+    smsStatusText.value = '正在加载人机验证组件…'
     await loadCaptchaScript()
-    if (anyWin.AliyunCaptchaV2?.captchaInstance) return
+    if (anyWin.AliyunCaptchaV2?.captchaInstance) {
+      smsStatus.value = ''
+      smsStatusText.value = '人机验证已就绪'
+      return
+    }
     anyWin.initAliyunCaptcha({
       ...CAPTCHA_CONFIG,
       captchaVerifyCallback: async (param: string) => {
@@ -139,11 +145,15 @@ const initCaptcha = async () => {
       getInstance: (instance: unknown) => {
         anyWin.AliyunCaptchaV2 = anyWin.AliyunCaptchaV2 || {}
         anyWin.AliyunCaptchaV2.captchaInstance = instance
+        smsStatus.value = ''
+        smsStatusText.value = '人机验证已就绪，请点「获取验证码」'
       },
     })
+    smsStatus.value = ''
+    smsStatusText.value = '人机验证已就绪，请点「获取验证码」'
   } catch (e: any) {
     smsStatus.value = 'error'
-    smsStatusText.value = e?.message || '滑块组件加载失败'
+    smsStatusText.value = '滑块加载失败：' + (e?.message || '未知错误')
   }
 }
 
@@ -165,7 +175,10 @@ const sendSms = async () => {
     return
   }
   if (!captchaVerifyParam) {
-    ElMessage.warning('请先完成滑块验证')
+    ElMessage.warning('人机验证未就绪，请等待「人机验证已就绪」提示后再点')
+    smsStatus.value = 'error'
+    smsStatusText.value = '人机验证组件未加载完成'
+    void initCaptcha()
     return
   }
   smsSending.value = true
