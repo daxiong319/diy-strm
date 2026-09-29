@@ -13,6 +13,7 @@ import {
   type DiscoverMeta,
 } from "@/api/discovery";
 import DiscoverPosterCard from "@/components/discover/DiscoverPosterCard.vue";
+import DiscoverDetailModal, { type DetailTarget } from "@/components/discover/DiscoverDetailModal.vue";
 import AppButton from "@/components/base/AppButton.vue";
 import AppInput from "@/components/base/AppInput.vue";
 import AppSelect from "@/components/base/AppSelect.vue";
@@ -212,9 +213,17 @@ function prevPage() {
   }
 }
 
+const detailOpen = ref(false);
+const detailTarget = ref<DetailTarget | null>(null);
+
 function onCardClick(item: DiscoverItem) {
-  // 详情弹层在后续迭代接入；当前先提示。
-  toast.info(`「${item.title}」详情页开发中`);
+  const externalID = String(item.tmdb_id ?? item.douban_id ?? "");
+  if (!externalID) {
+    toast.info("该条目暂不支持详情");
+    return;
+  }
+  detailTarget.value = { source: item.source, media_type: item.media_type, external_id: externalID };
+  detailOpen.value = true;
 }
 
 onMounted(() => {
@@ -293,6 +302,8 @@ onMounted(() => {
         下一页
       </AppButton>
     </div>
+
+    <DiscoverDetailModal :open="detailOpen" :target="detailTarget" @close="detailOpen = false" />
   </div>
 </template>
 
