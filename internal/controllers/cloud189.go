@@ -334,14 +334,11 @@ var quarkQrSessions = sync.Map{}
 
 // QuarkQrInitAPI POST /api/quark/qrcode — 生成夸克扫码登录二维码
 func QuarkQrInitAPI(c *gin.Context) {
-	sess := quark.NewQrSession()
-	token, qrURL, err := sess.QrInit(c.Request.Context())
+	sessionID, qrURL, err := quark.GlobalQrLogin().Start(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "生成二维码失败：" + err.Error()})
 		return
 	}
-	sessionID := token
-	quarkQrSessions.Store(sessionID, sess)
 	c.JSON(http.StatusOK, APIResponse[gin.H]{Code: Success, Message: "", Data: gin.H{
 		"session_id": sessionID,
 		"qr_url":     qrURL,
@@ -359,19 +356,12 @@ func QuarkQrPollAPI(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, APIResponse[any]{Code: BadRequest, Message: "参数错误：" + err.Error()})
 		return
 	}
-	v, ok := quarkQrSessions.Load(req.SessionID)
-	if !ok {
-		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: "扫码会话不存在或已过期，请重新生成"})
-		return
-	}
-	sess := v.(*quark.QrSession)
-	status, cookie, err := sess.QrPollStatus(c.Request.Context())
+	status, cookie, err := quark.GlobalQrLogin().Poll(c.Request.Context(), req.SessionID)
 	if err != nil {
 		c.JSON(http.StatusOK, APIResponse[any]{Code: BadRequest, Message: err.Error()})
 		return
 	}
 	if status == "success" {
-		quarkQrSessions.Delete(req.SessionID)
 		// 授权已有账号：把新 Cookie 写回该账号（不新建重复账号）
 		if req.AccountID > 0 {
 			if account, aerr := models.GetAccountById(req.AccountID); aerr == nil && account != nil && account.SourceType == models.SourceTypeQuark {
