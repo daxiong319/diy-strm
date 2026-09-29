@@ -14,6 +14,9 @@ import (
 	"litepan/internal/cache"
 	"litepan/internal/config"
 	"litepan/internal/coverextract"
+	"litepan/internal/discover/ddb"
+	"litepan/internal/discover/discovery"
+	"litepan/internal/discover/dmodels"
 	"litepan/internal/logx"
 	"litepan/internal/notification"
 	"litepan/internal/notifychannel"
@@ -35,6 +38,11 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	notifyDisp.Register(core.bus)
 	notifyChannelSvc := notifychannel.NewService(st.store.NotifyChannels, notifyDisp, logs.For(logx.ModuleAPI))
 	notifyDisp.Refresh(context.Background())
+
+	// 影视发现板块：初始化 GORM 数据层（复用主库），桥接 TMDB 配置，建表并启动后台 Worker。
+	if err := discoverInit(cfg, st, logs); err != nil {
+		return nil, err
+	}
 
 	apiKeySvc := apikey.New(apikey.Options{
 		Repo:     st.store.ApiKeys,
@@ -179,6 +187,24 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}, nil
+}
+
+// discoverInit 初始化影视发现板块：GORM 数据层（复用主库）→ 桥接 TMDB 配置 → 建表 → 启动后台 Worker。
+// 失败仅记日志不阻断启动（发现板块为非核心增强功能）。
+func discoverInit(cfg config.Config, st *storeBundle, logs *logx.Manager) error {
+	log := logs.For(logx.ModuleSystem)
+	if err := ddb.Init(cfg.DBPath, log); err != nil {
+		log.Warn("发现板块数据库初始化失败", "err", err)
+		return err
+	}
+	dmodels.BindSettings(st.settings)
+	if err := discovery.EnsureDiscoverySchema(); err != nil {
+		log.Warn("发现板块建表失败", "err", err)
+		return err
+	}
+	discovery.StartDiscoveryWorkers()
+	log.Info("发现板块已初始化")
+	return nil
 }
 
 func cacheSettingsHook(cacheSvc *cache.Service, settingsSvc *settings.Service, dataDir string) func(map[string]string) {

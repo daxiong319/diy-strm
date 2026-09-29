@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/glebarez/go-sqlite"
 )
 
 type blockMeta struct {

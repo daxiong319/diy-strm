@@ -6,6 +6,7 @@ require (
 	github.com/alde/go-fish v0.0.0-20260611152328-df695ecc9fbf
 	github.com/anacrolix/dht/v2 v2.24.0
 	github.com/anacrolix/torrent v1.61.0
+	github.com/glebarez/go-sqlite v1.21.2
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/google/uuid v1.6.0
@@ -18,7 +19,6 @@ require (
 	golang.org/x/sys v0.47.0
 	golang.org/x/time v0.15.0
 	gorm.io/gorm v1.31.2
-	modernc.org/sqlite v1.57.0
 	resty.dev/v3 v3.0.0-rc.3
 )
 
@@ -48,7 +48,6 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/edsrzf/mmap-go v1.1.0 // indirect
-	github.com/glebarez/go-sqlite v1.21.2 // indirect
 	github.com/go-llsqlite/adapter v0.0.0-20230927005056-7f5ce7f0c916 // indirect
 	github.com/go-llsqlite/crawshaw v0.5.6-0.20250312230104-194977a03421 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
@@ -102,5 +101,6 @@ require (
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
+	modernc.org/sqlite v1.57.0 // indirect
 	zombiezen.com/go/sqlite v0.13.1 // indirect
 )
