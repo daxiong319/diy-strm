@@ -13,16 +13,20 @@ const CrossDrivePlainTransfer = defineAsyncComponent(
 const CrossDriveTransfer = defineAsyncComponent(
   () => import("@/components/admin/CrossDriveTransfer.vue"),
 );
+// CAS 秒传管理（.cas 清单 + 五哈希秒传恢复）
+const CasManagePanel = defineAsyncComponent(() => import("@/components/admin/CasManagePanel.vue"));
 
 const PLAIN_TAB = "plain";
 const RAPID_TAB = "rapid";
+const CAS_TAB = "cas";
 
 const tabs = [
   { key: PLAIN_TAB, label: "跨盘普传" },
   { key: RAPID_TAB, label: "跨盘秒传" },
+  { key: CAS_TAB, label: "CAS 秒传" },
 ];
 
-const { activeTab, setActiveTab } = useSectionTabRoute(PLAIN_TAB, [PLAIN_TAB, RAPID_TAB]);
+const { activeTab, setActiveTab } = useSectionTabRoute(PLAIN_TAB, [PLAIN_TAB, RAPID_TAB, CAS_TAB]);
 
 // 秒传子组件实例：用于调用其矩阵弹层
 const rapidViewRef = ref<{ openMatrix?: () => void } | null>(null);
@@ -50,6 +54,9 @@ function openRapidMatrix() {
     </div>
     <div v-show="activeTab === RAPID_TAB" class="ctp-pane">
       <CrossDriveTransfer ref="rapidViewRef" />
+    </div>
+    <div v-show="activeTab === CAS_TAB" class="ctp-pane">
+      <CasManagePanel />
     </div>
   </div>
 </template>
