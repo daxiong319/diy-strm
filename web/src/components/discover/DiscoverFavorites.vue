@@ -7,6 +7,7 @@ import {
   type DiscoveryFavorite,
 } from "@/api/discovery";
 import DiscoverPosterCard from "@/components/discover/DiscoverPosterCard.vue";
+import DiscoverDetailModal, { type DetailTarget } from "@/components/discover/DiscoverDetailModal.vue";
 import AppButton from "@/components/base/AppButton.vue";
 import AppStateBlock from "@/components/base/AppStateBlock.vue";
 import { useConfirm } from "@/composables/useConfirm";
@@ -69,8 +70,17 @@ async function handleDelete(f: DiscoveryFavorite) {
   }
 }
 
+const detailOpen = ref(false);
+const detailTarget = ref<DetailTarget | null>(null);
+
 function onCardClick(f: DiscoveryFavorite) {
-  toast.info(`「${f.title}」详情页开发中`);
+  const externalID = String(f.tmdb_id ?? f.external_id ?? "");
+  if (!externalID) {
+    toast.info("该条目暂不支持详情");
+    return;
+  }
+  detailTarget.value = { source: f.source, media_type: f.media_type, external_id: externalID };
+  detailOpen.value = true;
 }
 
 onMounted(load);
@@ -94,6 +104,8 @@ onMounted(load);
     </div>
 
     <AppStateBlock v-else message="还没有收藏，去「影视探索」页收藏感兴趣的影片吧" min-height="300px" />
+
+    <DiscoverDetailModal :open="detailOpen" :target="detailTarget" @close="detailOpen = false" />
   </div>
 </template>
 

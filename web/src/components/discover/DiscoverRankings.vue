@@ -11,6 +11,7 @@ import {
   type RankingItem,
 } from "@/api/discovery";
 import DiscoverPosterCard from "@/components/discover/DiscoverPosterCard.vue";
+import DiscoverDetailModal, { type DetailTarget } from "@/components/discover/DiscoverDetailModal.vue";
 import AppButton from "@/components/base/AppButton.vue";
 import AppSelect from "@/components/base/AppSelect.vue";
 import AppStateBlock from "@/components/base/AppStateBlock.vue";
@@ -90,8 +91,17 @@ function applyProvider() {
   void load();
 }
 
+const detailOpen = ref(false);
+const detailTarget = ref<DetailTarget | null>(null);
+
 function onCardClick(item: DiscoverItem) {
-  toast.info(`「${item.title}」详情页开发中`);
+  const externalID = String(item.tmdb_id ?? item.douban_id ?? "");
+  if (!externalID) {
+    toast.info("该条目暂不支持详情");
+    return;
+  }
+  detailTarget.value = { source: item.source, media_type: item.media_type, external_id: externalID };
+  detailOpen.value = true;
 }
 
 onMounted(() => {
@@ -147,6 +157,8 @@ onMounted(() => {
     </div>
 
     <AppStateBlock v-else message="暂无榜单数据" min-height="300px" />
+
+    <DiscoverDetailModal :open="detailOpen" :target="detailTarget" @close="detailOpen = false" />
   </div>
 </template>
 
