@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+
+	"diy-strm/internal/helpers"
 	"strings"
 	"sync"
 	"time"
@@ -113,6 +115,7 @@ func (s *SmsSession) SendSmsCode(ctx context.Context, phone, sig, sessionID, tok
 	defer resp.Body.Close()
 	body := readAll(resp)
 	out := parseStatus(body)
+	helpers.AppLogger.Infof("[夸克短信] sendSmsCode: phone=%s status=%d resp=%s", maskPhone(phone), out.Status, truncateStr(string(body), 300))
 	// 2000000 成功；20180001 需滑块（data 带 token/key 重置滑块）
 	if out.Status == 2000000 {
 		s.Phone = phone
@@ -146,6 +149,7 @@ func (s *SmsSession) CommitSmsLogin(ctx context.Context, phone, smsCode, sig, se
 	defer resp.Body.Close()
 	body := readAll(resp)
 	out := parseStatus(body)
+	helpers.AppLogger.Infof("[夸克短信] commit: phone=%s status=%d resp=%s", maskPhone(phone), out.Status, truncateStr(string(body), 300))
 	if out.Status != 20000 {
 		return "", fmt.Errorf("登录失败（%d）：%s", out.Status, out.Message)
 	}
@@ -221,4 +225,18 @@ func DeleteSmsSession(sessionID string) {
 	SmsSessionStore.Lock()
 	delete(SmsSessionStore.m, sessionID)
 	SmsSessionStore.Unlock()
+}
+
+func maskPhone(phone string) string {
+	if len(phone) >= 7 {
+		return phone[:3] + "****" + phone[len(phone)-4:]
+	}
+	return phone
+}
+
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
