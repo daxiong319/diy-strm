@@ -26,7 +26,7 @@
           <el-form-item label="验证码">
             <div style="display: flex; gap: 8px; width: 100%">
               <el-input v-model="smsForm.code" placeholder="短信验证码" maxlength="6" />
-              <el-button :disabled="smsCountdown > 0 || smsSending" :loading="smsSending" @click="sendSms">
+              <el-button id="sms-send-btn" :disabled="smsCountdown > 0 || smsSending" :loading="smsSending" @click="sendSms">
                 {{ smsCountdown > 0 ? `${smsCountdown}s` : '获取验证码' }}
               </el-button>
             </div>
@@ -97,6 +97,7 @@ const CAPTCHA_CONFIG = {
   region: 'cn',
   appKey: 'FFFF0N0000000000ABDE',
   mode: 'popup',
+  button: '#sms-send-btn',
 }
 
 const loadCaptchaScript = (): Promise<void> =>
