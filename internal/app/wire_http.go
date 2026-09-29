@@ -17,6 +17,7 @@ import (
 	"litepan/internal/discover/ddb"
 	"litepan/internal/discover/discovery"
 	"litepan/internal/discover/dmodels"
+	"litepan/internal/discover/dutil"
 	"litepan/internal/logx"
 	"litepan/internal/notification"
 	"litepan/internal/notifychannel"
@@ -198,6 +199,8 @@ func discoverInit(cfg config.Config, st *storeBundle, logs *logx.Manager) error 
 		return err
 	}
 	dmodels.BindSettings(st.settings)
+	// 观影等模块的本地敏感数据加解密密钥存于配置目录
+	dutil.ConfigDir = cfg.DataDir
 	if err := discovery.EnsureDiscoverySchema(); err != nil {
 		log.Warn("发现板块建表失败", "err", err)
 		return err
