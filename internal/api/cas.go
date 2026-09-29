@@ -114,6 +114,23 @@ func (h *Handler) casRestoreFromText(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, result)
 }
 
+// casRunOnce 手动触发一轮 CAS 化（扫描已完成影视上传任务）
+func (h *Handler) casRunOnce(w http.ResponseWriter, r *http.Request) {
+	if h.casRunner == nil {
+		writeErr(w, domain.Errorf(domain.CodeNotImplement, "CAS 运行器未就绪"))
+		return
+	}
+	generated, deleted, skipped, failed, err := h.casRunner.RunOnce(r.Context())
+	if err != nil {
+		writeErr(w, domain.Errorf(domain.CodeInternal, "CAS 化执行失败：%v", err))
+		return
+	}
+	writeOK(w, map[string]any{
+		"generated": generated, "deleted": deleted,
+		"skipped": skipped, "failed": failed,
+	})
+}
+
 // casGetConfig 读 CAS 配置
 func (h *Handler) casGetConfig(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, cas.GetConfigForAPI())

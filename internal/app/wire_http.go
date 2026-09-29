@@ -155,6 +155,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		Files:             svc.files,
 		Favorites:         svc.favorites,
 		Uploads:           svc.uploads,
+		CASRunner:         cas.NewRunner(svc.uploads),
 		OfflineDownloads:  svc.offlineDownloads,
 		Playback:          svc.playback,
 		Strm:              svc.strm,

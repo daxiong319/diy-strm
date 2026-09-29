@@ -68,3 +68,14 @@ export function fetchCasConfig() {
 export function saveCasConfig(cfg: CasConfig) {
   return http.put<CasConfig>("/admin/cas/config", cfg);
 }
+
+export interface CasRunOnceResult {
+  generated: number;
+  deleted: number;
+  skipped: number;
+  failed: number;
+}
+
+export function runCasOnce() {
+  return http.post<CasRunOnceResult>("/admin/cas/run-once", {});
+}
