@@ -28,6 +28,7 @@ import SettingsCard from "@/components/admin/SettingsCard.vue";
 import SettingsRow from "@/components/admin/SettingsRow.vue";
 import SettingsHelpTooltip from "@/components/admin/SettingsHelpTooltip.vue";
 import ApiKeySettings from "@/components/admin/ApiKeySettings.vue";
+import NotifyChannelSettings from "@/components/admin/NotifyChannelSettings.vue";
 import SvgIcon from "@/components/icons/SvgIcon.vue";
 import { isCacheSettingKey } from "@/constants/cacheSettings";
 import { getSkinPref, previewSkin, restoreSavedSkin, setSkinPref, type SkinPref } from "@/utils/theme";
@@ -48,6 +49,7 @@ const SECURITY_TAB = "security";
 const HOMEPAGE_TAB = "homepage";
 const SERVICE_TAB = "services";
 const API_KEYS_TAB = "apiKeys";
+const NOTIFY_CHANNEL_TAB = "notifyChannels";
 
 const TASK_PANEL_SETTING_KEYS = new Set([
   "upload_task_concurrency",
@@ -130,6 +132,7 @@ const homepageOriginal = reactive({
   index_strm_auto_detect_enabled: true,
 });
 const apiKeySettingsRef = ref<InstanceType<typeof ApiKeySettings> | null>(null);
+const notifyChannelSettingsRef = ref<InstanceType<typeof NotifyChannelSettings> | null>(null);
 const apiKeyToolbar = reactive({ loading: true, keyCount: 0, maxKeys: 10 });
 const apiKeyAddDisabled = computed(
   () => apiKeyToolbar.loading || apiKeyToolbar.keyCount >= apiKeyToolbar.maxKeys,
@@ -140,6 +143,7 @@ const tabs = computed(() => [
   { key: HOMEPAGE_TAB, label: "首页设置" },
   { key: SERVICE_TAB, label: "其他设置", disabled: props.forcePasswordChange },
   { key: API_KEYS_TAB, label: "API 秘钥", disabled: props.forcePasswordChange },
+  { key: NOTIFY_CHANNEL_TAB, label: "通知渠道", disabled: props.forcePasswordChange },
 ]);
 
 const systemItems = computed(() => items.value.filter((it) => it.category === "system"));
@@ -213,7 +217,7 @@ const settingsDirty = computed(
 );
 const { activeTab, setActiveTab } = useSectionTabRoute(
   SECURITY_TAB,
-  [SECURITY_TAB, HOMEPAGE_TAB, SERVICE_TAB, API_KEYS_TAB],
+  [SECURITY_TAB, HOMEPAGE_TAB, SERVICE_TAB, API_KEYS_TAB, NOTIFY_CHANNEL_TAB],
   {
     beforeTabChange: async (from, to) => {
       if (props.forcePasswordChange && to !== SECURITY_TAB) return false;
@@ -228,6 +232,7 @@ const isSecurityTab = computed(() => activeTab.value === SECURITY_TAB);
 const isHomepageTab = computed(() => activeTab.value === HOMEPAGE_TAB);
 const isServicesTab = computed(() => activeTab.value === SERVICE_TAB);
 const isApiKeysTab = computed(() => activeTab.value === API_KEYS_TAB);
+const isNotifyChannelTab = computed(() => activeTab.value === NOTIFY_CHANNEL_TAB);
 const accentColor = computed(() => {
   if (isSecurityTab.value) return ACCENTS[0];
   if (isHomepageTab.value) return ACCENTS[1];
@@ -439,6 +444,14 @@ async function submit() {
           @click="apiKeySettingsRef?.openCreate()"
         >
           新增秘钥
+        </AppButton>
+        <AppButton
+          v-else-if="isNotifyChannelTab"
+          type="button"
+          variant="primary"
+          @click="notifyChannelSettingsRef?.openCreate()"
+        >
+          新增渠道
         </AppButton>
         <AppButton
           v-else
@@ -798,6 +811,11 @@ async function submit() {
         ref="apiKeySettingsRef"
         :accent="accentColor"
         @toolbar-state="Object.assign(apiKeyToolbar, $event)"
+      />
+      <NotifyChannelSettings
+        v-else-if="isNotifyChannelTab"
+        ref="notifyChannelSettingsRef"
+        :accent="accentColor"
       />
     </template>
   </div>

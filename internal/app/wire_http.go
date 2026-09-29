@@ -16,6 +16,7 @@ import (
 	"litepan/internal/coverextract"
 	"litepan/internal/logx"
 	"litepan/internal/notification"
+	"litepan/internal/notifychannel"
 	"litepan/internal/settings"
 	"litepan/internal/spacecleanup"
 )
@@ -27,6 +28,13 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		Log:      logs.For(logx.ModuleSystem),
 	})
 	notifySvc.Register(core.bus)
+
+	// 外部通知渠道：dispatcher 订阅事件总线把通知投递到 telegram/bark 等启用渠道；
+	// service 提供渠道 CRUD 与测试发送，供管理 API 使用。
+	notifyDisp := notifychannel.NewDispatcher(st.store.NotifyChannels, logs.For(logx.ModuleSystem))
+	notifyDisp.Register(core.bus)
+	notifyChannelSvc := notifychannel.NewService(st.store.NotifyChannels, notifyDisp, logs.For(logx.ModuleAPI))
+	notifyDisp.Refresh(context.Background())
 
 	apiKeySvc := apikey.New(apikey.Options{
 		Repo:     st.store.ApiKeys,
@@ -159,6 +167,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		BackupRestore:     backupRestoreSvc,
 		SpaceCleanup:      spaceCleanupSvc,
 		CoverExtract:      coverExtractSvc,
+		NotifyChannels:    notifyChannelSvc,
 		DataDir:           cfg.DataDir,
 		StrmDir:           cfg.StrmDir,
 		OnSettingsUpdated: cacheSettingsHook(core.cache, st.settings, cfg.DataDir),

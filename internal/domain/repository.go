@@ -35,3 +35,12 @@ type NotificationRepository interface {
 	DeleteAll(ctx context.Context) (int64, error)
 	DeleteByRef(ctx context.Context, category string, refID int64) (int64, error)
 }
+
+type NotifyChannelRepository interface {
+	Create(ctx context.Context, c *NotifyChannel) (int64, error)
+	Update(ctx context.Context, c *NotifyChannel) error
+	Delete(ctx context.Context, id int64) error
+	Get(ctx context.Context, id int64) (*NotifyChannel, error)
+	List(ctx context.Context) ([]*NotifyChannel, error)
+	ListEnabled(ctx context.Context) ([]*NotifyChannel, error)
+}

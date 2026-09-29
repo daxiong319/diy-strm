@@ -40,6 +40,7 @@ import (
 	"litepan/internal/logx"
 	"litepan/internal/mediaorganize"
 	"litepan/internal/notification"
+	"litepan/internal/notifychannel"
 	"litepan/internal/offlinedownload"
 	"litepan/internal/playback"
 	"litepan/internal/quarktv"
@@ -90,6 +91,7 @@ type Deps struct {
 	BackupRestore     *backuprestore.Service
 	SpaceCleanup      *spacecleanup.Service
 	CoverExtract      *coverextract.Service
+	NotifyChannels    *notifychannel.Service
 	DataDir           string
 	StrmDir           string
 	OnSettingsUpdated func(map[string]string)
@@ -131,6 +133,7 @@ type Handler struct {
 	backupRestore     *backuprestore.Service
 	spaceCleanup      *spacecleanup.Service
 	coverExtract      *coverextract.Service
+	notifyChannels    *notifychannel.Service
 	dataDir           string
 	strmDir           string
 	onSettingsUpdated func(map[string]string)
@@ -181,6 +184,7 @@ func NewRouter(d Deps) http.Handler {
 		backupRestore:     d.BackupRestore,
 		spaceCleanup:      d.SpaceCleanup,
 		coverExtract:      d.CoverExtract,
+		notifyChannels:    d.NotifyChannels,
 		dataDir:           d.DataDir,
 		strmDir:           d.StrmDir,
 		onSettingsUpdated: d.OnSettingsUpdated,
@@ -308,6 +312,14 @@ func NewRouter(d Deps) http.Handler {
 				r.Delete("/notifications", h.deleteAllNotifications)
 				r.Post("/notifications/{id}/read", h.markNotificationRead)
 				r.Delete("/notifications/{id}", h.deleteNotification)
+				r.Route("/notify-channels", func(r chi.Router) {
+					r.Get("/meta", h.notifyChannelMeta)
+					r.Get("/", h.listNotifyChannels)
+					r.Post("/", h.createNotifyChannel)
+					r.Post("/test", h.testNotifyChannel)
+					r.Put("/{id}", h.updateNotifyChannel)
+					r.Delete("/{id}", h.deleteNotifyChannel)
+				})
 				r.Get("/announcement", h.getAnnouncement)
 				r.Post("/announcement/read", h.markAnnouncementRead)
 				r.Route("/strm", func(r chi.Router) {

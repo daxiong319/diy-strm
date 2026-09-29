@@ -21,6 +21,7 @@ type Store struct {
 	AutomationRules     domain.AutomationRuleRepository
 	AutomationRuns      domain.AutomationRunRepository
 	QuarkTVBindings     domain.QuarkTVBindingRepository
+	NotifyChannels      domain.NotifyChannelRepository
 }
 
 // New 基于已打开的 DB 构造仓储集合。
@@ -43,5 +44,6 @@ func New(db *DB) *Store {
 		AutomationRules:     &automationRuleRepo{db: db},
 		AutomationRuns:      &automationRunRepo{db: db},
 		QuarkTVBindings:     &quarktvBindingRepo{db: db},
+		NotifyChannels:      &notifyChannelRepo{db: db},
 	}
 }
