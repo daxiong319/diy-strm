@@ -1,0 +1,120 @@
+// Package dmodels 为发现板块移植提供老 diy-strm/internal/models 的最小适配，
+// 核心是 GlobalScrapeSettings（TMDB 配置中心），从 LitePan settings 读取配置。
+package dmodels
+
+import (
+	"strings"
+	"sync"
+
+	"litepan/internal/discover/tmdb"
+	"litepan/internal/settings"
+)
+
+// TMDB 默认值（对齐老 diy-strm/helpers）。
+const (
+	DEFAULT_TMDB_API_URL   = "https://api.themoviedb.org"
+	DEFAULT_TMDB_IMAGE_URL = "https://image.tmdb.org"
+	DEFAULT_TMDB_LANGUAGE  = "zh-CN"
+	// DEFAULT_TMDB_API_KEY 老代码内置的兜底 key；LitePan 留空，强制用户配置或走 access token。
+)
+
+// ScrapeSettings 对齐老 models.ScrapeSettings 的 TMDB 相关字段子集
+// （发现板块只用 TMDB 部分；AI/Fanart 等不在发现板块范围）。
+type ScrapeSettings struct {
+	TmdbUrl         string
+	TmdbImageUrl    string
+	TmdbApiKey      string
+	TmdbAccessToken string
+	TmdbLanguage    string
+}
+
+// GetTmdbApiKey 返回 TMDB API Key（空则返回内置兜底）。
+func (s *ScrapeSettings) GetTmdbApiKey() string {
+	if s.TmdbApiKey == "" {
+		return ""
+	}
+	return s.TmdbApiKey
+}
+
+func (s *ScrapeSettings) GetTmdbAccessToken() string { return s.TmdbAccessToken }
+
+func (s *ScrapeSettings) GetTmdbApiUrl() string {
+	if s.TmdbUrl == "" {
+		return DEFAULT_TMDB_API_URL
+	}
+	return s.TmdbUrl
+}
+
+func (s *ScrapeSettings) GetTmdbImageUrl() string {
+	if s.TmdbImageUrl == "" {
+		return DEFAULT_TMDB_IMAGE_URL
+	}
+	return s.TmdbImageUrl
+}
+
+func (s *ScrapeSettings) GetTmdbLanguage() string {
+	if s.TmdbLanguage == "" {
+		return DEFAULT_TMDB_LANGUAGE
+	}
+	return s.TmdbLanguage
+}
+
+// GetTmdbClient 对齐老方法：构造/复用全局 tmdb 客户端。
+func (s *ScrapeSettings) GetTmdbClient() *tmdb.Client {
+	return tmdb.NewClient(
+		s.GetTmdbApiKey(),
+		s.GetTmdbAccessToken(),
+		s.GetTmdbApiUrl(),
+		s.GetTmdbLanguage(),
+		s.GetProxyUrl(),
+	)
+}
+
+// GetProxyUrl 返回代理 URL（发现板块暂未接 LitePan 代理设置，留空=直连）。
+func (s *ScrapeSettings) GetProxyUrl() string { return "" }
+
+// ---------------------------------------------------------------------------
+// GlobalScrapeSettings：包级全局，方法调用时惰性从 LitePan settings 刷新 TMDB 配置。
+// ---------------------------------------------------------------------------
+
+var (
+	settingsSvc *settings.Service
+	settingsMu  sync.RWMutex
+)
+
+// GlobalScrapeSettings 对应老 models.GlobalScrapeSettings（包级全局变量）。
+var GlobalScrapeSettings = &ScrapeSettings{}
+
+// BindSettings 在装配层注入 LitePan settings 服务，并立即刷新一次缓存。
+func BindSettings(svc *settings.Service) {
+	settingsMu.Lock()
+	settingsSvc = svc
+	settingsMu.Unlock()
+	RefreshFromSettings()
+}
+
+// RefreshFromSettings 从 LitePan settings 读取 TMDB 配置写入 GlobalScrapeSettings。
+func RefreshFromSettings() {
+	settingsMu.RLock()
+	svc := settingsSvc
+	settingsMu.RUnlock()
+	if svc == nil {
+		return
+	}
+	GlobalScrapeSettings.TmdbApiKey = strings.TrimSpace(svc.String(settings.KeyMOTmdbAPIKey))
+	GlobalScrapeSettings.TmdbLanguage = strings.TrimSpace(svc.String(settings.KeyMOTmdbLanguage))
+	GlobalScrapeSettings.TmdbUrl = strings.TrimSpace(svc.String(settings.KeyMOTmdbAPIHost))
+	GlobalScrapeSettings.TmdbImageUrl = strings.TrimSpace(svc.String(settings.KeyMOTmdbImageHost))
+}
+
+// GetTmdbImageUrl 包级函数：拼完整图片 URL（对齐老 models.GetTmdbImageUrl）。
+func GetTmdbImageUrl(path string) string {
+	if path == "" {
+		return ""
+	}
+	base := GlobalScrapeSettings.GetTmdbImageUrl()
+	if strings.HasSuffix(base, "/t/p") || strings.Contains(base, "/t/p") {
+		return base + "/original" + path
+	}
+	return base + "/t/p/original" + path
+}
