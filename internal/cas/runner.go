@@ -2,19 +2,80 @@ package cas
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"litepan/internal/upload"
+	"litepan/pkg/safego"
 )
 
 // Runner 持有上传管理器，扫描已完成影视上传任务并触发 CAS 化。
 type Runner struct {
 	Uploads *upload.Manager
+	Log     *slog.Logger
+
+	mu      sync.Mutex
+	running bool
 }
 
 // NewRunner 构造 CAS 运行器
-func NewRunner(u *upload.Manager) *Runner { return &Runner{Uploads: u} }
+func NewRunner(u *upload.Manager) *Runner { return &Runner{Uploads: u, Log: slog.Default()} }
+
+// StartScheduler 启动 CAS 定时调度：周期性触发 RunOnce（CAS 化按"满 N 天"粒度，1 小时足够）。
+// 仅当配置 enabled 时执行；单轮崩溃不影响调度循环。
+func (r *Runner) StartScheduler(ctx context.Context) {
+	if r == nil {
+		return
+	}
+	log := r.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	interval := time.Hour
+	runOnce := func() {
+		safego.Guard(log, "cas.schedule", func() {
+			if !GetConfigForAPI().Enabled {
+				return
+			}
+			r.mu.Lock()
+			if r.running {
+				r.mu.Unlock()
+				return
+			}
+			r.running = true
+			r.mu.Unlock()
+			defer func() {
+				r.mu.Lock()
+				r.running = false
+				r.mu.Unlock()
+			}()
+			generated, deleted, skipped, failed, err := r.RunOnce(ctx)
+			if err != nil {
+				log.Warn("CAS 定时化执行失败", "err", err)
+				return
+			}
+			if generated > 0 || deleted > 0 || failed > 0 {
+				log.Info("CAS 定时化完成", "generated", generated, "deleted", deleted, "skipped", skipped, "failed", failed)
+			}
+		})
+	}
+	go func() {
+		// 启动即跑一轮，之后按周期触发
+		runOnce()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				runOnce()
+			}
+		}
+	}()
+}
 
 // RunOnce 扫描上传任务（success + 影视），转换为候选并执行一轮 CAS 化。
 func (r *Runner) RunOnce(ctx context.Context) (generated, deleted, skipped, failed int, err error) {

@@ -42,8 +42,12 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	notifyChannelSvc := notifychannel.NewService(st.store.NotifyChannels, notifyDisp, logs.For(logx.ModuleAPI))
 	notifyDisp.Refresh(context.Background())
 
+	// CAS 运行器（扫描上传任务自动 CAS 化）：API 手动触发与定时调度共用同一实例。
+	casRunner := cas.NewRunner(svc.uploads)
+	casRunner.Log = logs.For(logx.ModuleSystem)
+
 	// 影视发现板块：初始化 GORM 数据层（复用主库），桥接 TMDB 配置，建表并启动后台 Worker。
-	if err := discoverInit(cfg, st, core, logs); err != nil {
+	if err := discoverInit(cfg, st, core, casRunner, logs); err != nil {
 		return nil, err
 	}
 
@@ -155,7 +159,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		Files:             svc.files,
 		Favorites:         svc.favorites,
 		Uploads:           svc.uploads,
-		CASRunner:         cas.NewRunner(svc.uploads),
+		CASRunner:         casRunner,
 		OfflineDownloads:  svc.offlineDownloads,
 		Playback:          svc.playback,
 		Strm:              svc.strm,
@@ -195,7 +199,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 
 // discoverInit 初始化影视发现板块：GORM 数据层（复用主库）→ 桥接 TMDB 配置 → 建表 → 启动后台 Worker。
 // 失败仅记日志不阻断启动（发现板块为非核心增强功能）。
-func discoverInit(cfg config.Config, st *storeBundle, core *coreBundle, logs *logx.Manager) error {
+func discoverInit(cfg config.Config, st *storeBundle, core *coreBundle, casRunner *cas.Runner, logs *logx.Manager) error {
 	log := logs.For(logx.ModuleSystem)
 	if err := ddb.Init(cfg.DBPath, log); err != nil {
 		log.Warn("发现板块数据库初始化失败", "err", err)
@@ -215,6 +219,7 @@ func discoverInit(cfg config.Config, st *storeBundle, core *coreBundle, logs *lo
 	cas.BindDriverResolver(func(accountID int64, sourceType string) cas.RapidDriver {
 		return casAdapter.Resolve(context.Background(), accountID, sourceType)
 	})
+	casRunner.StartScheduler(context.Background())
 	discovery.StartDiscoveryWorkers()
 	log.Info("发现板块已初始化")
 	return nil
