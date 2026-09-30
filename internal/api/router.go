@@ -641,7 +641,8 @@ func spaHandler(fsys fs.FS) http.Handler {
 			serveCompressedAsset(w, r, fsys, upath)
 			return
 		}
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if r.Method != http.MethodHead {
 			_, _ = w.Write(index)
@@ -691,7 +692,10 @@ func setStaticCacheHeader(w http.ResponseWriter, upath string) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		return
 	}
-	w.Header().Set("Cache-Control", "no-cache")
+	// index.html 与其它入口文件：禁止任何缓存（含磁盘快照），
+	// 确保发版后浏览器必然重新拉取入口，从而引用到新的 hash 资源。
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
 }
 
 func staticContentType(name string) string {
