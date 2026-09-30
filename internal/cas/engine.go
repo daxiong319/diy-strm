@@ -69,9 +69,11 @@ func EnsureTable() {
 
 // CasConfig CAS 自动化配置
 type CasConfig struct {
-	Enabled        bool `json:"enabled"`
-	AgeDays        int  `json:"age_days"`
-	WriteBackCloud bool `json:"write_back_cloud"`
+	Enabled          bool `json:"enabled"`
+	AgeDays          int  `json:"age_days"`
+	DeleteSource     bool `json:"delete_source"`
+	DelayDeleteHours int  `json:"delay_delete_hours"` // 播放恢复后延时删除临时文件（小时，默认 2；0=不自动删除）
+	WriteBackCloud   bool `json:"write_back_cloud"`
 }
 
 // configStore/configSetter 配置读写（由装配层注入；默认空实现，未接 settings 前不持久化）。
@@ -92,12 +94,21 @@ func BindConfigStore(get func(key string) (string, bool), set func(key, value st
 }
 
 func getConfig() CasConfig {
-	cfg := CasConfig{Enabled: true, AgeDays: 30}
+	cfg := CasConfig{
+		Enabled:          true,
+		AgeDays:          30,
+		DeleteSource:     true,
+		DelayDeleteHours: 2,
+		WriteBackCloud:   false,
+	}
 	if v, ok := configStore(configKey); ok && v != "" {
 		_ = json.Unmarshal([]byte(v), &cfg)
 	}
 	if cfg.AgeDays <= 0 {
 		cfg.AgeDays = 30
+	}
+	if cfg.DelayDeleteHours < 0 {
+		cfg.DelayDeleteHours = 0
 	}
 	return cfg
 }
@@ -109,6 +120,9 @@ func GetConfigForAPI() CasConfig { return getConfig() }
 func SaveConfig(cfg CasConfig) {
 	if cfg.AgeDays <= 0 {
 		cfg.AgeDays = 30
+	}
+	if cfg.DelayDeleteHours < 0 {
+		cfg.DelayDeleteHours = 0
 	}
 	raw, _ := json.Marshal(cfg)
 	configSetter(configKey, string(raw))
@@ -177,6 +191,8 @@ type RapidDriver interface {
 	SourceType() string
 	// FetchFingerprint 免下载取五哈希指纹（189:fileMd5+sliceMd5 / 139:sha256 / 夸克:md5+preHash）
 	FetchFingerprint(ctx context.Context, parentID, fileID, fileName string) (cloud189.HashSet, bool)
+	// ProbeFile 探测文件是否在云端目录存在（优先按 fileID，后备按 parentID+fileName），存在返回 (true, actualFileID)
+	ProbeFile(ctx context.Context, parentID, fileID, fileName string) (bool, string)
 	// DeleteFile 删除云端文件
 	DeleteFile(ctx context.Context, fileID string) error
 	// UploadTextFile 上传文本文件（.cas 清单写回网盘），返回文件 ID

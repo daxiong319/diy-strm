@@ -26,7 +26,17 @@ export interface CasRecord {
 export interface CasConfig {
   enabled: boolean;
   age_days: number;
+  delete_source: boolean;
+  delay_delete_hours: number;
   write_back_cloud: boolean;
+}
+
+export interface CasPlayURLResult {
+  cas_id: number;
+  file_name: string;
+  play_file_id: string;
+  restored: boolean;
+  play_url: string;
 }
 
 export interface CasRecordListResult {
@@ -78,4 +88,8 @@ export interface CasRunOnceResult {
 
 export function runCasOnce() {
   return http.post<CasRunOnceResult>("/admin/cas/run-once", {});
+}
+
+export function fetchCasPlayURL(id: number) {
+  return http.post<CasPlayURLResult>(`/admin/cas/records/${id}/play-url`, {});
 }

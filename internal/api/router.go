@@ -201,6 +201,16 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(h.logSlowDashboardRequests)
 	r.Use(chimw.Recoverer)
 
+	// CAS 播放直链/代理入口（对齐老 diy-strm /cas/play/* 契约，免鉴权供 Emby/播放器直接访问）
+	r.Get("/cas/play/{id}", h.casPlay)
+	r.Head("/cas/play/{id}", h.casPlay)
+	r.Get("/cas/play/{id}/{filename}", h.casPlay)
+	r.Head("/cas/play/{id}/{filename}", h.casPlay)
+	r.Get("/cas/play", h.casPlay)
+	r.Head("/cas/play", h.casPlay)
+	r.Get("/cas/play/*", h.casPlay)
+	r.Head("/cas/play/*", h.casPlay)
+
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/internal/cover-source/{token}", h.coverExtractSource)
 		r.Get("/health", h.health)
@@ -216,6 +226,16 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/guanying/detail/{dir}/{id}", h.guanyingDetailPage)
 		r.Get("/guanying/img/{dir}/{id}/{size}", h.guanyingImage)
 		r.Get("/guanying/res/*", h.guanyingResProxy)
+
+		// CAS 播放直链/代理入口（/api/cas/play 别名）
+		r.Get("/cas/play/{id}", h.casPlay)
+		r.Head("/cas/play/{id}", h.casPlay)
+		r.Get("/cas/play/{id}/{filename}", h.casPlay)
+		r.Head("/cas/play/{id}/{filename}", h.casPlay)
+		r.Get("/cas/play", h.casPlay)
+		r.Head("/cas/play", h.casPlay)
+		r.Get("/cas/play/*", h.casPlay)
+		r.Head("/cas/play/*", h.casPlay)
 		r.Head("/strm/play/{account_id}/{file_key}/t/{token}/n/{filename}/s/{signature}", h.strmPlay)
 		r.Get("/strm/path/{account_id}/{root_key}/{path_key}/t/{token}/n/{filename}", h.strmPathPlay)
 		r.Head("/strm/path/{account_id}/{root_key}/{path_key}/t/{token}/n/{filename}", h.strmPathPlay)
@@ -372,6 +392,7 @@ func NewRouter(d Deps) http.Handler {
 					r.Delete("/records/{id}", h.casDeleteRecord)
 					r.Get("/records/{id}/export", h.casExportRecord)
 					r.Post("/records/{id}/restore", h.casRestoreRecord)
+					r.Post("/records/{id}/play-url", h.casPlayURL)
 					r.Post("/restore", h.casRestoreFromText)
 					r.Get("/config", h.casGetConfig)
 					r.Put("/config", h.casSaveConfig)

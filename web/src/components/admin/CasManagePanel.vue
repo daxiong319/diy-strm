@@ -4,11 +4,13 @@ import { getApiErrorMessage } from "@/api/client";
 import {
   deleteCasRecord,
   fetchCasConfig,
+  fetchCasPlayURL,
   fetchCasRecords,
   restoreCasRecord,
   runCasOnce,
   saveCasConfig,
   type CasConfig,
+  type CasPlayURLResult,
   type CasRecord,
 } from "@/api/cas";
 import AppButton from "@/components/base/AppButton.vue";
@@ -20,7 +22,7 @@ import AppStateBlock from "@/components/base/AppStateBlock.vue";
 import FormField from "@/components/base/FormField.vue";
 import SettingsCard from "@/components/admin/SettingsCard.vue";
 import { useConfirm } from "@/composables/useConfirm";
-import { toast } from "@/composables/useToast";
+import { copyTextToClipboard, toast } from "@/composables/useToast";
 import "@/styles/admin-table.css";
 
 const { showConfirm } = useConfirm();
@@ -34,9 +36,55 @@ const pageSize = 50;
 const keyword = ref("");
 const status = ref("");
 
-const cfg = reactive<CasConfig>({ enabled: true, age_days: 30, write_back_cloud: false });
+const cfg = reactive<CasConfig>({
+  enabled: true,
+  age_days: 30,
+  delete_source: true,
+  delay_delete_hours: 2,
+  write_back_cloud: false,
+});
 const cfgSaving = ref(false);
 const running = ref(false);
+
+const playModalOpen = ref(false);
+const playTarget = ref<CasRecord | null>(null);
+const playURLInfo = ref<CasPlayURLResult | null>(null);
+const playURLLoading = ref(false);
+
+async function openPlayModal(rec: CasRecord) {
+  playTarget.value = rec;
+  playURLInfo.value = null;
+  playModalOpen.value = true;
+  playURLLoading.value = true;
+  try {
+    const res = await fetchCasPlayURL(rec.id);
+    playURLInfo.value = res;
+    if (res.restored) {
+      toast.info("源文件已被删除，已触发秒传恢复并登记延时清理");
+      await load();
+    }
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "获取播放地址失败"));
+  } finally {
+    playURLLoading.value = false;
+  }
+}
+
+function fullPlayURL(path?: string): string {
+  if (!path) return "";
+  return `${window.location.origin}${path}`;
+}
+
+function copyPlayURL() {
+  if (!playURLInfo.value?.play_url) return;
+  copyTextToClipboard(fullPlayURL(playURLInfo.value.play_url));
+  toast.success("播放地址已复制到剪贴板");
+}
+
+function testPlay() {
+  if (!playURLInfo.value?.play_url) return;
+  window.open(fullPlayURL(playURLInfo.value.play_url), "_blank");
+}
 
 // 手动触发一轮 CAS 化（扫描已完成影视上传任务）
 async function runOnce() {
@@ -246,6 +294,13 @@ onMounted(() => {
           <AppInput v-model.number="cfg.age_days" type="number" min="1" />
         </FormField>
         <label class="cas__cfg-item">
+          <input v-model="cfg.delete_source" type="checkbox" />
+          <span>生成清单后自动删除源视频</span>
+        </label>
+        <FormField label="延时删除(时)">
+          <AppInput v-model.number="cfg.delay_delete_hours" type="number" min="0" placeholder="默认2" />
+        </FormField>
+        <label class="cas__cfg-item">
           <input v-model="cfg.write_back_cloud" type="checkbox" />
           <span>.cas 清单写回网盘（默认只存本地库）</span>
         </label>
@@ -292,6 +347,7 @@ onMounted(() => {
               <td><AppBadge :tone="statusTone(rec.status)">{{ statusLabel(rec.status) }}</AppBadge></td>
               <td>
                 <div class="cas__actions">
+                  <AppButton type="button" variant="secondary" size="sm" @click="openPlayModal(rec)">播放直链</AppButton>
                   <AppButton type="button" variant="primary" size="sm" @click="openRestore(rec)">秒传恢复</AppButton>
                   <AppButton type="button" variant="danger" size="sm" @click="handleDelete(rec)">删除</AppButton>
                 </div>
@@ -323,6 +379,35 @@ onMounted(() => {
             {{ restoring ? "恢复中…" : "开始秒传恢复" }}
           </AppButton>
         </div>
+      </div>
+    </AppModal>
+
+    <AppModal :open="playModalOpen" size="account" title="CAS 播放恢复直链" @close="playModalOpen = false">
+      <div class="cas__restore">
+        <AppStateBlock v-if="playURLLoading" message="正在探测/秒传恢复并获取播放直链…" loading min-height="120px" />
+        <template v-else-if="playURLInfo">
+          <p class="cas__restore-tip">
+            <strong>{{ playURLInfo.file_name }}</strong>
+            <br />
+            <span v-if="playURLInfo.restored" style="color: var(--brand, #e50914)">
+              ★ 源文件原先已被删除，刚刚已触发秒传恢复，并在 {{ cfg.delay_delete_hours }} 小时后自动延时删除。
+            </span>
+            <span v-else style="color: #34d399">
+              ✓ 云端文件尚存，可直接流畅播放。
+            </span>
+          </p>
+          <FormField label="播放直链 / STRM 路径">
+            <AppInput :model-value="fullPlayURL(playURLInfo.play_url)" readonly />
+          </FormField>
+          <div class="modal-form__footer">
+            <AppButton type="button" variant="secondary" @click="copyPlayURL">
+              复制完整链接
+            </AppButton>
+            <AppButton type="button" variant="primary" @click="testPlay">
+              在新窗口播放测试
+            </AppButton>
+          </div>
+        </template>
       </div>
     </AppModal>
   </div>

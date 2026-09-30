@@ -54,10 +54,12 @@ func (r *Runner) StartScheduler(ctx context.Context) {
 			generated, deleted, skipped, failed, err := r.RunOnce(ctx)
 			if err != nil {
 				log.Warn("CAS 定时化执行失败", "err", err)
-				return
-			}
-			if generated > 0 || deleted > 0 || failed > 0 {
+			} else if generated > 0 || deleted > 0 || failed > 0 {
 				log.Info("CAS 定时化完成", "generated", generated, "deleted", deleted, "skipped", skipped, "failed", failed)
+			}
+			// 巡检清理因重启等遗留的已过期临时恢复文件
+			if cleaned := CleanupExpiredRestoredSources(ctx); cleaned > 0 {
+				log.Info("CAS 巡检清理已过期恢复文件", "cleaned", cleaned)
 			}
 		})
 	}
