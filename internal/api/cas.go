@@ -1,11 +1,17 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
 
 	"litepan/internal/cas"
 	"litepan/internal/domain"
+	"litepan/internal/playback"
 )
 
 // ---------------------------------------------------------------------------
@@ -145,4 +151,98 @@ func (h *Handler) casSaveConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	cas.SaveConfig(cfg)
 	writeOK(w, cas.GetConfigForAPI())
+}
+
+// parseCasIDFromRequest 灵活提取 CAS ID（兼容 /cas/play/{id}、/cas/play/*?cas_id=N、?id=N 等格式）
+func parseCasIDFromRequest(r *http.Request) (uint, error) {
+	idStr := strings.TrimSpace(chi.URLParam(r, "id"))
+	if idStr == "" {
+		idStr = strings.TrimSpace(r.URL.Query().Get("cas_id"))
+	}
+	if idStr == "" {
+		idStr = strings.TrimSpace(r.URL.Query().Get("id"))
+	}
+	if idStr == "" {
+		// 尝试从通配路径提取数字前缀，例如 /cas/play/123-film.mkv 或 /cas/play/123/film.mkv
+		path := strings.Trim(chi.URLParam(r, "*"), "/")
+		if parts := strings.Split(path, "/"); len(parts) > 0 {
+			first := parts[0]
+			if idx := strings.Index(first, "-"); idx > 0 {
+				first = first[:idx]
+			}
+			if n, err := strconv.ParseUint(first, 10, 64); err == nil && n > 0 {
+				return uint(n), nil
+			}
+		}
+	}
+	if idStr == "" {
+		return 0, domain.Errorf(domain.CodeValidation, "缺少有效 cas_id")
+	}
+	n, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, domain.Errorf(domain.CodeValidation, "非法 cas_id：%s", idStr)
+	}
+	return uint(n), nil
+}
+
+// casPlay CAS 播放直链/代理入口：源文件若被删则自动秒传恢复，并登记延时清理，支持 302 重定向或边转边播
+func (h *Handler) casPlay(w http.ResponseWriter, r *http.Request) {
+	if h.playback == nil {
+		writeErr(w, domain.Errf(domain.CodeNotImplement))
+		return
+	}
+
+	casID, err := parseCasIDFromRequest(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	// 探测并恢复文件
+	rec, playFileID, restored, err := cas.ProbeAndRestoreFile(r.Context(), casID)
+	if err != nil {
+		writeErr(w, domain.Errorf(domain.CodeDriverError, "CAS 播放恢复失败：%v", err))
+		return
+	}
+
+	fileName := rec.FileName
+	if custom := chi.URLParam(r, "filename"); custom != "" {
+		if unescaped, err := url.PathUnescape(custom); err == nil && unescaped != "" {
+			fileName = unescaped
+		}
+	}
+
+	h.log.Info("CAS 播放交付", "cas_id", casID, "file", fileName, "fid", playFileID, "restored", restored)
+
+	// 交付播放（自动支持 302 重定向、Range 分片代理）
+	if err := h.playback.ServeHTTP(w, r, playback.Request{
+		AccountID: rec.AccountID,
+		FileID:    playFileID,
+	}, playback.Intent{FileName: fileName}); err != nil {
+		writeErr(w, err)
+	}
+}
+
+// casPlayURL 获取 CAS 播放地址和恢复状态（后台管理或测试调用）
+func (h *Handler) casPlayURL(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil || id <= 0 {
+		writeErr(w, domain.Errorf(domain.CodeValidation, "非法记录 id"))
+		return
+	}
+
+	rec, playFileID, restored, err := cas.ProbeAndRestoreFile(r.Context(), uint(id))
+	if err != nil {
+		writeErr(w, domain.Errorf(domain.CodeDriverError, "CAS 播放恢复失败：%v", err))
+		return
+	}
+
+	playURL := fmt.Sprintf("/cas/play/%d/%s", rec.ID, url.PathEscape(rec.FileName))
+	writeOK(w, map[string]any{
+		"cas_id":       rec.ID,
+		"file_name":    rec.FileName,
+		"play_file_id": playFileID,
+		"restored":     restored,
+		"play_url":     playURL,
+	})
 }

@@ -76,6 +76,40 @@ func (r *rapidDriver) FetchFingerprint(ctx context.Context, parentID, fileID, fi
 	return hs, false
 }
 
+// ProbeFile 探测文件是否在云端目录存在（优先按 fileID，后备按 parentID+fileName），存在返回 (true, actualFileID)
+func (r *rapidDriver) ProbeFile(ctx context.Context, parentID, fileID, fileName string) (bool, string) {
+	drv, err := r.mgr.Get(ctx, r.accountID)
+	if err != nil || drv == nil {
+		return false, ""
+	}
+	// 1. 如果有 fileID，优先 GetFileInfo 精确探测
+	if fileID != "" {
+		if ig, ok := drv.(driver.InfoGetter); ok {
+			if item, ierr := ig.GetFileInfo(ctx, fileID); ierr == nil && item != nil && !item.IsDir {
+				return true, item.ID
+			}
+		}
+	}
+	// 2. 如果传入了父目录或者文件名，列出父目录匹配同名文件
+	if lister, ok := drv.(driver.Lister); ok && (parentID != "" || fileID != "") {
+		pID := parentID
+		if pID == "" {
+			pID = "0"
+		}
+		if items, lerr := lister.ListFiles(ctx, pID); lerr == nil {
+			for _, it := range items {
+				if it.IsDir {
+					continue
+				}
+				if it.ID == fileID || it.Name == fileName {
+					return true, it.ID
+				}
+			}
+		}
+	}
+	return false, ""
+}
+
 // DeleteFile 删除云端文件
 func (r *rapidDriver) DeleteFile(ctx context.Context, fileID string) error {
 	drv, err := r.mgr.Get(ctx, r.accountID)
