@@ -16,6 +16,7 @@ func classifyScanFile(
 	fileID, fileName, outputFolder string,
 	size int64,
 	relDirs []string,
+	sourceDir string,
 	exts, metaExts map[string]struct{},
 	minMediaBytes, metaMaxBytes int64,
 	syncMetadata bool,
@@ -27,10 +28,11 @@ func classifyScanFile(
 		}
 		return classifiedScanFile{
 			media: mediaCandidate{
-				fileID:   fileID,
-				fileName: fileName,
-				size:     size,
-				relDirs:  append([]string{}, relDirs...),
+				fileID:    fileID,
+				fileName:  fileName,
+				size:      size,
+				relDirs:   append([]string{}, relDirs...),
+				sourceDir: sourceDir,
 			},
 			hasMedia: true,
 		}

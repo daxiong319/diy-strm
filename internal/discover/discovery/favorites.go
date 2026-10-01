@@ -109,6 +109,53 @@ type DiscoverySubjectCache struct {
 
 func (DiscoverySubjectCache) TableName() string { return "discovery_subject_cache" }
 
+// PersistDoubanSubjects 把豆瓣列表条目写入 discovery_subject_cache。
+//
+// 详情接口 doubanDetails 只认这张表（按 source+external_id 查），而探索页
+// /explore/douban 与片单榜 /rankings?provider=douban:* 此前从不落库，导致从这两处
+// 点进详情必然 500（未找到该豆瓣条目）。这里按 (catalog_key, source, external_id)
+// 幂等 upsert，榜单翻页与探索页都调用它。
+func PersistDoubanSubjects(catalogKey string, rows []DiscoverySubjectCache) (int, error) {
+	added := 0
+	now := time.Now()
+	err := ddb.Db.Transaction(func(tx *gorm.DB) error {
+		for i := range rows {
+			row := rows[i]
+			if strings.TrimSpace(row.ExternalID) == "" {
+				continue
+			}
+			row.CatalogKey = catalogKey
+			row.Source = "douban"
+			row.Sort = i
+			row.UpdatedAt = now
+			var exist DiscoverySubjectCache
+			err := tx.Where("catalog_key = ? AND source = ? AND external_id = ?",
+				catalogKey, "douban", row.ExternalID).First(&exist).Error
+			if err == nil {
+				// 已存在：只刷新易变字段，保留既有 TMDB 匹配结果
+				if err := tx.Model(&exist).Updates(map[string]any{
+					"title":        row.Title,
+					"media_type":   row.MediaType,
+					"poster":       row.Poster,
+					"rating":       row.Rating,
+					"release_date": row.ReleaseDate,
+					"payload":      row.Payload,
+					"updated_at":   now,
+				}).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+			added++
+		}
+		return nil
+	})
+	return added, err
+}
+
 // ReplaceCatalogItems 全量替换某目录的缓存条目
 func ReplaceCatalogItems(catalogKey string, items []DiscoverySubjectCache) error {
 	return ddb.Db.Transaction(func(tx *gorm.DB) error {

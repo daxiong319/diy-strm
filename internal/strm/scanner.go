@@ -217,8 +217,8 @@ func newScanRules(task *domain.StrmTask, settings ScanSettings) scanRules {
 	}
 }
 
-func (r scanRules) classify(fileID, name string, size int64, relDirs []string) classifiedScanFile {
-	return classifyScanFile(fileID, name, r.outputRelDir, size, relDirs,
+func (r scanRules) classify(fileID, name string, size int64, relDirs []string, sourceDir string) classifiedScanFile {
+	return classifyScanFile(fileID, name, r.outputRelDir, size, relDirs, sourceDir,
 		r.mediaExts, r.metadataExts, r.minMediaBytes, r.maxMetadataBytes, r.syncMetadata)
 }
 
@@ -284,10 +284,10 @@ func (f scanFinalizer) writeStrm(selected []mediaCandidate) (ScanResult, map[str
 		}
 		if created {
 			result.GeneratedCount++
-			f.log.Info("STRM 生成", "path", filepath.ToSlash(relPath))
+			logStrmFile(f.log, "STRM 生成成功", item, filepath.Join(f.root, relPath), filepath.ToSlash(relPath), f.rules.outputRelDir)
 		} else if updated {
 			result.UpdatedCount++
-			f.log.Info("STRM 更新", "path", filepath.ToSlash(relPath))
+			logStrmFile(f.log, "STRM 更新成功", item, filepath.Join(f.root, relPath), filepath.ToSlash(relPath), f.rules.outputRelDir)
 		}
 	}
 	return result, seen
@@ -590,12 +590,76 @@ func looksLikeNotFound(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "object not found")
 }
 
+// buildStrmLogArgs 组装单条 STRM 生成/更新日志的字段与可读消息，
+// 形如 "源文件完整路径 => 生成的 strm 完整路径"，并附带剧名、季、集与画质等可排查信息。
+func buildStrmLogArgs(item mediaCandidate, strmAbsPath, strmRelPath, mediaRoot string) (string, []any) {
+	sourcePath := ""
+	sourceDir := strings.TrimRight(strings.TrimSpace(item.sourceDir), "/")
+	if sourceDir != "" {
+		sourcePath = sourceDir + "/" + item.fileName
+	}
+	info := DescribeMediaInfo(sourcePath, item.fileName, item.relDirs)
+
+	displaySource := sourcePath
+	if displaySource == "" {
+		displaySource = info.Title
+	}
+	mediaRoot = strings.TrimRight(strings.TrimSpace(mediaRoot), "/")
+	displayStrm := strings.TrimSpace(strmAbsPath)
+	if displayStrm == "" {
+		displayStrm = strmRelPath
+	}
+
+	args := []any{
+		"source", filepath.ToSlash(displaySource),
+		"strm", filepath.ToSlash(displayStrm),
+		"title", info.Title,
+		"file", item.fileName,
+		"rel_path", strmRelPath,
+		"root", filepath.ToSlash(mediaRoot),
+	}
+	if info.HasSeason {
+		args = append(args, "season", info.Season)
+	}
+	if info.HasEpisode {
+		args = append(args, "episode", info.Episode)
+	}
+	return fmt.Sprintf("%s => %s", filepath.ToSlash(displaySource), filepath.ToSlash(displayStrm)), args
+}
+
+// logStrmFile 输出一条 STRM 生成/更新日志，字段与可读消息都带齐源文件与产物路径。
+func logStrmFile(log *slog.Logger, msg string, item mediaCandidate, strmAbsPath, strmRelPath, mediaRoot string) {
+	if log == nil {
+		return
+	}
+	display, args := buildStrmLogArgs(item, strmAbsPath, strmRelPath, mediaRoot)
+	log.Info(msg+": "+display, args...)
+}
+
 // dirRelPath 把相对目录段拼成可读的斜杠路径，用于失败记录。
 func dirRelPath(relDirs []string) string {
 	if len(relDirs) == 0 {
 		return "/"
 	}
 	return strings.Join(relDirs, "/")
+}
+
+// remoteDirOf 拼出源文件所在目录的完整远端路径，用于生成日志展示。
+// scopePath 非空时它就是"当前所在目录"的真实完整路径（分支 Path 已含相对路径），
+// 直接返回；为空时退回任务根路径 + 相对目录逐段拼接。
+func remoteDirOf(scopePath, taskPath string, relDirs []string) string {
+	if base := strings.TrimRight(strings.TrimSpace(scopePath), "/"); base != "" {
+		return base
+	}
+	base := strings.TrimRight(strings.TrimSpace(taskPath), "/")
+	rel := dirRelPath(relDirs)
+	if rel == "/" {
+		return base
+	}
+	for _, seg := range strings.Split(rel, "/") {
+		base = joinRemotePath(base, seg)
+	}
+	return base
 }
 
 // listDirWithNotFoundRetry 三段式列目录：正常列 → not found 强刷一次 → 仍失败则记录并跳过，致命错误返回 err。
@@ -705,7 +769,7 @@ func walkBaseBranchEntry(
 		if matchesKeywordRules(name, rules.excludeFiles) {
 			continue
 		}
-		classified := rules.classify(item.ID, name, item.Size, relDirs)
+		classified := rules.classify(item.ID, name, item.Size, relDirs, remoteDirOf(scope.remotePath, task.Path, relDirs))
 		if classified.hasMedia {
 			harvest.candidates = append(harvest.candidates, classified.media)
 			if deps.OnProgress != nil {
@@ -729,7 +793,9 @@ func walkBaseBranchEntry(
 	if deps.OnProgress != nil {
 		reportScanProgress(deps.OnProgress, ScanPhaseScan, 1, 0, dirProgressLabel(relDirs))
 	}
-	harvest.log.Info("STRM 扫描目录", "dir", dirRelPath(relDirs), "files", len(items), "media", mediaCount)
+	harvest.log.Info("STRM 扫描目录", "dir", dirRelPath(relDirs),
+		"remote_dir", remoteDirOf(scope.remotePath, task.Path, relDirs),
+		"files", len(items), "media", mediaCount)
 	return childScopes, remoteChildNames, nil
 }
 
@@ -793,13 +859,14 @@ func walkScope(
 			if matchesKeywordRules(name, rules.excludeFiles) {
 				continue
 			}
-			classified := rules.classify(item.ID, name, item.Size, n.relDirs)
+			classified := rules.classify(item.ID, name, item.Size, n.relDirs, remoteDirOf(scope.remotePath, task.Path, n.relDirs))
 			if classified.hasMedia {
 				harvest.candidates = append(harvest.candidates, classified.media)
 				if deps.OnProgress != nil {
 					reportScanProgress(deps.OnProgress, ScanPhaseScan, 0, 1, dirProgressLabel(n.relDirs))
 				}
 				localHasMedia = true
+				mediaCount++
 				continue
 			}
 			if classified.hasMetadata {
@@ -817,7 +884,9 @@ func walkScope(
 		if deps.OnProgress != nil {
 			reportScanProgress(deps.OnProgress, ScanPhaseScan, 1, 0, dirProgressLabel(n.relDirs))
 		}
-		harvest.log.Info("STRM 扫描目录", "dir", dirRelPath(n.relDirs), "files", len(items), "media", mediaCount)
+		harvest.log.Info("STRM 扫描目录", "dir", dirRelPath(n.relDirs),
+			"remote_dir", remoteDirOf(scope.remotePath, task.Path, n.relDirs),
+			"files", len(items), "media", mediaCount)
 	}
 	return nil
 }

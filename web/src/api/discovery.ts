@@ -241,6 +241,14 @@ export interface DiscoverResourceItem {
 }
 
 /** 单来源失败信息（★ 部分源失败时整体仍 200，必须消费 errors） */
+/**
+ * 来源级问题。
+ * ★ code 决定语气与图标，不要只看 message：
+ * - RESOURCE_SOURCE_UNCONFIGURED：来源没配置（不是失败，只在 skipped 里出现）
+ * - RESOURCE_SOURCE_UNAVAILABLE：依赖的服务没跑/端口不通（用户可自行修复）
+ * - RESOURCE_SOURCE_TIMEOUT：来源查询超时
+ * - RESOURCE_SOURCE_ERROR：上游返回错误等真实失败
+ */
 export interface DiscoverResourceSourceError {
   source: string;
   code?: string;
@@ -248,9 +256,18 @@ export interface DiscoverResourceSourceError {
   error?: string;
 }
 
+/** 未启用的来源（没配置），与 errors 分开，前端不应据此报警 */
+export interface DiscoverResourceSkippedSource {
+  source: string;
+  code?: string;
+  message?: string;
+}
+
 export interface DiscoverResourceSearchResult {
   items: DiscoverResourceItem[];
   errors: DiscoverResourceSourceError[];
+  /** ★ 未配置而跳过的来源，不是错误；老后端可能不返回该字段 */
+  skipped?: DiscoverResourceSkippedSource[];
 }
 
 export interface DiscoverResourceSearchBody {
@@ -708,8 +725,19 @@ export function clearMonitorRecords(payload: { source_type?: string; start?: str
 /** Emby 缺集总览（后端直接透出 map，字段按需读取） */
 export interface EmbyMissingStatus {
   emby?: {
+    /** 本功能是否已由用户填写服务器地址 + API Key（★ 不继承其它功能的 Emby 配置） */
     configured?: boolean;
     enabled?: boolean;
+    /** 配置齐全且探活成功（state=ready 时为 true） */
+    reachable?: boolean;
+    /**
+     * 配置状态枚举，前端据此区分三类完全不同的问题：
+     * - unconfigured：本功能未配置（要引导用户去填，不是报错）
+     * - disabled：填了但没启用
+     * - unreachable：填了但连不上 Emby（这才是真故障）
+     * - ready：可扫描
+     */
+    state?: "unconfigured" | "disabled" | "unreachable" | "ready";
     server_url?: string;
     message?: string;
   };
@@ -721,6 +749,13 @@ export interface EmbyMissingStatus {
     scan_interval_minutes?: number;
     auto_create_subscriptions?: boolean;
   };
+}
+
+/** 缺集扫描专用的 Emby 配置（写入 settings key media_emby） */
+export interface MediaEmbyConfigPayload {
+  enabled: boolean;
+  server_url: string;
+  api_key: string;
 }
 
 /** Emby 媒体库（id/name 为主，其余字段后端可能扩展） */
@@ -806,6 +841,40 @@ export interface EmbyMissingSubscriptionPayload {
 
 export function fetchEmbyMissingStatus() {
   return http.get<EmbyMissingStatus>("/admin/discovery/emby-missing/status");
+}
+
+/**
+ * 缺集扫描专用 Emby 配置。
+ * ★ 该配置与其它功能的全局 Emby 配置完全隔离（后端 settings key media_emby），
+ *   未配置时 server_url 为空串——所以表单初始是空的，不会被别人预填。
+ * api_key 不回显明文，只返回 api_key_set。
+ */
+export interface EmbyMissingConfig {
+  enabled: boolean;
+  server_url: string;
+  api_key_set: boolean;
+  configured: boolean;
+}
+
+export function fetchEmbyMissingConfig() {
+  return http.get<EmbyMissingConfig>("/admin/discovery/emby-missing/config");
+}
+
+/** 保存配置；api_key 留空 = 沿用已存的 Key（因为后端不回显明文） */
+export function saveEmbyMissingConfig(payload: {
+  enabled: boolean;
+  server_url: string;
+  api_key?: string;
+}) {
+  return http.put<EmbyMissingConfig>("/admin/discovery/emby-missing/config", payload);
+}
+
+/** 用当前表单里的地址/Key 探活 Emby（不写设置） */
+export function testEmbyMissingConfig(payload: { server_url: string; api_key?: string }) {
+  return http.post<{ ok: boolean; library_count: number; libraries: EmbyLibrary[] }>(
+    "/admin/discovery/emby-missing/config/test",
+    payload,
+  );
 }
 
 export function fetchEmbyMissingLibraries() {

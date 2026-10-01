@@ -42,9 +42,17 @@ type Tgto123FeedClient struct {
 	loginFai time.Time
 }
 
+// Tgto123ConfiguredURL 返回生效的 tgto123 反代地址（空串表示确实没配置）。
+// 注意：默认设置里 SettingTgto123URL 就是 Tgto123DefaultURL，所以正常情况下
+// 这里返回的是 127.0.0.1:12366 —— 也就是说「地址为空」是罕见情形，反代没启动
+// 会表现为连接被拒，而不是未配置。
+func Tgto123ConfiguredURL() string {
+	return strings.TrimRight(SettingString(SettingTgto123URL, Tgto123DefaultURL), "/")
+}
+
 // newTgto123FeedClient 从设置构建客户端（未配置 URL 返回 nil）
 func newTgto123FeedClient() *Tgto123FeedClient {
-	base := strings.TrimRight(SettingString(SettingTgto123URL, Tgto123DefaultURL), "/")
+	base := Tgto123ConfiguredURL()
 	if base == "" {
 		return nil
 	}
@@ -104,7 +112,9 @@ func (c *Tgto123FeedClient) login(ctx context.Context) error {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("连接 tgto123 失败：%w", err)
+		// 反代是独立进程，连不上通常意味着它没启动/端口不对。把「打谁不通」
+		// 写清楚，呼叫方（资源搜索）会再翻译成面向用户的修复建议。
+		return fmt.Errorf("连接 tgto123 反代失败（%s 是独立进程，请确认已启动）：%w", c.baseURL, err)
 	}
 	defer resp.Body.Close()
 	var out struct {

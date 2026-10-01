@@ -18,6 +18,8 @@ const (
 	TemplateRegion = "region"
 	TemplateGenre  = "genre"
 	TemplateCustom = "custom"
+	// TemplateUserRules 标识本次分类由用户自定义规则（导入的 YAML 规则）命中。
+	TemplateUserRules = "user_rules"
 )
 
 // Rule 用同一种结构描述一级、二级分类。

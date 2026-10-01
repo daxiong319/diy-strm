@@ -2,16 +2,19 @@
 // Emby 缺集补档面板。
 // 数据链路：启动扫描（后端异步）→ 轮询 status 拿进度 → 拉 results 列缺集 → 勾选后批量建补档订阅。
 // 设计取舍：扫描是异步的，所以不做「点了就等结果」，而是用轮询驱动进度条，用户可随时离开。
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { getApiErrorMessage } from "@/api/client";
 import {
   createEmbyMissingSubscriptions,
+  fetchEmbyMissingConfig,
   fetchEmbyMissingEvents,
   fetchEmbyMissingLibraries,
   fetchEmbyMissingResults,
   fetchEmbyMissingScans,
   fetchEmbyMissingStatus,
+  saveEmbyMissingConfig,
   startEmbyMissingScan,
+  testEmbyMissingConfig,
   type EmbyLibrary,
   type EmbyMissingEvent,
   type EmbyMissingResult,
@@ -20,8 +23,10 @@ import {
 } from "@/api/discovery";
 import AppBadge from "@/components/base/AppBadge.vue";
 import AppButton from "@/components/base/AppButton.vue";
+import AppInput from "@/components/base/AppInput.vue";
 import AppSelect from "@/components/base/AppSelect.vue";
 import AppStateBlock from "@/components/base/AppStateBlock.vue";
+import FormField from "@/components/base/FormField.vue";
 import SettingsCard from "@/components/admin/SettingsCard.vue";
 import { toast } from "@/composables/useToast";
 import "@/styles/admin-table.css";
@@ -55,7 +60,49 @@ let pollTimer: number | null = null;
 
 const embyInfo = computed(() => status.value?.emby ?? {});
 const activeScan = computed(() => status.value?.active_scan ?? null);
-const ready = computed(() => Boolean(embyInfo.value.configured));
+/**
+ * 只有「配置齐全 + 已启用」才算就绪。
+ * ★ 不能只看 configured：后端现在会如实区分未配置 / 未启用 / 连不上，
+ *   这里也必须跟着区分，否则「填了但连不上」还会被当成可以扫描。
+ */
+const ready = computed(
+  () =>
+    Boolean(embyInfo.value.configured) &&
+    Boolean(embyInfo.value.enabled) &&
+    embyInfo.value.state !== "unreachable",
+);
+
+/** 配置状态中文名（state 缺失时按 configured/enabled 兜底推断，兼容旧后端） */
+function embyStateLabel(state?: string): string {
+  switch (state) {
+    case "ready":
+      return "已就绪";
+    case "unreachable":
+      return "无法连接";
+    case "disabled":
+      return "未启用";
+    case "unconfigured":
+      return "未配置";
+    default:
+      if (!embyInfo.value.configured) return "未配置";
+      if (!embyInfo.value.enabled) return "未启用";
+      return "已就绪";
+  }
+}
+
+function embyStateTone(state?: string): "success" | "warning" | "danger" | "neutral" {
+  switch (state) {
+    case "ready":
+      return "success";
+    case "unreachable":
+      return "danger";
+    case "disabled":
+    case "unconfigured":
+      return "warning";
+    default:
+      return embyInfo.value.configured ? "success" : "warning";
+  }
+}
 
 /** 扫描进度百分比：后端不保证 total_series 一定大于 0，所以要做零除保护。 */
 const scanProgress = computed(() => {
@@ -187,7 +234,11 @@ async function refreshAll() {
   loading.value = true;
   errorMsg.value = "";
   try {
-    await Promise.all([loadStatus(), loadScans(), loadLibraries()]);
+    await loadStatus();
+    // 未配置就自动展开配置区：这是用户进来第一件要做的事，
+    // 省掉一次「点立即配置」的点击。
+    if (configNeeded.value) configOpen.value = true;
+    await Promise.all([loadScans(), loadLibraries(), loadConfig()]);
   } finally {
     loading.value = false;
   }
@@ -278,6 +329,100 @@ async function toggleEvents(scanId: number) {
   }
 }
 
+// --- 本功能专属 Emby 配置 ---------------------------------------------------
+// ★ 缺集补档的 Emby 配置与其它功能（影巢反代等）完全隔离，后端不会替用户预填，
+//   所以表单初始为空，必须由用户自己填写。这里也刻意不读全局 Emby 配置。
+const configOpen = ref(false);
+const configLoading = ref(false);
+const configSaving = ref(false);
+const configTesting = ref(false);
+const configMsg = ref("");
+const configError = ref("");
+/** 已保存过 API Key 时提示「留空即沿用」，避免用户以为必须重填 */
+const apiKeySaved = ref(false);
+const configForm = reactive({
+  enabled: false,
+  serverUrl: "",
+  apiKey: "",
+});
+
+/** 未配置时自动展开配置区，用户一进来就知道要自己填 */
+const configNeeded = computed(() => !embyInfo.value.configured);
+
+async function loadConfig() {
+  configLoading.value = true;
+  configError.value = "";
+  try {
+    const res = await fetchEmbyMissingConfig();
+    configForm.enabled = res.enabled ?? false;
+    // 后端未配置时返回空串 → 表单留空（这正是本次要保证的行为）
+    configForm.serverUrl = res.server_url ?? "";
+    configForm.apiKey = "";
+    apiKeySaved.value = res.api_key_set ?? false;
+  } catch (e) {
+    configError.value = getApiErrorMessage(e, "加载 Emby 配置失败");
+  } finally {
+    configLoading.value = false;
+  }
+}
+
+async function saveConfig() {
+  if (configSaving.value) return;
+  configError.value = "";
+  configMsg.value = "";
+  if (configForm.enabled && !configForm.serverUrl.trim()) {
+    configError.value = "启用前请先填写 Emby 服务器地址";
+    return;
+  }
+  if (configForm.enabled && !configForm.apiKey.trim() && !apiKeySaved.value) {
+    configError.value = "首次配置需同时填写 API Key";
+    return;
+  }
+  configSaving.value = true;
+  try {
+    const res = await saveEmbyMissingConfig({
+      enabled: configForm.enabled,
+      server_url: configForm.serverUrl.trim(),
+      api_key: configForm.apiKey.trim() || undefined,
+    });
+    apiKeySaved.value = res.api_key_set ?? apiKeySaved.value;
+    configForm.apiKey = "";
+    configMsg.value = res.configured
+      ? "配置已保存，可点击「测试连接」确认可达"
+      : "配置已保存（尚未具备扫描条件）";
+    toast.success("Emby 配置已保存");
+    await loadStatus();
+    configOpen.value = false;
+  } catch (e) {
+    configError.value = getApiErrorMessage(e, "保存 Emby 配置失败");
+  } finally {
+    configSaving.value = false;
+  }
+}
+
+async function testConfig() {
+  if (configTesting.value) return;
+  configError.value = "";
+  configMsg.value = "";
+  if (!configForm.serverUrl.trim()) {
+    configError.value = "请先填写 Emby 服务器地址";
+    return;
+  }
+  configTesting.value = true;
+  try {
+    const res = await testEmbyMissingConfig({
+      server_url: configForm.serverUrl.trim(),
+      api_key: configForm.apiKey.trim() || undefined,
+    });
+    configMsg.value = `连接成功：识别到 ${res.library_count ?? 0} 个剧集媒体库`;
+    toast.success("Emby 连接成功");
+  } catch (e) {
+    configError.value = getApiErrorMessage(e, "无法连接 Emby");
+  } finally {
+    configTesting.value = false;
+  }
+}
+
 onMounted(refreshAll);
 onUnmounted(stopPolling);
 </script>
@@ -294,10 +439,90 @@ onUnmounted(stopPolling);
     <template v-else>
       <div v-if="errorMsg" class="em__banner em__banner--error">{{ errorMsg }}</div>
 
-      <!-- Emby 未配置时给出明确阻断，而不是让用户点了扫描才报错 -->
-      <div v-if="!ready" class="em__banner em__banner--warn">
-        {{ embyInfo.message || "请先完成 Emby 配置" }}
+      <!--
+        状态分三类，语气必须不同：
+        - unconfigured：本功能还没配 → 引导去填，不是报错
+        - unreachable：填了但连不上 → 这是真故障，用 error 色
+        - disabled：填了没启用 → 提示开启即可
+      -->
+      <div
+        v-if="!ready"
+        class="em__banner"
+        :class="
+          embyInfo.state === 'unreachable' ? 'em__banner--error' : 'em__banner--warn'
+        "
+      >
+        <span>{{ embyInfo.message || "请先完成本功能的 Emby 配置" }}</span>
+        <AppButton size="sm" variant="secondary" @click="configOpen = !configOpen">
+          {{ configOpen ? "收起配置" : "立即配置" }}
+        </AppButton>
       </div>
+      <div v-else-if="embyInfo.state === 'disabled'" class="em__banner em__banner--warn">
+        {{ embyInfo.message || "Emby 已填写但未启用" }}
+      </div>
+
+      <!-- 本功能专属 Emby 配置（★ 与其它功能的全局 Emby 配置隔离，需用户自行填写） -->
+      <SettingsCard title="Emby 服务器配置（缺集补档专用）">
+        <template #head-actions>
+          <AppButton variant="ghost" size="sm" @click="configOpen = !configOpen">
+            {{ configOpen ? "收起" : "编辑配置" }}
+          </AppButton>
+        </template>
+
+        <p class="em__config-hint">
+          本功能的服务器地址与 API Key 独立保存，<strong>不会继承</strong>影巢反代等其它功能的
+          Emby 配置，请按下方的空白表单自行填写。
+        </p>
+
+        <div class="em__meta">
+          <span>服务器：{{ embyInfo.server_url || "未配置" }}</span>
+          <span>
+            状态：
+            <AppBadge :tone="embyStateTone(embyInfo.state)">
+              {{ embyStateLabel(embyInfo.state) }}
+            </AppBadge>
+          </span>
+        </div>
+
+        <div v-if="configOpen" class="em__config">
+          <AppStateBlock v-if="configLoading" message="正在加载配置…" loading min-height="80px" />
+          <template v-else>
+            <label class="em__config-toggle">
+              <input v-model="configForm.enabled" type="checkbox" />
+              <span>启用缺集扫描</span>
+            </label>
+
+            <FormField label="Emby 服务器地址">
+              <AppInput
+                v-model="configForm.serverUrl"
+                placeholder="例如 http://192.168.1.10:8096"
+                ignore-autofill
+              />
+            </FormField>
+
+            <FormField label="API Key">
+              <AppInput
+                v-model="configForm.apiKey"
+                type="password"
+                :placeholder="apiKeySaved ? '已保存，留空表示不修改' : '请填写 Emby 的 API Key'"
+                ignore-autofill
+              />
+            </FormField>
+
+            <div class="em__config-actions">
+              <AppButton variant="primary" size="sm" :disabled="configSaving" @click="saveConfig">
+                {{ configSaving ? "保存中…" : "保存配置" }}
+              </AppButton>
+              <AppButton variant="secondary" size="sm" :disabled="configTesting" @click="testConfig">
+                {{ configTesting ? "测试中…" : "测试连接" }}
+              </AppButton>
+            </div>
+
+            <p v-if="configMsg" class="em__config-msg">{{ configMsg }}</p>
+            <p v-if="configError" class="em__config-msg em__config-msg--error">{{ configError }}</p>
+          </template>
+        </div>
+      </SettingsCard>
 
       <SettingsCard title="缺集扫描">
         <template #head-actions>
@@ -464,6 +689,10 @@ onUnmounted(stopPolling);
 }
 
 .em__banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 10px 14px;
   border-radius: 8px;
   font-size: 14px;
@@ -477,6 +706,48 @@ onUnmounted(stopPolling);
 .em__banner--warn {
   background: color-mix(in srgb, var(--warning, #d90) 14%, transparent);
   color: var(--warning, #d90);
+}
+
+.em__config-hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.em__config {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+}
+
+.em__config-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-regular);
+  cursor: pointer;
+  user-select: none;
+}
+
+.em__config-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.em__config-msg {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.em__config-msg--error {
+  color: var(--danger, #d33);
 }
 
 .em__meta {

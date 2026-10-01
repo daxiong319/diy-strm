@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -78,6 +79,25 @@ func (s *Service) Classify(ctx context.Context, req classification.Request) (cla
 	}
 	decision := classification.Decision{Applied: true, Template: tpl.Kind}
 	state := evaluationState{req: req, raw: req.Raw, evaluated: make(map[string][]string)}
+
+	// 用户自定义规则优先：配置了启用中的规则时按文件顺序评估、首个命中胜出。
+	// 未配置任何自定义规则时不改变既有模板行为（向后兼容）。
+	if s.hasCustomRules(ctx) {
+		segments, evidence, err := s.matchCustomRules(ctx, req.MediaType, &state)
+		if err != nil {
+			return classification.Decision{}, err
+		}
+		if len(segments) > 0 {
+			decision.Template = TemplateUserRules
+			decision.Matched = true
+			decision.RelativeSegments = segments
+			decision.Category = segments[len(segments)-1]
+			decision.Evidence = evidence
+			return decision, nil
+		}
+		// 规则存在但均未命中：继续走所选模板，避免用户规则不全时完全失去归类能力。
+	}
+
 	if tpl.Kind == TemplateCustom {
 		return s.classifyCustom(ctx, decision, &state, tpl.Rules)
 	}
@@ -309,6 +329,12 @@ func (s *Service) valuesForField(ctx context.Context, state *evaluationState, fi
 		state.evaluated[field] = append([]string(nil), values...)
 		return values
 	}
+	if field == "year" {
+		// year 不是 TMDB 的直接字段，统一从上映/首播日期里取年份。
+		values := yearValues(state.raw)
+		state.evaluated[field] = append([]string(nil), values...)
+		return values
+	}
 	if raw, exists := state.raw[field]; exists {
 		values := extractFieldValues(raw, field)
 		state.evaluated[field] = append([]string(nil), values...)
@@ -328,12 +354,44 @@ func (s *Service) valuesForField(ctx context.Context, state *evaluationState, fi
 		state.raw = raw
 		state.detailLoaded = true
 	}
+	if field == "year" {
+		values := yearValues(state.raw)
+		state.evaluated[field] = append([]string(nil), values...)
+		return values
+	}
 	values := extractFieldValues(state.raw[field], field)
 	state.evaluated[field] = append([]string(nil), values...)
 	return values
 }
 
+// yearValues 从 TMDB detail 的上映/首播日期中解析年份。
+// 电影用 release_date，剧集用 first_air_date；两者都是 "YYYY-MM-DD"。
+func yearValues(raw map[string]any) []string {
+	if raw == nil {
+		return nil
+	}
+	values := make([]string, 0, 2)
+	for _, key := range []string{"release_date", "first_air_date", "air_date"} {
+		text := strings.TrimSpace(fmt.Sprint(raw[key]))
+		if text == "" || text == "<nil>" {
+			continue
+		}
+		year := text
+		if len(year) > 4 {
+			year = year[:4]
+		}
+		if _, err := strconv.Atoi(year); err != nil {
+			continue
+		}
+		values = append(values, year)
+	}
+	return uniqueValues(values)
+}
+
 func extractFieldValues(raw any, field string) []string {
+	if keys, ok := ruleFieldObjectKeys[field]; ok {
+		return uniqueValues(collectObjectFieldValues(raw, keys))
+	}
 	values := make([]string, 0)
 	var appendValue func(any)
 	appendValue = func(value any) {
@@ -371,6 +429,85 @@ func extractFieldValues(raw any, field string) []string {
 	}
 	appendValue(raw)
 	return uniqueValues(values)
+}
+
+// ruleFieldObjectKeys 定义自定义规则条件键 → TMDB 载荷对象键的映射。
+// 这些键与既有模板字段（genres/origin_country）走同一套取值与缓存路径。
+var ruleFieldObjectKeys = map[string][]string{
+	"genre_ids":         {"id"},
+	"keywords":          {"name"},
+	"series_keywords":   {"name"},
+	"series_actors":     {"name"},
+	"original_language": {"iso_639_1", "code"},
+	"origin_country":    {"iso_3166_1", "code"},
+}
+
+// ruleFieldNestedPaths 定义需要下钻两级容器的字段（TMDB 的 keywords 形如
+// {"keywords":[{"id":..,"name":".."}]}，剧集是 {"results":[...]}）。
+var ruleFieldNestedPaths = map[string][]string{
+	"keywords":        {"keywords", "results", "keywords"},
+	"series_keywords": {"keywords", "results", "keywords"},
+	"series_actors":   {"credits", "aggregate_credits", "cast"},
+}
+
+// collectObjectFieldValues 从原始载荷中递归收集对象键取值。
+// 对 keywords/series_actors 这类需要下钻的字段，先在已知容器里找；
+// 找不到时回落到全量递归，保证不同 TMDB 语言/接口形态都能取到值。
+func collectObjectFieldValues(raw any, keys []string) []string {
+	values := make([]string, 0)
+	var collect func(any)
+	collect = func(value any) {
+		switch item := value.(type) {
+		case nil:
+			return
+		case []any:
+			for _, child := range item {
+				collect(child)
+			}
+		case []string:
+			for _, child := range item {
+				text := strings.TrimSpace(child)
+				if text != "" {
+					values = append(values, text)
+				}
+			}
+		case []map[string]any:
+			for _, child := range item {
+				collect(child)
+			}
+		case map[string]any:
+			for _, key := range keys {
+				if child, ok := item[key]; ok {
+					collect(child)
+				}
+			}
+		case float64:
+			// TMDB 的数字 ID 经 JSON 解码后是 float64；整数形态去掉小数点。
+			values = append(values, formatNumber(item))
+		case int:
+			values = append(values, strconv.Itoa(item))
+		case int64:
+			values = append(values, strconv.FormatInt(item, 10))
+		case json.Number:
+			values = append(values, string(item))
+		case bool:
+			values = append(values, strconv.FormatBool(item))
+		default:
+			text := strings.TrimSpace(fmt.Sprint(item))
+			if text != "" {
+				values = append(values, text)
+			}
+		}
+	}
+	collect(raw)
+	return values
+}
+
+func formatNumber(value float64) string {
+	if value == float64(int64(value)) {
+		return strconv.FormatInt(int64(value), 10)
+	}
+	return strconv.FormatFloat(value, 'f', -1, 64)
 }
 
 func nonEmptyValues(value string) []string {

@@ -171,6 +171,9 @@ func (h *Handler) searchMediaResources(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]resourceItem, 0)
 	errs := make([]map[string]any, 0)
+	// skipped 单独回报「未启用的来源」，与 errors 分开：
+	// 没配置一个源不是失败，前端不该拿它当错误吓用户（见 resource_source_error.go）。
+	skipped := make([]map[string]any, 0)
 	mediaType := strings.ToLower(strings.TrimSpace(req.MediaType))
 	if mediaType != "tv" {
 		mediaType = "movie"
@@ -180,7 +183,22 @@ func (h *Handler) searchMediaResources(w http.ResponseWriter, r *http.Request) {
 	for _, source := range sources {
 		sourceItems, err := searchResourceBySource(r.Context(), source, mediaType, req.TmdbID, req.Title)
 		if err != nil {
-			errs = append(errs, map[string]any{"source": source, "code": resourceSourceErrorCode(err), "error": err.Error()})
+			outcome := classifyResourceSourceError(source, err)
+			if outcome.Skip {
+				// 未配置 = 这个源没启用，静默跳过（单独回报给前端做「未启用」展示）
+				skipped = append(skipped, map[string]any{
+					"source":  source,
+					"code":    outcome.Code,
+					"message": sourceName(source) + "未配置，已跳过（不是错误）",
+				})
+				continue
+			}
+			errs = append(errs, map[string]any{
+				"source":  source,
+				"code":    outcome.Code,
+				"error":   outcome.Message,
+				"message": outcome.Message,
+			})
 			continue
 		}
 		// 目标网盘过滤（对齐参考实现：provider 非 offline 时须精确匹配）
@@ -215,7 +233,7 @@ func (h *Handler) searchMediaResources(w http.ResponseWriter, r *http.Request) {
 		return resourceCandidateWeight(items[i]) > resourceCandidateWeight(items[j])
 	})
 
-	writeOK(w, map[string]any{"items": items, "errors": errs})
+	writeOK(w, map[string]any{"items": items, "errors": errs, "skipped": skipped})
 }
 
 // normalizeResourceSources 归一化来源：hdhive→re0，去重，仅保留已知来源
@@ -237,19 +255,6 @@ func normalizeResourceSources(raw []string) []string {
 	return out
 }
 
-// resourceSourceErrorCode 错误码（对齐 tgto123：RESOURCE_SOURCE_UNAVAILABLE 等）
-func resourceSourceErrorCode(err error) string {
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "未配置"), strings.Contains(msg, "未授权"), strings.Contains(msg, "auth required"):
-		return "RESOURCE_SOURCE_UNAVAILABLE"
-	case strings.Contains(msg, "超时"):
-		return "RESOURCE_SOURCE_TIMEOUT"
-	default:
-		return "RESOURCE_SOURCE_ERROR"
-	}
-}
-
 // searchResourceBySource 按来源执行搜索
 func searchResourceBySource(ctx context.Context, source, mediaType string, tmdbID int64, title string) ([]resourceItem, error) {
 	switch source {
@@ -266,11 +271,16 @@ func searchResourceBySource(ctx context.Context, source, mediaType string, tmdbI
 	}
 }
 
+// errSourceNotConfigured 包装未配置哨兵错误，让归类走类型判定而非文案匹配。
+func errSourceNotConfigured(name, hint string) error {
+	return fmt.Errorf("%s未配置：%s：%w", name, hint, errResourceSourceNotConfigured)
+}
+
 // searchGuanyingResources 观影源检索：会话保存后走上游搜索，
 // 结果映射为统一资源卡片（guanying 分享无 RE0 积分语义）
 func searchGuanyingResources(ctx context.Context, mediaType string, tmdbID int64, title string) ([]resourceItem, error) {
 	if !guanyingEnabled() {
-		return nil, fmt.Errorf("观影未启用：请先在发现-基础配置中开启观影")
+		return nil, errSourceNotConfigured("观影", "请在发现-基础配置中开启观影")
 	}
 	client := guanying.SharedClient()
 	rawItems, err := client.SearchResources(ctx, title, mediaType, tmdbID, "")
@@ -330,6 +340,11 @@ func searchRe0Resources(ctx context.Context, mediaType string, tmdbID int64, tit
 	}
 	resources, err := discovery.Tgto123SearchResources(ctx, title, tmdbID, mediaType, "")
 	if err != nil {
+		// 「反代未配置」属于没启用，交给归类逻辑跳过；其余错误原样上抛，
+		// 由 classifyResourceSourceError 统一翻译成可执行提示。
+		if discovery.Tgto123ConfiguredURL() == "" {
+			return nil, errSourceNotConfigured("RE0", "请在发现-基础配置中填写 tgto123 反代地址")
+		}
 		return nil, fmt.Errorf("tgto123 反代不可用：%w", err)
 	}
 	items := make([]resourceItem, 0, len(resources))
@@ -389,11 +404,11 @@ func (h *Handler) copyRe0ResourceLink(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, map[string]any{"link": link, "copied_at": time.Now().Format(time.RFC3339)})
 }
 
-// searchSeedhubResources SeedHub 源检索（未配置返回标准化不可用错误）
+// searchSeedhubResources SeedHub 源检索（未配置返回哨兵错误，由归类逻辑跳过）
 func searchSeedhubResources(ctx context.Context, mediaType string, tmdbID int64, title string) ([]resourceItem, error) {
 	cfg, ok := seedhub.GetConfig()
 	if !ok {
-		return nil, fmt.Errorf("SeedHub 未配置：请先在发现-基础配置中填写 API 地址与令牌")
+		return nil, errSourceNotConfigured("SeedHub", "请在发现-基础配置中填写 API 地址与令牌")
 	}
 	rawItems, err := seedhub.SearchResources(ctx, cfg, title, mediaType, tmdbID)
 	if err != nil {
@@ -439,6 +454,10 @@ func normalizeProviderFilter(p string) string {
 func searchTGChannelResources(ctx context.Context, mediaType, title string) ([]resourceItem, error) {
 	if strings.TrimSpace(title) == "" {
 		return nil, fmt.Errorf("TG 频道检索需要标题")
+	}
+	// 未配置任何检索频道 = 这个源没启用，不是失败
+	if len(discovery.TGResourceChannels()) == 0 {
+		return nil, errSourceNotConfigured("TG 频道", "请在发现-基础配置中填写公开 TG 资源检索频道")
 	}
 	matches, errs := discovery.SearchTGChannelResources(ctx, title, nil, "")
 	items := make([]resourceItem, 0, len(matches))

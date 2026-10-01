@@ -21,6 +21,7 @@ import (
 	"litepan/internal/cas"
 	caslitepan "litepan/internal/cas/litepan"
 	casintake "litepan/internal/casintake"
+	"litepan/internal/classifyorganize"
 	"litepan/internal/config"
 	"litepan/internal/coverextract"
 	"litepan/internal/discover/ddb"
@@ -267,6 +268,11 @@ func discoverInit(cfg config.Config, st *storeBundle, core *coreBundle, svc *ser
 	if err := discovery.EnsureDiscoverySchema(); err != nil {
 		log.Warn("发现板块建表失败", "err", err)
 		return err
+	}
+	// 目录整理自定义规则表（UI 自定义规则 + YAML 导入）。失败不阻断启动：
+	// classifyorganize 在无表/无规则时会回落到既有模板逻辑。
+	if err := classifyorganize.EnsureClassifySchema(); err != nil {
+		log.Warn("目录整理规则建表失败", "err", err)
 	}
 	// CAS 秒传：建表 + 配置桥接到 discovery_settings + 网盘驱动适配（LitePan 驱动 → cas.RapidDriver）
 	cas.EnsureTable()

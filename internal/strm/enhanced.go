@@ -105,7 +105,7 @@ func scanEnhancedTask(
 		}
 		if _, ok := relDirsOf(freshPath, "check", rootSegs); !ok {
 			pathConflict = "全量清单中的目录路径与任务根不一致，本次已停止本地清理，请检查任务目录和路径映射"
-			log.Warn("STRM 扫描目录路径不一致", "task_id", task.ID, "account_id", task.AccountID,
+			log.Warn("STRM 扫描目录路径不一致", "task_id", task.ID, "task_name", task.Name, "account_id", task.AccountID,
 				"directory_id", pid, "task_path", task.Path, "cached_path", oldPath, "resolved_path", freshPath)
 			continue
 		}
@@ -175,7 +175,7 @@ func scanEnhancedTask(
 			continue
 		}
 		recordMetadataDirectory(state.metadataDirs, e.ParentID, relDirs)
-		classified := rules.classify(e.FileID, e.Name, e.Size, relDirs)
+		classified := rules.classify(e.FileID, e.Name, e.Size, relDirs, dirPaths[pid])
 		if classified.hasMedia {
 			harvest.candidates = append(harvest.candidates, classified.media)
 			harvest.dirHasMedia[dirKey(relDirs)] = true
