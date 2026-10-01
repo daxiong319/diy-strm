@@ -269,12 +269,12 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) bool {
 	}
 	user, pass, ok := r.BasicAuth()
 	if !ok {
-		w.Header().Set("WWW-Authenticate", `Basic realm="LitePan WebDAV"`)
+		w.Header().Set("WWW-Authenticate", `Basic realm="diy-strm WebDAV"`)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return false
 	}
 	if !s.checkCredentials(r.Context(), user, pass) {
-		w.Header().Set("WWW-Authenticate", `Basic realm="LitePan WebDAV"`)
+		w.Header().Set("WWW-Authenticate", `Basic realm="diy-strm WebDAV"`)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return false
 	}

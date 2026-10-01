@@ -1,8 +1,8 @@
 // 应用品牌与版本号的唯一来源。前端所有展示位置统一引用此处。
-export const APP_NAME = "LitePan";
+export const APP_NAME = "diy-strm";
 export const APP_VERSION = "v0.5.6-Beta";
-export const APP_URL = "https://www.litepan.top";
-export const GITHUB_URL = "https://github.com/Ponphil/LitePan";
+export const APP_URL = "https://github.com/daxiong319/diy-strm";
+export const GITHUB_URL = "https://github.com/daxiong319/diy-strm";
 
 // 好用斋联名主页（首页 footer 联合测评入口）。
 export const COLLAB_URL = "https://haoyongzhai.com";

@@ -80,7 +80,7 @@ defineExpose({
             <div class="settings-row__label">
               <span>启用 WebDAV 服务</span>
               <SettingsHelpTooltip title="WebDAV 服务开关说明">
-                <p>开启后，外部客户端可以通过 WebDAV 地址访问 LitePan。</p>
+                <p>开启后，外部客户端可以通过 WebDAV 地址访问 diy-strm。</p>
                 <p>关闭后，WebDAV 入口会直接拒绝访问，下面的传输设置也不会生效。</p>
                 <p>访问地址为当前浏览器打开后台所用的「协议 + 主机 + 端口」后接 <code>/dav</code>，见下方「WebDAV 地址」。</p>
               </SettingsHelpTooltip>

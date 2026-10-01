@@ -76,7 +76,7 @@ export function useLocalUploadDispatcher(
           const message =
             total > 0 && loaded >= total
               ? "投递成功，创建任务中"
-              : `投递到 LitePan 服务器 ${progress}%`;
+              : `投递到 diy-strm 服务器 ${progress}%`;
           store.updateLocalUploadTask(task.task_id, {
             status: "pending",
             progress,

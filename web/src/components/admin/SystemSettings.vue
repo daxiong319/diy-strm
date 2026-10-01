@@ -471,7 +471,7 @@ async function submit() {
           <SvgIcon name="hand-database" :size="22" />
         </div>
         <div class="bootstrap-restore-card__copy">
-          <strong>已有 LitePan 备份？</strong>
+          <strong>已有 diy-strm 备份？</strong>
           <span>可以直接导入旧备份并恢复，无需先修改默认密码。</span>
         </div>
         <AppButton type="button" variant="secondary" @click="backupRestoreRef?.openImport()">

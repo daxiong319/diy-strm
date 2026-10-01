@@ -167,6 +167,8 @@ func generateForTask(ctx context.Context, task CasCandidate, hashes cloud189.Has
 	if err := ddb.Db.Create(&rec).Error; err != nil {
 		return out, err
 	}
+	// 联动：把指向源文件的 .strm 改写成 CAS 播放直链，打通"播放 → 秒传恢复 → 302"。
+	linkCASStrm(&rec)
 	out.SourceDeleted = sourceDeleted
 	dutil.AppLogger.Infof("CAS 化完成：%s（删源=%v，可秒传盘=%s）", task.FileName, sourceDeleted, rapidDriveTypes)
 	return out, nil

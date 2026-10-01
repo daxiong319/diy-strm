@@ -26,7 +26,7 @@ func sendSMTP(_ context.Context, cfg map[string]string, msg Message) error {
 	username := cfg["username"]
 	password := cfg["password"]
 	from := orDefault(cfg["from"], username)
-	fromName := orDefault(cfg["from_name"], "LitePan")
+	fromName := orDefault(cfg["from_name"], "diy-strm")
 	toList := strings.Split(cfg["to"], ",")
 	for i := range toList {
 		toList[i] = strings.TrimSpace(toList[i])

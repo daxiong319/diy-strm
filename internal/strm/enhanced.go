@@ -143,7 +143,7 @@ func scanEnhancedTask(
 		}
 	}
 
-	harvest := newScanHarvest()
+	harvest := newScanHarvest(deps.Log)
 	state := harvest.state
 	state.cleanupBlockedReason = pathConflict
 	state.cleanupScopes = []cleanupScope{{recursive: true}}

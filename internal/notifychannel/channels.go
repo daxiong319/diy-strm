@@ -37,7 +37,7 @@ func init() {
 		Note:     "正文经 POST 提交，长多行内容不再受 URL 长度限制；可只填 Key，也可直接粘贴 App 生成的完整链接。",
 		Fields: []FieldMeta{
 			{Key: "device_key", Label: "Device Key / URL", Type: "text", Placeholder: "https://api.day.app/<key>"},
-			{Key: "group", Label: "分组", Type: "text", Placeholder: "LitePan"},
+			{Key: "group", Label: "分组", Type: "text", Placeholder: "diy-strm"},
 			{Key: "sound", Label: "提示音", Type: "text", Placeholder: "minuet"},
 			{Key: "level", Label: "送达级别", Type: "select", Options: []Option{
 				{Value: "", Label: "默认 (active)"}, {Value: "active", Label: "active"},
@@ -131,9 +131,9 @@ func init() {
 			{Key: "username", Label: "登录账号", Type: "text"},
 			{Key: "password", Label: "登录密码/授权码", Type: "password"},
 			{Key: "from", Label: "发件地址", Type: "text"},
-			{Key: "from_name", Label: "发件人显示名", Type: "text", Placeholder: "LitePan 通知"},
+			{Key: "from_name", Label: "发件人显示名", Type: "text", Placeholder: "diy-strm 通知"},
 			{Key: "to", Label: "收件人", Type: "textarea", Rows: 2, Placeholder: "多个用英文逗号分隔"},
-			{Key: "subject_prefix", Label: "主题前缀 (可选)", Type: "text", Placeholder: "【LitePan】"},
+			{Key: "subject_prefix", Label: "主题前缀 (可选)", Type: "text", Placeholder: "【diy-strm】"},
 		},
 	}, sendEmail)
 

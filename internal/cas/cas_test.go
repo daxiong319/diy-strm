@@ -25,7 +25,7 @@ func TestManifestRoundTrip(t *testing.T) {
 func TestDeriveRapidDriveTypes(t *testing.T) {
 	hs := cloud189.HashSet{FileMd5: "a", SliceMd5: "b", Sha256: "c", PreHash: "d"}
 	got := DeriveRapidDriveTypes(hs)
-	if got != "cloud189,cloud139,quark" {
+	if got != "cloud189,cloud139,quark,123_open" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -68,4 +68,15 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+func TestBuildRapidPayload123(t *testing.T) {
+	hs := cloud189.HashSet{FileMd5: "abc123"}
+	p := BuildRapidPayloadFor("123_open", "x.mkv", 99, hs)
+	if p == "" {
+		t.Fatal("123_open payload 不应为空")
+	}
+	if !contains(p, "123_open") || !contains(p, "abc123") {
+		t.Errorf("123_open payload 缺 md5 特征：%s", p)
+	}
 }

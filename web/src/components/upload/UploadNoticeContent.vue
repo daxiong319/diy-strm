@@ -14,7 +14,7 @@ import SvgIcon from "@/components/icons/SvgIcon.vue";
         <div class="upload-notice__arrow">→</div>
         <div class="upload-notice__node upload-notice__node--wide">
           <div class="upload-notice__icon"><SvgIcon name="hand-monitor" :size="26" /></div>
-          <span>LitePan服务器</span>
+          <span>diy-strm服务器</span>
         </div>
         <div class="upload-notice__arrow">→</div>
         <div class="upload-notice__node">

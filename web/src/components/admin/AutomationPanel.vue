@@ -441,7 +441,7 @@
             <div class="api-example">
               <div class="api-example-title">调用方式</div>
               <div class="api-example-text">把下面内容填到外部程序的 Webhook / HTTP 通知里。</div>
-              <code>POST http://你的LitePan地址:5211/api/open/automation/events</code>
+              <code>POST http://你的diy-strm地址:5211/api/open/automation/events</code>
               <code>Authorization: Bearer lpk_api_xxx</code>
               <pre>{{ externalEventJsonExample }}</pre>
             </div>

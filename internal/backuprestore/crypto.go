@@ -298,7 +298,7 @@ func readBackupHeader(file *os.File) (Manifest, int64, error) {
 	}
 	magic := make([]byte, len(backupMagic))
 	if _, err := io.ReadFull(file, magic); err != nil || !bytes.Equal(magic, backupMagic[:]) {
-		return Manifest{}, 0, fmt.Errorf("不是 LitePan 备份文件")
+		return Manifest{}, 0, fmt.Errorf("不是 diy-strm 备份文件")
 	}
 	var size [4]byte
 	if _, err := io.ReadFull(file, size[:]); err != nil {

@@ -42,6 +42,9 @@ const cfg = reactive<CasConfig>({
   delete_source: true,
   delay_delete_hours: 2,
   write_back_cloud: false,
+  cas_notify_auto_save: true,
+  cas_notify_auto_save_dir: "CAS",
+  cas_notify_auto_save_drives: {},
 });
 const cfgSaving = ref(false);
 const running = ref(false);

@@ -65,7 +65,7 @@ const embyFields: ProxyField[] = [
     label: "Emby/Jellyfin 地址",
     placeholder: "http://192.168.1.10:8096",
     helpTitle: "媒体服务器地址说明",
-    helpBody: "你的 Emby 或 Jellyfin 服务器地址，例如 <code>http://192.168.1.10:8096</code>。<br>给 LitePan 连接媒体服务器使用，播放器里不要填这个。",
+    helpBody: "你的 Emby 或 Jellyfin 服务器地址，例如 <code>http://192.168.1.10:8096</code>。<br>给 diy-strm 连接媒体服务器使用，播放器里不要填这个。",
   },
   {
     key: "api_key",
@@ -88,7 +88,7 @@ const embyFields: ProxyField[] = [
     label: "STRM 直读客户端",
     placeholder: "默认留空",
     helpTitle: "STRM 直读客户端说明",
-    helpBody: "一般无需填写。播放器无法通过反代播放 STRM 时，可让它自己读取 STRM 中的地址。<br>填写客户端关键字，多个用分号隔开，例如 <code>XXXPlay;YYYPlayer</code>；未匹配的播放器仍由 LitePan 代取地址，填错了反而播不了。<br>外网播放时，请确保 STRM 的 URL 基础地址可从外网访问。",
+    helpBody: "一般无需填写。播放器无法通过反代播放 STRM 时，可让它自己读取 STRM 中的地址。<br>填写客户端关键字，多个用分号隔开，例如 <code>XXXPlay;YYYPlayer</code>；未匹配的播放器仍由 diy-strm 代取地址，填错了反而播不了。<br>外网播放时，请确保 STRM 的 URL 基础地址可从外网访问。",
   },
 ];
 
@@ -351,14 +351,14 @@ const fnosFields: ProxyField[] = [
     label: "飞牛影视地址",
     placeholder: "http://192.168.1.50:8005",
     helpTitle: "飞牛影视地址说明",
-    helpBody: "你的飞牛影视地址，端口一般是 8005（不是 NAS 管理页的 5666）。<br>给 LitePan 连飞牛用的，播放器里不要填这个。",
+    helpBody: "你的飞牛影视地址，端口一般是 8005（不是 NAS 管理页的 5666）。<br>给 diy-strm 连飞牛用的，播放器里不要填这个。",
   },
   {
     key: "strm_path_maps",
     label: "飞牛 STRM 目录",
-    placeholder: "/vol1/1000/Strm/LitePanGO",
+    placeholder: "/vol1/1000/Strm/diy-strmGO",
     helpTitle: "飞牛 STRM 目录说明",
-    helpBody: "把 Docker 里映射到 <code>/app/strm</code> 的左边路径填到这里。<br>例：<code>/vol1/1000/Strm/LitePanGO:/app/strm</code> → 填 <code>/vol1/1000/Strm/LitePanGO</code>。<br>两边路径相同则可留空。",
+    helpBody: "把 Docker 里映射到 <code>/app/strm</code> 的左边路径填到这里。<br>例：<code>/vol1/1000/Strm/diy-strmGO:/app/strm</code> → 填 <code>/vol1/1000/Strm/diy-strmGO</code>。<br>两边路径相同则可留空。",
   },
   {
     key: "proxy_port",
@@ -373,7 +373,7 @@ const fnosFields: ProxyField[] = [
     label: "STRM 直读客户端",
     placeholder: "Infuse;XXXPlay",
     helpTitle: "STRM 直读客户端说明",
-    helpBody: "目前已知只有 Infuse 不支持由 LitePan 代取下载地址，需要自己读取 STRM 中的地址。<br>填写这些播放器的客户端关键字，多个用分号隔开，例如 <code>Infuse;XXXPlay</code>；未匹配的播放器仍由 LitePan 代取地址，填错了反而播不了。<br>外网播放时，请确保 STRM 的 URL 基础地址可从外网访问。",
+    helpBody: "目前已知只有 Infuse 不支持由 diy-strm 代取下载地址，需要自己读取 STRM 中的地址。<br>填写这些播放器的客户端关键字，多个用分号隔开，例如 <code>Infuse;XXXPlay</code>；未匹配的播放器仍由 diy-strm 代取地址，填错了反而播不了。<br>外网播放时，请确保 STRM 的 URL 基础地址可从外网访问。",
   },
 ];
 

@@ -1,10 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { getApiErrorMessage } from "@/api/client";
-import { fetchDiscoverDetails } from "@/api/discovery";
+import {
+  fetchDiscoverDetails,
+  saveSubscription,
+  toggleSubscription,
+  type SubscriptionUpsertPayload,
+} from "@/api/discovery";
 import AppButton from "@/components/base/AppButton.vue";
 import AppModal from "@/components/base/AppModal.vue";
+import AppSelect from "@/components/base/AppSelect.vue";
 import AppStateBlock from "@/components/base/AppStateBlock.vue";
+import { toast } from "@/composables/useToast";
 
 // 条目标识（打开弹层时传入）
 export interface DetailTarget {
@@ -46,6 +53,79 @@ const cast = computed<any[]>(() => detail.value?.cast ?? []);
 const crew = computed<any[]>(() => detail.value?.crew ?? []);
 const subscription = computed<any>(() => detail.value?.subscription ?? null);
 const transferTargets = computed<Record<string, any>>(() => detail.value?.transfer_targets ?? {});
+
+// 订阅只支持 123 / 光鸭 / 139（后端 NormalizeTransferProvider 会拒绝 115）。
+// 这里只列「已配置保存目录」的网盘，避免用户点完才发现没配目录。
+const TARGET_PROVIDER_LABELS: Record<string, string> = {
+  "123": "123 网盘",
+  guangya: "光鸭",
+  pan139: "139 网盘",
+};
+const targetOptions = computed(() =>
+  ["123", "guangya", "pan139"]
+    .filter((k) => transferTargets.value[k]?.configured)
+    .map((k) => ({ value: k, label: TARGET_PROVIDER_LABELS[k] ?? k })),
+);
+const targetProvider = ref("123");
+const subscribing = ref(false);
+
+// 默认选中第一个「已配置目录」的网盘；用户切回来时保留其选择。
+watch(targetOptions, (opts) => {
+  if (opts.length > 0 && !opts.some((o) => o.value === targetProvider.value)) {
+    targetProvider.value = String(opts[0].value);
+  }
+});
+
+const canSubscribe = computed(
+  () => props.target?.media_type === "movie" || props.target?.media_type === "tv",
+);
+
+/** 订阅：以当前条目身份 UPSERT（entity_key = tmdb:<type>:<id>），因此重复点击是安全的。 */
+async function subscribe() {
+  if (subscribing.value || !props.target) return;
+  if (targetOptions.value.length === 0) {
+    toast.warning("请先到「影视发现 - 基础配置」配置至少一个网盘的保存目录");
+    return;
+  }
+  subscribing.value = true;
+  try {
+    const payload: SubscriptionUpsertPayload = {
+      source: props.target.source || "tmdb",
+      entity_type: props.target.media_type,
+      external_id: String(props.target.external_id),
+      media_type: props.target.media_type,
+      title: title.value,
+      original_title: detail.value?.original_title || "",
+      poster_url: poster.value,
+      target_provider: targetProvider.value,
+      transfer_mode: "auto",
+      enabled: true,
+    };
+    const res = await saveSubscription(payload);
+    if (res.warning) toast.warning(res.warning);
+    toast.success("已订阅追更");
+    await load();
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "订阅失败"));
+  } finally {
+    subscribing.value = false;
+  }
+}
+
+/** 取消订阅：复用 toggle 接口显式传 false，语义比「取反」更明确。 */
+async function unsubscribe() {
+  if (subscribing.value || !subscription.value?.id) return;
+  subscribing.value = true;
+  try {
+    await toggleSubscription(subscription.value.id, false);
+    toast.success("已取消订阅");
+    await load();
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "取消订阅失败"));
+  } finally {
+    subscribing.value = false;
+  }
+}
 
 function runtimeText(min: number): string {
   if (!min) return "";
@@ -114,13 +194,34 @@ watch(
               <span v-for="g in genres" :key="g" class="ddm__genre">{{ g }}</span>
             </div>
 
-            <div class="ddm__actions">
-              <AppButton v-if="!subscription" type="button" variant="primary" disabled title="订阅功能后续接入">
-                订阅追更
-              </AppButton>
-              <AppButton v-else type="button" variant="secondary" disabled>
-                已订阅（{{ subscription.status }}）
-              </AppButton>
+            <div v-if="canSubscribe" class="ddm__actions">
+              <template v-if="!subscription">
+                <AppSelect
+                  v-if="targetOptions.length > 1"
+                  v-model="targetProvider"
+                  :options="targetOptions"
+                />
+                <AppButton
+                  type="button"
+                  variant="primary"
+                  :disabled="subscribing || targetOptions.length === 0"
+                  :title="targetOptions.length === 0 ? '请先到「影视发现 - 基础配置」配置网盘保存目录' : ''"
+                  @click="subscribe"
+                >
+                  {{ subscribing ? "订阅中…" : "订阅追更" }}
+                </AppButton>
+              </template>
+              <template v-else>
+                <span class="ddm__sub-state">
+                  已订阅{{ subscription.status ? `（${subscription.status}）` : "" }}
+                  <template v-if="subscription.target_provider">
+                    · {{ TARGET_PROVIDER_LABELS[subscription.target_provider] ?? subscription.target_provider }}
+                  </template>
+                </span>
+                <AppButton type="button" variant="secondary" :disabled="subscribing" @click="unsubscribe">
+                  {{ subscribing ? "处理中…" : "取消订阅" }}
+                </AppButton>
+              </template>
             </div>
           </div>
         </div>
@@ -258,7 +359,13 @@ watch(
 .ddm__actions {
   margin-top: 4px;
   display: flex;
+  align-items: center;
   gap: 10px;
+}
+
+.ddm__sub-state {
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 .ddm__section {

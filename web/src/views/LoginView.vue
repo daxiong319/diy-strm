@@ -105,7 +105,7 @@ async function handleForgotPassword() {
           ? "临时密码仍在有效期内，请查看容器日志获取临时密码。"
           : "已生成临时密码，请查看容器控制台日志获取临时密码。") +
         remaining +
-        "\n\n宿主机终端执行（请将 litepan 替换为实际容器名）：\n  docker logs litepan",
+        "\n\n宿主机终端执行（请将 diy-strm 替换为实际容器名）：\n  docker logs diy-strm",
     });
   } catch (e) {
     toast.error(e instanceof Error ? e.message : "重置失败，无法连接到服务器");
@@ -131,7 +131,7 @@ onMounted(async () => {
   <div class="login-container">
     <div class="left-panel">
       <div class="brand-row">
-        <img src="/static/img/logo.png" alt="LitePan" class="brand-logo" />
+        <img src="/static/img/logo.png" alt="diy-strm" class="brand-logo" />
       </div>
       <div class="characters-area">
         <AnimatedCharacters
@@ -149,7 +149,7 @@ onMounted(async () => {
     <div class="right-panel">
       <div class="form-card">
         <p class="form-tag">管理员登录</p>
-        <div class="mobile-logo"><span>LitePan 控制台</span></div>
+        <div class="mobile-logo"><span>diy-strm 控制台</span></div>
 
         <div class="form-header">
           <h1 class="form-title">欢迎回来</h1>

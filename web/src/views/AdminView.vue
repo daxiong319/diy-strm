@@ -21,6 +21,7 @@ const adminPageLoaders = {
   tasks: () => import("@/components/admin/TaskManagement.vue"),
   tools: () => import("@/components/admin/AuxToolsManagement.vue"),
   "cross-transfer": () => import("@/components/admin/CrossDriveTransferPage.vue"),
+  cas: () => import("@/components/admin/CasManagementPage.vue"),
   share: () => import("@/components/admin/FileShareManagement.vue"),
   discover: () => import("@/components/admin/DiscoveryPage.vue"),
 };
@@ -30,6 +31,7 @@ const SystemSettings = defineAsyncComponent(adminPageLoaders.settings);
 const TaskManagement = defineAsyncComponent(adminPageLoaders.tasks);
 const AuxToolsManagement = defineAsyncComponent(adminPageLoaders.tools);
 const CrossDriveTransferPage = defineAsyncComponent(adminPageLoaders["cross-transfer"]);
+const CasManagementPage = defineAsyncComponent(adminPageLoaders.cas);
 const FileShareManagement = defineAsyncComponent(adminPageLoaders.share);
 const DiscoveryPage = defineAsyncComponent(adminPageLoaders.discover);
 import { logout, fetchSystemConfig } from "@/api/auth";
@@ -49,6 +51,7 @@ const nav = [
   { key: "tasks", label: "任务管理", icon: "tasks" },
   { key: "tools", label: "辅助工具", icon: "toolbox" },
   { key: "cross-transfer", label: "跨盘传输", icon: "right-left" },
+  { key: "cas", label: "CAS 秒传", icon: "film" },
   { key: "share", label: "文件共享", icon: "share-alt" },
   { key: "discover", label: "影视发现", icon: "compass" },
 ];
@@ -71,6 +74,7 @@ const PAGE_TABS: Record<string, { defaultTab: string; tabs: Record<string, strin
   },
   share: { defaultTab: "webdav", tabs: { webdav: "WebDAV", fuse: "本地挂载" } },
   "cross-transfer": { defaultTab: "plain", tabs: { plain: "跨盘普传", rapid: "跨盘秒传" } },
+  cas: { defaultTab: "files", tabs: { files: "秒传清单" } },
 };
 
 const route = useRoute();
@@ -292,7 +296,10 @@ onMounted(async () => {
     />
 
     <AdminEmptyState
-      v-if="!cachedPageComponent && !['settings', 'cross-transfer', 'share', 'discover'].includes(page)"
+      v-if="
+        !cachedPageComponent &&
+        !['settings', 'cross-transfer', 'cas', 'share', 'discover'].includes(page)
+      "
       icon="screwdriver-wrench"
       :title="`「${nav.find((n) => n.key === page)?.label}」功能开发中`"
     />
@@ -305,6 +312,7 @@ onMounted(async () => {
         @admin-ui-updated="loadAdminUiConfig"
       />
       <CrossDriveTransferPage v-else-if="page === 'cross-transfer'" />
+      <CasManagementPage v-else-if="page === 'cas'" />
       <FileShareManagement v-else-if="page === 'share'" />
       <DiscoveryPage v-else-if="page === 'discover'" />
       <component :is="cachedPageComponent" v-else-if="cachedPageComponent" :key="page" />

@@ -396,7 +396,7 @@ function uploadStatusLabel(task: UploadTask) {
 
 function isLocalDispatchMessage(message: string) {
   if (!message) return false;
-  if (message.includes("投递到 LitePan 服务器")) return true;
+  if (message.includes("投递到 diy-strm 服务器")) return true;
   if (message.includes("投递成功")) return true;
   if (message.includes("创建任务中")) return true;
   return false;
@@ -419,7 +419,7 @@ function isUploadStageMessage(message: string) {
 function uploadStageLabel(message: string) {
   if (!message) return "";
   if (message.includes("投递成功") || message.includes("创建任务中")) return "创建任务中";
-  if (message.includes("投递到 LitePan 服务器")) return message;
+  if (message.includes("投递到 diy-strm 服务器")) return message;
   if (message.includes("SHA-256")) return "计算校验中";
   if (message.includes("校验")) return "校验中";
   if (message.includes("发起上传") || message.includes("准备上传") || message.includes("预上传")) return "准备上传中";

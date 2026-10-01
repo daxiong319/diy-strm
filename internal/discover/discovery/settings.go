@@ -172,5 +172,14 @@ func EnsureDiscoverySchema() error {
 		&DiscoverySubscriptionRun{},
 		&DiscoverySubscriptionItem{},
 		&DiscoverySubscriptionEvent{},
+		&DiscoveryChannel{},
+		&DiscoveryTransferRecord{},
+		&DiscoveryMonitorRecord{},
+		// Emby 缺集扫描三张表：模型早已定义（TableName 都写好了），但一直没进
+		// AutoMigrate 列表，导致 /emby-missing/scan 直接报
+		// `no such table: discovery_emby_missing_scans`。
+		&DiscoveryEmbyMissingScan{},
+		&DiscoveryEmbyMissingResult{},
+		&DiscoveryEmbyMissingEvent{},
 	)
 }

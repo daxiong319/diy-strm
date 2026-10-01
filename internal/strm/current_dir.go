@@ -391,6 +391,15 @@ func cleanupCurrentDirectoryStrm(root, outputFolder string, relDirs []string, se
 				continue
 			}
 			childPath := filepath.Join(currentLocalDir, e.Name())
+			// 目录内含 CAS 播放 .strm 时不能整层删除（源已删，播放时才秒传恢复）。
+			if dirContainsCasPlayStrm(childPath) {
+				n, perr := pruneMissingRemoteDir(childPath)
+				removed += n
+				if perr != nil {
+					return removed, perr
+				}
+				continue
+			}
 			n := countStrmFiles(childPath)
 			if err := os.RemoveAll(childPath); err != nil && !os.IsNotExist(err) {
 				return removed, err

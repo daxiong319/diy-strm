@@ -85,7 +85,7 @@ func connectionTestError(drv driver.Driver, driverType string, err error, saving
 	case errorCodeIs(err, domain.CodeRateLimited):
 		friendly = prefix + "：网盘接口请求过于频繁，请稍后重试"
 	case domain.IsNetworkError(err):
-		friendly = prefix + "：连接网盘服务失败，请检查 LitePan 所在设备的网络"
+		friendly = prefix + "：连接网盘服务失败，请检查 diy-strm 所在设备的网络"
 	}
 	if friendly == "" {
 		if e, ok := drv.(driver.ConnectionErrorExplainer); ok {

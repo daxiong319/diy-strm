@@ -12,7 +12,7 @@ const emit = defineEmits<{
 }>();
 
 // 底部三个操作入口（固定链接，新窗口打开）。
-const GITHUB_URL = "https://github.com/Ponphil/LitePan";
+const GITHUB_URL = "https://github.com/daxiong319/diy-strm";
 const SPONSOR_URL = "https://www.litepan.top/sponsor.html";
 const CHANGELOG_URL = "https://www.litepan.top/changelog.html";
 
@@ -78,7 +78,7 @@ function closeAll() {
           <SvgIcon name="heart" size="1em" class="announcement-modal__link-icon announcement-modal__link-icon--sponsor" />
           <span class="announcement-modal__link-copy">
             <strong>打赏支持</strong>
-            <small>赞助 LitePan 开发</small>
+            <small>赞助 diy-strm 开发</small>
           </span>
         </a>
         <a

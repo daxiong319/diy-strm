@@ -360,7 +360,7 @@ async function executeCleanup() {
     <AppModal :open="open" title="垃圾清理" size="lg" @close="closeTool">
       <div v-if="scanning && !report" class="cleanup-loading">
         <span class="cleanup-spinner" />
-        <strong>正在检查 LitePan 本地数据…</strong>
+        <strong>正在检查 diy-strm 本地数据…</strong>
         <small>只扫描本地目录和缓存，不会访问网盘</small>
       </div>
 

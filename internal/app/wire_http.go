@@ -2,7 +2,13 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"litepan/internal/adminauth"
@@ -11,20 +17,25 @@ import (
 	"litepan/internal/apikey"
 	"litepan/internal/backuprestore"
 	"litepan/internal/buildinfo"
+	"litepan/internal/cache"
 	"litepan/internal/cas"
 	caslitepan "litepan/internal/cas/litepan"
-	"litepan/internal/cache"
+	casintake "litepan/internal/casintake"
 	"litepan/internal/config"
 	"litepan/internal/coverextract"
 	"litepan/internal/discover/ddb"
 	"litepan/internal/discover/discovery"
 	"litepan/internal/discover/dmodels"
 	"litepan/internal/discover/dutil"
+	"litepan/internal/domain"
+	"litepan/internal/driver"
 	"litepan/internal/logx"
 	"litepan/internal/notification"
 	"litepan/internal/notifychannel"
+	"litepan/internal/offlinedownload"
 	"litepan/internal/settings"
 	"litepan/internal/spacecleanup"
+	"litepan/internal/strm"
 )
 
 func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core *coreBundle, svc *servicesBundle, onRestart func()) (*http.Server, error) {
@@ -46,8 +57,48 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	casRunner := cas.NewRunner(svc.uploads)
 	casRunner.Log = logs.For(logx.ModuleSystem)
 
+	// CAS 链接联动：CAS 化删除源文件后，把指向该文件的 .strm 改写成 CAS 播放直链，
+	// 打通"播放 → 读 cas strm → 秒传恢复 → 302"。
+	if strings.TrimSpace(cfg.StrmDir) != "" {
+		cas.BindStrmLinker(func(sourceFileID string, recordID uint, fileName string) (int, int, error) {
+			return strm.RewriteCASStrmReferences(cfg.StrmDir, sourceFileID, recordID, fileName)
+		})
+	}
+
+	// CAS 自动转存：通知渠道收到用户发来的 .cas 文件后，保存到前端配置的网盘目录。
+	cas.BindAutoSaveAccounts(st.store.Accounts.List)
+	cas.BindAutoSaveNotifier(notifySvc.Notify)
+	cas.BindAutoSaveSaver(func(ctx context.Context, accountID int64, saveDir string, file cas.AutoSaveSourceFile) (string, error) {
+		rootID := casAccountRootID(ctx, st.store.Accounts, accountID)
+		folderID, err := svc.uploads.EnsureTargetDir(ctx, accountID, rootID, saveDir)
+		if err != nil {
+			return "", err
+		}
+		localPath, err := writeAutoSaveTemp(cfg.DataDir, file)
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = os.Remove(localPath) }()
+		res, err := svc.files.UploadLocal(ctx, accountID, driver.LocalUploadRequest{
+			LocalPath:      localPath,
+			FileName:       file.FileName,
+			ParentID:       folderID,
+			ConflictPolicy: "overwrite",
+		})
+		if err != nil {
+			return "", err
+		}
+		if res == nil {
+			return "", nil
+		}
+		return res.FileID, nil
+	})
+
+	// CAS 接收：Telegram 渠道收到用户发来的 .cas 文件后自动转存（手写长轮询，无第三方依赖）。
+	casintake.Start(context.Background(), st.store.NotifyChannels, logs.For(logx.ModuleSystem))
+
 	// 影视发现板块：初始化 GORM 数据层（复用主库），桥接 TMDB 配置，建表并启动后台 Worker。
-	if err := discoverInit(cfg, st, core, casRunner, logs); err != nil {
+	if err := discoverInit(cfg, st, core, svc, casRunner, notifySvc.Notify, logs); err != nil {
 		return nil, err
 	}
 
@@ -197,9 +248,13 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	}, nil
 }
 
+// notifyFn 通知写入器（notification.Service.Notify 的方法值）。
+// 单独抽成类型是为了让 discoverInit 不必依赖 notification 包，避免装配层耦合。
+type notifyFn func(ctx context.Context, level, category, title, message string, accountID, refID int64)
+
 // discoverInit 初始化影视发现板块：GORM 数据层（复用主库）→ 桥接 TMDB 配置 → 建表 → 启动后台 Worker。
 // 失败仅记日志不阻断启动（发现板块为非核心增强功能）。
-func discoverInit(cfg config.Config, st *storeBundle, core *coreBundle, casRunner *cas.Runner, logs *logx.Manager) error {
+func discoverInit(cfg config.Config, st *storeBundle, core *coreBundle, svc *servicesBundle, casRunner *cas.Runner, notify notifyFn, logs *logx.Manager) error {
 	log := logs.For(logx.ModuleSystem)
 	if err := ddb.Init(cfg.DBPath, log); err != nil {
 		log.Warn("发现板块数据库初始化失败", "err", err)
@@ -220,9 +275,203 @@ func discoverInit(cfg config.Config, st *storeBundle, core *coreBundle, casRunne
 		return casAdapter.Resolve(context.Background(), accountID, sourceType)
 	})
 	casRunner.StartScheduler(context.Background())
+	bindDiscoveryTransfer(cfg, st, core, svc, notify, log)
 	discovery.StartDiscoveryWorkers()
 	log.Info("发现板块已初始化")
 	return nil
+}
+
+// bindDiscoveryTransfer 注入资源转存执行器：
+//   - TransferShareFn：TG 频道 / 资源搜索结果里的网盘分享链接 → 目标网盘目录（走 driver.ShareLinkSaver）。
+//   - OfflineLinkFn：磁力/ed2k → 内置离线下载（走 offlinedownload.Service）。
+func bindDiscoveryTransfer(cfg config.Config, st *storeBundle, core *coreBundle, svc *servicesBundle, notify notifyFn, log *slog.Logger) {
+	discovery.TransferShareFn = func(ctx context.Context, text, pwd, sourceType, targetDir string) (string, int, error) {
+		creds := cas.NormalizeDriveType(sourceType)
+		accounts, err := st.store.Accounts.List(ctx)
+		if err != nil {
+			return "", 0, err
+		}
+		var lastErr error
+		for _, acc := range accounts {
+			if acc == nil || !acc.IsActive {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return "", 0, err
+			}
+			if creds != "" && cas.NormalizeDriveType(acc.DriverType) != creds {
+				continue
+			}
+			drv, err := core.drivers.Get(ctx, acc.ID)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			saver, ok := drv.(driver.ShareLinkSaver)
+			if !ok {
+				continue
+			}
+			targetParentID := ""
+			if targetDir != "" && targetDir != "/" {
+				rootID := casAccountRootID(ctx, st.store.Accounts, acc.ID)
+				item, err := svc.files.ResolvePath(ctx, acc.ID, rootID, targetDir)
+				if err != nil {
+					lastErr = fmt.Errorf("目标目录不存在 %q：%w", targetDir, err)
+					continue
+				}
+				if item == nil || !item.IsDir {
+					lastErr = fmt.Errorf("目标目录不存在 %q", targetDir)
+					continue
+				}
+				targetParentID = item.ID
+			}
+			res, err := saver.SaveShareLink(ctx, driver.ShareLinkSaveRequest{
+				ShareURL:       text,
+				SharePwd:       pwd,
+				TargetParentID: targetParentID,
+			})
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if res == nil {
+				return "", 0, nil
+			}
+			return res.Title, res.Total, nil
+		}
+		if lastErr != nil {
+			return "", 0, lastErr
+		}
+		return "", 0, fmt.Errorf("没有支持分享转存的%s账号，请先在账号管理中添加", cas.NormalizeDriveType(sourceType))
+	}
+
+	discovery.OfflineLinkFn = func(ctx context.Context, link, savePath string) error {
+		accountID := discoveryOfflineAccountID(ctx, st)
+		if accountID == 0 {
+			return fmt.Errorf("未找到可用于离线下载的网盘账号")
+		}
+		_, err := svc.offlineDownloads.AddURLs(ctx, offlinedownload.AddURLParams{
+			AccountID: accountID,
+			URLs:      []string{link},
+			FileName:  "",
+		})
+		return err
+	}
+
+	// ---- TG 频道订阅 watcher 的注入点 ----
+	// 这三项在 discovery 包内无法直接实现（通知服务会成环、驱动能力在 driver 层），
+	// 未绑定时 watcher 只是静默跳过，功能看着「没反应」且不报错——所以必须在这里接上。
+
+	// 聚合帖防误转：转存前只读探测分享顶级名称，与订阅关键词复核。
+	// 失败/未绑定时 watcher 一律放行（宁放勿拦），因此这里的错误不影响主流程。
+	discovery.ShareTitleProbeFn = func(ctx context.Context, shareURL, pwd string) (string, error) {
+		probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		for _, acc := range discoveryActiveAccounts(ctx, st) {
+			if cas.NormalizeDriveType(acc.DriverType) != cas.NormalizeDriveType("123_open") {
+				continue
+			}
+			drv, err := core.drivers.Get(ctx, acc.ID)
+			if err != nil {
+				continue
+			}
+			prober, ok := drv.(driver.ShareDirProbe)
+			if !ok {
+				continue
+			}
+			name, err := prober.ProbeShareTitle(probeCtx, driver.ShareLinkSaveRequest{
+				ShareURL: shareURL,
+				SharePwd: pwd,
+			})
+			if err != nil {
+				return "", err
+			}
+			return name, nil
+		}
+		return "", nil
+	}
+
+	discovery.TransferSuccessNotifyFn = func(subscriptionID uint, title, shareTitle, provider string) {
+		if notify == nil {
+			return
+		}
+		// 分享标题为空时退回订阅标题，避免出现「已转存「」」这种空引号文案。
+		shown := shareTitle
+		if strings.TrimSpace(shown) == "" {
+			shown = title
+		}
+		msg := fmt.Sprintf("订阅「%s」已转存「%s」到 %s 保存目录", title, shown, providerDisplayName(provider))
+		notify(context.Background(), "info", "discovery", "TG 频道订阅转存成功", msg, 0, int64(subscriptionID))
+	}
+
+	discovery.TransferFailedNotifyFn = func(subscriptionID uint, title, shareURL, provider, reason string) {
+		if notify == nil {
+			return
+		}
+		msg := fmt.Sprintf("订阅「%s」转存 %s 失败：%s", title, providerDisplayName(provider), reason)
+		notify(context.Background(), "error", "discovery", "TG 频道订阅转存失败", msg, 0, int64(subscriptionID))
+	}
+
+	_ = cfg
+	log.Debug("发现板块转存执行器已注入")
+}
+
+// discoveryActiveAccounts 当前启用账号（探测/转存共用，失败返回 nil 由调用方降级）。
+func discoveryActiveAccounts(ctx context.Context, st *storeBundle) []*domain.Account {
+	accounts, err := st.store.Accounts.List(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make([]*domain.Account, 0, len(accounts))
+	for _, acc := range accounts {
+		if acc != nil && acc.IsActive {
+			out = append(out, acc)
+		}
+	}
+	return out
+}
+
+// providerDisplayName 网盘编码转中文展示名（通知文案用）。
+func providerDisplayName(provider string) string {
+	switch cas.NormalizeDriveType(provider) {
+	case "123_open":
+		return "123 网盘"
+	case "guangya":
+		return "光鸭云盘"
+	case "cloud139":
+		return "天翼云盘"
+	case "cloud189":
+		return "天翼云盘(189)"
+	case "quark":
+		return "夸克网盘"
+	default:
+		return provider
+	}
+}
+
+// discoveryOfflineAccountID 选择内置离线下载可用账号（优先 123/115/夸克等原生支持离线的驱动）。
+func discoveryOfflineAccountID(ctx context.Context, st *storeBundle) int64 {
+	accounts, err := st.store.Accounts.List(ctx)
+	if err != nil {
+		return 0
+	}
+	preferred := []string{"123_open", "115_open", "quark"}
+	for _, want := range preferred {
+		for _, acc := range accounts {
+			if acc == nil || !acc.IsActive {
+				continue
+			}
+			if cas.NormalizeDriveType(acc.DriverType) == cas.NormalizeDriveType(want) {
+				return acc.ID
+			}
+		}
+	}
+	for _, acc := range accounts {
+		if acc != nil && acc.IsActive {
+			return acc.ID
+		}
+	}
+	return 0
 }
 
 // discoveryCASConfigGet/Set 读写 discovery_settings 表（CAS 配置存 cas_engine_config 键）。
@@ -250,4 +499,47 @@ func cacheSettingsHook(cacheSvc *cache.Service, settingsSvc *settings.Service, d
 		}
 		applyCacheRuntime(cacheSvc, settingsSvc, dataDir)
 	}
+}
+
+// casAccountRootID 读取账号配置里的根目录 ID（缺省为空，由驱动自行归一为各自根）。
+func casAccountRootID(ctx context.Context, repo domain.AccountRepository, accountID int64) string {
+	acc, err := repo.Get(ctx, accountID)
+	if err != nil || acc == nil || strings.TrimSpace(acc.Config) == "" {
+		return ""
+	}
+	var cfg struct {
+		RootFolderID string `json:"root_folder_id"`
+	}
+	if err := json.Unmarshal([]byte(acc.Config), &cfg); err != nil {
+		return ""
+	}
+	root := strings.TrimSpace(cfg.RootFolderID)
+	if root == "0" || root == "/" || strings.EqualFold(root, "root") {
+		return ""
+	}
+	return root
+}
+
+// writeAutoSaveTemp 把收到的 .cas 内容落到本地临时文件，供驱动上传。
+func writeAutoSaveTemp(dataDir string, file cas.AutoSaveSourceFile) (string, error) {
+	dir := filepath.Join(dataDir, "cas_autosave")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp(dir, "*.cas")
+	if err != nil {
+		return "", err
+	}
+	path := f.Name()
+	_, werr := f.WriteString(file.Content)
+	cerr := f.Close()
+	if werr != nil {
+		_ = os.Remove(path)
+		return "", werr
+	}
+	if cerr != nil {
+		_ = os.Remove(path)
+		return "", cerr
+	}
+	return path, nil
 }

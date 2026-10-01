@@ -47,6 +47,40 @@ type RapidUploadProber interface {
 	ProbeRapidUploadByHash(ctx context.Context, req RapidUploadRequest) (*RapidUploadResult, error)
 }
 
+// ShareLinkSaveRequest 分享链接转存请求（TG 频道订阅 / 资源一键转存共用）。
+type ShareLinkSaveRequest struct {
+	// ShareURL 分享页地址或分享标识（驱动自解析 key/id）。
+	ShareURL string
+	// SharePwd 提取码/访问码（无则空）。
+	SharePwd string
+	// TargetParentID 目标父目录 ID（空表示根目录）。
+	TargetParentID string
+}
+
+// ShareLinkSaveResult 分享转存结果。
+type ShareLinkSaveResult struct {
+	Title    string
+	Total    int
+	ParentID string
+	Message  string
+}
+
+// ShareLinkSaver 分享链接转存能力（支持分享链接一键转存的驱动实现）。
+type ShareLinkSaver interface {
+	SaveShareLink(ctx context.Context, req ShareLinkSaveRequest) (*ShareLinkSaveResult, error)
+}
+
+// ShareDirProbe 分享标题探测能力（只读，不落盘）。
+//
+// 存在的原因：TG 频道聚合帖常把多部影片塞进一条帖子，若只按关键词命中就转存，
+// 会把无关剧集整包搬进用户目录（旧仓库「无上神帝」误转事故）。转存前先取分享内
+// 顶级文件名复核，是成本最低的兜底。单独抽成接口而非复用 SaveShareLink：
+// 探测必须无副作用，否则复核本身就产生了误转。
+type ShareDirProbe interface {
+	// ProbeShareTitle 返回分享内第一个顶级条目的名称（目录名或文件名）。
+	ProbeShareTitle(ctx context.Context, req ShareLinkSaveRequest) (string, error)
+}
+
 type rapidProbeTerminalError struct{ err error }
 
 func (e *rapidProbeTerminalError) Error() string { return e.err.Error() }

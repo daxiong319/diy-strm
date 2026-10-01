@@ -136,7 +136,7 @@ func TestWalkBaseBranchEntryTreatsSkippedLocalSTRMAsSubtreeMedia(t *testing.T) {
 	deps := ScanDeps{Files: files}
 	scope := scanScope{parentID: "show", relDirs: []string{"电视剧"}, baseEntry: true}
 
-	harvest := newScanHarvest()
+	harvest := newScanHarvest(nil)
 
 	children, _, err := walkBaseBranchEntry(
 		context.Background(), task, deps, scope,
@@ -178,7 +178,7 @@ func TestWalkBaseBranchEntrySkipsBranchProbeWithoutRepository(t *testing.T) {
 	deps := ScanDeps{Files: files}
 	scope := scanScope{parentID: "show", relDirs: []string{"电视剧"}, baseEntry: true}
 
-	harvest := newScanHarvest()
+	harvest := newScanHarvest(nil)
 
 	children, _, err := walkBaseBranchEntry(
 		context.Background(), task, deps, scope,
@@ -832,6 +832,7 @@ func TestCleanupFunctionsIgnoreOversizedDirectory(t *testing.T) {
 		[]cleanupScope{{relDirs: []string{longDir}, recursive: true}},
 		nil,
 		failures,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("全量清理不应因超长目录失败：%v", err)
@@ -960,6 +961,7 @@ func TestCleanupScopedStaleFilesRemovesSameStemSidecarsOnly(t *testing.T) {
 		[]cleanupScope{{relDirs: nil, recursive: true}},
 		nil,
 		NewFailureCollector(),
+		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -999,7 +1001,7 @@ func TestCleanupMovedMediaSidecars(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			n, err := cleanupScopedStaleFiles(root, "任务", seen, []cleanupScope{{recursive: true}}, nil, NewFailureCollector())
+			n, err := cleanupScopedStaleFiles(root, "任务", seen, []cleanupScope{{recursive: true}}, nil, NewFailureCollector(), nil)
 			if err != nil || n != 1 {
 				t.Fatalf("清理结果 %d, %v", n, err)
 			}

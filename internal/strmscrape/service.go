@@ -201,8 +201,11 @@ func (s *Service) startAsyncOperation(taskID int64, total int, message, doneMess
 				s.progress.Message = "刮削失败"
 			}
 			s.log.Warn(logMessage, "task_id", taskID, "err", err)
-		} else if s.progress.Message == "" {
-			s.progress.Message = doneMessage
+		} else {
+			if s.progress.Message == "" {
+				s.progress.Message = doneMessage
+			}
+			s.log.Info("STRM 刮削操作完成", "task_id", taskID, "result", s.progress.Message)
 		}
 		s.mu.Unlock()
 	}()
@@ -499,6 +502,13 @@ func (s *Service) run(ctx context.Context, req RunRequest) error {
 		})
 		return domain.Errorf(domain.CodeValidation, "当前刮削范围内没有 .strm 文件：%s", root)
 	}
+	s.log.Info("STRM 刮削开始",
+		"task_id", req.StrmTaskID,
+		"task_name", task.Name,
+		"root", root,
+		"works", len(works),
+		"write_mode", mode,
+	)
 	s.setProgress(func(p *Progress) {
 		p.Total = len(works)
 		p.Done = 0
@@ -530,6 +540,7 @@ func (s *Service) run(ctx context.Context, req RunRequest) error {
 				p.Skipped++
 				p.CurrentItemID = ""
 			})
+			s.log.Info("STRM 刮削跳过（已最新）", "task_id", req.StrmTaskID, "work", displayName, "progress", fmt.Sprintf("%d/%d", i+1, len(works)))
 			continue
 		}
 		s.setProgress(func(p *Progress) {
@@ -585,14 +596,33 @@ func (s *Service) run(ctx context.Context, req RunRequest) error {
 			p.UpdatedItem = &updated
 			p.Message = "已刮削：" + title
 		})
+		s.log.Info("STRM 刮削完成",
+			"task_id", req.StrmTaskID,
+			"work", title,
+			"tmdb_id", info.TMDBID,
+			"media_type", info.MediaType,
+			"path", g.relKey,
+			"progress", fmt.Sprintf("%d/%d", i+1, len(works)),
+		)
 		time.Sleep(interval)
 	}
 	// 全量对账一次，去掉已删除作品
 	_ = s.RebuildIndex(ctx, req.StrmTaskID)
+	var success int
 	s.setProgress(func(p *Progress) {
+		success = p.Done - p.Skipped - p.Failed
 		p.CurrentItemID = ""
-		p.Message = fmt.Sprintf("完成：成功 %d，跳过 %d，失败 %d", p.Done-p.Skipped-p.Failed, p.Skipped, p.Failed)
+		p.Message = fmt.Sprintf("完成：成功 %d，跳过 %d，失败 %d", success, p.Skipped, p.Failed)
 	})
+	cur := s.GetProgress()
+	s.log.Info("STRM 刮削任务完成",
+		"task_id", req.StrmTaskID,
+		"task_name", task.Name,
+		"works", len(works),
+		"success", success,
+		"skipped", cur.Skipped,
+		"failed", cur.Failed,
+	)
 	return nil
 }
 

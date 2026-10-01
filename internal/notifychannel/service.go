@@ -50,7 +50,7 @@ func (s *Service) Test(ctx context.Context, p TestPayload) error {
 	cfg := withDefaults(p.Type, p.Config)
 	title := p.Title
 	if title == "" {
-		title = "LitePan 测试通知"
+		title = "diy-strm 测试通知"
 	}
 	content := p.Content
 	if content == "" {

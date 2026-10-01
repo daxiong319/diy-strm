@@ -335,7 +335,7 @@ onMounted(async () => {
     </div>
     <div class="header__inner container">
       <RouterLink to="/" class="header__brand">
-        <img src="/static/img/logo.png" alt="LitePan" class="header__logo" />
+        <img src="/static/img/logo.png" alt="diy-strm" class="header__logo" />
       </RouterLink>
 
       <nav class="header__nav">
