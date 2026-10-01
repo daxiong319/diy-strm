@@ -1,7 +1,7 @@
 services:
-  litepan:
+  diystrm:
     image: ponphil/litepan:beta
-    container_name: litepan
+    container_name: diystrm
     environment:
       - TZ=Asia/Shanghai
     volumes:
