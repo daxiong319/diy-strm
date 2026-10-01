@@ -102,3 +102,50 @@ export function runCasOnce() {
 export function fetchCasPlayURL(id: number) {
   return http.post<CasPlayURLResult>(`/admin/cas/records/${id}/play-url`, {});
 }
+
+// ---------------------------------------------------------------------------
+// 本地文件生成 CAS 清单
+// ---------------------------------------------------------------------------
+
+/** 本地文件的五哈希（全部小写 hex；pre_hash/gcid 本地无法计算，恒为空）。 */
+export interface CasLocalHashes {
+  sha1?: string;
+  sha256?: string;
+  fileMd5?: string;
+  sliceMd5?: string;
+  preHash?: string;
+  gcid?: string;
+}
+
+export interface CasGenerateLocalRequest {
+  /** 本地文件路径，必须落在服务端配置的媒体根目录内 */
+  local_path: string;
+  /** 可空，默认取路径 basename */
+  file_name?: string;
+  /** 目标网盘：123 / pan139 / cloud189 / quark / guangya（可空） */
+  target_provider?: string;
+  /** 目标网盘账号 ID；不传则仅生成清单，无法直接秒传恢复 */
+  account_id?: number;
+}
+
+export interface CasGenerateLocalResult {
+  id: number;
+  file_name: string;
+  file_size: number;
+  hashes: CasLocalHashes;
+  rapid_drive_types: string;
+  cas_content: string;
+  /** 是否指定了真实目标盘账号+类型（可走秒传恢复） */
+  restorable: boolean;
+  /** 未指定目标盘时的提示，非空时应展示给用户 */
+  warning?: string;
+}
+
+/**
+ * 对本地磁盘文件生成 CAS 清单。
+ * 大文件需要完整读盘算哈希，耗时可能从数十秒到数分钟，
+ * 故显式放宽到 600 秒（10 分钟），避免默认超时先炸。
+ */
+export function generateCasFromLocal(body: CasGenerateLocalRequest) {
+  return http.postWithTimeout<CasGenerateLocalResult>("/admin/cas/generate-local", body, 600_000);
+}
