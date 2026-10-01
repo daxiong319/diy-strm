@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"litepan/internal/cas"
+	"litepan/internal/cas/localhash"
 	"litepan/internal/domain"
 	"litepan/internal/playback"
 )
@@ -276,4 +279,109 @@ func (h *Handler) casPlayURL(w http.ResponseWriter, r *http.Request) {
 		"restored":     restored,
 		"play_url":     playURL,
 	})
+}
+
+// casGenerateLocalRequest 本地文件生成 CAS 清单请求。
+// 注意 decodeJSON 使用 DisallowUnknownFields()，字段名须与前端严格一致。
+type casGenerateLocalRequest struct {
+	LocalPath      string `json:"local_path"`
+	FileName       string `json:"file_name"`       // 可空，默认取路径 basename
+	TargetProvider string `json:"target_provider"` // 123 / pan139 / cloud189 / quark
+	AccountID      int64  `json:"account_id"`
+}
+
+// casGenerateLocal 对本地磁盘文件生成 CAS 清单入库（补齐"只能从网盘已有文件生成"的缺口）。
+// 大文件哈希耗时较长，直接复用 r.Context()，不额外设超时。
+func (h *Handler) casGenerateLocal(w http.ResponseWriter, r *http.Request) {
+	var req casGenerateLocalRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if strings.TrimSpace(req.LocalPath) == "" {
+		writeErr(w, domain.Errorf(domain.CodeValidation, "缺少 local_path"))
+		return
+	}
+	if len(h.mediaRoots) == 0 {
+		writeErr(w, domain.Errorf(domain.CodeValidation, "未配置本地媒体根目录（LITEPAN_MEDIA_DIR / LITEPAN_MEDIA_DIRS），本地生成 CAS 未启用"))
+		return
+	}
+
+	// 1. 路径安全校验（解析符号链接，必须落在白名单根目录内且为普通文件）
+	absPath, err := localhash.ResolveLocalMediaPath(req.LocalPath, h.mediaRoots)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	// 2. 流式算五哈希（恒定内存）
+	hashes, err := localhash.ComputeHashes(r.Context(), absPath)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	// 3. 文件名默认取 basename
+	fileName := strings.TrimSpace(req.FileName)
+	if fileName == "" {
+		fileName = filepath.Base(absPath)
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		writeErr(w, domain.Wrap(domain.CodeValidation, err))
+		return
+	}
+
+	// 4. 复用既有清单构造 + 落库
+	// ★ 目标盘类型必须归一化成真实网盘类型（如 "123" → "123_open"），
+	// 否则 "local" 会落成 SourceType="localfs"，restore 永远解析不到驱动。
+	// AccountID 同理必须真实，恢复时 driverResolver(accountID, sourceType) 依赖它。
+	targetDrive := ""
+	if p := strings.TrimSpace(req.TargetProvider); p != "" {
+		normalized, nerr := normalizeCasTargetProvider(p)
+		if nerr != nil {
+			writeErr(w, nerr)
+			return
+		}
+		targetDrive = normalized
+	}
+	result, err := cas.BuildLocalManifest(fileName, info.Size(), hashes, req.AccountID, targetDrive)
+	if err != nil {
+		writeErr(w, domain.Errorf(domain.CodeInternal, "CAS 清单落库失败：%v", err))
+		return
+	}
+
+	// 未指定目标盘账号时给出提示，避免用户误以为该记录可直接恢复。
+	warning := ""
+	if !result.Restorable {
+		warning = "未指定目标网盘账号与类型，仅生成可携带清单，无法直接秒传恢复"
+	}
+
+	writeOK(w, map[string]any{
+		"id":                result.ID,
+		"file_name":         result.FileName,
+		"file_size":         result.FileSize,
+		"hashes":            result.Hashes,
+		"rapid_drive_types": result.RapidDriveTypes,
+		"cas_content":       result.CasContent,
+		"restorable":        result.Restorable,
+		"warning":           warning,
+	})
+}
+
+// normalizeCasTargetProvider 把前端/API 传入的目标盘标识归一化成内部网盘类型。
+//
+// ★ 只允许 BuildRapidPayloadFor（engine.go:184）真正有分支的盘：传别的类型它返回空
+// 字符串，落库记录 RapidPayload 为空 → restore.go:64 的 `if rec.RapidPayload != ""`
+// 为假 → 静默跳过重放，记录永远无法恢复。故必须在这里就拦掉，不能放行成死记录。
+// 光鸭（guangya）当前无 payload 分支，虽驱动有秒传能力但重放路径未接通，故拒绝。
+func normalizeCasTargetProvider(raw string) (string, error) {
+	switch cas.NormalizeDriveType(raw) {
+	case "123_open", "cloud189", "cloud139", "quark":
+		return cas.NormalizeDriveType(raw), nil
+	default:
+		return "", domain.Errorf(domain.CodeValidation,
+			"不支持的目标网盘：%s（仅支持 123 / 移动云盘139 / 天翼云盘 / 夸克；光鸭秒传重放路径尚未接通）", raw)
+	}
 }

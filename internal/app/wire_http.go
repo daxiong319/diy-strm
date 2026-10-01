@@ -237,6 +237,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		NotifyChannels:    notifyChannelSvc,
 		DataDir:           cfg.DataDir,
 		StrmDir:           cfg.StrmDir,
+		MediaRoots:        cfg.MediaRoots(),
 		OnSettingsUpdated: cacheSettingsHook(core.cache, st.settings, cfg.DataDir),
 	})
 

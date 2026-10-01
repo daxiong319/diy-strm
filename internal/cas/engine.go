@@ -199,10 +199,15 @@ func BuildRapidPayloadFor(sourceType, fileName string, fileSize int64, hs cloud1
 			},
 		})
 	case "quark":
+		// ★ 夸克秒传（drivers/Quark/upload.go:696 RapidUploadByHashes）同时需要 md5 与 sha1，
+		// 缺任一直接报「夸克秒传缺少 md5/sha1 特征」。preHash 在驱动里从不被读取
+		// （pathUpdateHash 只发 md5+sha1），故这里补上 sha1，preHash 保留仅为兼容旧记录。
 		return marshalJSON(map[string]any{
 			"drive_type": "quark", "kind": "file",
 			"name": fileName, "size": fileSize,
-			"params": map[string]any{"file_md5": hs.FileMd5, "pre_hash": hs.PreHash},
+			"params": map[string]any{
+				"file_md5": hs.FileMd5, "pre_hash": hs.PreHash, "sha1": hs.Sha1,
+			},
 		})
 	case "123", "123_open", "123open":
 		// 123 云盘开放平台秒传特征 = 全量 MD5（Etag）

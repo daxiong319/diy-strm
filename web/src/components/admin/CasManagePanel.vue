@@ -6,14 +6,18 @@ import {
   fetchCasConfig,
   fetchCasPlayURL,
   fetchCasRecords,
+  generateCasFromLocal,
   restoreCasRecord,
   runCasOnce,
   saveCasConfig,
   type CasConfig,
+  type CasGenerateLocalResult,
   type CasPlayURLResult,
   type CasRecord,
 } from "@/api/cas";
 import AppButton from "@/components/base/AppButton.vue";
+import { accountsApi } from "@/api/accounts";
+import type { Account } from "@/api/types";
 import AppBadge from "@/components/base/AppBadge.vue";
 import AppInput from "@/components/base/AppInput.vue";
 import AppModal from "@/components/base/AppModal.vue";
@@ -48,6 +52,83 @@ const cfg = reactive<CasConfig>({
 });
 const cfgSaving = ref(false);
 const running = ref(false);
+
+// ---- 本地文件生成 CAS ----
+const localPath = ref("");
+const localFileName = ref("");
+const localProvider = ref("");
+const localAccountId = ref<number | null>(null);
+const localGenerating = ref(false);
+const localResult = ref<CasGenerateLocalResult | null>(null);
+
+const providerOptions = [
+  { value: "", label: "不指定（仅生成清单）" },
+  { value: "123", label: "123 云盘" },
+  { value: "pan139", label: "移动云盘 139" },
+  { value: "cloud189", label: "天翼云盘" },
+  { value: "quark", label: "夸克" },
+];
+
+// 目标盘账号：必须选真实账号，否则记录无法秒传恢复（restorable=false）。
+const localAccounts = ref<Account[]>([]);
+const localAccountOptions = computed(() => [
+  { value: "", label: "不指定账号（仅生成清单）" },
+  ...localAccounts.value.map((a) => ({
+    value: String(a.id),
+    label: `#${a.id} ${a.name || a.driver_type || ""}`.trim(),
+  })),
+]);
+
+async function loadLocalAccounts() {
+  // 账号列表加载失败不阻断主流程，仅退化成"不指定账号"。
+  try {
+    localAccounts.value = await accountsApi.list();
+  } catch {
+    localAccounts.value = [];
+  }
+}
+
+const localHashRows = computed(() => {
+  const h = localResult.value?.hashes;
+  if (!h) return [];
+  return [
+    { label: "FileMd5", value: h.fileMd5 },
+    { label: "SliceMd5", value: h.sliceMd5 },
+    { label: "SHA1", value: h.sha1 },
+    { label: "SHA256", value: h.sha256 },
+    { label: "PreHash", value: h.preHash },
+    { label: "Gcid", value: h.gcid },
+  ].filter((r) => !!r.value);
+});
+
+async function generateFromLocal() {
+  const path = localPath.value.trim();
+  if (!path) {
+    toast.error("请填写本地文件路径");
+    return;
+  }
+  localGenerating.value = true;
+  try {
+    const res = await generateCasFromLocal({
+      local_path: path,
+      file_name: localFileName.value.trim() || undefined,
+      target_provider: localProvider.value || undefined,
+      account_id: localAccountId.value ?? undefined,
+    });
+    localResult.value = res;
+    if (res.restorable) {
+      toast.success(`「${res.file_name}」CAS 清单已生成，可秒传恢复`);
+    } else {
+      toast.warning(res.warning || `「${res.file_name}」已生成，但未绑定目标盘，无法直接恢复`);
+    }
+    await load();
+  } catch (e) {
+    localResult.value = null;
+    toast.error(getApiErrorMessage(e, "本地生成 CAS 失败"));
+  } finally {
+    localGenerating.value = false;
+  }
+}
 
 const playModalOpen = ref(false);
 const playTarget = ref<CasRecord | null>(null);
@@ -282,6 +363,7 @@ function prevPage() {
 onMounted(() => {
   void loadConfig();
   void load();
+  void loadLocalAccounts();
 });
 </script>
 
@@ -313,6 +395,61 @@ onMounted(() => {
         <AppButton type="button" variant="secondary" :disabled="running" @click="runOnce">
           {{ running ? "执行中…" : "立即执行 CAS 化" }}
         </AppButton>
+      </div>
+    </SettingsCard>
+
+    <SettingsCard title="本地文件生成 CAS" accent="var(--brand)" class="cas__list-card">
+      <p class="cas__restore-tip">
+        直接对服务器本地磁盘上的文件算五哈希并生成清单（与网盘文件生成清单等价）。
+        路径必须落在服务端配置的媒体根目录（<code>LITEPAN_MEDIA_DIR</code> /
+        <code>LITEPAN_MEDIA_DIRS</code>）之内；大文件需要完整读盘，耗时较长。
+      </p>
+      <div class="cas__local-form">
+        <FormField label="本地文件路径" class="cas__local-path">
+          <AppInput v-model="localPath" placeholder="如 /media/movies/影片.mkv" />
+        </FormField>
+        <FormField label="文件名（可空，默认取路径文件名）">
+          <AppInput v-model="localFileName" placeholder="可空" />
+        </FormField>
+        <FormField label="目标网盘">
+          <AppSelect v-model="localProvider" :options="providerOptions" class="cas__local-provider" />
+        </FormField>
+        <FormField label="目标盘账号">
+          <AppSelect v-model="localAccountId" :options="localAccountOptions" class="cas__local-provider" />
+        </FormField>
+        <AppButton type="button" variant="primary" :disabled="localGenerating" @click="generateFromLocal">
+          {{ localGenerating ? "计算中…（大文件较慢）" : "生成 CAS 清单" }}
+        </AppButton>
+      </div>
+      <p class="cas__restore-tip">
+        只算哈希与落库，<strong>不会把文件上传到网盘</strong>；目标网盘与账号用于生成
+        「恢复时重放」的秒传请求。不选账号则仅生成可携带清单，无法直接秒传恢复。
+      </p>
+
+      <div v-if="localResult" class="cas__local-result">
+        <div class="cas__local-head">
+          <strong>{{ localResult.file_name }}</strong>
+          <span class="cas__muted">{{ formatSize(localResult.file_size) }}</span>
+          <AppBadge tone="success">#{{ localResult.id }}</AppBadge>
+          <AppBadge :tone="localResult.restorable ? 'success' : 'warning'">
+            {{ localResult.restorable ? "可秒传恢复" : "仅清单，不可恢复" }}
+          </AppBadge>
+        </div>
+        <p v-if="!localResult.restorable" class="cas__restore-tip">
+          {{ localResult.warning || "未指定目标网盘账号与类型，仅生成可携带清单，无法直接秒传恢复。" }}
+        </p>
+        <table class="cas__table cas__local-table">
+          <tbody>
+            <tr v-for="row in localHashRows" :key="row.label">
+              <th>{{ row.label }}</th>
+              <td><code class="cas__hash">{{ row.value }}</code></td>
+            </tr>
+            <tr>
+              <th>可秒传盘</th>
+              <td class="cas__muted">{{ localResult.rapid_drive_types || "-" }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </SettingsCard>
 
@@ -552,5 +689,51 @@ onMounted(() => {
   font-size: 13px;
   color: var(--text-muted, #6b7280);
   line-height: 1.6;
+}
+
+.cas__local-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.cas__local-path {
+  min-width: 320px;
+  flex: 1;
+}
+
+.cas__local-provider {
+  width: 200px;
+}
+
+.cas__local-result {
+  margin-top: 18px;
+}
+
+.cas__local-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--text, #e5e7eb);
+}
+
+.cas__local-table {
+  table-layout: auto;
+}
+
+.cas__local-table th {
+  width: 110px;
+  white-space: nowrap;
+}
+
+.cas__hash {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--text, #e5e7eb);
 }
 </style>

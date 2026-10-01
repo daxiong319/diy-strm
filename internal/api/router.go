@@ -58,44 +58,47 @@ var webFS embed.FS
 
 // Deps 是 API 层所需依赖（只依赖接口/服务，不感知具体存储实现）。
 type Deps struct {
-	Logs              *logx.Manager
-	AccountSvc        *account.Service
-	AccountProfile    *accountprofile.Service
-	Accounts          domain.AccountRepository
-	Configs           domain.ConfigRepository
-	Settings          *settings.Service
-	Cache             *cache.Service
-	ListHitTracker    *cache.HitTracker
-	Files             *file.Service
-	Favorites         *favorites.Service
-	Uploads           *upload.Manager
-	OfflineDownloads  *offlinedownload.Service
-	Playback          *playback.Service
-	Strm              *strm.Service
-	CacheRetention    *cacheretention.Service
-	MediaOrganize     *mediaorganize.Service
-	AIOrganize        *aiorganize.Service
-	ClassifyOrganize  *classifyorganize.Service
-	StrmScrape        *strmscrape.Service
-	Automation        *automation.Service
-	Fuse              *fusemount.Service
-	CrossTransfer     *crosstransfer.Service
-	EmbyProxy         *embyproxy.Service
-	FnosProxy         *fnosproxy.Service
-	QuarkTV           *quarktv.Service
-	ApiKeys           *apikey.Service
-	Auth              *auth.Service
-	AuthSched         *auth.Scheduler
-	AdminAuth         *adminauth.Service
-	Notifications     *notification.Service
-	Announcement      *announcement.Service
-	BackupRestore     *backuprestore.Service
-	SpaceCleanup      *spacecleanup.Service
-	CoverExtract      *coverextract.Service
-	NotifyChannels    *notifychannel.Service
-	CASRunner         *cas.Runner
-	DataDir           string
-	StrmDir           string
+	Logs             *logx.Manager
+	AccountSvc       *account.Service
+	AccountProfile   *accountprofile.Service
+	Accounts         domain.AccountRepository
+	Configs          domain.ConfigRepository
+	Settings         *settings.Service
+	Cache            *cache.Service
+	ListHitTracker   *cache.HitTracker
+	Files            *file.Service
+	Favorites        *favorites.Service
+	Uploads          *upload.Manager
+	OfflineDownloads *offlinedownload.Service
+	Playback         *playback.Service
+	Strm             *strm.Service
+	CacheRetention   *cacheretention.Service
+	MediaOrganize    *mediaorganize.Service
+	AIOrganize       *aiorganize.Service
+	ClassifyOrganize *classifyorganize.Service
+	StrmScrape       *strmscrape.Service
+	Automation       *automation.Service
+	Fuse             *fusemount.Service
+	CrossTransfer    *crosstransfer.Service
+	EmbyProxy        *embyproxy.Service
+	FnosProxy        *fnosproxy.Service
+	QuarkTV          *quarktv.Service
+	ApiKeys          *apikey.Service
+	Auth             *auth.Service
+	AuthSched        *auth.Scheduler
+	AdminAuth        *adminauth.Service
+	Notifications    *notification.Service
+	Announcement     *announcement.Service
+	BackupRestore    *backuprestore.Service
+	SpaceCleanup     *spacecleanup.Service
+	CoverExtract     *coverextract.Service
+	NotifyChannels   *notifychannel.Service
+	CASRunner        *cas.Runner
+	DataDir          string
+	StrmDir          string
+	// MediaRoots 本地媒体根目录白名单，供 POST /admin/cas/generate-local 校验本地路径。
+	// 为空切片表示该功能未启用。
+	MediaRoots        []string
 	OnSettingsUpdated func(map[string]string)
 }
 
@@ -139,6 +142,7 @@ type Handler struct {
 	casRunner         *cas.Runner
 	dataDir           string
 	strmDir           string
+	mediaRoots        []string
 	onSettingsUpdated func(map[string]string)
 
 	devMu       sync.Mutex
@@ -191,6 +195,7 @@ func NewRouter(d Deps) http.Handler {
 		casRunner:         d.CASRunner,
 		dataDir:           d.DataDir,
 		strmDir:           d.StrmDir,
+		mediaRoots:        d.MediaRoots,
 		onSettingsUpdated: d.OnSettingsUpdated,
 	}
 
@@ -437,6 +442,7 @@ func NewRouter(d Deps) http.Handler {
 					r.Put("/config", h.casSaveConfig)
 					r.Post("/run-once", h.casRunOnce)
 					r.Post("/generate", h.casGenerateForFile)
+					r.Post("/generate-local", h.casGenerateLocal)
 				})
 				r.Get("/announcement", h.getAnnouncement)
 				r.Post("/announcement/read", h.markAnnouncementRead)
