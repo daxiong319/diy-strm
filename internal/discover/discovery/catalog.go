@@ -727,15 +727,18 @@ func kickTMDBMatch() {
 	}
 }
 
-// StartDiscoveryWorkers 启动发现页后台 Worker（目录预抓 + TMDB 匹配 + 订阅调度）。
-// 注：RE0 订阅迁移（MigrateHiveSubscriptions）与缺集扫描（embyMissingWorker）依赖老 Emby 同步/订阅体系，
-// 暂未移植，见 _pending/。
+// StartDiscoveryWorkers 启动发现页后台 Worker（目录预抓 + TMDB 匹配 + 订阅调度 + Emby 缺集扫描 + TG 频道订阅）。
+// 注：RE0 旧订阅迁移（MigrateHiveSubscriptions）针对老仓库的 cloud_subscriptions 表，
+// 本项目无该表，故不启用（见 _pending/migrate_hive.go）。
 func StartDiscoveryWorkers() {
 	workerOnce.Do(func() {
 		go doubanPrefetchWorker()
 		go tmdbMatchWorker()
 		go subscriptionWorker()
-		log.Println("[discovery] 后台 Worker 已启动（目录预抓/TMDB匹配/订阅调度）")
+		go embyMissingWorker()
+		// StartChannelWatcher 自带幂等保护，这里直接起 goroutine 与其它 worker 保持一致。
+		go StartChannelWatcher(context.Background())
+		log.Println("[discovery] 后台 Worker 已启动（目录预抓/TMDB匹配/订阅调度/缺集扫描/TG频道订阅）")
 	})
 }
 

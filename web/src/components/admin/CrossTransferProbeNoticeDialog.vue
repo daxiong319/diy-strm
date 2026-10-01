@@ -9,7 +9,7 @@
         <div class="notice-arrow">→</div>
         <div class="notice-node wide">
           <div class="notice-icon"><SvgIcon name="hand-monitor" :size="26" /></div>
-          <span>LitePan 试探</span>
+          <span>diy-strm 试探</span>
         </div>
         <div class="notice-arrow">→</div>
         <div class="notice-node">

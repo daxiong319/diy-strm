@@ -87,7 +87,7 @@ func (h *Handler) downloadBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, _ := time.Parse(time.RFC3339Nano, record.CreatedAt)
-	filename := "LitePan-backup-" + created.Local().Format("20060102-150405") + ".lpb"
+	filename := "diy-strm-backup-" + created.Local().Format("20060102-150405") + ".lpb"
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
@@ -161,7 +161,7 @@ func (h *Handler) restartForRestore(w http.ResponseWriter, _ *http.Request) {
 		writeErr(w, domain.Errorf(domain.CodeValidation, "当前没有等待重启的恢复"))
 		return
 	}
-	writeJSON(w, http.StatusOK, Resp{Success: true, Message: "LitePan 即将优雅退出并执行恢复"})
+	writeJSON(w, http.StatusOK, Resp{Success: true, Message: "diy-strm 即将优雅退出并执行恢复"})
 	go func() {
 		time.Sleep(350 * time.Millisecond)
 		if err := h.backupRestore.RequestRestart(); err != nil && h.log != nil {

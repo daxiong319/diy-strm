@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,15 +16,37 @@ import (
 	"sync"
 	"time"
 
+	"log/slog"
+
+	"litepan/internal/httpx"
 	"litepan/internal/playback"
 )
 
+// metadataHTTPClient 返回元数据下载使用（且已套用统一出站地址族策略）的 HTTP 客户端。
+//
+// metadataSyncer.client 目前没有任何装配点，因此不能依赖它非空：这里直接复用
+// 进程级单例，才能与各驱动一样获得 IPv4 优先/按地址族回退的拨号行为。
+// 之前使用裸 &http.Client 会退回标准库 happy eyeballs，在 AAAA 被黑洞的链路上
+// 反复撞 IPv6 超时。
+var (
+	metadataClientOnce sync.Once
+	metadataClient     *http.Client
+)
+
+func metadataHTTPClient() *http.Client {
+	metadataClientOnce.Do(func() {
+		metadataClient = httpx.NewClient(httpx.ClientOptions{Timeout: metadataClientTimeout})
+	})
+	return metadataClient
+}
+
 const (
-	metadataCDNConcurrency = 3
-	metadataHTTPAttempts   = 3
-	metadataResolveRounds  = 3
-	metadataClientTimeout  = 5 * time.Minute
-	metadataFallbackUA     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	metadataCDNConcurrency  = 3
+	metadataHTTPAttempts    = 3
+	metadataResolveRounds   = 3
+	metadataResolveAttempts = 3
+	metadataClientTimeout   = 5 * time.Minute
+	metadataFallbackUA      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
 type metadataResolver interface {
@@ -36,6 +59,14 @@ type metadataSyncer struct {
 	client     *http.Client
 	onProgress ScanProgressReporter
 	resolveMu  sync.Mutex
+	log        *slog.Logger
+}
+
+func (m *metadataSyncer) logger() *slog.Logger {
+	if m.log != nil {
+		return m.log
+	}
+	return slog.Default()
 }
 
 type metadataItem struct {
@@ -57,6 +88,15 @@ type metadataDownloadJob struct {
 	resolved playback.Resolved
 }
 
+// pickClient 返回元数据下载使用的 HTTP 客户端：优先使用显式注入的 client，
+// 否则回退到套用了统一出站地址族策略的进程级客户端。
+func (m *metadataSyncer) pickClient() *http.Client {
+	if m != nil && m.client != nil {
+		return m.client
+	}
+	return metadataHTTPClient()
+}
+
 func (m *metadataSyncer) syncFiles(ctx context.Context, accountID int64, root string, items []metadataItem) (int64, error) {
 	if m == nil || m.playback == nil || len(items) == 0 {
 		return 0, nil
@@ -67,10 +107,7 @@ func (m *metadataSyncer) syncFiles(ctx context.Context, accountID int64, root st
 	}
 	total := len(pending)
 	reportMetadataProgress(m.onProgress, 0, total, "")
-	client := m.client
-	if client == nil {
-		client = &http.Client{Timeout: metadataClientTimeout}
-	}
+	client := m.pickClient()
 
 	var stateMu sync.Mutex
 	var created int64
@@ -79,6 +116,7 @@ func (m *metadataSyncer) syncFiles(ctx context.Context, accountID int64, root st
 		stateMu.Lock()
 		if made {
 			created++
+			m.logger().Info("元数据下载完成", "path", item.relPath)
 		}
 		done++
 		reportMetadataProgress(m.onProgress, done, total, metadataProgressLabel(item.relPath))
@@ -155,7 +193,7 @@ func (m *metadataSyncer) syncFiles(ctx context.Context, accountID int64, root st
 		if err := ctx.Err(); err != nil {
 			break
 		}
-		resolved, err := m.resolve(ctx, accountID, group.fileID, false)
+		resolved, err := m.resolveWithRetry(ctx, accountID, group.fileID, false)
 		if err != nil {
 			if ctx.Err() != nil {
 				break
@@ -331,6 +369,38 @@ func (m *metadataSyncer) resolve(ctx context.Context, accountID int64, fileID st
 	return m.playback.Resolve(ctx, accountID, fileID, "", refresh, false)
 }
 
+// resolveWithRetry 获取下载直链，遇到瞬时网络错误时带退避重试。
+//
+// 取直链本身也要访问网盘 API（例如夸克的 /file/download），同样会撞上 CDN 边缘
+// 抖动；此前该步骤没有任何重试，一次 TLS 握手超时就会让整个元数据条目失败。
+func (m *metadataSyncer) resolveWithRetry(ctx context.Context, accountID int64, fileID string, refresh bool) (playback.Resolved, error) {
+	var lastErr error
+	for attempt := 0; attempt < metadataResolveAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return playback.Resolved{}, err
+		}
+		resolved, err := m.resolve(ctx, accountID, fileID, refresh)
+		if err == nil {
+			return resolved, nil
+		}
+		lastErr = err
+		if !isTransientMetadataErr(err) || attempt >= metadataResolveAttempts-1 {
+			break
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return playback.Resolved{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("获取下载直链失败")
+	}
+	return playback.Resolved{}, lastErr
+}
+
 func (m *metadataSyncer) recordFailure(path, reason string) {
 	if m.failures != nil {
 		m.failures.Add(ScanFailureMetadata, path, reason)
@@ -428,9 +498,24 @@ func isTransientMetadataErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "timeout") || strings.Contains(msg, "connection reset") || strings.Contains(msg, "broken pipe") {
+	// 内核级超时（如 dial tcp 1.2.3.4:443: connect: connection timed out）确实是
+	// net.Error 且 Timeout() 为真，但文案是 "timed out" 而不是 "timeout"，
+	// 只做字符串匹配会漏判，于是 CDN 边缘节点抖动时直接放弃重试。
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"timeout", "timed out",
+		"connection reset", "broken pipe",
+		"connection refused", "no route to host", "network is unreachable",
+		// 未拿到任何响应就被断开（CDN 边缘节点抖动常见），重试即可。
+		"eof",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
 	}
 	if strings.HasPrefix(msg, "http 5") {
 		return true

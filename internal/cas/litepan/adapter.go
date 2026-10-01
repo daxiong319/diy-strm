@@ -128,26 +128,49 @@ func (r *rapidDriver) UploadTextFile(ctx context.Context, parentID, fileName, co
 	return "", nil
 }
 
-// ReplayRapid 重放秒传请求原文。优先按 sourceType 用五哈希走 MultiHasher；
-// 秒传请求原文里的 params 反解出哈希再调 RapidUploadByHashes。
+// ReplayRapid 重放秒传请求原文。优先用五哈希走 MultiHasher；
+// 驱动只实现单哈希 RapidUploader 时（123_open/189Cloud），从 params 反解出
+// 对应指纹走 RapidUploadByHash。秒传请求原文里的 params 统一反解出哈希。
 func (r *rapidDriver) ReplayRapid(ctx context.Context, payload, targetFolderID string) (string, error) {
 	drv, err := r.mgr.Get(ctx, r.accountID)
 	if err != nil || drv == nil {
 		return "", fmt.Errorf("驱动不可用: %w", err)
 	}
-	mh, ok := drv.(driver.MultiHasher)
-	if !ok {
-		return "", fmt.Errorf("驱动 %s 未实现 MultiHasher 秒传", r.sourceType)
-	}
 	req, err := rapidRequestFromPayload(payload)
 	if err != nil {
 		return "", err
 	}
-	res, err := mh.RapidUploadByHashes(ctx, driver.RapidUploadByHashesRequest{
-		ParentID: targetFolderID,
-		FileName: req.Name,
-		Size:     req.Size,
-		Hashes:   req.Hashes,
+	if mh, ok := drv.(driver.MultiHasher); ok {
+		res, err := mh.RapidUploadByHashes(ctx, driver.RapidUploadByHashesRequest{
+			ParentID: targetFolderID,
+			FileName: req.Name,
+			Size:     req.Size,
+			Hashes:   req.Hashes,
+		})
+		if err != nil {
+			return "", err
+		}
+		if res == nil || !res.Reuse {
+			return "", fmt.Errorf("秒传未命中（云端已无该哈希文件）")
+		}
+		return res.FileID, nil
+	}
+	// 单哈希回退：123_open 用全量 MD5，天翼用 MD5（slice_md5 仅作展示，不参与）
+	rh, ru := drv.(driver.RapidUploader)
+	if !ru {
+		return "", fmt.Errorf("驱动 %s 未实现秒传接口", r.sourceType)
+	}
+	method, hash := singleHashForSource(r.sourceType, req)
+	if hash == "" {
+		return "", fmt.Errorf("网盘 %s 秒传缺少对应指纹", r.sourceType)
+	}
+	res, err := rh.RapidUploadByHash(ctx, driver.RapidUploadRequest{
+		ParentID:  targetFolderID,
+		FileName:  req.Name,
+		Method:    method,
+		Hash:      hash,
+		Size:      req.Size,
+		Duplicate: 2, // 覆盖同名（CAS 恢复以哈希为准，不产生副本）
 	})
 	if err != nil {
 		return "", err
@@ -158,12 +181,23 @@ func (r *rapidDriver) ReplayRapid(ctx context.Context, payload, targetFolderID s
 	return res.FileID, nil
 }
 
+// singleHashForSource 按网盘类型挑选单哈希秒传用的 (method, hash)。
+func singleHashForSource(sourceType string, req *rapidRequest) (string, string) {
+	switch cas.NormalizeDriveType(sourceType) {
+	case "123_open":
+		return "md5", req.Hashes[domain.HashMD5]
+	case "cloud189":
+		return "md5", req.Hashes[domain.HashMD5]
+	}
+	return "", ""
+}
+
 // rapidRequest 反解秒传请求原文（cloud-auto-save-x 同款 JSON）
 type rapidRequest struct {
-	DriveType string                  `json:"drive_type"`
-	Name      string                  `json:"name"`
-	Size      int64                   `json:"size"`
-	Params    map[string]any          `json:"params"`
+	DriveType string                     `json:"drive_type"`
+	Name      string                     `json:"name"`
+	Size      int64                      `json:"size"`
+	Params    map[string]any             `json:"params"`
 	Hashes    map[domain.HashType]string `json:"-"`
 }
 
@@ -185,6 +219,7 @@ func rapidRequestFromPayload(payload string) (*rapidRequest, error) {
 	put("fileMd5", domain.HashMD5)
 	put("sliceMd5", domain.HashSliceMD5)
 	put("file_md5", domain.HashMD5)
+	put("md5", domain.HashMD5)
 	put("contentHash", domain.HashSHA256)
 	put("sha1", domain.HashSHA1)
 	put("gcid", domain.HashGcid)

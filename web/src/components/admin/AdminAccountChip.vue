@@ -186,8 +186,8 @@ onBeforeUnmount(() => {
             class="acct-menu__icon"
             role="button"
             tabindex="-1"
-            aria-label="关于 LitePan"
-            title="关于 LitePan"
+            aria-label="关于 diy-strm"
+            title="关于 diy-strm"
             @click.stop="handleAboutIconClick"
           >
             <svg viewBox="0 0 24 24">

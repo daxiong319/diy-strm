@@ -495,7 +495,7 @@ func (s *Service) inspectBackup(ctx context.Context, path, password, extractDir 
 		return Manifest{}, payloadManifest{}, domain.Wrap(domain.CodeInternal, err)
 	}
 	if manifest.SchemaVersion > supported {
-		return Manifest{}, payloadManifest{}, domain.Errorf(domain.CodeValidation, "备份 schema 版本 %d 高于当前程序支持的 %d，请先升级 LitePan", manifest.SchemaVersion, supported)
+		return Manifest{}, payloadManifest{}, domain.Errorf(domain.CodeValidation, "备份 schema 版本 %d 高于当前程序支持的 %d，请先升级 diy-strm", manifest.SchemaVersion, supported)
 	}
 	payload, err := extractPayloadArchive(archivePath, extractDir)
 	if err != nil {
@@ -593,7 +593,7 @@ func (s *Service) RequestRestart() error {
 		return domain.Errorf(domain.CodeValidation, "当前没有等待重启的恢复")
 	}
 	if s.onRestart == nil {
-		return domain.Errorf(domain.CodeNotImplement, "当前部署不支持程序内发起重启，请手动重启 LitePan")
+		return domain.Errorf(domain.CodeNotImplement, "当前部署不支持程序内发起重启，请手动重启 diy-strm")
 	}
 	s.onRestart()
 	return nil

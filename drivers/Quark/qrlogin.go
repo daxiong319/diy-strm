@@ -18,6 +18,7 @@ import (
 
 	"litepan/internal/domain"
 	"litepan/internal/driver"
+	"litepan/internal/httpx"
 )
 
 // 夸克 CAS 扫码：会话状态编码进 opaque token，由客户端持有。
@@ -187,8 +188,11 @@ func (d *Driver) bootstrapList(ctx context.Context, client *http.Client, col *co
 }
 
 func (d *Driver) qrClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	httpx.ApplyDialStrategy(tr)
 	return &http.Client{
 		Timeout:       30 * time.Second,
+		Transport:     tr,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 }

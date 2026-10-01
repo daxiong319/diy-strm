@@ -1,4 +1,4 @@
-// LitePan 手绘图标。
+// diy-strm 手绘图标。
 const NS = ' xmlns="http://www.w3.org/2000/svg"'
 
 export const HAND_SVG_MAP: Record<string, string> = {

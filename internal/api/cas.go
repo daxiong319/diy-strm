@@ -137,6 +137,37 @@ func (h *Handler) casRunOnce(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// casGenerateForFile 手动对单个网盘文件触发 CAS 化（补齐 run-once 之外的管理入口）
+func (h *Handler) casGenerateForFile(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AccountID      int64  `json:"account_id"`
+		SourceType     string `json:"source_type"`
+		RemoteParentID string `json:"remote_parent_id"`
+		FileName       string `json:"file_name"`
+		RemoteFileID   string `json:"remote_file_id"`
+		FileSize       int64  `json:"file_size"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if req.AccountID <= 0 || req.RemoteFileID == "" || req.FileName == "" {
+		writeErr(w, domain.Errorf(domain.CodeValidation, "缺少 account_id / remote_file_id / file_name"))
+		return
+	}
+	if req.SourceType == "" {
+		writeErr(w, domain.Errorf(domain.CodeValidation, "缺少 source_type"))
+		return
+	}
+	cfg := cas.GetConfigForAPI()
+	result, err := cas.GenerateCASForFile(r.Context(), req.AccountID, req.SourceType, req.RemoteParentID, req.FileName, req.RemoteFileID, req.FileSize, cfg.DeleteSource)
+	if err != nil {
+		writeErr(w, domain.Errorf(domain.CodeInternal, "CAS 化失败：%v", err))
+		return
+	}
+	writeOK(w, result)
+}
+
 // casGetConfig 读 CAS 配置
 func (h *Handler) casGetConfig(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, cas.GetConfigForAPI())

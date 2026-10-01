@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/studio-b12/gowebdav"
+
+	"litepan/internal/httpx"
 )
 
 const defaultTimeout = 60 * time.Second
@@ -18,6 +20,7 @@ func buildTransport(add Addition) http.RoundTripper {
 	if add.TLSSkip {
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
+	httpx.ApplyDialStrategy(tr)
 	return tr
 }
 

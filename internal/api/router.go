@@ -27,8 +27,8 @@ import (
 	"litepan/internal/automation"
 	"litepan/internal/backuprestore"
 	"litepan/internal/cache"
-	"litepan/internal/cas"
 	"litepan/internal/cacheretention"
+	"litepan/internal/cas"
 	"litepan/internal/classifyorganize"
 	"litepan/internal/coverextract"
 	"litepan/internal/crosstransfer"
@@ -384,6 +384,45 @@ func NewRouter(d Deps) http.Handler {
 					r.Route("/resources", func(r chi.Router) {
 						r.Post("/search", h.searchMediaResources)
 						r.Post("/copy-link", h.copyRe0ResourceLink)
+						r.Post("/transfer", h.transferMediaResource)
+						r.Post("/offline", h.offlineMediaResource)
+					})
+					r.Route("/subscriptions", func(r chi.Router) {
+						r.Get("/", h.subscriptionList)
+						r.Post("/", h.subscriptionSave)
+						r.Get("/by-key", h.subscriptionByKey)
+						r.Post("/run-due", h.subscriptionRunDue)
+						r.Get("/{id}", h.subscriptionGet)
+						r.Delete("/{id}", h.subscriptionDelete)
+						r.Post("/{id}/toggle", h.subscriptionToggle)
+						r.Post("/{id}/run", h.subscriptionRun)
+						r.Get("/{id}/runs", h.subscriptionRuns)
+						r.Get("/{id}/events", h.subscriptionEvents)
+						r.Get("/{id}/items", h.subscriptionItems)
+					})
+					r.Route("/channels", func(r chi.Router) {
+						r.Get("/", h.channelList)
+						r.Post("/", h.channelSave)
+						r.Get("/preview", h.channelPreview)
+						r.Post("/run-now", h.channelRunNow)
+						r.Delete("/{id}", h.channelDelete)
+						r.Post("/{id}/toggle", h.channelToggle)
+						r.Post("/{id}/reset-cursor", h.channelResetCursor)
+					})
+					r.Route("/monitor-records", func(r chi.Router) {
+						r.Get("/", h.monitorRecordList)
+						r.Get("/sources", h.monitorRecordSources)
+						r.Post("/delete", h.monitorRecordDelete)
+						r.Post("/clear", h.monitorRecordClear)
+					})
+					r.Route("/emby-missing", func(r chi.Router) {
+						r.Get("/status", h.embyMissingStatus)
+						r.Get("/libraries", h.embyMissingLibraries)
+						r.Post("/scan", h.embyMissingScanStart)
+						r.Get("/scans", h.embyMissingScans)
+						r.Get("/scans/{id}/results", h.embyMissingResults)
+						r.Get("/scans/{id}/events", h.embyMissingEvents)
+						r.Post("/subscriptions", h.embyMissingSubscribe)
 					})
 				})
 				r.Route("/cas", func(r chi.Router) {
@@ -397,6 +436,7 @@ func NewRouter(d Deps) http.Handler {
 					r.Get("/config", h.casGetConfig)
 					r.Put("/config", h.casSaveConfig)
 					r.Post("/run-once", h.casRunOnce)
+					r.Post("/generate", h.casGenerateForFile)
 				})
 				r.Get("/announcement", h.getAnnouncement)
 				r.Post("/announcement/read", h.markAnnouncementRead)

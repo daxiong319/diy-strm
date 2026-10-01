@@ -10,32 +10,33 @@ import (
 
 	"litepan/internal/cas/cloud189"
 	"litepan/internal/discover/ddb"
+	"litepan/internal/discover/dutil"
 )
 
 // CasManifestRecord CAS 清单记录（五哈希统一模型 + 秒传请求原文缓存）
 type CasManifestRecord struct {
-	ID              uint   `gorm:"primaryKey" json:"id"`
-	UploadTaskID    int64   `gorm:"index" json:"upload_task_id"`
-	AccountID       int64   `gorm:"index" json:"account_id"`
-	SourceType      string `json:"source_type"`
-	FileName        string `gorm:"size:512" json:"file_name"`
-	FileSize        int64  `json:"file_size"`
-	FileMd5         string `gorm:"size:32" json:"file_md5"`
-	SliceMd5        string `gorm:"size:64" json:"slice_md5"`
-	Sha1            string `gorm:"size:40" json:"sha1"`
-	Sha256          string `gorm:"size:64" json:"sha256"`
-	PreHash         string `gorm:"size:256" json:"pre_hash"` // 夸克 4×4MB 分块 MD5 预检串
-	Gcid            string `gorm:"size:128" json:"gcid"`
-	RemoteFileID    string `gorm:"size:128" json:"remote_file_id"`
-	RemotePath      string `gorm:"size:1024" json:"remote_path"`
-	CasContent      string `gorm:"type:text" json:"cas_content"`
-	RapidPayload    string `gorm:"type:text" json:"rapid_payload"`
-	RapidDriveTypes string `gorm:"size:256" json:"rapid_drive_types"`
-	CasFileID       string `gorm:"size:128" json:"cas_file_id"`
-	Status          string `gorm:"size:32" json:"status"` // active(源已删)/restored(已恢复)/pending
-	DeletedAt       int64  `json:"deleted_at"`
-	RestoredAt      int64  `json:"restored_at"`
-	RestoredFileID  string `gorm:"size:128" json:"restored_file_id"`
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	UploadTaskID    int64     `gorm:"index" json:"upload_task_id"`
+	AccountID       int64     `gorm:"index" json:"account_id"`
+	SourceType      string    `json:"source_type"`
+	FileName        string    `gorm:"size:512" json:"file_name"`
+	FileSize        int64     `json:"file_size"`
+	FileMd5         string    `gorm:"size:32" json:"file_md5"`
+	SliceMd5        string    `gorm:"size:64" json:"slice_md5"`
+	Sha1            string    `gorm:"size:40" json:"sha1"`
+	Sha256          string    `gorm:"size:64" json:"sha256"`
+	PreHash         string    `gorm:"size:256" json:"pre_hash"` // 夸克 4×4MB 分块 MD5 预检串
+	Gcid            string    `gorm:"size:128" json:"gcid"`
+	RemoteFileID    string    `gorm:"size:128" json:"remote_file_id"`
+	RemotePath      string    `gorm:"size:1024" json:"remote_path"`
+	CasContent      string    `gorm:"type:text" json:"cas_content"`
+	RapidPayload    string    `gorm:"type:text" json:"rapid_payload"`
+	RapidDriveTypes string    `gorm:"size:256" json:"rapid_drive_types"`
+	CasFileID       string    `gorm:"size:128" json:"cas_file_id"`
+	Status          string    `gorm:"size:32" json:"status"` // active(源已删)/restored(已恢复)/pending
+	DeletedAt       int64     `json:"deleted_at"`
+	RestoredAt      int64     `json:"restored_at"`
+	RestoredFileID  string    `gorm:"size:128" json:"restored_file_id"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -44,17 +45,17 @@ func (CasManifestRecord) TableName() string { return "cas_manifests" }
 
 // RapidRecord 秒传请求原文缓存表
 type RapidRecord struct {
-	ID            uint   `gorm:"primaryKey" json:"id"`
-	DriveType     string `gorm:"index:idx_rapid_drive_file,unique" json:"drive_type"`
-	FileID        string `gorm:"size:128;index:idx_rapid_drive_file,unique" json:"file_id"`
-	Size          int64  `json:"size"`
-	FileMd5       string `gorm:"size:32" json:"file_md5"`
-	SliceMd5      string `gorm:"size:64" json:"slice_md5"`
-	Sha1          string `gorm:"size:40" json:"sha1"`
-	Sha256        string `gorm:"size:64" json:"sha256"`
-	PreHash       string `gorm:"size:256" json:"pre_hash"`
-	Gcid          string `gorm:"size:128" json:"gcid"`
-	Base64Payload string `gorm:"type:text" json:"base64_payload"`
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	DriveType     string    `gorm:"index:idx_rapid_drive_file,unique" json:"drive_type"`
+	FileID        string    `gorm:"size:128;index:idx_rapid_drive_file,unique" json:"file_id"`
+	Size          int64     `json:"size"`
+	FileMd5       string    `gorm:"size:32" json:"file_md5"`
+	SliceMd5      string    `gorm:"size:64" json:"slice_md5"`
+	Sha1          string    `gorm:"size:40" json:"sha1"`
+	Sha256        string    `gorm:"size:64" json:"sha256"`
+	PreHash       string    `gorm:"size:256" json:"pre_hash"`
+	Gcid          string    `gorm:"size:128" json:"gcid"`
+	Base64Payload string    `gorm:"type:text" json:"base64_payload"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -74,6 +75,11 @@ type CasConfig struct {
 	DeleteSource     bool `json:"delete_source"`
 	DelayDeleteHours int  `json:"delay_delete_hours"` // 播放恢复后延时删除临时文件（小时，默认 2；0=不自动删除）
 	WriteBackCloud   bool `json:"write_back_cloud"`
+
+	// 通知渠道 CAS 自动转存：收到用户发来的 .cas 文件后自动保存到下列目录。
+	CASNotifyAutoSave       bool                           `json:"cas_notify_auto_save"`
+	CASNotifyAutoSaveDir    string                         `json:"cas_notify_auto_save_dir"`
+	CASNotifyAutoSaveDrives map[string]AutoSaveDriveConfig `json:"cas_notify_auto_save_drives,omitempty"`
 }
 
 // configStore/configSetter 配置读写（由装配层注入；默认空实现，未接 settings 前不持久化）。
@@ -95,11 +101,14 @@ func BindConfigStore(get func(key string) (string, bool), set func(key, value st
 
 func getConfig() CasConfig {
 	cfg := CasConfig{
-		Enabled:          true,
-		AgeDays:          30,
-		DeleteSource:     true,
-		DelayDeleteHours: 2,
-		WriteBackCloud:   false,
+		Enabled:                 true,
+		AgeDays:                 30,
+		DeleteSource:            true,
+		DelayDeleteHours:        2,
+		WriteBackCloud:          false,
+		CASNotifyAutoSave:       true,
+		CASNotifyAutoSaveDir:    "CAS",
+		CASNotifyAutoSaveDrives: map[string]AutoSaveDriveConfig{},
 	}
 	if v, ok := configStore(configKey); ok && v != "" {
 		_ = json.Unmarshal([]byte(v), &cfg)
@@ -110,7 +119,26 @@ func getConfig() CasConfig {
 	if cfg.DelayDeleteHours < 0 {
 		cfg.DelayDeleteHours = 0
 	}
+	normalizeAutoSave(&cfg)
 	return cfg
+}
+
+// normalizeAutoSave 归一 CAS 自动转存配置（去空白/斜杠、初始化 map）。
+func normalizeAutoSave(cfg *CasConfig) {
+	cfg.CASNotifyAutoSaveDir = strings.Trim(strings.TrimSpace(cfg.CASNotifyAutoSaveDir), "/")
+	if cfg.CASNotifyAutoSaveDrives == nil {
+		cfg.CASNotifyAutoSaveDrives = map[string]AutoSaveDriveConfig{}
+	}
+	normalized := make(map[string]AutoSaveDriveConfig, len(cfg.CASNotifyAutoSaveDrives))
+	for k, v := range cfg.CASNotifyAutoSaveDrives {
+		key := NormalizeDriveType(k)
+		if key == "" {
+			continue
+		}
+		v.SaveDir = strings.Trim(strings.TrimSpace(v.SaveDir), "/")
+		normalized[key] = v
+	}
+	cfg.CASNotifyAutoSaveDrives = normalized
 }
 
 // GetConfigForAPI 配置读取（API 用）
@@ -124,6 +152,7 @@ func SaveConfig(cfg CasConfig) {
 	if cfg.DelayDeleteHours < 0 {
 		cfg.DelayDeleteHours = 0
 	}
+	normalizeAutoSave(&cfg)
 	raw, _ := json.Marshal(cfg)
 	configSetter(configKey, string(raw))
 }
@@ -134,7 +163,7 @@ func SaveConfig(cfg CasConfig) {
 
 // DeriveRapidDriveTypes 由五哈希非空字段推导可秒传到的盘
 func DeriveRapidDriveTypes(hs cloud189.HashSet) string {
-	types := make([]string, 0, 3)
+	types := make([]string, 0, 4)
 	if hs.FileMd5 != "" || hs.SliceMd5 != "" {
 		types = append(types, "cloud189")
 	}
@@ -143,6 +172,9 @@ func DeriveRapidDriveTypes(hs cloud189.HashSet) string {
 	}
 	if hs.FileMd5 != "" && hs.PreHash != "" {
 		types = append(types, "quark")
+	}
+	if hs.FileMd5 != "" {
+		types = append(types, "123_open")
 	}
 	return strings.Join(types, ",")
 }
@@ -171,6 +203,13 @@ func BuildRapidPayloadFor(sourceType, fileName string, fileSize int64, hs cloud1
 			"drive_type": "quark", "kind": "file",
 			"name": fileName, "size": fileSize,
 			"params": map[string]any{"file_md5": hs.FileMd5, "pre_hash": hs.PreHash},
+		})
+	case "123", "123_open", "123open":
+		// 123 云盘开放平台秒传特征 = 全量 MD5（Etag）
+		return marshalJSON(map[string]any{
+			"drive_type": "123_open", "kind": "file",
+			"name": fileName, "size": fileSize,
+			"params": map[string]any{"md5": hs.FileMd5},
 		})
 	}
 	return ""
@@ -212,6 +251,42 @@ func BindDriverResolver(resolver func(accountID int64, sourceType string) RapidD
 }
 
 // ---------------------------------------------------------------------------
+// CAS 链接联动：生成 .cas 后把对应的老 .strm 改写成 CAS 播放直链
+// （播放 → 读 cas strm → 秒传恢复 → 302）
+// ---------------------------------------------------------------------------
+
+// StrmLinker 由装配层注入：把指向 sourceFileID 的 .strm 首行改写成 CAS 播放直链。
+// 返回 matched（命中的 .strm 数量）与 updated（实际写盘数量）。
+type StrmLinker func(sourceFileID string, recordID uint, fileName string) (matched, updated int, err error)
+
+// strmLinker 默认空实现：未注入时不影响 CAS 化主流程。
+var strmLinker StrmLinker = func(string, uint, string) (int, int, error) { return 0, 0, nil }
+
+// BindStrmLinker 注入 STRM 改写器（由装配层提供 STRM 根目录配置）。
+func BindStrmLinker(linker StrmLinker) {
+	if linker != nil {
+		strmLinker = linker
+	}
+}
+
+// linkCASStrm 在 CAS 记录落库后联动改写老 .strm。失败只记日志，不阻断 CAS 化。
+func linkCASStrm(rec *CasManifestRecord) {
+	if rec == nil || strmLinker == nil {
+		return
+	}
+	matched, updated, err := strmLinker(rec.RemoteFileID, rec.ID, rec.FileName)
+	if err != nil {
+		dutil.AppLogger.Warnf("CAS 化：%s 联动 STRM 失败：%v", rec.FileName, err)
+		return
+	}
+	if matched > 0 {
+		dutil.AppLogger.Infof("CAS 化：%s 联动 STRM（命中 %d，改写 %d）", rec.FileName, matched, updated)
+	} else {
+		dutil.AppLogger.Infof("CAS 化：%s 未找到对应 STRM，跳过联动（可稍后执行 STRM 任务生成）", rec.FileName)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // CAS 生成（GenerateCASForFile：整理后处理钩子，网盘无关骨架）
 // ---------------------------------------------------------------------------
 
@@ -219,7 +294,7 @@ func BindDriverResolver(resolver func(accountID int64, sourceType string) RapidD
 type CASOrganizeResult struct {
 	Success      bool   `json:"success"`
 	RemoteFileID string `json:"remote_file_id"`
-	CasRecordID  int64   `json:"cas_record_id"`
+	CasRecordID  int64  `json:"cas_record_id"`
 	Skipped      bool   `json:"skipped"`
 }
 
@@ -300,6 +375,8 @@ func GenerateCASForFile(ctx context.Context, accountID int64, sourceType, remote
 	if err := ddb.Db.Create(&rec).Error; err != nil {
 		return nil, &CasError{Op: "persist", Drive: sourceType, Err: err}
 	}
+	// 联动：把指向源文件的 .strm 改写成 CAS 播放直链，打通"播放 → 秒传恢复 → 302"。
+	linkCASStrm(&rec)
 	result.Success = true
 	result.RemoteFileID = remoteFileID
 	result.CasRecordID = int64(rec.ID)

@@ -218,12 +218,12 @@ async function restartNow() {
   const oldBootID = await currentBootID();
   restarting.value = true;
   restartTimedOut.value = false;
-  restartMessage.value = "LitePan 正在安全关闭，请不要关闭此页面……";
+  restartMessage.value = "diy-strm 正在安全关闭，请不要关闭此页面……";
   try {
     await backupRestoreApi.restart();
   } catch (error) {
     restarting.value = false;
-    toast.error(getApiErrorMessage(error, "发起重启失败，请手动重启 LitePan"));
+    toast.error(getApiErrorMessage(error, "发起重启失败，请手动重启 diy-strm"));
     return;
   }
   restartMessage.value = "正在应用备份并等待服务重新启动……";
@@ -243,7 +243,7 @@ async function pollRestart(oldBootID: string) {
     }
   }
   restartTimedOut.value = true;
-  restartMessage.value = "尚未检测到服务重新启动。当前部署可能没有自动重启策略，请手动启动 LitePan 后重新连接。";
+  restartMessage.value = "尚未检测到服务重新启动。当前部署可能没有自动重启策略，请手动启动 diy-strm 后重新连接。";
 }
 
 async function retryConnection() {

@@ -23,12 +23,21 @@ export interface CasRecord {
   created_at?: string;
 }
 
+export interface CasAutoSaveDriveConfig {
+  enabled: boolean;
+  account_id: number;
+  save_dir: string;
+}
+
 export interface CasConfig {
   enabled: boolean;
   age_days: number;
   delete_source: boolean;
   delay_delete_hours: number;
   write_back_cloud: boolean;
+  cas_notify_auto_save: boolean;
+  cas_notify_auto_save_dir: string;
+  cas_notify_auto_save_drives?: Record<string, CasAutoSaveDriveConfig>;
 }
 
 export interface CasPlayURLResult {

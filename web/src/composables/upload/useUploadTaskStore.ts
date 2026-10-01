@@ -121,7 +121,7 @@ export function useUploadTaskStore(deps: UploadTaskDeps) {
       progress: 0,
       uploaded_bytes: 0,
       total_bytes: file.size,
-      message: "等待发送到 LitePan 服务器",
+      message: "等待发送到 diy-strm 服务器",
       error: "",
       created_at: now,
       updated_at: now,

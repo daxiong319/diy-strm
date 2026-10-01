@@ -149,7 +149,7 @@ onBeforeUnmount(() => {
         >
           <img
             :src="sidebarCompact ? '/static/img/logo-l.png' : '/static/img/logo.png'"
-            alt="LitePan"
+            alt="diy-strm"
             class="sidebar__logo"
           />
           <span v-if="!isMobile" class="sidebar-logo-tip" role="tooltip">

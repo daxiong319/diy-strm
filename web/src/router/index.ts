@@ -31,7 +31,7 @@ export const router = createRouter({
 
 router.beforeEach(async (to) => {
   if (to.meta.title) {
-    document.title = `${String(to.meta.title)} - LitePan`;
+    document.title = `${String(to.meta.title)} - diy-strm`;
   }
 
   const auth = useAuthStore();

@@ -237,7 +237,9 @@ func finalizeQRLogin(ctx context.Context, client *http.Client, redirectURL strin
 
 func qrHTTPClient() *http.Client {
 	jar, _ := cookiejar.New(nil)
-	return &http.Client{Timeout: 30 * time.Second, Jar: jar}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	httpx.ApplyDialStrategy(tr)
+	return &http.Client{Timeout: 30 * time.Second, Jar: jar, Transport: tr}
 }
 
 func qrPostForm(ctx context.Context, client *http.Client, rawURL string, form url.Values, out any, headers map[string]string) error {

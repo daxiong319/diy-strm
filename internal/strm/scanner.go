@@ -145,7 +145,7 @@ func ScanTask(ctx context.Context, task *domain.StrmTask, deps ScanDeps, runMode
 		branchParentIDs = make(map[string]struct{})
 	}
 
-	harvest := newScanHarvest()
+	harvest := newScanHarvest(deps.Log)
 	state := harvest.state
 
 	var monitorScopes, childScopes []scanScope
@@ -228,9 +228,13 @@ type scanHarvest struct {
 	state           *branchScanState
 	dirHasMedia     map[string]bool
 	subtreeHasMedia map[string]bool
+	log             *slog.Logger
 }
 
-func newScanHarvest() scanHarvest {
+func newScanHarvest(log *slog.Logger) scanHarvest {
+	if log == nil {
+		log = slog.Default()
+	}
 	return scanHarvest{
 		state: &branchScanState{
 			skippedDirs:    make(map[string]struct{}),
@@ -239,6 +243,7 @@ func newScanHarvest() scanHarvest {
 		},
 		dirHasMedia:     make(map[string]bool),
 		subtreeHasMedia: make(map[string]bool),
+		log:             log,
 	}
 }
 
@@ -279,8 +284,10 @@ func (f scanFinalizer) writeStrm(selected []mediaCandidate) (ScanResult, map[str
 		}
 		if created {
 			result.GeneratedCount++
+			f.log.Info("STRM 生成", "path", filepath.ToSlash(relPath))
 		} else if updated {
 			result.UpdatedCount++
+			f.log.Info("STRM 更新", "path", filepath.ToSlash(relPath))
 		}
 	}
 	return result, seen
@@ -319,6 +326,7 @@ func (f scanFinalizer) syncAndCleanup(result *ScanResult, harvest scanHarvest, c
 			Playback:     f.deps.Playback,
 			Failures:     f.failures,
 			OnProgress:   f.deps.OnProgress,
+			Log:          f.log,
 		})
 		if err != nil {
 			return err
@@ -329,7 +337,7 @@ func (f scanFinalizer) syncAndCleanup(result *ScanResult, harvest scanHarvest, c
 	if !cleanupEnabled {
 		return nil
 	}
-	removed, err := cleanupScopedStaleFiles(f.root, f.rules.outputRelDir, seen, scopes, state.skippedDirs, f.failures)
+	removed, err := cleanupScopedStaleFiles(f.root, f.rules.outputRelDir, seen, scopes, state.skippedDirs, f.failures, f.log)
 	if err != nil {
 		return err
 	}
@@ -380,7 +388,7 @@ func finalizeScan(
 		return result, err
 	}
 
-	log.Debug("STRM 扫描完成",
+	log.Info("STRM 扫描完成",
 		"task_id", task.ID,
 		"scanned", result.ScannedCount,
 		"generated", result.GeneratedCount,
@@ -636,6 +644,7 @@ func walkBaseBranchEntry(
 	outputFolder := rules.outputRelDir
 	localStrmChildren := localChildDirsWithStrm(strmRoot, outputFolder, relDirs)
 	localHasMedia := false
+	mediaCount := 0
 	var dirMeta []metadataItem
 	var childScopes []scanScope
 	remoteChildNames := make(map[string]struct{})
@@ -703,6 +712,7 @@ func walkBaseBranchEntry(
 				reportScanProgress(deps.OnProgress, ScanPhaseScan, 0, 1, dirProgressLabel(relDirs))
 			}
 			localHasMedia = true
+			mediaCount++
 			continue
 		}
 		if classified.hasMetadata {
@@ -719,6 +729,7 @@ func walkBaseBranchEntry(
 	if deps.OnProgress != nil {
 		reportScanProgress(deps.OnProgress, ScanPhaseScan, 1, 0, dirProgressLabel(relDirs))
 	}
+	harvest.log.Info("STRM 扫描目录", "dir", dirRelPath(relDirs), "files", len(items), "media", mediaCount)
 	return childScopes, remoteChildNames, nil
 }
 
@@ -763,6 +774,7 @@ func walkScope(
 		childNames := make(map[string]struct{})
 		dirKey := dirKey(n.relDirs)
 		localHasMedia := false
+		mediaCount := 0
 		var dirMeta []metadataItem
 		for i := range items {
 			item := items[i]
@@ -805,6 +817,7 @@ func walkScope(
 		if deps.OnProgress != nil {
 			reportScanProgress(deps.OnProgress, ScanPhaseScan, 1, 0, dirProgressLabel(n.relDirs))
 		}
+		harvest.log.Info("STRM 扫描目录", "dir", dirRelPath(n.relDirs), "files", len(items), "media", mediaCount)
 	}
 	return nil
 }
@@ -1031,7 +1044,10 @@ func isSharedMediaSidecar(name string) bool {
 }
 
 // cleanupScopedStaleFiles 清理过期 .strm，并顺带删除同主干旁路元数据。
-func cleanupScopedStaleFiles(root, outputFolder string, seen map[string]struct{}, scopes []cleanupScope, skipped map[string]struct{}, failures *FailureCollector) (int64, error) {
+func cleanupScopedStaleFiles(root, outputFolder string, seen map[string]struct{}, scopes []cleanupScope, skipped map[string]struct{}, failures *FailureCollector, log *slog.Logger) (int64, error) {
+	if log == nil {
+		log = slog.Default()
+	}
 	taskFolder := localTaskDir("", outputFolder, nil)
 	var removed int64
 	for _, sc := range scopes {
@@ -1074,10 +1090,15 @@ func cleanupScopedStaleFiles(root, outputFolder string, seen map[string]struct{}
 				if isStrmUnderSkipped(rel, taskFolder, skipped) {
 					return nil
 				}
+				// CAS 播放 .strm：源文件已删（秒传恢复后播放），云端看不到不代表过期。
+				if isCasPlayStrmFile(path) {
+					return nil
+				}
 				if err := removeStaleStrmAndSameStemSidecars(path); err != nil {
 					return err
 				}
 				removed++
+				log.Info("STRM 清理：删除过期文件", "path", filepath.ToSlash(rel))
 				return nil
 			})
 			if err != nil {
@@ -1113,10 +1134,15 @@ func cleanupScopedStaleFiles(root, outputFolder string, seen map[string]struct{}
 			if isStrmUnderSkipped(rel, taskFolder, skipped) {
 				continue
 			}
+			// CAS 播放 .strm：源文件已删（秒传恢复后播放），云端看不到不代表过期。
+			if isCasPlayStrmFile(full) {
+				continue
+			}
 			if err := removeStaleStrmAndSameStemSidecars(full); err != nil {
 				return removed, err
 			}
 			removed++
+			log.Info("STRM 清理：删除过期文件", "path", rel)
 		}
 		_ = removeEmptyDirs(cleanupRoot)
 	}
@@ -1161,6 +1187,10 @@ func collectCleanupImpact(root, outputFolder string, scopes []cleanupScope, skip
 				return nil
 			}
 			if _, ok := seen[rel]; !ok {
+				// CAS 播放 .strm 不会被清理，不计入待删规模。
+				if isCasPlayStrmFile(path) {
+					return nil
+				}
 				staleSet[rel] = struct{}{}
 			}
 			return nil
@@ -1201,8 +1231,11 @@ func collectCleanupImpact(root, outputFolder string, scopes []cleanupScope, skip
 	}
 	imp.staleStrm = int64(len(staleSet))
 	// 待删顶层目录：与 cleanupMissingRemoteChildDirs 的删除范围一致
-	if err := forEachMissingRemoteChildDir(root, outputFolder, remoteChildren, nil, func(string) error {
-		imp.staleDirs++
+	// （含 CAS 播放 .strm 的目录会被保留，故不计入待删规模）
+	if err := forEachMissingRemoteChildDir(root, outputFolder, remoteChildren, nil, func(childPath string) error {
+		if !dirContainsCasPlayStrm(childPath) {
+			imp.staleDirs++
+		}
 		return nil
 	}); err != nil {
 		return imp, err
@@ -1228,6 +1261,19 @@ func cleanupMissingRemoteChildDirs(root, outputFolder string, remoteChildren map
 		localRel := localTaskDir("", taskFolder, relDirs)
 		return addOversizedPathFailure(failures, ScanFailureStrm, localRel, true)
 	}, func(childPath string) error {
+		// 目录内含 CAS 播放 .strm 时不能整层删除，否则会删掉源文件已删、播放时才秒传恢复的链路文件。
+		// 此时只清理目录内普通过期 .strm，保留 CAS 内容。
+		if dirContainsCasPlayStrm(childPath) {
+			n, perr := pruneMissingRemoteDir(childPath)
+			removed += n
+			if perr != nil {
+				return perr
+			}
+			if log != nil {
+				log.Info("保留 CAS 播放目录", "path", childPath, "strm_removed", n)
+			}
+			return nil
+		}
 		n := countStrmFiles(childPath)
 		if err := os.RemoveAll(childPath); err != nil && !os.IsNotExist(err) {
 			return err

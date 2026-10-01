@@ -47,7 +47,7 @@ textarea {
   color: var(--text);
 }
 
-/* 统一滚动条：极细 6px 圆角，与原版 LitePan 一致 */
+/* 统一滚动条：极细 6px 圆角，与原版 diy-strm 一致 */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

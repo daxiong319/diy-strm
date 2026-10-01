@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -56,6 +57,7 @@ type metadataSyncRequest struct {
 	Playback     metadataResolver
 	Failures     *FailureCollector
 	OnProgress   ScanProgressReporter
+	Log          *slog.Logger
 }
 
 type metadataSyncResult struct {
@@ -130,6 +132,7 @@ func syncMetadata(ctx context.Context, req metadataSyncRequest) (metadataSyncRes
 			playback:   req.Playback,
 			failures:   req.Failures,
 			onProgress: req.OnProgress,
+			log:        req.Log,
 		}
 		result.Downloaded, err = syncer.syncFiles(ctx, req.AccountID, req.Root, plan.downloads)
 		if err != nil {
