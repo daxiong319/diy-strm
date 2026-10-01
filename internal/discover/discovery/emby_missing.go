@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"litepan/internal/discover/ddb"
-	"litepan/internal/discover/dmodels"
 	"litepan/internal/discover/embyclient"
 )
 
@@ -94,7 +93,11 @@ func (DiscoveryEmbyMissingEvent) TableName() string { return "discovery_emby_mis
 // embyMissingMu 扫描互斥（同一时间只允许一个扫描）
 var embyMissingMu sync.Mutex
 
-// MediaEmbyConfig 影视发现 Emby 配置（独立于影巢反代，settings key media_emby）
+// MediaEmbyConfig 影视发现 Emby 配置（完全独立于全局 Emby 配置，settings key media_emby）。
+//
+// 设计取舍：此前未配置时会静默回退全局 Emby（dmodels.GetEmbyConfig），导致本功能的
+// 服务器地址/API Key 被别的功能预填。缺集补档是独立功能，必须由用户显式配置，
+// 因此这里不做任何回退：未填写就返回空串，由状态接口如实报告「未配置」。
 func MediaEmbyConfig() (enabled bool, serverURL, apiKey string) {
 	raw, _ := mustSettings()[SettingMediaEmby].(map[string]any)
 	if v, ok := raw["enabled"].(bool); ok {
@@ -106,12 +109,8 @@ func MediaEmbyConfig() (enabled bool, serverURL, apiKey string) {
 	if s, ok := raw["api_key"].(string); ok {
 		apiKey = strings.TrimSpace(s)
 	}
-	if serverURL == "" || apiKey == "" {
-		// 兼容：未配置时回退全局 Emby 配置
-		if cfg, err := dmodels.GetEmbyConfig(); err == nil && cfg != nil && cfg.EmbyUrl != "" && cfg.EmbyApiKey != "" {
-			return enabled || len(raw) == 0, cfg.EmbyUrl, cfg.EmbyApiKey
-		}
-	}
+	// 三个字段必须同时具备才算「已配置」；enabled 仅为用户意图开关，
+	// 缺任一项都视为未配置（避免 enabled=true + 空地址被当作可用）。
 	return enabled && serverURL != "" && apiKey != "", serverURL, apiKey
 }
 
@@ -125,18 +124,49 @@ func mediaEmbyClient() (*embyclient.Client, error) {
 }
 
 // EmbyMissingStatus 状态（status 接口）
+//
+// 状态必须互斥且如实：
+//   - 未配置（configured=false, state=unconfigured）：media_emby 缺地址或 Key。
+//     此前会因全局 Emby 静默回退而误报 configured=true，掩盖「本功能没配」的事实。
+//   - 已配置但未启用（configured=true, enabled=false, state=disabled）
+//   - 已配置且可达（state=ready, reachable=true）
+//   - 已配置但不可达（state=unreachable, reachable=false）：配置齐全却连不上，
+//     与「未配置」是两类问题，不能都报 configured=true 让用户以为一切正常。
 func EmbyMissingStatus() (map[string]any, error) {
-	enabled, serverURL, _ := MediaEmbyConfig()
+	enabled, serverURL, apiKey := MediaEmbyConfig()
+	configured := serverURL != "" && apiKey != ""
+	reachable := false
+	message := ""
+	state := "unconfigured"
+	switch {
+	case !configured:
+		message = "Emby 未配置：请在本页填写该功能专用的服务器地址与 API Key（不会继承其它功能的 Emby 配置）"
+	case !enabled:
+		state = "disabled"
+		message = "Emby 地址与 Key 已填写但未启用：开启「启用缺集扫描」后即可扫描"
+	default:
+		// 配置齐全 → 探活，如实区分「就绪」与「配置了但连不上」
+		if _, err := embyclient.NewClient(serverURL, apiKey).GetLibraryVirtualFolders(); err != nil {
+			state = "unreachable"
+			message = fmt.Sprintf("Emby 配置已填写但连接失败（%s）：请检查地址是否正确、Emby 服务是否在运行", serverURL)
+		} else {
+			reachable = true
+			state = "ready"
+			message = "Emby 缺集扫描已就绪"
+		}
+	}
 	var latest DiscoveryEmbyMissingScan
 	hasLatest := ddb.Db.Order("id desc").First(&latest).Error == nil
 	var subCount int64
 	ddb.Db.Model(&DiscoverySubscription{}).Where("entity_key LIKE ?", "emby-missing:%").Count(&subCount)
 	status := map[string]any{
 		"emby": map[string]any{
-			"configured": serverURL != "" && enabled,
+			"configured": configured,
 			"enabled":    enabled,
+			"reachable":  reachable,
+			"state":      state,
 			"server_url": serverURL,
-			"message":    ternaryStr(enabled && serverURL != "", "Emby 缺集扫描已就绪", "请先完成 Emby 配置"),
+			"message":    message,
 		},
 		"active_scan":        nil,
 		"latest_scan":        nil,
@@ -177,6 +207,29 @@ func EmbyMissingLibraries() ([]map[string]any, error) {
 	folders, err := client.GetLibraryVirtualFolders()
 	if err != nil {
 		return nil, fmt.Errorf("获取 Emby 媒体库失败：%v", err)
+	}
+	items := []map[string]any{}
+	for _, folder := range folders {
+		collectionType := strings.ToLower(folder.CollectionType)
+		if collectionType != "tvshows" && collectionType != "tv" && collectionType != "series" {
+			continue
+		}
+		items = append(items, map[string]any{"id": folder.ItemId, "name": folder.Name, "collection_type": collectionType})
+	}
+	return items, nil
+}
+
+// EmbyMissingProbe 用给定（未持久化的）地址与 Key 探活 Emby，返回电视剧库列表。
+// 用于「测试连接」按钮：不写设置，纯探测，把 dial 错误如实回传。
+func EmbyMissingProbe(serverURL, apiKey string) ([]map[string]any, error) {
+	serverURL = strings.TrimSpace(serverURL)
+	apiKey = strings.TrimSpace(apiKey)
+	if serverURL == "" || apiKey == "" {
+		return nil, fmt.Errorf("请先填写服务器地址与 API Key")
+	}
+	folders, err := embyclient.NewClient(serverURL, apiKey).GetLibraryVirtualFolders()
+	if err != nil {
+		return nil, err
 	}
 	items := []map[string]any{}
 	for _, folder := range folders {

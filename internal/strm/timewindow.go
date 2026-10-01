@@ -13,6 +13,8 @@ type mediaCandidate struct {
 	fileName string
 	size     int64
 	relDirs  []string
+	// sourceDir 是源文件所在目录的完整远端路径，仅用于生成日志展示，不参与任何判定。
+	sourceDir string
 }
 
 func selectConflictWinners(items []mediaCandidate, policy string) ([]mediaCandidate, int64) {

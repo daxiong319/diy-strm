@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -42,6 +43,9 @@ type CollectionItem struct {
 	Cover       struct {
 		URL string `json:"url"`
 	} `json:"cover"`
+	// rexxar subject_collection_items 返回扁平的 cover_url 字符串（不是
+	// cover:{url}），旧字段名导致片单榜海报始终为空。
+	CoverURL    string `json:"cover_url"`
 	ReleaseDate string `json:"release_date"`
 	Year        string `json:"year"`
 	Info        string `json:"info"`
@@ -131,6 +135,14 @@ type RecommendItem struct {
 	Cover struct {
 		URL string `json:"url"`
 	} `json:"cover"`
+}
+
+// CoverImage 取片单条目封面：优先 cover_url，兼容旧版 cover.url 嵌套结构
+func (c CollectionItem) CoverImage() string {
+	if u := strings.TrimSpace(c.CoverURL); u != "" {
+		return u
+	}
+	return strings.TrimSpace(c.Cover.URL)
 }
 
 type recommendResponse struct {

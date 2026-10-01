@@ -22,6 +22,11 @@ type Service struct {
 	accounts domain.AccountRepository
 	log      *slog.Logger
 
+	// bus 由 Register 注入。Notify 直接落库的通知需要再发布一次
+	// NotificationCreated，外部通知渠道（dispatcher）才会投递；
+	// 否则这些通知只进站内列表、永远到不了 Telegram/Bark 等渠道。
+	bus *eventbus.Bus
+
 	// subs 是未读数订阅者（前端 SSE 长连接）。每个通道带 1 个缓冲，
 	// 推送采用非阻塞写：慢客户端只保留最新值，不会拖住发布方。
 	subMu   sync.Mutex
@@ -99,6 +104,7 @@ func (s *Service) Register(bus *eventbus.Bus) {
 	if s == nil || bus == nil {
 		return
 	}
+	s.bus = bus
 	eventbus.Subscribe(bus, s.onAuthFailed)
 	eventbus.Subscribe(bus, s.onAuthRecovered)
 	eventbus.Subscribe(bus, s.onCreated)
@@ -181,6 +187,20 @@ func (s *Service) Notify(ctx context.Context, level, category, title, message st
 		return
 	}
 	s.persist(ctx, level, category, title, message, accountID, refID)
+	// 落库后必须再广播一次：外部通知渠道（dispatcher）订阅的是
+	// NotificationCreated 事件，只调 persist 的通知到不了 Telegram/Bark。
+	// 这里不能改走「发事件让 onCreated 落库」，否则 persist 失败时事件仍会
+	// 被投递出去，站内列表与外部渠道会出现不一致。
+	if s.bus != nil {
+		s.bus.Publish(ctx, eventbus.NotificationCreated{
+			Level:     level,
+			Category:  category,
+			Title:     title,
+			Message:   message,
+			AccountID: accountID,
+			RefID:     refID,
+		})
+	}
 }
 
 func (s *Service) onAuthFailed(ctx context.Context, e eventbus.AccountAuthFailed) {

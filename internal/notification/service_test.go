@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"litepan/internal/domain"
+	"litepan/internal/eventbus"
 )
 
 type fakeRepo struct {
@@ -236,5 +237,55 @@ func TestSubscribeUnsubscribeUnderPublish(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("并发订阅/退订下发布阻塞")
+	}
+}
+
+// TestNotifyPublishesToBus 锁定 CAS 等直接调用 Notify 的通知必须广播到事件总线。
+// 回归背景：Notify 只调 persist 落库、从不发布 NotificationCreated，
+// 导致 dispatcher（外部通知渠道）收不到事件，CAS 自动转存等通知只进站内列表、
+// 永远到不了 Telegram/Bark。见 internal/notifychannel/dispatcher.go:70。
+func TestNotifyPublishesToBus(t *testing.T) {
+	bus := eventbus.New(nil)
+	defer func() { _ = bus.Close(context.Background()) }()
+
+	sub := make(chan eventbus.NotificationCreated, 1)
+	eventbus.Subscribe(bus, func(_ context.Context, e eventbus.NotificationCreated) {
+		select {
+		case sub <- e:
+		default:
+		}
+	})
+
+	svc := NewService(Options{Repo: newFakeRepo()})
+	svc.Register(bus)
+
+	svc.Notify(context.Background(), "success", "cas", "CAS 清单已自动转存", "已收到 a.mkv.cas", 2, 0)
+
+	select {
+	case e := <-sub:
+		if e.Title != "CAS 清单已自动转存" {
+			t.Fatalf("标题不符: %q", e.Title)
+		}
+		if e.Category != "cas" {
+			t.Fatalf("category 不符: %q", e.Category)
+		}
+		if e.AccountID != 2 {
+			t.Fatalf("account_id 不符: %d", e.AccountID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Notify 未发布 NotificationCreated 事件：外部通知渠道将收不到该通知")
+	}
+}
+
+// TestNotifyWithoutBusDoesNotPanic 未注入总线时（如测试/降级场景）只落库、不得 panic。
+func TestNotifyWithoutBusDoesNotPanic(t *testing.T) {
+	svc := NewService(Options{Repo: newFakeRepo()})
+	svc.Notify(context.Background(), "info", "system", "t", "m", 0, 0)
+	list, err := svc.List(context.Background(), 10, 0)
+	if err != nil {
+		t.Fatalf("List 失败: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("应落库 1 条，实际 %d 条", len(list))
 	}
 }

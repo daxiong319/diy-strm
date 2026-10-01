@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -244,6 +245,7 @@ func ExploreDouban(mediaType, tag string, page int, force bool) (*PageResult, er
 		return nil, err
 	}
 	items := make([]Item, 0, len(subjects))
+	rows := make([]DiscoverySubjectCache, 0, len(subjects))
 	for _, s := range subjects {
 		rate, _ := strconv.ParseFloat(s.Rate, 64)
 		items = append(items, Item{
@@ -256,10 +258,28 @@ func ExploreDouban(mediaType, tag string, page int, force bool) (*PageResult, er
 			Poster:     s.Cover,
 			VoteAvg:    rate,
 		})
+		rows = append(rows, DiscoverySubjectCache{
+			ExternalID: s.ID,
+			Title:      s.Title,
+			MediaType:  mediaType,
+			Poster:     s.Cover,
+			Rating:     rate,
+			Payload:    marshalJSON(s),
+		})
+	}
+	// 落库，保证从探索页点进详情能命中缓存（否则 doubanDetails 必然 500）
+	if _, err := PersistDoubanSubjects(doubanExploreCatalogKey(mediaType, tag), rows); err != nil {
+		log.Printf("[discovery] 持久化豆瓣探索条目失败 catalog=%s：%v", doubanExploreCatalogKey(mediaType, tag), err)
 	}
 	result := &PageResult{Items: items, Page: page, TotalPages: 10}
 	cacheSet(cacheKey, result)
 	return result, nil
+}
+
+// doubanExploreCatalogKey 探索页豆瓣条目的落库目录键（按媒体类型+标签分桶，
+// 与页无关，翻页只追加不覆盖）
+func doubanExploreCatalogKey(mediaType, tag string) string {
+	return fmt.Sprintf("douban:explore:%s:%s", mediaType, tag)
 }
 
 // tmdbMovieToItems / tmdbTvToItems TMDB 结果转换
@@ -559,6 +579,7 @@ func doubanCollectionRanking(collection string, page int, force bool) (*PageResu
 		return nil, err
 	}
 	items := make([]Item, 0, len(rawItems))
+	rows := make([]DiscoverySubjectCache, 0, len(rawItems))
 	for _, c := range rawItems {
 		media := "movie"
 		if strings.Contains(collection, "tv") {
@@ -570,22 +591,41 @@ func doubanCollectionRanking(collection string, page int, force bool) (*PageResu
 		} else if len(c.ReleaseDate) >= 4 {
 			year, _ = strconv.Atoi(c.ReleaseDate[:4])
 		}
+		cover := c.CoverImage()
 		items = append(items, Item{
-			Source:     "douban",
-			MediaType:  media,
-			DoubanID:   c.ID,
-			ExternalID: c.ID,
-			EntityKey:  normalizeEntityKey("douban", media, c.ID),
-			Title:      c.Title,
-			Poster:     c.Cover.URL,
-			VoteAvg:    c.Rating.Value,
+			Source:      "douban",
+			MediaType:   media,
+			DoubanID:    c.ID,
+			ExternalID:  c.ID,
+			EntityKey:   normalizeEntityKey("douban", media, c.ID),
+			Title:       c.Title,
+			Poster:      cover,
+			VoteAvg:     c.Rating.Value,
 			ReleaseDate: c.ReleaseDate,
-			Year:       year,
+			Year:        year,
 		})
+		rows = append(rows, DiscoverySubjectCache{
+			ExternalID:  c.ID,
+			Title:       c.Title,
+			MediaType:   media,
+			Poster:      cover,
+			Rating:      c.Rating.Value,
+			ReleaseDate: c.ReleaseDate,
+			Payload:     marshalJSON(c),
+		})
+	}
+	// 落库，保证从榜单点进详情能命中缓存（否则 doubanDetails 必然 500）
+	if _, err := PersistDoubanSubjects(doubanRankingCatalogKey(collection), rows); err != nil {
+		log.Printf("[discovery] 持久化豆瓣片单条目失败 collection=%s：%v", collection, err)
 	}
 	result := &PageResult{Items: withRanks(items, (page-1)*30+1), Page: page, TotalPages: 10}
 	cacheSet(cacheKey, result)
 	return result, nil
+}
+
+// doubanRankingCatalogKey 豆瓣片单榜条目的落库目录键
+func doubanRankingCatalogKey(collection string) string {
+	return "douban:ranking:" + collection
 }
 
 // withRanks 为列表补名次

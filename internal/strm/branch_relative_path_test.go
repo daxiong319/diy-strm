@@ -2,8 +2,10 @@ package strm
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"litepan/internal/core/driverexec"
@@ -251,5 +253,95 @@ func TestTempBranchUnderSlashDirScansWithoutValidationError(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "任务", "剧集", "abc_def_ghi", "影片.strm")); err != nil {
 		t.Fatalf("应生成 任务/剧集/abc_def_ghi/影片.strm：%v", err)
+	}
+}
+
+// 端到端：真实 ScanTask 走完整扫描链路时，生成日志必须带源文件路径 => STRM 路径、剧名与季集。
+func TestScanTaskLogsSourceAndStrmPathsPerEpisode(t *testing.T) {
+	root := t.TempDir()
+	repo := &recordingBranchRepo{branches: []*domain.StrmBranch{
+		{ID: 2, TaskID: 1, ParentID: "season-id", Path: "/CloudNAS/影视/已整理/国产剧集/兰香如故 (2026)/Season 01",
+			RelativePath: "国产剧集/兰香如故 (2026)/Season 01", Recursive: false, BranchType: domain.StrmBranchTypeBase},
+	}}
+	episode := "兰香如故.2026.S01E31.第31集.2160p.WEB-DL.H.265.10-bit.60fps-UBWEB.mkv"
+	drv := &metadataTestDriver{items: map[string][]domain.FileItem{
+		"season-id": {{ID: "ep31", Name: episode, Size: 4096}},
+	}}
+	files := file.NewService(driverexec.New(metadataTestProvider{drv: drv}, nil), nil, nil, nil, nil, nil)
+	task := &domain.StrmTask{
+		ID: 1, AccountID: 1, Path: "/CloudNAS/影视/已整理", BranchCheckEnabled: true,
+		ScanMode: domain.StrmScanModeIncrementalUpdate, Extensions: "mkv", OutputFolder: "任务",
+	}
+
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	res, err := ScanTask(context.Background(), task, ScanDeps{
+		Files: files, Branches: repo, StrmDir: root, Log: logger,
+	}, domain.StrmRunModeBranch)
+	if err != nil {
+		t.Fatalf("扫描失败: %v", err)
+	}
+	if res.GeneratedCount != 1 {
+		t.Fatalf("应生成 1 个 STRM，实际 %d", res.GeneratedCount)
+	}
+
+	out := buf.String()
+	t.Logf("实际日志输出:\n%s", out)
+	wantSource := "/CloudNAS/影视/已整理/国产剧集/兰香如故 (2026)/Season 01/" + episode
+	if !strings.Contains(out, wantSource) {
+		t.Fatalf("日志缺少源文件完整路径 %q，实际:\n%s", wantSource, out)
+	}
+	if !strings.Contains(out, "兰香如故 (2026)") {
+		t.Fatalf("日志缺少剧名，实际:\n%s", out)
+	}
+	if !strings.Contains(out, "season=1") || !strings.Contains(out, "episode=31") {
+		t.Fatalf("日志缺少 season/episode，实际:\n%s", out)
+	}
+	if !strings.Contains(out, "STRM 生成成功: ") {
+		t.Fatalf("日志缺少可读消息前缀，实际:\n%s", out)
+	}
+	if !strings.Contains(out, "=> ") {
+		t.Fatalf("日志缺少 A => B 结构，实际:\n%s", out)
+	}
+}
+
+// 非分支（普通任务/增强清单）路径下 scope.remotePath 为空，源路径须由任务根 + 相对目录拼出。
+func TestScanTaskLogsSourcePathFromTaskRootWhenNoBranch(t *testing.T) {
+	root := t.TempDir()
+	drv := &metadataTestDriver{items: map[string][]domain.FileItem{
+		"task-root": {{ID: "s1", Name: "电影", IsDir: true}},
+		"s1":        {{ID: "m1", Name: "流浪地球2.2023.2160p.mkv", Size: 4096}},
+	}}
+	files := file.NewService(driverexec.New(metadataTestProvider{drv: drv}, nil), nil, nil, nil, nil, nil)
+	task := &domain.StrmTask{
+		ID: 1, AccountID: 1, Path: "/云影音/影库", ParentID: "task-root", Recursive: true,
+		ScanMode: domain.StrmScanModeIncrementalUpdate, Extensions: "mkv", OutputFolder: "任务",
+	}
+
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	res, err := ScanTask(context.Background(), task, ScanDeps{
+		Files: files, StrmDir: root, Log: logger,
+	}, domain.StrmRunModeAuto)
+	if err != nil {
+		t.Fatalf("扫描失败: %v", err)
+	}
+	if res.GeneratedCount != 1 {
+		t.Fatalf("应生成 1 个 STRM，实际 %d", res.GeneratedCount)
+	}
+
+	out := buf.String()
+	t.Logf("实际日志输出:\n%s", out)
+	wantSource := "/云影音/影库/电影/流浪地球2.2023.2160p.mkv"
+	if !strings.Contains(out, wantSource) {
+		t.Fatalf("日志缺少由任务根拼出的源文件路径 %q，实际:\n%s", wantSource, out)
+	}
+	if !strings.Contains(out, "title=电影") {
+		t.Fatalf("日志缺少剧名/片名目录，实际:\n%s", out)
+	}
+	if strings.Contains(out, "season=") || strings.Contains(out, "episode=") {
+		t.Fatalf("电影不应带 season/episode 字段，实际:\n%s", out)
 	}
 }

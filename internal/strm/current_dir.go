@@ -161,8 +161,10 @@ func (s *Service) GenerateCurrentDirectory(ctx context.Context, accountID int64,
 		switch {
 		case created:
 			out.Created++
+			logStrmFile(s.log, "STRM 生成成功", item, localAbs, relSlash, work.outputFolder)
 		case updated:
 			out.Updated++
+			logStrmFile(s.log, "STRM 更新成功", item, localAbs, relSlash, work.outputFolder)
 		default:
 			out.SkippedExisting++
 		}
@@ -222,7 +224,7 @@ func (s *Service) prepareCurrentDirectoryWork(ctx context.Context, accountID int
 	scanCfg := s.scanSettings()
 	rules := newScanRules(task, scanCfg)
 	rules.outputRelDir = outputFolder
-	candidates, metadataItems, remoteDirNames := classifyCurrentDirectoryEntries(items, relDirs, rules)
+	candidates, metadataItems, remoteDirNames := classifyCurrentDirectoryEntries(items, relDirs, currentPath, rules)
 
 	selected, skippedConflict := selectConflictWinners(candidates, scanCfg.ConflictPolicy)
 	metadataItems = alignMetadataItems(outputFolder, selected, metadataItems, scanCfg.ISOFilenameEnabled)
@@ -242,7 +244,7 @@ func (s *Service) prepareCurrentDirectoryWork(ctx context.Context, accountID int
 	}, nil
 }
 
-func classifyCurrentDirectoryEntries(items []CurrentDirectoryEntry, relDirs []string, rules scanRules) ([]mediaCandidate, []metadataItem, map[string]struct{}) {
+func classifyCurrentDirectoryEntries(items []CurrentDirectoryEntry, relDirs []string, currentPath string, rules scanRules) ([]mediaCandidate, []metadataItem, map[string]struct{}) {
 	var candidates []mediaCandidate
 	var metadataItems []metadataItem
 	remoteDirNames := make(map[string]struct{})
@@ -258,7 +260,7 @@ func classifyCurrentDirectoryEntries(items []CurrentDirectoryEntry, relDirs []st
 		if strings.TrimSpace(item.ID) == "" || matchesKeywordRules(name, rules.excludeFiles) {
 			continue
 		}
-		classified := rules.classify(item.ID, name, item.Size, relDirs)
+		classified := rules.classify(item.ID, name, item.Size, relDirs, currentPath)
 		if classified.hasMedia {
 			candidates = append(candidates, classified.media)
 		} else if classified.hasMetadata {

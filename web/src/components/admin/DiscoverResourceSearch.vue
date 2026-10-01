@@ -72,6 +72,11 @@ const searched = ref(false);
 const items = ref<DiscoverResourceItem[]>([]);
 /** 部分来源失败信息（★ 后端整体仍返回 200，必须显式消费，否则用户会误判"没资源"） */
 const sourceErrors = ref<string[]>([]);
+/**
+ * 未启用的来源（只是没配置），与 sourceErrors 分开：
+ * 没配一个源不是失败，不该红色报错，只在结果页脚做轻提示。
+ */
+const skippedSources = ref<string[]>([]);
 
 /** 正在进行中的资源 key 集合：★ 防止同一条资源被并发重复提交 */
 const pendingKeys = ref<Set<string>>(new Set());
@@ -98,6 +103,7 @@ async function runSearch() {
   loading.value = true;
   errorMsg.value = "";
   sourceErrors.value = [];
+  skippedSources.value = [];
   items.value = [];
   searched.value = true;
   try {
@@ -118,8 +124,19 @@ async function runSearch() {
       const msg = e.message || e.error || e.code || "查询失败";
       return `${label}：${msg}`;
     });
+    // 未配置的来源单独收：不是错误，只做「已跳过」轻提示
+    const skips = Array.isArray(res.skipped) ? res.skipped : [];
+    skippedSources.value = skips
+      .filter((s) => s.code !== "RESOURCE_SOURCE_ERROR")
+      .map((s) => sourceLabel(s.source) || s.source || "未知来源");
+    // 只有「依赖没跑」这类真故障才值得警告；未配置不弹任何 toast。
     if (sourceErrors.value.length) {
-      toast.warning(`部分来源失败：${sourceErrors.value.join("；")}`);
+      const unavailable = errs.some((e) => e.code === "RESOURCE_SOURCE_UNAVAILABLE");
+      toast.warning(
+        unavailable
+          ? `部分来源不可用：${sourceErrors.value.join("；")}`
+          : `部分来源查询失败：${sourceErrors.value.join("；")}`,
+      );
     }
     if (!items.value.length && !sourceErrors.value.length) {
       toast.info("未找到匹配资源");
@@ -141,6 +158,7 @@ function resetSearch() {
   selectedSources.value = ["re0", "guanying", "seedhub", "tg"];
   items.value = [];
   sourceErrors.value = [];
+  skippedSources.value = [];
   errorMsg.value = "";
   searched.value = false;
 }
@@ -367,13 +385,20 @@ async function submit(item: DiscoverResourceItem) {
       <p v-if="tmdbId" class="drs__tmdb">已关联 TMDB ID：{{ tmdbId }}</p>
     </SettingsCard>
 
-    <!-- 部分来源失败：内联提示（toast 会消失，这里常驻可见） -->
+    <!-- 部分来源不可用：内联提示（toast 会消失，这里常驻可见）。
+         ★ 这类是真故障（依赖进程没跑/端口不通），提示里已含修复建议。 -->
     <div v-if="sourceErrors.length" class="drs__src-errors">
-      <AppBadge tone="warning">部分来源失败</AppBadge>
+      <AppBadge tone="warning">部分来源不可用</AppBadge>
       <ul class="drs__src-error-list">
         <li v-for="(msg, i) in sourceErrors" :key="i">{{ msg }}</li>
       </ul>
     </div>
+
+    <!-- 未启用的来源：不是错误，只做一行轻提示，避免让用户以为出问题了 -->
+    <p v-if="skippedSources.length" class="drs__src-skipped">
+      <AppBadge tone="neutral">已跳过</AppBadge>
+      以下来源尚未配置，本次未参与检索：{{ skippedSources.join("、") }}
+    </p>
 
     <!-- 加载中 -->
     <AppStateBlock v-if="loading" message="正在搜索各来源资源…" loading />
@@ -532,6 +557,20 @@ async function submit(item: DiscoverResourceItem) {
   font-size: 13px;
   color: var(--text-regular);
   line-height: 1.6;
+}
+
+/* 未启用来源：中性样式，刻意不用警示色——没配置不是错误 */
+.drs__src-skipped {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle, var(--surface));
+  font-size: 13px;
+  color: var(--text-muted, var(--text-regular));
 }
 
 .drs__grid {

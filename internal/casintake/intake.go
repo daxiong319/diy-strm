@@ -9,12 +9,14 @@ package casintake
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"litepan/internal/cas"
@@ -25,6 +27,11 @@ import (
 const (
 	// pollTimeoutSeconds getUpdates 长轮询超时（秒），与客户端超时保持一档差。
 	pollTimeoutSeconds = 50
+	// pollClientTimeoutSeconds HTTP 客户端超时，必须显著大于服务端长轮询
+	// pollTimeoutSeconds，否则响应头还没回来客户端就先超时了（表现为
+	// "Client.Timeout exceeded while awaiting headers"）。Telegram 在
+	// timeout=50 时通常在 50s 左右返回，留 40s 余量吸收网络抖动与排队。
+	pollClientTimeoutSeconds = pollTimeoutSeconds + 40
 	// maxCasFileBytes 单个 .cas 下载上限，防止被超大文件撑爆内存。
 	maxCasFileBytes = 10 << 20
 	// channelRefreshInterval 重新读取启用渠道的间隔（配置变更后自动生效）。
@@ -33,6 +40,9 @@ const (
 	errorRetryInterval = 5 * time.Second
 	// conflictMaxRetryInterval 同一 bot 被其它实例占用时的最大退避间隔。
 	conflictMaxRetryInterval = 60 * time.Second
+	// transientMaxRetryInterval 瞬时网络故障（超时/连接重置）的最大退避间隔，
+	// 避免弱网下每 5s 打一条 WARN 刷屏。
+	transientMaxRetryInterval = 30 * time.Second
 	// telegramDefaultHost Telegram 官方 API 基址。
 	telegramDefaultHost = "https://api.telegram.org"
 )
@@ -156,58 +166,35 @@ type tgDocument struct {
 // "Conflict: terminated by other getUpdates request"。这属于部署侧冲突而非本服务故障，
 // 因此按指数退避降低请求频率（避免与对方互抢），且只在状态切换时告警，防止刷屏。
 func pollTelegram(ctx context.Context, channelID int64, token, host string, log *slog.Logger) {
-	client := &http.Client{Timeout: (pollTimeoutSeconds + 15) * time.Second}
+	client := &http.Client{Timeout: pollClientTimeoutSeconds * time.Second}
 
 	// 有 webhook 时 getUpdates 会 409，先删除（不影响已投递的更新）。
 	deleteWebhook(ctx, client, host, token, log)
 
 	offset := latestUpdateID(ctx, client, host, token)
 
-	// 冲突状态下逐步拉长重试间隔；恢复后立即归零。
-	conflicting := false
-	backoff := errorRetryInterval
+	// 失败分类计数：状态变化时打一条明细，其余只累计，避免同类告警刷屏。
+	track := newFailureTracker()
 
 	for {
 		if ctx.Err() != nil {
 			return
 		}
+		start := time.Now()
 		updates, err := getUpdates(ctx, client, host, token, offset)
+		elapsed := time.Since(start)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			if isPollingConflict(err) {
-				if !conflicting {
-					conflicting = true
-					log.Warn("CAS 接收：检测到其它实例正在使用同一 bot，已进入退避轮询（请停止重复的 bot 实例）",
-						"channel_id", channelID, "backoff", backoff.String(), "error", err.Error())
-				}
-				if !sleepCtx(ctx, backoff) {
-					return
-				}
-				if backoff < conflictMaxRetryInterval {
-					backoff *= 2
-					if backoff > conflictMaxRetryInterval {
-						backoff = conflictMaxRetryInterval
-					}
-				}
-				continue
-			}
-			if conflicting {
-				conflicting = false
-				backoff = errorRetryInterval
-			}
-			log.Warn("CAS 接收：拉取更新失败", "channel_id", channelID, "error", err.Error())
-			if !sleepCtx(ctx, errorRetryInterval) {
+			kind := classifyPollError(err)
+			wait := track.observe(kind, err, elapsed, channelID, host, log)
+			if !sleepCtx(ctx, wait) {
 				return
 			}
 			continue
 		}
-		if conflicting {
-			conflicting = false
-			backoff = errorRetryInterval
-			log.Info("CAS 接收：轮询冲突已解除，恢复正常长轮询", "channel_id", channelID)
-		}
+		track.recovered(channelID, log)
 		for _, u := range updates {
 			if u.UpdateID >= offset {
 				offset = u.UpdateID + 1
@@ -223,6 +210,196 @@ func pollTelegram(ctx context.Context, channelID int64, token, host string, log 
 			handleDocument(ctx, client, host, token, channelID, doc, log)
 		}
 	}
+}
+
+// pollFailureKind 长轮询失败分类：不同原因的处置与日志级别不同。
+type pollFailureKind int
+
+const (
+	// pollFailureConflict 同一 bot 被其它实例占用（Telegram 409），属部署侧问题。
+	pollFailureConflict pollFailureKind = iota
+	// pollFailureTransient 瞬时网络故障（超时、连接被拒/重置、DNS 抖动），
+	// 之前它被打成与真实上游失败相同的 WARN 并无限刷屏，正是用户看到的
+	// "拉取更新失败" 大量重复。现在按类聚合、逐级退避。
+	pollFailureTransient
+	// pollFailureUpstream Telegram 明确返回的业务错误（ok=false），需要人工关注。
+	pollFailureUpstream
+)
+
+// String 便于日志与测试断言。
+func (k pollFailureKind) String() string {
+	switch k {
+	case pollFailureConflict:
+		return "conflict"
+	case pollFailureTransient:
+		return "transient"
+	case pollFailureUpstream:
+		return "upstream"
+	}
+	return "unknown"
+}
+
+// classifyPollError 判定失败类别。
+//
+// 注意：context deadline exceeded / Client.Timeout exceeded 属于客户端超时，
+// 不包含 "conflict" 字样，因此不会被误判为冲突。
+func classifyPollError(err error) pollFailureKind {
+	if err == nil {
+		return pollFailureUpstream
+	}
+	if isPollingConflict(err) {
+		return pollFailureConflict
+	}
+	if isTransientNetworkError(err) {
+		return pollFailureTransient
+	}
+	return pollFailureUpstream
+}
+
+// isTransientNetworkError 判断是否为瞬时网络故障（可自愈，不需要人工介入）。
+func isTransientNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ETIMEDOUT) ||
+		errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"client.timeout exceeded",
+		"context deadline exceeded",
+		"i/o timeout",
+		"connection refused",
+		"connection reset by peer",
+		"broken pipe",
+		"no such host",
+		"tls handshake timeout",
+		"eof",
+		"temporary failure in name resolution",
+		"network is unreachable",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// failureTracker 抑制重复告警：同类别连续失败只在首次（以及每 50 次）打明细，
+// 恢复时打一条 Info 收尾，从而把「显示了好多个」压成可读的少量日志。
+type failureTracker struct {
+	kind      pollFailureKind
+	active    bool
+	count     int
+	backoff   time.Duration
+	lastError string
+}
+
+// newFailureTracker 初始化为「未失败」状态。
+func newFailureTracker() *failureTracker {
+	return &failureTracker{}
+}
+
+// observe 记录一次失败，必要时打日志，并返回本次应休眠的时长。
+func (t *failureTracker) observe(kind pollFailureKind, err error, elapsed time.Duration, channelID int64, host string, log *slog.Logger) time.Duration {
+	t.count++
+	// 失败原因变化时重置计数与退避，保证新问题第一时间可见。
+	if !t.active || t.kind != kind {
+		t.active = true
+		t.kind = kind
+		t.count = 1
+		t.backoff = 0
+	}
+	t.lastError = err.Error()
+
+	switch kind {
+	case pollFailureConflict:
+		if t.backoff == 0 {
+			t.backoff = errorRetryInterval
+		}
+		if t.count == 1 {
+			log.Warn("CAS 接收：检测到其它实例正在使用同一 bot，已进入退避轮询（请停止重复的 bot 实例）",
+				"channel_id", channelID, "backoff", t.backoff.String(), "error", t.lastError)
+		}
+		t.grow(conflictMaxRetryInterval)
+		return t.consumeBackoff()
+	case pollFailureTransient:
+		if t.backoff == 0 {
+			t.backoff = errorRetryInterval
+		}
+		if t.count == 1 {
+			log.Warn("CAS 接收：拉取更新超时/网络抖动，将自动重试",
+				"channel_id", channelID, "host", host, "elapsed", elapsed.Round(time.Millisecond).String(),
+				"error", t.lastError)
+		} else if t.count%50 == 0 {
+			log.Warn("CAS 接收：拉取更新仍不稳定，持续重试中",
+				"channel_id", channelID, "host", host, "failures", t.count,
+				"backoff", t.backoff.String(), "error", t.lastError)
+		}
+		t.grow(transientMaxRetryInterval)
+		return t.consumeBackoff()
+	default:
+		if t.count == 1 {
+			log.Warn("CAS 接收：拉取更新失败",
+				"channel_id", channelID, "host", host, "elapsed", elapsed.Round(time.Millisecond).String(),
+				"error", t.lastError)
+		} else if t.count%50 == 0 {
+			log.Warn("CAS 接收：拉取更新持续失败", "channel_id", channelID, "host", host,
+				"failures", t.count, "error", t.lastError)
+		}
+		return errorRetryInterval
+	}
+}
+
+// grow 指数增长退避，封顶 max。
+func (t *failureTracker) grow(max time.Duration) {
+	if t.backoff <= 0 {
+		t.backoff = errorRetryInterval
+		return
+	}
+	t.backoff *= 2
+	if t.backoff > max {
+		t.backoff = max
+	}
+}
+
+// consumeBackoff 取本次休眠时长并把退避推进到下一档。
+func (t *failureTracker) consumeBackoff() time.Duration {
+	current := t.backoff
+	t.grow(t.maxForKind())
+	return current
+}
+
+// maxForKind 该类别允许的最大退避。
+func (t *failureTracker) maxForKind() time.Duration {
+	if t.kind == pollFailureConflict {
+		return conflictMaxRetryInterval
+	}
+	return transientMaxRetryInterval
+}
+
+// recovered 成功后收尾：只有在之前确实处于失败态时才打一条恢复日志。
+func (t *failureTracker) recovered(channelID int64, log *slog.Logger) {
+	if !t.active {
+		return
+	}
+	kind := t.kind
+	failures := t.count
+	t.active = false
+	t.count = 0
+	t.backoff = 0
+	t.lastError = ""
+	if kind == pollFailureConflict {
+		log.Info("CAS 接收：轮询冲突已解除，恢复正常长轮询", "channel_id", channelID)
+		return
+	}
+	log.Info("CAS 接收：长轮询已恢复正常", "channel_id", channelID,
+		"failed_attempts", failures, "reason", kind.String())
 }
 
 // handleDocument 下载 .cas 内容并触发自动转存。
@@ -304,6 +481,10 @@ func latestUpdateID(ctx context.Context, client *http.Client, host, token string
 }
 
 // getUpdates 长轮询拉取更新。
+//
+// 必须显式检查 HTTP 状态码：Telegram 在 409（同一 bot 有其它实例占用）时
+// 响应体仍是 JSON 且 ok=false，但更糟的情况是网关返回非 JSON 的错误页。
+// 只依赖 JSON 解析会把「连接问题」和「上游业务错误」混为一谈。
 func getUpdates(ctx context.Context, client *http.Client, host, token string, offset int64) ([]tgUpdate, error) {
 	endpoint := fmt.Sprintf("%s/bot%s/getUpdates?offset=%d&timeout=%d&allowed_updates=%%5B%%22message%%22%%5D",
 		host, token, offset, pollTimeoutSeconds)
@@ -322,14 +503,23 @@ func getUpdates(ctx context.Context, client *http.Client, host, token string, of
 	}
 	var payload struct {
 		OK          bool       `json:"ok"`
+		ErrorCode   int        `json:"error_code"`
 		Description string     `json:"description"`
 		Result      []tgUpdate `json:"result"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("Telegram 返回 HTTP %d（响应非 JSON）", resp.StatusCode)
+		}
 		return nil, fmt.Errorf("解析 getUpdates 响应失败: %w", err)
 	}
 	if !payload.OK {
-		return nil, fmt.Errorf("Telegram 返回错误: %s", payload.Description)
+		if payload.Description != "" {
+			// 带上 error_code：409 冲突文案即使措辞变化也能被 isPollingConflict 兜住。
+			return nil, fmt.Errorf("Telegram 返回错误（HTTP %d，error_code %d）: %s",
+				resp.StatusCode, payload.ErrorCode, payload.Description)
+		}
+		return nil, fmt.Errorf("Telegram 返回错误（HTTP %d）", resp.StatusCode)
 	}
 	return payload.Result, nil
 }

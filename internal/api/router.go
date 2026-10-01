@@ -356,6 +356,7 @@ func NewRouter(d Deps) http.Handler {
 				})
 				r.Route("/discovery", func(r chi.Router) {
 					r.Get("/meta", h.discoverMeta)
+					r.Get("/cover", h.discoveryCoverProxy)
 					r.Get("/explore", h.discoverExplore)
 					r.Get("/explore/douban", h.discoverExploreDouban)
 					r.Get("/explore/douban/catalog", h.discoverDoubanCatalog)
@@ -422,6 +423,9 @@ func NewRouter(d Deps) http.Handler {
 					})
 					r.Route("/emby-missing", func(r chi.Router) {
 						r.Get("/status", h.embyMissingStatus)
+						r.Get("/config", h.embyMissingConfigGet)
+						r.Put("/config", h.embyMissingConfigSave)
+						r.Post("/config/test", h.embyMissingConfigTest)
 						r.Get("/libraries", h.embyMissingLibraries)
 						r.Post("/scan", h.embyMissingScanStart)
 						r.Get("/scans", h.embyMissingScans)
@@ -487,6 +491,14 @@ func NewRouter(d Deps) http.Handler {
 					r.Get("/config", h.getClassificationConfig)
 					r.Put("/config", h.updateClassificationConfig)
 					r.Post("/tmdb-detail", h.lookupClassificationTMDBDetail)
+					// 用户自定义分类规则（含 YAML 导入/导出）
+					r.Get("/rules", h.listClassificationRules)
+					r.Post("/rules", h.createClassificationRule)
+					r.Put("/rules/{id}", h.updateClassificationRule)
+					r.Delete("/rules/{id}", h.deleteClassificationRule)
+					r.Post("/rules/reorder", h.reorderClassificationRules)
+					r.Post("/rules/import", h.importClassificationRules)
+					r.Get("/rules/export", h.exportClassificationRules)
 				})
 				r.Route("/tools/quarktv", func(r chi.Router) {
 					r.Get("/status", h.getQuarkTVStatus)

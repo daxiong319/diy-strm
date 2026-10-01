@@ -179,12 +179,56 @@ export const aiOrganizeApi = {
     http.post<{ ok: boolean }>("/admin/tools/ai-organize/test", payload),
 };
 
+// 用户自定义分类规则（与内置模板并存的独立引擎，按 position 顺序首个命中胜出）
+export interface ClassifyRuleCondition {
+  key: string;
+  values: string;
+  optional: boolean;
+}
+
+export interface ClassifyRuleItem {
+  id: number;
+  media_type: string;
+  target_path: string;
+  enabled: boolean;
+  remark: string;
+  conditions: ClassifyRuleCondition[];
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClassifyRuleInput {
+  media_type: string;
+  target_path: string;
+  enabled?: boolean;
+  remark?: string;
+  conditions: ClassifyRuleCondition[];
+}
+
+export interface ClassifyRulesImportResult {
+  rules: ClassifyRuleItem[];
+  warnings: string[];
+  imported: number;
+}
+
 export const classificationApi = {
   getConfig: () => http.get<ClassificationConfig>("/admin/tools/classification/config"),
   saveConfig: (payload: ClassificationConfig) =>
     http.put<ClassificationConfig>("/admin/tools/classification/config", payload),
   lookupTMDBDetail: (payload: { tmdb_id: string; media_type: "movie" | "tv" }) =>
     http.post<ClassificationTMDBDetail>("/admin/tools/classification/tmdb-detail", payload),
+  listRules: () => http.get<{ rules: ClassifyRuleItem[] }>("/admin/tools/classification/rules"),
+  createRule: (payload: ClassifyRuleInput) =>
+    http.post<ClassifyRuleItem>("/admin/tools/classification/rules", payload),
+  updateRule: (id: number, payload: ClassifyRuleInput) =>
+    http.put<ClassifyRuleItem>(`/admin/tools/classification/rules/${id}`, payload),
+  deleteRule: (id: number) => http.del<void>(`/admin/tools/classification/rules/${id}`),
+  reorderRules: (ids: number[]) =>
+    http.post<{ rules: ClassifyRuleItem[] }>("/admin/tools/classification/rules/reorder", { ids }),
+  importRules: (payload: { yaml: string; mode?: "replace" | "append" }) =>
+    http.post<ClassifyRulesImportResult>("/admin/tools/classification/rules/import", payload),
+  exportRules: () => http.get<{ yaml: string }>("/admin/tools/classification/rules/export"),
 };
 
 export const quarkTVApi = {

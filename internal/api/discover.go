@@ -67,7 +67,7 @@ func (h *Handler) discoverExplore(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeOK(w, result)
+	writeDiscoveryOK(w, result)
 }
 
 // discoverExploreDouban 影视探索（豆瓣 tag）
@@ -79,7 +79,7 @@ func (h *Handler) discoverExploreDouban(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, err)
 		return
 	}
-	writeOK(w, result)
+	writeDiscoveryOK(w, result)
 }
 
 // discoverRankings 榜单推荐三源聚合
@@ -92,7 +92,7 @@ func (h *Handler) discoverRankings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeOK(w, result)
+	writeDiscoveryOK(w, result)
 }
 
 // discoverCalendar 追剧日历（RE0 feed 按天分组，TMDB 兜底）
@@ -104,7 +104,7 @@ func (h *Handler) discoverCalendar(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeOK(w, days)
+	writeDiscoveryOK(w, days)
 }
 
 // discoverAnimeCalendar 番剧放送日历（Bangumi）
@@ -114,7 +114,7 @@ func (h *Handler) discoverAnimeCalendar(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, err)
 		return
 	}
-	writeOK(w, days)
+	writeDiscoveryOK(w, days)
 }
 
 // discoverAnimeSearch 番剧搜索（Bangumi 主源 + AniList 回退）
@@ -126,7 +126,7 @@ func (h *Handler) discoverAnimeSearch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeOK(w, result)
+	writeDiscoveryOK(w, result)
 }
 
 // discoverDoubanCatalog 豆瓣目录（分类/排序筛选 + 后台预抓 + TMDB 匹配）
@@ -140,7 +140,7 @@ func (h *Handler) discoverDoubanCatalog(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, err)
 		return
 	}
-	writeOK(w, result)
+	writeDiscoveryOK(w, result)
 }
 
 // discoverAnimeCatalog 动漫目录（source=anilist/bangumi，AniList 故障自动回退 Bangumi）
@@ -168,7 +168,7 @@ func (h *Handler) discoverAnimeCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result.FallbackSource = fallbackSource
-	writeOK(w, result)
+	writeDiscoveryOK(w, result)
 }
 
 // discoverActors 热门演员
@@ -181,7 +181,7 @@ func (h *Handler) discoverActors(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeOK(w, result)
+	writeDiscoveryOK(w, result)
 }
 
 // discoverActorWorks 演员作品
@@ -196,7 +196,7 @@ func (h *Handler) discoverActorWorks(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeOK(w, result)
+	writeDiscoveryOK(w, result)
 }
 
 // discoverSearch 统一搜索（TMDB 电影/剧集/演员）
@@ -209,7 +209,7 @@ func (h *Handler) discoverSearch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeOK(w, result)
+	writeDiscoveryOK(w, result)
 }
 
 // discoverDetails 作品详情（附订阅状态与转存目标配置）
@@ -231,7 +231,7 @@ func (h *Handler) discoverDetails(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	result["transfer_targets"] = transferTargetsStatus()
-	writeOK(w, result)
+	writeDiscoveryOK(w, result)
 }
 
 // transferTargetsStatus 三网盘保存目录配置状态（详情页按钮 disabled 用）
@@ -252,7 +252,7 @@ func (h *Handler) discoverMaoyanRankings(w http.ResponseWriter, r *http.Request)
 	category := r.URL.Query().Get("category")
 	groups, ok, err := discovery.MaoyanRankings(r.Context(), category, force)
 	if err != nil && !ok {
-		writeOK(w, map[string]any{
+		writeDiscoveryOK(w, map[string]any{
 			"provider": "maoyan", "provider_label": "猫眼",
 			"region": "CN", "category_label": maoyanCategoryLabelOf(category),
 			"groups": []any{}, "feed_status": "pending",
@@ -261,7 +261,7 @@ func (h *Handler) discoverMaoyanRankings(w http.ResponseWriter, r *http.Request)
 		})
 		return
 	}
-	writeOK(w, map[string]any{
+	writeDiscoveryOK(w, map[string]any{
 		"provider": "maoyan", "provider_label": "猫眼",
 		"region": "CN", "category_label": maoyanCategoryLabelOf(category),
 		"groups": groups, "feed_status": "ok", "is_stale": false,
@@ -312,7 +312,7 @@ func (h *Handler) discoverFavorites(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeOK(w, map[string]any{"items": list})
+	writeDiscoveryOK(w, map[string]any{"items": list})
 }
 
 // discoverFavoriteAdd 添加收藏

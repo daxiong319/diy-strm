@@ -15,6 +15,7 @@ import AppButton from "@/components/base/AppButton.vue";
 import AppModal from "@/components/base/AppModal.vue";
 import ToolCard from "@/components/admin/ToolCard.vue";
 import SettingsHelpTooltip from "@/components/admin/SettingsHelpTooltip.vue";
+import ClassificationRulesPanel from "@/components/admin/ClassificationRulesPanel.vue";
 
 const props = withDefaults(defineProps<{ searchQuery?: string }>(), { searchQuery: "" });
 
@@ -36,6 +37,8 @@ const config = ref<ClassificationConfig>(emptyConfig());
 const draft = ref<ClassificationConfig>(emptyConfig());
 const open = ref(false);
 const helpOpen = ref(false);
+// 自定义规则弹窗（规则面板自带增删改/导入导出，独立于模板配置）
+const rulesOpen = ref(false);
 const saving = ref(false);
 const detailTMDBID = ref("");
 const detailMediaType = ref<"movie" | "tv">("movie");
@@ -325,9 +328,17 @@ async function saveSettings() {
       </template>
       移动整理时按所选模板放入分类目录；无法识别影视类型时放入目标根目录，本地重命名模式不受影响。
       <template #actions>
+        <AppButton size="sm" variant="secondary" :disabled="saving" @click="rulesOpen = true">自定义规则</AppButton>
         <AppButton size="sm" variant="secondary" :disabled="saving" @click="openSettings">分类设置</AppButton>
       </template>
     </ToolCard>
+
+    <AppModal :open="rulesOpen" size="lg" title="自定义分类规则" @close="rulesOpen = false">
+      <ClassificationRulesPanel />
+      <template #footer>
+        <AppButton variant="secondary" @click="rulesOpen = false">关闭</AppButton>
+      </template>
+    </AppModal>
 
     <AppModal :open="open" size="lg" title="请选择分类模板" footer-divider body-flush @close="open = false">
       <div class="classification-template-tabs">

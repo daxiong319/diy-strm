@@ -1,8 +1,11 @@
 package strm
 
 import (
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -197,5 +200,128 @@ func TestMetadataSyncerMigratesAlignedISOFileWithoutDownload(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(root, item.relPath)); err != nil || string(got) != "metadata" {
 		t.Fatalf("migrated metadata = %q, err=%v", got, err)
+	}
+}
+
+func TestDescribeMediaInfoParsesEpisodeAndTitle(t *testing.T) {
+	source := "/CloudNAS/影视/已整理/国产剧集/兰香如故 (2026) {tmdb=282326}/Season 01/兰香如故.2026.S01E31.第31集.2160p.WEB-DL.H.265.10-bit.60fps-UBWEB.mkv"
+	info := DescribeMediaInfo(source, "兰香如故.2026.S01E31.第31集.2160p.WEB-DL.H.265.10-bit.60fps-UBWEB.mkv",
+		[]string{"国产剧集", "兰香如故 (2026) {tmdb=282326}", "Season 01"})
+
+	if !info.HasSeason || info.Season != 1 {
+		t.Fatalf("Season = %d (has=%v), want 1", info.Season, info.HasSeason)
+	}
+	if !info.HasEpisode || info.Episode != 31 {
+		t.Fatalf("Episode = %d (has=%v), want 31", info.Episode, info.HasEpisode)
+	}
+	if info.Title != "兰香如故 (2026) {tmdb=282326}" {
+		t.Fatalf("Title = %q, want 剧名目录", info.Title)
+	}
+	if info.SourcePath != source {
+		t.Fatalf("SourcePath = %q, want %q", info.SourcePath, source)
+	}
+}
+
+func TestDescribeMediaInfoMovieHasNoEpisode(t *testing.T) {
+	info := DescribeMediaInfo("/媒体/电影/流浪地球2.2023.2160p.mkv", "流浪地球2.2023.2160p.mkv", []string{"电影"})
+	if info.HasEpisode || info.HasSeason {
+		t.Fatalf("电影不应解析出季集: %+v", info)
+	}
+	if info.Title != "电影" {
+		t.Fatalf("Title = %q, want 电影", info.Title)
+	}
+}
+
+func TestDescribeMediaInfoFallsBackToFileNameWhenSourceMissing(t *testing.T) {
+	// 当前目录生成等场景拿不到源文件完整路径：此时 source 为空、标题退回文件名去扩展名。
+	info := DescribeMediaInfo("", "第03集.mkv", []string{"电视剧", "某剧", "Season 2"})
+	if info.SourcePath != "" {
+		t.Fatalf("SourcePath = %q, want empty", info.SourcePath)
+	}
+	if !info.HasEpisode || info.Episode != 3 {
+		t.Fatalf("Episode = %d (has=%v), want 3", info.Episode, info.HasEpisode)
+	}
+	if info.Title != "某剧" {
+		t.Fatalf("Title = %q, want 某剧", info.Title)
+	}
+}
+
+func TestBuildStrmLogArgsIncludesAllFields(t *testing.T) {
+	item := mediaCandidate{
+		fileID:    "video-1",
+		fileName:  "兰香如故.2026.S01E31.第31集.2160p.WEB-DL.H.265.10-bit.60fps-UBWEB.mkv",
+		relDirs:   []string{"国产剧集", "兰香如故 (2026) {tmdb=282326}", "Season 01"},
+		sourceDir: "/CloudNAS/CloudDrive/NAS-WebDAV/中国移动云盘/影视/已整理/国产剧集/兰香如故 (2026) {tmdb=282326}/Season 01",
+	}
+	display, args := buildStrmLogArgs(item,
+		"/media/移动STRM/国产剧集/兰香如故 (2026) {tmdb=282326}/Season 01/兰香如故.2026.S01E31.第31集.2160p.WEB-DL.H.265.10-bit.60fps-UBWEB.strm",
+		"国产剧集/兰香如故 (2026) {tmdb=282326}/Season 01/兰香如故.2026.S01E31.第31集.2160p.WEB-DL.H.265.10-bit.60fps-UBWEB.strm",
+		"国产剧集")
+
+	wantSource := "/CloudNAS/CloudDrive/NAS-WebDAV/中国移动云盘/影视/已整理/国产剧集/兰香如故 (2026) {tmdb=282326}/Season 01/兰香如故.2026.S01E31.第31集.2160p.WEB-DL.H.265.10-bit.60fps-UBWEB.mkv"
+	wantStrm := "/media/移动STRM/国产剧集/兰香如故 (2026) {tmdb=282326}/Season 01/兰香如故.2026.S01E31.第31集.2160p.WEB-DL.H.265.10-bit.60fps-UBWEB.strm"
+	if want := wantSource + " => " + wantStrm; display != want {
+		t.Fatalf("display = %q, want %q", display, want)
+	}
+
+	fields := map[string]any{}
+	for i := 0; i+1 < len(args); i += 2 {
+		key, _ := args[i].(string)
+		fields[key] = args[i+1]
+	}
+	for key, want := range map[string]any{
+		"source":   wantSource,
+		"strm":     wantStrm,
+		"title":    "兰香如故 (2026) {tmdb=282326}",
+		"file":     item.fileName,
+		"season":   1,
+		"episode":  31,
+		"rel_path": "国产剧集/兰香如故 (2026) {tmdb=282326}/Season 01/兰香如故.2026.S01E31.第31集.2160p.WEB-DL.H.265.10-bit.60fps-UBWEB.strm",
+		"root":     "国产剧集",
+	} {
+		if got, ok := fields[key]; !ok || got != want {
+			t.Fatalf("field %q = %v (present=%v), want %v", key, got, ok, want)
+		}
+	}
+
+	t.Logf("渲染后的日志: level=INFO msg=\"STRM 生成成功: %s\" %s", display, formatLogArgsForTest(args))
+}
+
+func formatLogArgsForTest(args []any) string {
+	var b strings.Builder
+	for i := 0; i+1 < len(args); i += 2 {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		fmt.Fprintf(&b, "%v=%v", args[i], args[i+1])
+	}
+	return b.String()
+}
+
+// 当前目录生成（API 手动触发）时 sourceDir 即完整远端目录，日志须据此拼出源文件路径。
+func TestLogStrmFileFromCurrentDirectoryUsesFullRemoteDir(t *testing.T) {
+	item := mediaCandidate{
+		fileID:    "ep31",
+		fileName:  "兰香如故.2026.S01E31.第31集.2160p.WEB-DL.H.265.mkv",
+		relDirs:   []string{"兰香如故 (2026)", "Season 01"},
+		sourceDir: "/CloudNAS/影视/已整理/国产剧集/兰香如故 (2026)/Season 01",
+	}
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	logStrmFile(logger, "STRM 生成成功", item,
+		"/media/移动STRM/任务/兰香如故 (2026)/Season 01/兰香如故.2026.S01E31.第31集.2160p.WEB-DL.H.265.strm",
+		"任务/兰香如故 (2026)/Season 01/兰香如故.2026.S01E31.第31集.2160p.WEB-DL.H.265.strm",
+		"任务")
+
+	out := buf.String()
+	t.Logf("当前目录生成日志:\n%s", out)
+	for _, want := range []string{
+		"/CloudNAS/影视/已整理/国产剧集/兰香如故 (2026)/Season 01/兰香如故.2026.S01E31.第31集.2160p.WEB-DL.H.265.mkv",
+		"=> ",
+		"season=1", "episode=31", "title=",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("日志缺少 %q，实际:\n%s", want, out)
+		}
 	}
 }
