@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -138,7 +139,12 @@ func (d *Driver) UploadLocalFile(ctx context.Context, req driver.LocalUploadRequ
 		if uploadFileID == "" {
 			return nil, domain.Errorf(domain.CodeDriverError, "天翼云盘未返回上传会话信息")
 		}
-		rapid = anyInt(initData["fileDataExists"]) == 1 || anyInt(initResp["fileDataExists"]) == 1
+		// 上传初始化路径同样按三态解析：只有明确的 "1" 才算命中秒传并跳过真上传。
+		// 缺失/非法值在此处降级为「未命中」是安全的——本函数本身就是真上传流程，
+		// 不像 RapidUploadByHash 那样存在「误判后额外触发一次上传」的风险。
+		// 但取值仍严格要求 "1"/"0"，避免把乱码当成命中。
+		rapid = parseCloud189InitFileDataExists(initData["fileDataExists"]) == cloud189DataExists ||
+			parseCloud189InitFileDataExists(initResp["fileDataExists"]) == cloud189DataExists
 		resume = &cloud189ResumeCtx{
 			space:          space,
 			parentID:       parentID,
@@ -758,8 +764,19 @@ func (d *Driver) RapidUploadByHash(ctx context.Context, req driver.RapidUploadRe
 	if err != nil {
 		return nil, err
 	}
-	if created.FileDataExists.String() != "1" {
+	// 严格三态：只有明确的 "1" 才允许提交秒传，只有明确的 "0" 才是真的未命中。
+	// 字段缺失、null、非法值一律报协议异常，禁止被误判为「未命中」——
+	// 因为 Reuse=false 会让上游回退到真上传（crosstransfer/service.go:818），
+	// 协议异常下静默触发一次完整上传既浪费带宽又掩盖了接口变更。
+	switch parseCloud189FileDataExists(created.FileDataExists.String()) {
+	case cloud189DataExists:
+		// 继续走秒传提交
+	case cloud189DataAbsent:
 		return &driver.RapidUploadResult{Reuse: false, ParentID: parentID, Message: "未命中秒传"}, nil
+	default:
+		return nil, domain.Errorf(domain.CodeDriverError,
+			"天翼云盘秒传响应缺少有效的 fileDataExists 字段（实际值 %q），协议异常，已中止以避免误判后触发真上传",
+			created.FileDataExists.String())
 	}
 	uploadFileID := created.UploadFileID.String()
 	commitURL := strings.TrimSpace(created.FileCommitURL)
@@ -799,12 +816,73 @@ func (d *Driver) ProbeRapidUploadByHash(ctx context.Context, req driver.RapidUpl
 	if err != nil {
 		return nil, normalize189RapidProbeError(err)
 	}
-	reuse := created.FileDataExists.String() == "1"
+	var reuse bool
+	switch parseCloud189FileDataExists(created.FileDataExists.String()) {
+	case cloud189DataExists:
+		reuse = true
+	case cloud189DataAbsent:
+		reuse = false
+	default:
+		return nil, domain.Errorf(domain.CodeDriverError,
+			"天翼云盘秒传试探响应缺少有效的 fileDataExists 字段（实际值 %q），协议异常",
+			created.FileDataExists.String())
+	}
 	message := "未命中秒传"
 	if reuse {
 		message = "秒传命中"
 	}
 	return &driver.RapidUploadResult{Reuse: reuse, ParentID: parentID, Message: message}, nil
+}
+
+// 189FileDataExists 是 fileDataExists 的三态判定结果。
+type fileDataExistsState int
+
+const (
+	// cloud189DataExists：云端已有该数据（fileDataExists == 1），允许提交秒传。
+	cloud189DataExists fileDataExistsState = iota + 1
+	// cloud189DataAbsent：云端明确没有该数据（fileDataExists == 0），可走真上传或明确失败。
+	cloud189DataAbsent
+	// cloud189DataUnknown：字段缺失、null、非法值 —— 协议异常，禁止当作「未命中」。
+	cloud189DataUnknown
+)
+
+// parseCloud189FileDataExists 严格解析 fileDataExists，只认 "1" 与 "0" 两种取值。
+// 1 → 有数据；0 → 明确无数据；其它（含空串、null、乱码）→ 协议异常。
+func parseCloud189FileDataExists(raw string) fileDataExistsState {
+	switch strings.TrimSpace(raw) {
+	case "1":
+		return cloud189DataExists
+	case "0":
+		return cloud189DataAbsent
+	default:
+		return cloud189DataUnknown
+	}
+}
+
+// parseCloud189InitFileDataExists 解析上传初始化响应里的 fileDataExists（可能是数字、字符串或缺失）。
+// 与 parseCloud189FileDataExists 语义一致，仅多一层 any 到字符串的归一化。
+func parseCloud189InitFileDataExists(v any) fileDataExistsState {
+	switch x := v.(type) {
+	case nil:
+		return cloud189DataUnknown
+	case string:
+		return parseCloud189FileDataExists(x)
+	case float64:
+		// JSON 数字经 encoding/json 解码后是 float64，只接受恰好等于 0 或 1 的值。
+		if x == 1 {
+			return cloud189DataExists
+		}
+		if x == 0 {
+			return cloud189DataAbsent
+		}
+		return cloud189DataUnknown
+	case json.Number:
+		return parseCloud189FileDataExists(x.String())
+	case bool:
+		return cloud189DataUnknown
+	default:
+		return cloud189DataUnknown
+	}
 }
 
 func (*Driver) SupportsRapidUploadProbe(method string) bool {
