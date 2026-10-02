@@ -420,7 +420,7 @@ func handleDocument(ctx context.Context, client *http.Client, host, token string
 	if isUnsupportedArchiveName(name) {
 		// 明确告知而不是静默丢弃：用户以为自己发了，程序却当没看见。
 		log.Warn("CAS 接收：压缩包格式不受支持", "channel_id", channelID, "file_name", name)
-		notifyResult(ctx, "warn", name, "压缩包格式不受支持（当前仅支持 zip / tar / tar.gz / tgz / gz）")
+		notifyResult(ctx, "warn", name, "", "", "压缩包格式不受支持（当前仅支持 zip / tar / tar.gz / tgz / gz）")
 		return
 	}
 
@@ -435,7 +435,7 @@ func handleDocument(ctx context.Context, client *http.Client, host, token string
 			kind = "下载压缩包失败"
 		}
 		log.Warn("CAS 接收："+kind, "channel_id", channelID, "file_name", name, "error", err.Error())
-		notifyResult(ctx, "error", name, "下载失败："+err.Error())
+		notifyResult(ctx, "error", name, "", "", "下载失败："+err.Error())
 		return
 	}
 
@@ -449,7 +449,7 @@ func handleDocument(ctx context.Context, client *http.Client, host, token string
 	items, err := extractCasFromArchive(name, content)
 	if err != nil {
 		log.Warn("CAS 接收：压缩包解压失败", "channel_id", channelID, "file_name", name, "error", err.Error())
-		notifyResult(ctx, "warn", name, "解压失败："+err.Error())
+		notifyResult(ctx, "warn", name, "", "", "解压失败："+err.Error())
 		return
 	}
 	log.Info("CAS 接收：压缩包解压完成", "channel_id", channelID, "file_name", name, "cas_count", len(items))
@@ -465,15 +465,21 @@ func autoSaveItems(ctx context.Context, sourceName string, items []casItem, log 
 	}
 	results := cas.AutoSaveCASFiles(ctx, files)
 	for _, r := range results {
+		// 日志要能独立回答「转存了什么文件 → 到哪个网盘 → 哪个目录 → 成功还是失败」，
+		// 只打 file_name + drive_type 时用户看到「自动转存成功 / 账号 2」完全不知道去向。
+		name := firstNonEmpty(r.SavedFileName, sourceName)
+		drive := cas.DriveDisplayName(r.DriveType)
+		dir := cas.DisplaySaveDir(r.SaveDir)
 		switch {
 		case r.Saved:
 			log.Info("CAS 接收：自动转存成功", "file_name", r.SavedFileName, "drive_type", r.DriveType,
-				"account_id", r.AccountID, "source", sourceName)
+				"drive", drive, "save_dir", dir, "account_id", r.AccountID, "source", sourceName)
 			// 成功通知由 cas.AutoSaveCASFiles 内部经通知中心发出。
 		case r.Skipped:
-			log.Warn("CAS 接收：自动转存跳过", "file_name", r.SavedFileName, "source", sourceName, "reason", r.Reason)
-			// 跳过原因用清单名而不是压缩包名，用户才能对上是哪个文件出问题。
-			notifyResult(ctx, "warn", firstNonEmpty(r.SavedFileName, sourceName), "未转存："+r.Reason)
+			log.Warn("CAS 接收：自动转存失败", "file_name", r.SavedFileName, "drive_type", r.DriveType,
+				"drive", drive, "save_dir", dir, "source", sourceName, "reason", r.Reason)
+			// 失败原因用清单名而不是压缩包名，用户才能对上是哪个文件出问题。
+			notifyResult(ctx, "warn", name, r.DriveType, r.SaveDir, "未转存："+r.Reason)
 		}
 	}
 }
@@ -489,8 +495,9 @@ func firstNonEmpty(values ...string) string {
 }
 
 // notifyResult 在未成功转存时提示用户原因（下载/判定/落盘失败）。
-func notifyResult(ctx context.Context, level, fileName, message string) {
-	cas.NotifyAutoSaveFailure(ctx, level, fileName, message)
+// driveType/saveDir 可能为空（尚未判定出网盘，或下载阶段就失败），此时文案自动略去。
+func notifyResult(ctx context.Context, level, fileName, driveType, saveDir, message string) {
+	cas.NotifyAutoSaveFailure(ctx, level, fileName, driveType, saveDir, message)
 }
 
 // isCasFileName 判断是否为 .cas 清单文件。

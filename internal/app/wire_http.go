@@ -439,21 +439,10 @@ func discoveryActiveAccounts(ctx context.Context, st *storeBundle) []*domain.Acc
 }
 
 // providerDisplayName 网盘编码转中文展示名（通知文案用）。
+// 统一走 cas.DriveDisplayName，避免各处各写一份映射而互相矛盾
+// （此处曾把 cloud139 也写成「天翼云盘」，但 139 是移动、189 才是天翼）。
 func providerDisplayName(provider string) string {
-	switch cas.NormalizeDriveType(provider) {
-	case "123_open":
-		return "123 网盘"
-	case "guangya":
-		return "光鸭云盘"
-	case "cloud139":
-		return "天翼云盘"
-	case "cloud189":
-		return "天翼云盘(189)"
-	case "quark":
-		return "夸克网盘"
-	default:
-		return provider
-	}
+	return cas.DriveDisplayName(provider)
 }
 
 // discoveryOfflineAccountID 选择内置离线下载可用账号（优先 123/115/夸克等原生支持离线的驱动）。
