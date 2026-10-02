@@ -122,12 +122,14 @@ type RefreshResult struct {
 	TaskID      string `json:"task_id,omitempty"`
 	LibraryID   string `json:"library_id,omitempty"`
 	LibraryName string `json:"library_name,omitempty"`
+	ItemID      string `json:"item_id,omitempty"`
 }
 
 type RefreshRequest struct {
 	ConfigID  string `json:"config_id"`
 	Mode      string `json:"mode"`
 	LibraryID string `json:"library_id"`
+	ItemID    string `json:"item_id"`
 }
 
 type Library struct {
@@ -427,6 +429,10 @@ func (s *Service) RefreshLibrary(ctx context.Context, req RefreshRequest) (Refre
 		result, err := s.refreshLibraryByID(ctx, cfg, strings.TrimSpace(req.LibraryID))
 		return withRefreshConfig(result, cfg), err
 	}
+	if mode == "item" {
+		result, err := s.refreshItemByID(ctx, cfg, strings.TrimSpace(req.ItemID))
+		return withRefreshConfig(result, cfg), err
+	}
 	result, err := s.refreshAllLibraries(ctx, base, cfg.APIKey)
 	return withRefreshConfig(result, cfg), err
 }
@@ -513,6 +519,38 @@ func (s *Service) refreshLibraryByID(ctx context.Context, cfg Config, libraryID 
 		Mode:        "library",
 		LibraryID:   selected.ID,
 		LibraryName: selected.Name,
+	}, nil
+}
+
+// refreshItemByID 触发单个条目的元数据刷新。查询参数与 refreshLibraryByID 保持一致，
+// 只刷新元数据/图片的默认缺失项，不做替换式全量刷新。
+func (s *Service) refreshItemByID(ctx context.Context, cfg Config, itemID string) (RefreshResult, error) {
+	if itemID == "" {
+		return RefreshResult{}, domain.Errorf(domain.CodeValidation, "请选择 Emby/Jellyfin 条目")
+	}
+	base := strings.TrimRight(cfg.EmbyURL, "/")
+	query := mediaServerQuery(cfg.APIKey)
+	query.Set("Recursive", "true")
+	query.Set("ImageRefreshMode", "Default")
+	query.Set("MetadataRefreshMode", "Default")
+	query.Set("ReplaceAllImages", "false")
+	query.Set("ReplaceAllMetadata", "false")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/Items/"+url.PathEscape(itemID)+"/Refresh?"+query.Encode(), nil)
+	if err != nil {
+		return RefreshResult{}, domain.Wrap(domain.CodeInternal, err)
+	}
+	setMediaServerAuth(req, cfg.APIKey)
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return RefreshResult{}, embyTestConnectError(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return RefreshResult{}, embyTestHTTPError(resp.StatusCode)
+	}
+	return RefreshResult{
+		Mode:   "item",
+		ItemID: itemID,
 	}, nil
 }
 
@@ -713,6 +751,16 @@ func (s *Service) enabled() bool {
 	return s.settings != nil && s.settings.Bool(settings.KeyEmbyEnabled)
 }
 
+// LiveConfigs 返回当前生效的 Emby/Jellyfin 配置（含明文 API Key）。
+//
+// 与 Snapshots 的区别：Snapshots 供 HTTP 接口返回给前端，会把 API Key 脱敏；
+// 本方法供内部服务（如 embyindex 的条目同步）使用，必须拿到能真正发起请求的密钥。
+// 因此它不接受 *http.Request；调用方必须是内部代码，绝不能直接序列化给前端。
+func (s *Service) LiveConfigs() []Config {
+	return s.configsFromSettings()
+}
+
+// resolveConfig 按 ID 取生效配置；ID 为空时返回第一个。
 func (s *Service) resolveConfig(id string) (Config, error) {
 	id = strings.TrimSpace(id)
 	configs := s.configsFromSettings()

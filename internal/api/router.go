@@ -34,12 +34,14 @@ import (
 	"litepan/internal/crosstransfer"
 	"litepan/internal/domain"
 	"litepan/internal/embyproxy"
+	"litepan/internal/embywebhook"
 	"litepan/internal/favorites"
 	"litepan/internal/file"
 	"litepan/internal/fnosproxy"
 	"litepan/internal/fusemount"
 	"litepan/internal/logx"
 	"litepan/internal/mediaorganize"
+	"litepan/internal/moviepilot"
 	"litepan/internal/notification"
 	"litepan/internal/notifychannel"
 	"litepan/internal/offlinedownload"
@@ -74,6 +76,7 @@ type Deps struct {
 	Strm             *strm.Service
 	CacheRetention   *cacheretention.Service
 	MediaOrganize    *mediaorganize.Service
+	MoviePilot       *moviepilot.Service
 	AIOrganize       *aiorganize.Service
 	ClassifyOrganize *classifyorganize.Service
 	StrmScrape       *strmscrape.Service
@@ -81,6 +84,7 @@ type Deps struct {
 	Fuse             *fusemount.Service
 	CrossTransfer    *crosstransfer.Service
 	EmbyProxy        *embyproxy.Service
+	EmbyWebhook      *embywebhook.Service
 	FnosProxy        *fnosproxy.Service
 	QuarkTV          *quarktv.Service
 	ApiKeys          *apikey.Service
@@ -94,8 +98,12 @@ type Deps struct {
 	CoverExtract     *coverextract.Service
 	NotifyChannels   *notifychannel.Service
 	CASRunner        *cas.Runner
-	DataDir          string
-	StrmDir          string
+	// PlaybackRecords 播放记录仓储：面板只读与清理用它，写入由 playbackrecord.Service 负责。
+	PlaybackRecords domain.PlaybackRecordRepository
+	// Renames 批量重命名历史与常用组合仓储：文件操作类接口直接用仓储，与 PlaybackRecords 同风格。
+	Renames domain.RenameRepository
+	DataDir string
+	StrmDir string
 	// MediaRoots 本地媒体根目录白名单，供 POST /admin/cas/generate-local 校验本地路径。
 	// 为空切片表示该功能未启用。
 	MediaRoots        []string
@@ -104,46 +112,50 @@ type Deps struct {
 
 // Handler 持有处理请求所需的依赖。
 type Handler struct {
-	bootID            string
-	logs              *logx.Manager
-	log               *slog.Logger
-	accountSvc        *account.Service
-	accountProfile    *accountprofile.Service
-	settings          *settings.Service
-	cache             *cache.Service
-	listHits          *cache.HitTracker
-	files             *file.Service
-	favorites         *favorites.Service
-	uploads           *upload.Manager
-	offlineDownloads  *offlinedownload.Service
-	playback          *playback.Service
-	strm              *strm.Service
-	cacheRetention    *cacheretention.Service
-	mediaOrganize     *mediaorganize.Service
-	aiOrganize        *aiorganize.Service
-	classifyOrganize  *classifyorganize.Service
-	strmScrape        *strmscrape.Service
-	automation        *automation.Service
-	fuse              *fusemount.Service
-	crossTransfer     *crosstransfer.Service
-	embyProxy         *embyproxy.Service
-	fnosProxy         *fnosproxy.Service
-	quarktv           *quarktv.Service
-	apiKeys           *apikey.Service
-	auth              *auth.Service
-	authSched         *auth.Scheduler
-	adminAuth         *adminauth.Service
-	notifications     *notification.Service
-	announcement      *announcement.Service
-	backupRestore     *backuprestore.Service
-	spaceCleanup      *spacecleanup.Service
-	coverExtract      *coverextract.Service
-	notifyChannels    *notifychannel.Service
-	casRunner         *cas.Runner
-	dataDir           string
-	strmDir           string
-	mediaRoots        []string
-	onSettingsUpdated func(map[string]string)
+	bootID               string
+	logs                 *logx.Manager
+	log                  *slog.Logger
+	accountSvc           *account.Service
+	accountProfile       *accountprofile.Service
+	settings             *settings.Service
+	cache                *cache.Service
+	listHits             *cache.HitTracker
+	files                *file.Service
+	favorites            *favorites.Service
+	uploads              *upload.Manager
+	offlineDownloads     *offlinedownload.Service
+	playback             *playback.Service
+	strm                 *strm.Service
+	cacheRetention       *cacheretention.Service
+	mediaOrganize        *mediaorganize.Service
+	moviePilot           *moviepilot.Service
+	aiOrganize           *aiorganize.Service
+	classifyOrganize     *classifyorganize.Service
+	strmScrape           *strmscrape.Service
+	automation           *automation.Service
+	fuse                 *fusemount.Service
+	crossTransfer        *crosstransfer.Service
+	embyProxy            *embyproxy.Service
+	embyWebhookSvc       *embywebhook.Service
+	fnosProxy            *fnosproxy.Service
+	quarktv              *quarktv.Service
+	apiKeys              *apikey.Service
+	auth                 *auth.Service
+	authSched            *auth.Scheduler
+	adminAuth            *adminauth.Service
+	notifications        *notification.Service
+	announcement         *announcement.Service
+	backupRestore        *backuprestore.Service
+	spaceCleanup         *spacecleanup.Service
+	coverExtract         *coverextract.Service
+	notifyChannels       *notifychannel.Service
+	casRunner            *cas.Runner
+	storePlaybackRecords domain.PlaybackRecordRepository
+	renames              domain.RenameRepository
+	dataDir              string
+	strmDir              string
+	mediaRoots           []string
+	onSettingsUpdated    func(map[string]string)
 
 	devMu       sync.Mutex
 	devUnlocked bool
@@ -157,46 +169,50 @@ func NewRouter(d Deps) http.Handler {
 		apiLog = d.Logs.For(logx.ModuleAPI)
 	}
 	h := &Handler{
-		bootID:            uuid.NewString(),
-		logs:              d.Logs,
-		log:               apiLog,
-		accountSvc:        d.AccountSvc,
-		accountProfile:    d.AccountProfile,
-		settings:          d.Settings,
-		cache:             d.Cache,
-		listHits:          d.ListHitTracker,
-		files:             d.Files,
-		favorites:         d.Favorites,
-		uploads:           d.Uploads,
-		offlineDownloads:  d.OfflineDownloads,
-		playback:          d.Playback,
-		strm:              d.Strm,
-		cacheRetention:    d.CacheRetention,
-		mediaOrganize:     d.MediaOrganize,
-		aiOrganize:        d.AIOrganize,
-		classifyOrganize:  d.ClassifyOrganize,
-		strmScrape:        d.StrmScrape,
-		automation:        d.Automation,
-		fuse:              d.Fuse,
-		crossTransfer:     d.CrossTransfer,
-		embyProxy:         d.EmbyProxy,
-		fnosProxy:         d.FnosProxy,
-		quarktv:           d.QuarkTV,
-		apiKeys:           d.ApiKeys,
-		auth:              d.Auth,
-		authSched:         d.AuthSched,
-		adminAuth:         d.AdminAuth,
-		notifications:     d.Notifications,
-		announcement:      d.Announcement,
-		backupRestore:     d.BackupRestore,
-		spaceCleanup:      d.SpaceCleanup,
-		coverExtract:      d.CoverExtract,
-		notifyChannels:    d.NotifyChannels,
-		casRunner:         d.CASRunner,
-		dataDir:           d.DataDir,
-		strmDir:           d.StrmDir,
-		mediaRoots:        d.MediaRoots,
-		onSettingsUpdated: d.OnSettingsUpdated,
+		bootID:               uuid.NewString(),
+		logs:                 d.Logs,
+		log:                  apiLog,
+		accountSvc:           d.AccountSvc,
+		accountProfile:       d.AccountProfile,
+		settings:             d.Settings,
+		cache:                d.Cache,
+		listHits:             d.ListHitTracker,
+		files:                d.Files,
+		favorites:            d.Favorites,
+		uploads:              d.Uploads,
+		offlineDownloads:     d.OfflineDownloads,
+		playback:             d.Playback,
+		strm:                 d.Strm,
+		cacheRetention:       d.CacheRetention,
+		mediaOrganize:        d.MediaOrganize,
+		moviePilot:           d.MoviePilot,
+		aiOrganize:           d.AIOrganize,
+		classifyOrganize:     d.ClassifyOrganize,
+		strmScrape:           d.StrmScrape,
+		automation:           d.Automation,
+		fuse:                 d.Fuse,
+		crossTransfer:        d.CrossTransfer,
+		embyProxy:            d.EmbyProxy,
+		embyWebhookSvc:       d.EmbyWebhook,
+		fnosProxy:            d.FnosProxy,
+		quarktv:              d.QuarkTV,
+		apiKeys:              d.ApiKeys,
+		auth:                 d.Auth,
+		authSched:            d.AuthSched,
+		adminAuth:            d.AdminAuth,
+		notifications:        d.Notifications,
+		announcement:         d.Announcement,
+		backupRestore:        d.BackupRestore,
+		spaceCleanup:         d.SpaceCleanup,
+		coverExtract:         d.CoverExtract,
+		notifyChannels:       d.NotifyChannels,
+		casRunner:            d.CASRunner,
+		storePlaybackRecords: d.PlaybackRecords,
+		renames:              d.Renames,
+		dataDir:              d.DataDir,
+		strmDir:              d.StrmDir,
+		mediaRoots:           d.MediaRoots,
+		onSettingsUpdated:    d.OnSettingsUpdated,
 	}
 
 	r := chi.NewRouter()
@@ -254,6 +270,8 @@ func NewRouter(d Deps) http.Handler {
 		})
 		r.Route("/open", func(r chi.Router) {
 			r.Post("/automation/events", h.automationWebhook)
+			// Emby/Jellyfin Webhook 回调：免会话鉴权，由处理器内的 API Key 开关保护。
+			r.Post("/emby/webhook", h.embyWebhook)
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(h.requireAdmin)
@@ -397,6 +415,7 @@ func NewRouter(d Deps) http.Handler {
 						r.Get("/", h.subscriptionList)
 						r.Post("/", h.subscriptionSave)
 						r.Get("/by-key", h.subscriptionByKey)
+						r.Post("/preview", h.subscriptionPreviewMatch)
 						r.Post("/run-due", h.subscriptionRunDue)
 						r.Get("/{id}", h.subscriptionGet)
 						r.Delete("/{id}", h.subscriptionDelete)
@@ -531,6 +550,25 @@ func NewRouter(d Deps) http.Handler {
 					r.Get("/style", h.getCoverStyle)
 					r.Put("/style", h.putCoverStyle)
 				})
+				r.Route("/moviepilot", func(r chi.Router) {
+					r.Get("/setting", h.getMoviePilotConfig)
+					r.Put("/setting", h.updateMoviePilotConfig)
+					r.Post("/setting/test", h.testMoviePilotConnection)
+					r.Get("/subscribes", h.listMoviePilotSubscribes)
+					r.Post("/subscribes", h.createMoviePilotSubscribe)
+					r.Post("/subscribes/{id}/search", h.searchMoviePilotSubscribe)
+					r.Delete("/subscribes/{id}", h.deleteMoviePilotSubscribe)
+					r.Put("/subscribes/{id}/status", h.updateMoviePilotSubscribeStatus)
+					r.Get("/downloads", h.listMoviePilotDownloads)
+					r.Get("/upload-tasks", h.listMoviePilotUploadTasks)
+					r.Post("/upload-tasks/{id}/retry", h.retryMoviePilotUploadTask)
+					r.Post("/upload-tasks/{id}/cancel", h.cancelMoviePilotUploadTask)
+					r.Get("/failed-files", h.listMoviePilotFailedFiles)
+					r.Post("/failed-files/{id}/identify", h.identifyMoviePilotFailedFile)
+					r.Post("/failed-files/{id}/resolve", h.resolveMoviePilotFailedFile)
+					r.Post("/failed-files/{id}/skip", h.skipMoviePilotFailedFile)
+					r.Get("/organize-history", h.listMoviePilotOrganizeHistory)
+				})
 				r.Route("/media-organize", func(r chi.Router) {
 					r.Get("/tasks", h.listMediaOrganizeTasks)
 					r.Post("/tasks", h.createMediaOrganizeTask)
@@ -582,6 +620,13 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/runs/clear", h.clearAutomationRuns)
 					r.Get("/options", h.automationOptions)
 				})
+				// 播放记录面板（老版 /api/emby302/playback-records 的等价物）
+				r.Route("/playback-records", func(r chi.Router) {
+					r.Get("/", h.playbackRecords)
+					r.Get("/stats", h.playbackRecordsStats)
+					r.Delete("/{id}", h.playbackRecordDelete)
+					r.Post("/clear", h.playbackRecordsClear)
+				})
 				r.Route("/fuse", func(r chi.Router) {
 					r.Get("/status", h.fuseStatus)
 					r.Put("/config", h.updateFuseConfig)
@@ -620,6 +665,13 @@ func NewRouter(d Deps) http.Handler {
 				r.Put("/favorites", h.saveFavorites)
 				r.Post("/name-align/preview", h.previewNameAlign)
 				r.Post("/name-align/apply", h.applyNameAlign)
+				r.Post("/batch-rename/preview", h.previewBatchRename)
+				r.Post("/batch-rename/apply", h.applyBatchRename)
+				r.Get("/batch-rename/history", h.listBatchRenameHistory)
+				r.Post("/batch-rename/rollback", h.rollbackBatchRename)
+				r.Get("/batch-rename/presets", h.listBatchRenamePresets)
+				r.Post("/batch-rename/presets", h.saveBatchRenamePreset)
+				r.Delete("/batch-rename/presets", h.deleteBatchRenamePreset)
 				r.Post("/create-folder", h.createFolder)
 				r.Post("/upload-task", h.createUploadTask)
 				r.Get("/upload/runtime", h.getUploadRuntime)

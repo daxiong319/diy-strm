@@ -456,6 +456,16 @@
               <div class="field-tip">该账号中，目标为此目录或其任意子目录的离线任务完成后触发。</div>
             </div>
           </template>
+          <template v-else-if="form.trigger_type === 'cas_autosave'">
+            <div class="cfg-row">
+              <label>待整理目录</label>
+              <button class="time-btn" type="button" @click="openOfflineFolderPicker">
+                <SvgIcon name="folder-tree" size="1em" />
+                {{ offlineDownloadDirectoryLabel }}
+              </button>
+              <div class="field-tip">CAS 清单转存到该目录或其任意子目录后触发；不选则任意账号、任意目录的转存都会触发。</div>
+            </div>
+          </template>
           <template v-else-if="form.trigger_type === 'advanced'">
             <div class="cfg-row">
               <label>执行周期</label>
@@ -561,6 +571,26 @@
               <button class="inline-link-btn" type="button" :disabled="embyLibrariesLoading || !configAction.params.emby_id" @click="ensureEmbyLibrariesLoaded(true)">
                 {{ embyLibrariesLoading ? '加载中...' : '刷新媒体库列表' }}
               </button>
+            </div>
+          </template>
+          <template v-else-if="configAction.type === 'notify'">
+            <div class="cfg-row">
+              <label>发送方式</label>
+              <AppSelect v-model="configAction.params.batch_mode" :options="notifyBatchModeOptions" />
+              <div class="field-tip">本次触发涉及多个影片时，「每部影片一条」会逐个发送通知。</div>
+            </div>
+            <div class="cfg-row">
+              <label>通知标题</label>
+              <input v-model="configAction.params.title" class="ctrl" type="text" :placeholder="notifyTitlePlaceholder(configAction)">
+            </div>
+            <div class="cfg-row">
+              <label>通知内容</label>
+              <input v-model="configAction.params.message" class="ctrl" type="text" :placeholder="notifyMessagePlaceholder(configAction)">
+              <div class="field-tip">可用占位符：{file} 当前文件、{files} 本次全部文件、{drive} 网盘、{dir} 目录、{count} 文件数、{account_id} 账号 ID。留空则使用默认文案。</div>
+            </div>
+            <div class="cfg-row">
+              <label>通知级别</label>
+              <AppSelect v-model="configAction.params.level" :options="notifyLevelOptions" />
             </div>
           </template>
           <template v-else-if="isFnosAction(configAction)">
@@ -746,7 +776,8 @@ const triggerGroups = [
     name: '事件触发',
     items: [
       { value: 'external_event', label: '第三方通知', icon: 'plug', desc: '外部程序调用 Webhook 接口时触发' },
-      { value: 'offline_download', label: '离线下载完成', icon: 'cloud-arrow-down', desc: '指定目录或其子目录中的离线任务完成后触发' }
+      { value: 'offline_download', label: '离线下载完成', icon: 'cloud-arrow-down', desc: '指定目录或其子目录中的离线任务完成后触发' },
+      { value: 'cas_autosave', label: 'CAS 转存完成', icon: 'box-archive', desc: 'CAS 清单自动转存到指定目录后触发，可衔接整理、STRM、扫库与入库通知' }
     ]
   }
 ]
@@ -862,6 +893,22 @@ const ACTION_DEFINITIONS = {
     canApply: action => Boolean(options.value.fnos_management_ready && String(action.params.library_id || '').trim()),
     nodeTitle: action => `飞牛影视刷新元数据「${action.params.library_name || '未选择'}」`,
     previewTitle: action => `飞牛影视刷新元数据[${action.params.library_name || '未选择'}]`
+  },
+  notify: {
+    group: 'flow',
+    label: '入库通知',
+    optionLabel: '发送入库通知',
+    icon: 'bell',
+    desc: '通过已配置的通知渠道发送一条通知，支持 {file} {files} {drive} {dir} {count} 等占位符',
+    normalize: params => ({
+      level: ['info', 'warn', 'success'].includes(params.level) ? params.level : 'success',
+      title: String(params.title ?? ''),
+      message: String(params.message ?? ''),
+      batch_mode: params.batch_mode === 'once' ? 'once' : 'per_file'
+    }),
+    canApply: () => true,
+    nodeTitle: action => notifyNodeTitle(action),
+    previewTitle: action => notifyPreviewTitle(action)
   }
 }
 
@@ -945,6 +992,27 @@ const fnosRefreshModeOptions = [
   { value: 0, label: '替换所有元数据' }
 ]
 
+const notifyBatchModeOptions = [
+  { value: 'per_file', label: '每部影片一条（推荐）' },
+  { value: 'once', label: '整批合并一条' }
+]
+
+const notifyLevelOptions = [
+  { value: 'success', label: '成功' },
+  { value: 'info', label: '提示' },
+  { value: 'warn', label: '警告' }
+]
+
+const notifyTitlePlaceholder = action => (
+  action?.params?.batch_mode === 'once' ? '自动联动完成' : '「{file}」已入库'
+)
+
+const notifyMessagePlaceholder = action => (
+  action?.params?.batch_mode === 'once'
+    ? '本次联动已执行完成，共 {count} 个文件'
+    : '来自 {drive} {dir}，本次共 {count} 个文件'
+)
+
 const embyConfigOptions = computed(() => (options.value.emby_configs || []).map(item => ({
   value: item.id,
   label: item.name
@@ -1005,6 +1073,9 @@ const triggerNodeTitle = computed(() => {
   if (form.trigger_type === 'offline_download') {
     return triggerReady.value ? `离线下载完成：${offlineDownloadDirectoryLabel.value}` : '离线下载完成'
   }
+  if (form.trigger_type === 'cas_autosave') {
+    return triggerReady.value ? `CAS 转存完成：${casAutoSaveDirectoryLabel.value}` : 'CAS 转存完成'
+  }
   return form.trigger_config.time ? `每天 ${form.trigger_config.time}` : '每天定时'
 })
 
@@ -1019,6 +1090,8 @@ const triggerNodeSub = computed(() => (
     ? externalEventSubtitle.value
     : form.trigger_type === 'offline_download'
     ? '任务目标位于所选目录或其子目录时触发'
+    : form.trigger_type === 'cas_autosave'
+    ? 'CAS 转存到所选目录或其子目录时触发'
     : '每天到点自动启动联动'
 ))
 
@@ -1027,6 +1100,17 @@ const offlineDownloadDirectoryLabel = computed(() => {
   if (!path) return '请选择账号和目录'
   const accountName = String(form.trigger_config.account_name || '').trim() || '网盘'
   return `${accountName} · ${path}`
+})
+
+// CAS 触发器允许留空（任意账号 / 任意目录），不选时给出明确说明而非报错文案
+const casAutoSaveDirectoryLabel = computed(() => {
+  const path = String(form.trigger_config.path || '/').trim()
+  const accountId = Number(form.trigger_config.account_id || 0)
+  if (!accountId && (!path || path === '/')) return '任意账号 · 任意目录'
+  const accountName = accountId > 0
+    ? (String(form.trigger_config.account_name || '').trim() || '网盘')
+    : '任意账号'
+  return `${accountName} · ${path && path !== '/' ? path : '任意目录'}`
 })
 
 const offlineFolderPickerAccountId = computed(() => {
@@ -1066,6 +1150,8 @@ const triggerReady = computed(() => {
   if (form.trigger_type === 'offline_download') {
     return Number(form.trigger_config.account_id || 0) > 0 && Boolean(String(form.trigger_config.path || '').trim())
   }
+  // CAS 转存触发允许账号与目录都留空，表示任意账号 / 任意目录的转存都会触发
+  if (form.trigger_type === 'cas_autosave') return true
   return false
 })
 const primaryActionReady = computed(() => Boolean(form.actions[0]))
@@ -1229,6 +1315,9 @@ const setTriggerType = (type) => {
     form.trigger_config.time = ''
     form.trigger_config.start_time = ''
   } else if (type === 'offline_download') {
+    form.trigger_config.time = ''
+    form.trigger_config.start_time = ''
+  } else if (type === 'cas_autosave') {
     form.trigger_config.time = ''
     form.trigger_config.start_time = ''
   }
@@ -1873,6 +1962,10 @@ const triggerLabel = (rule) => {
     const accountName = String(config.account_name || '').trim() || '网盘'
     return `离线下载完成：${accountName} · ${config.path || '/'}`
   }
+  if (rule.trigger_type === 'cas_autosave') {
+    const accountName = String(config.account_name || '').trim() || '任意账号'
+    return `CAS 转存完成：${accountName} · ${config.path || '任意目录'}`
+  }
   return `每天 ${config.time || '00:00'}`
 }
 
@@ -1897,6 +1990,21 @@ const formatDelay = (seconds) => {
   if (value >= 60 && value % 60 === 0) return `${value / 60}分钟`
   return `${value}秒`
 }
+
+// 入库通知的标题/摘要：未填标题时按发送方式给出可读文案，避免节点上出现空白
+const notifyTitleOrDefault = (action) => {
+  const title = String(action?.params?.title || '').trim()
+  if (title) return title
+  return action?.params?.batch_mode === 'once' ? '自动联动完成' : '影片已入库'
+}
+
+const notifyNodeTitle = (action) => {
+  const title = notifyTitleOrDefault(action)
+  const suffix = action?.params?.batch_mode === 'once' ? '（整批一条）' : '（每部一条）'
+  return `入库通知「${title}」${suffix}`
+}
+
+const notifyPreviewTitle = (action) => `入库通知[${notifyTitleOrDefault(action)}]`
 
 const previewActionTitle = action => actionDefinition(action.type).previewTitle(action)
 
@@ -2013,6 +2121,7 @@ const runSourceLabel = (source) => {
   if (source === 'manual') return '手动'
   if (source === 'external_event' || source === 'webhook') return '第三方'
   if (source === 'offline_download') return '离线下载'
+  if (source === 'cas_autosave') return 'CAS 转存'
   return '定时'
 }
 

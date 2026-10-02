@@ -40,6 +40,19 @@ type OfflineDownloadCompleted struct {
 	FileName          string
 }
 
+// CasAutoSaved CAS 清单经通知渠道收到后已成功转存到网盘目录。
+//
+// 与 OfflineDownloadCompleted 同理，这是「把资源放进待整理目录」这一动作
+// 的完成信号：自动化据此触发整理 → STRM → Emby 扫库 → 入库通知的联动。
+type CasAutoSaved struct {
+	AccountID int64
+	DriveType string // cloud189 / quark / 123_open ...
+	SaveDir   string // 相对网盘根目录，如 影视/CAS待整理
+	FileName  string // 落盘后的文件名（含 .cas 后缀）
+	FileID    string
+	Source    string // 用户实际发来的文件名（可能是压缩包名）
+}
+
 // NotificationCreated 新通知产生。
 type NotificationCreated struct {
 	Level     string

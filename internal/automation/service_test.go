@@ -42,7 +42,7 @@ func TestRefreshDirectoryClearsOnlyFollowingAccountDirectoryCaches(t *testing.T)
 	result := service.executeAction(context.Background(), RuleAction{Type: domain.AutomationActionCacheClear}, []RuleAction{
 		{Type: domain.AutomationActionOrganize, Params: map[string]any{"task_id": "org-1"}},
 		{Type: domain.AutomationActionStrm, Params: map[string]any{"task_id": 10}},
-	})
+	}, nil)
 	if result["success"] != true || result["message"] != "已刷新 1 个账号的目录缓存" {
 		t.Fatalf("刷新结果异常: %#v", result)
 	}

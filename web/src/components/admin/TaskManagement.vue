@@ -69,6 +69,8 @@ import type MediaOrganizePanelComponent from "@/components/admin/MediaOrganizePa
 const CacheRetentionPanel = defineAsyncComponent(() => import("@/components/admin/CacheRetentionPanel.vue"));
 const CacheSettingsPanel = defineAsyncComponent(() => import("@/components/admin/CacheSettingsPanel.vue"));
 const AutomationPanel = defineAsyncComponent(() => import("@/components/admin/AutomationPanel.vue"));
+const PlaybackRecordPanel = defineAsyncComponent(() => import("@/components/admin/PlaybackRecordPanel.vue"));
+const MoviePilotPanel = defineAsyncComponent(() => import("@/components/admin/MoviePilotPanel.vue"));
 const MediaOrganizePanel = defineAsyncComponent(() => import("@/components/admin/MediaOrganizePanel.vue"));
 const MediaOrganizeSettings = defineAsyncComponent(() => import("@/components/admin/MediaOrganizeSettings.vue"));
 import CacheSignalBand from "@/components/admin/CacheSignalBand.vue";
@@ -102,12 +104,16 @@ const CACHE_TAB = "cache";
 const STRM_TAB = "strm";
 const ORGANIZE_TAB = "organize";
 const AUTOMATION_TAB = "automation";
+const PLAYBACK_TAB = "playback";
+const MOVIEPILOT_TAB = "moviepilot";
 const DEFAULT_STRM_SCAN_INTERVAL_MINUTES = 6 * 60;
 const tabs = [
   { key: STRM_TAB, label: "STRM 任务" },
   { key: CACHE_TAB, label: "缓存任务" },
   { key: ORGANIZE_TAB, label: "目录整理" },
   { key: AUTOMATION_TAB, label: "自动联动" },
+  { key: PLAYBACK_TAB, label: "播放记录" },
+  { key: MOVIEPILOT_TAB, label: "MoviePilot" },
 ];
 
 type DrawerKind = "strm" | "organize" | "cache";
@@ -175,7 +181,7 @@ const { confirmDiscardChanges } = useSettingsPageDirty(settingsPageDirty, revert
 
 const { activeTab, setActiveTab } = useSectionTabRoute(
   STRM_TAB,
-  [STRM_TAB, CACHE_TAB, ORGANIZE_TAB, AUTOMATION_TAB],
+  [STRM_TAB, CACHE_TAB, ORGANIZE_TAB, AUTOMATION_TAB, PLAYBACK_TAB, MOVIEPILOT_TAB],
   {
   beforeTabChange: async (_from, _to) => {
     if (!settingsDrawerOpen.value) return true;
@@ -1284,6 +1290,14 @@ watch(activeTab, (tab) => {
 
     <div v-if="tabsVisited[AUTOMATION_TAB]" v-show="activeTab === AUTOMATION_TAB">
       <AutomationPanel ref="automationPanelRef" />
+    </div>
+
+    <div v-if="tabsVisited[PLAYBACK_TAB]" v-show="activeTab === PLAYBACK_TAB">
+      <PlaybackRecordPanel />
+    </div>
+
+    <div v-if="tabsVisited[MOVIEPILOT_TAB]" v-show="activeTab === MOVIEPILOT_TAB">
+      <MoviePilotPanel />
     </div>
 
     <AdminSettingsDrawer

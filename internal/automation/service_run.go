@@ -30,6 +30,12 @@ func (s *Service) RunAsync(ctx context.Context, id int64, triggerSource string) 
 }
 
 func (s *Service) runRule(id int64, triggerSource string) {
+	s.runRuleWithBatch(id, triggerSource, nil)
+}
+
+// runRuleWithBatch 执行一条规则。batch 为 nil 时（定时/Webhook 等触发）
+// 动作里的文件占位符退化为空串，notify 动作仍可用固定文案。
+func (s *Service) runRuleWithBatch(id int64, triggerSource string, batch *casTriggerBatch) {
 	defer s.endRun(id)
 	parent := s.appCtx
 	if parent == nil {
@@ -74,7 +80,7 @@ func (s *Service) runRule(id int64, triggerSource string) {
 		}
 		if shouldRunAction(action.Condition, previousSuccess, i) {
 			s.setRunningStep(id, i, actionDisplayName(action), action.Type)
-			result := s.executeAction(ctx, action, actions[i+1:])
+			result := s.executeAction(ctx, action, actions[i+1:], batch)
 			for k, v := range result {
 				step[k] = v
 			}
@@ -109,7 +115,7 @@ func (s *Service) runRule(id int64, triggerSource string) {
 	_ = s.rules.Update(ctx, rule)
 }
 
-func (s *Service) executeAction(ctx context.Context, action RuleAction, following []RuleAction) map[string]any {
+func (s *Service) executeAction(ctx context.Context, action RuleAction, following []RuleAction, batch *casTriggerBatch) map[string]any {
 	switch action.Type {
 	case domain.AutomationActionCacheClear:
 		return s.runCacheClear(ctx, following)
@@ -129,6 +135,8 @@ func (s *Service) executeAction(ctx context.Context, action RuleAction, followin
 		return s.runFnosLibraryAction(ctx, action.Params, false)
 	case domain.AutomationActionFnosRefreshMetadata:
 		return s.runFnosLibraryAction(ctx, action.Params, true)
+	case domain.AutomationActionNotify:
+		return s.runNotify(ctx, action.Params, batch)
 	default:
 		return map[string]any{"status": "failed", "success": false, "message": "动作类型不支持"}
 	}
@@ -460,6 +468,7 @@ func (s *Service) runEmbyRefresh(ctx context.Context, params map[string]any) map
 		ConfigID:  strings.TrimSpace(anyString(params["emby_id"])),
 		Mode:      strings.TrimSpace(anyString(params["mode"])),
 		LibraryID: strings.TrimSpace(anyString(params["library_id"])),
+		ItemID:    strings.TrimSpace(anyString(params["item_id"])),
 	}
 	result, err := s.emby.RefreshLibrary(ctx, req)
 	if err != nil {
@@ -468,6 +477,9 @@ func (s *Service) runEmbyRefresh(ctx context.Context, params map[string]any) map
 	message := "已通知 Emby/Jellyfin 扫描全部媒体库"
 	if result.Mode == "library" && result.LibraryName != "" {
 		message = "已通知 Emby/Jellyfin 扫描媒体库：" + result.LibraryName
+	}
+	if result.Mode == "item" {
+		message = "已通知 Emby/Jellyfin 刷新条目：" + result.ItemID
 	}
 	return map[string]any{
 		"status":  "success",
@@ -480,6 +492,7 @@ func (s *Service) runEmbyRefresh(ctx context.Context, params map[string]any) map
 			"task_id":      result.TaskID,
 			"library_id":   result.LibraryID,
 			"library_name": result.LibraryName,
+			"item_id":      result.ItemID,
 		},
 	}
 }
@@ -555,26 +568,32 @@ type submitRunResult struct {
 }
 
 func (s *Service) submitRun(ruleID int64, triggerSource string, dedupe bool) submitRunResult {
+	return s.submitRunWithBatch(ruleID, triggerSource, dedupe, nil)
+}
+
+// submitRunWithBatch 与 submitRun 相同，但把触发上下文（本次转存的文件等）
+// 一并带入执行，供 notify 动作渲染 {file}/{drive}/{dir} 占位符。
+func (s *Service) submitRunWithBatch(ruleID int64, triggerSource string, dedupe bool, batch *casTriggerBatch) submitRunResult {
 	s.mu.Lock()
 	if dedupe && s.pendingCount[ruleID] > 0 {
 		s.mu.Unlock()
 		return submitRunResult{queued: true}
 	}
 	if s.startupGate != nil && !s.startupReady {
-		s.pendingRuns = append(s.pendingRuns, queuedRun{ruleID: ruleID, triggerSource: triggerSource})
+		s.pendingRuns = append(s.pendingRuns, queuedRun{ruleID: ruleID, triggerSource: triggerSource, batch: batch})
 		s.pendingCount[ruleID]++
 		s.mu.Unlock()
 		return submitRunResult{queued: true}
 	}
 	if s.runningRuleID != 0 {
-		s.pendingRuns = append(s.pendingRuns, queuedRun{ruleID: ruleID, triggerSource: triggerSource})
+		s.pendingRuns = append(s.pendingRuns, queuedRun{ruleID: ruleID, triggerSource: triggerSource, batch: batch})
 		s.pendingCount[ruleID]++
 		s.mu.Unlock()
 		return submitRunResult{queued: true}
 	}
 	s.runningRuleID = ruleID
 	s.mu.Unlock()
-	go s.runRule(ruleID, triggerSource)
+	go s.runRuleWithBatch(ruleID, triggerSource, batch)
 	return submitRunResult{queued: false}
 }
 
@@ -590,7 +609,7 @@ func (s *Service) releaseStartupQueue() {
 	}
 	s.mu.Unlock()
 	if next != nil {
-		go s.runRule(next.ruleID, next.triggerSource)
+		go s.runRuleWithBatch(next.ruleID, next.triggerSource, next.batch)
 	}
 }
 
@@ -622,7 +641,7 @@ func (s *Service) endRun(ruleID int64) {
 	delete(s.runningStep, ruleID)
 	s.mu.Unlock()
 	if next != nil {
-		go s.runRule(next.ruleID, next.triggerSource)
+		go s.runRuleWithBatch(next.ruleID, next.triggerSource, next.batch)
 	}
 }
 
@@ -679,6 +698,8 @@ func actionDisplayName(action RuleAction) string {
 		return "Emby/JF 扫库"
 	case domain.AutomationActionEmbyCompleteMediaInfo:
 		return "Emby/JF 补媒体信息"
+	case domain.AutomationActionNotify:
+		return "发送入库通知"
 	case domain.AutomationActionFnosScan:
 		return "飞牛影视扫库"
 	case domain.AutomationActionFnosRefreshMetadata:

@@ -75,3 +75,10 @@ func (db *DB) Close() error {
 	}
 	return e2
 }
+
+// WriteHandle 返回单写连接池，供主库之外的手写 SQL 服务（如播放记录）复用同一事务域。
+// 调用方不得关闭返回的句柄。
+func (db *DB) WriteHandle() *sql.DB { return db.write }
+
+// ReadHandle 返回多读连接池，供只读查询复用。调用方不得关闭返回的句柄。
+func (db *DB) ReadHandle() *sql.DB { return db.read }

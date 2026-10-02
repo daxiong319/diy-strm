@@ -8,6 +8,11 @@ const NotificationCategoryStrmScrapeWarn = "strm_scrape_warn"
 const NotificationCategoryFuseMountWarn = "fuse_mount_warn"
 const NotificationCategoryQuarkTVWarn = "quarktv_warn"
 
+// Emby Webhook 相关通知分类。
+const NotificationCategoryEmbyIngest = "emby_ingest"
+const NotificationCategoryEmbyPlayback = "emby_playback"
+const NotificationCategoryEmbyDeleted = "emby_deleted"
+
 type Notification struct {
 	ID        int64
 	Level     string

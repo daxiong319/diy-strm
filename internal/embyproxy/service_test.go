@@ -470,3 +470,50 @@ func TestIsExpectedClientDisconnect(t *testing.T) {
 		t.Fatal("真实上游错误不应被当成客户端取消")
 	}
 }
+
+func TestRefreshItemByIDUsesConservativeQuery(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	var gotMethod string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/Items/item-9/Refresh") {
+			gotPath = r.URL.Path
+			gotQuery = r.URL.Query()
+			gotMethod = r.Method
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+
+	svc := testEmbyProxyService(t, upstream.URL)
+	result, err := svc.RefreshLibrary(context.Background(), RefreshRequest{Mode: "item", ItemID: "item-9"})
+	if err != nil {
+		t.Fatalf("条目刷新返回错误: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/Items/item-9/Refresh" {
+		t.Fatalf("条目刷新请求异常: method=%q path=%q", gotMethod, gotPath)
+	}
+	for key, want := range map[string]string{
+		"Recursive":           "true",
+		"ImageRefreshMode":    "Default",
+		"MetadataRefreshMode": "Default",
+		"ReplaceAllImages":    "false",
+		"ReplaceAllMetadata":  "false",
+	} {
+		if got := gotQuery.Get(key); got != want {
+			t.Fatalf("条目刷新参数 %s=%q，期望 %q", key, got, want)
+		}
+	}
+	if result.Mode != "item" || result.ItemID != "item-9" {
+		t.Fatalf("条目刷新结果异常: %#v", result)
+	}
+}
+
+func TestRefreshItemRequiresItemID(t *testing.T) {
+	svc := testEmbyProxyService(t, "http://emby.test:8096")
+	if _, err := svc.RefreshLibrary(context.Background(), RefreshRequest{Mode: "item"}); err == nil {
+		t.Fatal("缺少 item_id 时应返回错误")
+	}
+}

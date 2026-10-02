@@ -28,6 +28,7 @@ export function useFileTableInline(options: {
   batchMoveFiles: () => void;
   batchCopyFiles: () => void;
   nameAlignFile: (file: FileItem) => void;
+  batchRenameFiles: () => void;
   coverExtractEnabled: Ref<boolean>;
   coverExtractFile: (file: FileItem) => void;
 }) {
@@ -144,6 +145,9 @@ export function useFileTableInline(options: {
       items.push({ action: "name-align", label: "命名对齐" });
     }
     const useBatchActions = options.selectedIds.value.length > 1 && options.selectedIds.value.includes(fileKey(file));
+    if (useBatchActions) {
+      items.push({ action: "batch-rename", label: "批量重命名" });
+    }
     items.push(
       { action: "rename", label: "重命名" },
       { action: useBatchActions ? "batch-delete" : "delete", label: useBatchActions ? "批量删除" : "删除", danger: true },
@@ -256,6 +260,7 @@ export function useFileTableInline(options: {
 
     if (action === "download") options.downloadFile(file);
     if (action === "name-align") options.nameAlignFile(file);
+    if (action === "batch-rename") options.batchRenameFiles();
     if (action === "cover-extract") options.coverExtractFile(file);
     if (action === "rename") void startInlineRename(file);
     if (action === "delete") void startInlineDelete(file);

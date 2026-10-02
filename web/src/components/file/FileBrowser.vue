@@ -34,6 +34,7 @@ import BusySpinner from "@/components/base/BusySpinner.vue";
 import type { ActiveFilePreview, FilePreviewKind } from "./filePreview";
 import FolderPickerModal from "./FolderPickerModal.vue";
 import NameAlignModal from "./NameAlignModal.vue";
+import BatchRenameModal from "./BatchRenameModal.vue";
 import AppModal from "@/components/base/AppModal.vue";
 import AppInput from "@/components/base/AppInput.vue";
 import TaskPanel from "@/components/upload/TaskPanel.vue";
@@ -93,6 +94,7 @@ const nameAlignApplyTotal = ref(0);
 const nameAlignApplyProgress = ref(0);
 const activePreview = ref<ActiveFilePreview | null>(null);
 let nameAlignApplyTimer: number | undefined;
+const batchRenameOpen = ref(false);
 
 // 悬浮账号列表与简约模式不冲突：简约模式下左侧仍保留悬浮图标，账号下拉选择则不渲染。
 const floatingAccountSwitchEnabled = computed(
@@ -696,6 +698,34 @@ function closeNameAlignModal() {
   resetNameAlignState();
 }
 
+/** 打开批量重命名弹窗：需要已选账号，且当前目录下有勾选的文件。 */
+function openBatchRename() {
+  if (!currentAccountId.value) {
+    toast.info("请先选择一个账号");
+    return;
+  }
+  if (selectedFiles.value.length === 0) {
+    toast.info("请先勾选需要重命名的文件");
+    return;
+  }
+  batchRenameOpen.value = true;
+}
+
+function closeBatchRenameModal() {
+  batchRenameOpen.value = false;
+}
+
+/** 批量重命名执行后刷新当前目录列表。 */
+async function handleBatchRenameApplied() {
+  await store.loadFiles({ forceRefresh: true, silent: true });
+}
+
+/** 当前目录中未被勾选的文件名，供服务端做同目录重名校验。 */
+const batchRenameExistingNames = computed(() => {
+  const selected = new Set(selectedIds.value);
+  return files.value.filter((file) => !selected.has(fileKey(file))).map((file) => file.name);
+});
+
 function applyNameAlignPreview(preview: FileNameAlignPreviewResult) {
   nameAlignPreview.value = preview;
   nameAlignSelectedSampleId.value = preview.sample.file_id;
@@ -868,6 +898,7 @@ watch([currentAccountId, breadcrumb], () => {
   selectedIds.value = [];
   activePreview.value = null;
   if (nameAlignOpen.value) closeNameAlignModal();
+  if (batchRenameOpen.value) closeBatchRenameModal();
   persistBrowserLocation();
 }, { deep: true });
 
@@ -1103,6 +1134,7 @@ homeFooterStatus.onOpenTaskPanel(openTaskPanel);
             :batch-move-files="fileActions.requestBatchMove"
             :batch-copy-files="fileActions.requestBatchCopy"
             :name-align-file="openNameAlign"
+            :batch-rename-files="openBatchRename"
             :cover-extract-enabled="coverExtractEnabled"
             :cover-extract-file="sendToCoverExtract"
             :drag-active="dragMove.active"
@@ -1153,6 +1185,17 @@ homeFooterStatus.onOpenTaskPanel(openTaskPanel);
       @update:include-suspects="handleNameAlignIncludeSuspects"
       @remove-suspect="handleNameAlignRemove"
       @apply="handleNameAlignApply"
+    />
+
+    <BatchRenameModal
+      :open="batchRenameOpen"
+      :account-id="currentAccountId ?? 0"
+      :parent-id="currentParentId ?? '0'"
+      :folder-name="currentFolderName"
+      :selected-files="selectedFiles"
+      :existing-names="batchRenameExistingNames"
+      @close="closeBatchRenameModal"
+      @applied="handleBatchRenameApplied"
     />
 
     <AppModal

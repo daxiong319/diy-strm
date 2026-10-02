@@ -17,13 +17,17 @@ import (
 	"litepan/internal/cacheretention"
 	"litepan/internal/config"
 	"litepan/internal/driver"
+	"litepan/internal/embyindex"
 	"litepan/internal/embyproxy"
+	"litepan/internal/embyrefresh"
+	"litepan/internal/embywebhook"
 	"litepan/internal/eventbus"
 	"litepan/internal/file"
 	"litepan/internal/fnosproxy"
 	"litepan/internal/fusemount"
 	"litepan/internal/logx"
 	"litepan/internal/mediaorganize"
+	"litepan/internal/moviepilot"
 	"litepan/internal/offlinedownload"
 	"litepan/internal/playback"
 	"litepan/internal/settings"
@@ -58,6 +62,10 @@ type App struct {
 	fuse             *fusemount.Service
 	cacheRetention   *cacheretention.Service
 	embyProxy        *embyproxy.Service
+	embyRefresh      *embyrefresh.Service
+	embyIndex        *embyindex.Service
+	moviePilot       *moviepilot.Service
+	embyWebhook      *embywebhook.Service
 	fnosProxy        *fnosproxy.Service
 	httpSrv          *http.Server
 	httpBaseCancel   context.CancelFunc
@@ -141,6 +149,10 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		fuse:             svc.fuse,
 		cacheRetention:   svc.cacheRetention,
 		embyProxy:        svc.embyProxy,
+		embyRefresh:      svc.embyRefresh,
+		embyIndex:        svc.embyIndex,
+		moviePilot:       svc.moviePilot,
+		embyWebhook:      svc.embyWebhook,
 		fnosProxy:        svc.fnosProxy,
 		httpSrv:          httpSrv,
 		httpBaseCancel:   httpBaseCancel,
@@ -177,6 +189,21 @@ func (a *App) Run(ctx context.Context) error {
 	if a.embyProxy != nil {
 		a.embyProxy.Start(ctx)
 	}
+	if a.embyRefresh != nil {
+		a.embyRefresh.Start(ctx)
+	}
+	// Emby 本地索引的周期扫描：把 Emby 媒体库条目同步到本地索引，
+	// 发现新增/变更后登记刷新意图。未配置 Emby 时循环内自行跳过，不会空转。
+	if a.embyIndex != nil {
+		a.embyIndex.Start(ctx)
+	}
+	if a.moviePilot != nil {
+		a.moviePilot.Start(ctx)
+	}
+	// Emby Webhook 通知服务的剧集合并缓冲区需要常驻后台协程。
+	if a.embyWebhook != nil {
+		a.embyWebhook.Start(ctx)
+	}
 	if a.fnosProxy != nil {
 		a.fnosProxy.Start(ctx)
 	}
@@ -206,6 +233,7 @@ const (
 	shutdownBusBudget     = 3 * time.Second
 	shutdownOfflineBudget = 20 * time.Second
 	shutdownUploadBudget  = 20 * time.Second
+	shutdownRefreshBudget = 5 * time.Second
 )
 
 // Shutdown 按依赖反序优雅关闭：先停 HTTP，再卸载 FUSE，最后关 DB。
@@ -216,6 +244,26 @@ func (a *App) Shutdown(ctx context.Context) error {
 	}
 	if a.httpBaseCancel != nil {
 		a.httpBaseCancel()
+	}
+	if a.embyRefresh != nil {
+		refreshCtx, cancelRefresh := context.WithTimeout(ctx, shutdownRefreshBudget)
+		a.embyRefresh.Stop(refreshCtx)
+		cancelRefresh()
+	}
+	if a.embyIndex != nil {
+		// Stop 只取消在途扫描、不等它扫完：未落库的部分下一轮会重新扫到。
+		indexCtx, cancelIndex := context.WithTimeout(ctx, shutdownRefreshBudget)
+		a.embyIndex.Stop(indexCtx)
+		cancelIndex()
+	}
+	if a.moviePilot != nil {
+		mpCtx, cancelMP := context.WithTimeout(ctx, shutdownRefreshBudget)
+		a.moviePilot.Stop(mpCtx)
+		cancelMP()
+	}
+	if a.embyWebhook != nil {
+		// Stop 只等合并缓冲区收尾；缓冲区自身在 stopCh 关闭后立即返回。
+		a.embyWebhook.Stop()
 	}
 	if a.embyProxy != nil {
 		a.embyProxy.Shutdown(ctx)

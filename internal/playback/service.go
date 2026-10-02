@@ -19,7 +19,9 @@ type Service struct {
 	clientH2    *http.Client
 	rangeLimits accountRangeLimiter
 	resolveHook DownloadResolverHook
-	log         *slog.Logger
+	// redirectObserver 在每次 302 交付后回调一次，用于旁路落播放记录。
+	redirectObserver RedirectObserver
+	log              *slog.Logger
 }
 
 // DownloadResolverHook 允许外部插件在驱动解析前接管下载直链。
@@ -81,6 +83,15 @@ type Request struct {
 	FileID    string
 }
 
+// RedirectObserver 在取流入口决定走 302 后回调一次，用于旁路落播放记录。
+// accountID 为云盘账号，直接落在 Resolved 文件与下载链接上。
+type RedirectObserver func(r *http.Request, accountID int64, res Resolved, intent Intent)
+
+// SetRedirectObserver 注入 302 旁路观察者，仅在服务启动前调用一次。
+func (s *Service) SetRedirectObserver(fn RedirectObserver) {
+	s.redirectObserver = fn
+}
+
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request, req Request, intent Intent) error {
 	if err := s.exec.Check(r.Context(), req.AccountID); err != nil {
 		return err
@@ -96,6 +107,9 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request, req Request,
 	action := PickAction(res.Mode, res.Link, intent)
 	if action == ActionRedirect {
 		s.logAction("redirect", res.Mode, res.Link.URL, ua)
+		if s.redirectObserver != nil {
+			s.redirectObserver(r, req.AccountID, res, intent)
+		}
 		writeRedirect(w, r, res, intent)
 		return nil
 	}
