@@ -4,8 +4,9 @@ import { getApiErrorMessage } from "@/api/client";
 import { accountsApi } from "@/api/accounts";
 import { fetchCasConfig, saveCasConfig, type CasConfig } from "@/api/cas";
 import type { Account } from "@/api/types";
+import AccountFolderField from "@/components/admin/AccountFolderField.vue";
+import FolderPickerModal from "@/components/file/FolderPickerModal.vue";
 import AppButton from "@/components/base/AppButton.vue";
-import AppInput from "@/components/base/AppInput.vue";
 import AppSelect from "@/components/base/AppSelect.vue";
 import AppStateBlock from "@/components/base/AppStateBlock.vue";
 import FormField from "@/components/base/FormField.vue";
@@ -70,6 +71,119 @@ const accounts = ref<Account[]>([]);
 
 const enabled = ref(true);
 const defaultDir = ref("CAS");
+
+// 目录选择器状态：pickingKey 非空表示正在为某个网盘选目录，
+// 为 DEFAULT_DIR_KEY 时表示在选「默认保存目录」。
+const DEFAULT_DIR_KEY = "__default__";
+const pickingKey = ref("");
+const pickerOpen = ref(false);
+
+const activeAccounts = computed(() => accounts.value.filter((a) => a.is_active));
+
+// 目录选择器返回的是账号 + 路径：把路径写回对应字段，
+// 顺带把账号也一并带过来（用户既然在某个账号里翻了目录，
+// 就该转存到那个账号，否则选了目录却存到别的账号会让人费解）。
+function driveByKey(key: string): DriveRow | undefined {
+  return drives.find((d) => d.key === key);
+}
+
+function currentPickingRow(): DriveRow | undefined {
+  return driveByKey(pickingKey.value);
+}
+
+// 传给 FolderPickerModal 的初始账号：优先本行已选账号，否则用该网盘第一个可用账号。
+function pickingAccountId(): number | null {
+  if (pickingKey.value === DEFAULT_DIR_KEY) {
+    const first = activeAccounts.value[0];
+    return first ? first.id : null;
+  }
+  const row = currentPickingRow();
+  if (!row) return null;
+  if (row.accountId) return row.accountId;
+  const enabledIds = new Set(
+    accounts.value
+      .filter((a) => a.is_active && normalizeDriveType(a.driver_type) === row.key)
+      .map((a) => a.id),
+  );
+  if (row.accountId && enabledIds.has(row.accountId)) return row.accountId;
+  const first = accounts.value.find(
+    (a) => a.is_active && normalizeDriveType(a.driver_type) === row.key,
+  );
+  return first ? first.id : null;
+}
+
+function pickingInitialPath(): string {
+  if (pickingKey.value === DEFAULT_DIR_KEY) return defaultDir.value;
+  return currentPickingRow()?.saveDir ?? "";
+}
+
+// 该网盘的可用账号（用于目录选择器里约束可选账号范围）。
+function pickingAccounts(): Account[] {
+  if (pickingKey.value === DEFAULT_DIR_KEY) return activeAccounts.value;
+  const row = currentPickingRow();
+  if (!row) return activeAccounts.value;
+  const matched = activeAccounts.value.filter(
+    (a) => normalizeDriveType(a.driver_type) === row.key,
+  );
+  // 没有任何匹配账号时不限制，否则用户想选目录却看不到任何账号。
+  return matched.length > 0 ? matched : activeAccounts.value;
+}
+
+function openDirPicker(key: string) {
+  pickingKey.value = key;
+  pickerOpen.value = true;
+}
+
+function onDirPicked(payload: { accountId: number; path: string }) {
+  const path = (payload.path || "/").trim();
+  const normalized = path === "/" ? "" : path.replace(/^\/+|\/+$/g, "");
+  if (pickingKey.value === DEFAULT_DIR_KEY) {
+    defaultDir.value = normalized;
+  } else {
+    const row = driveByKey(pickingKey.value);
+    if (row) {
+      // 只有该行还没指定账号（自动选择）时才用选择器里的账号补上，
+      // 避免覆盖用户显式指定的转存账号。
+      if (!row.accountId && payload.accountId) row.accountId = payload.accountId;
+      row.saveDir = normalized;
+    }
+  }
+  pickerOpen.value = false;
+  pickingKey.value = "";
+}
+
+// 目录文案：空值表示「未单独设置」，此时该网盘会落到上面的默认保存目录。
+// 选了网盘根目录也等价于空（后端约定空目录即根目录），因此统一按未设置展示。
+const defaultDirLabel = computed(() => {
+  const dir = defaultDir.value.trim().replace(/^\/+|\/+$/g, "");
+  return dir ? `/${dir}` : "";
+});
+
+const defaultDirTitle = computed(() =>
+  defaultDirLabel.value
+    ? `转存到该网盘根目录下的 ${defaultDirLabel.value}`
+    : "未设置：转存到各网盘根目录",
+);
+
+const pickerTitle = computed(() => {
+  if (pickingKey.value === DEFAULT_DIR_KEY) return "选择默认保存目录";
+  const row = currentPickingRow();
+  return row ? `选择「${row.label}」保存目录` : "选择保存目录";
+});
+
+function rowDirLabel(row: DriveRow): string {
+  const dir = row.saveDir.trim().replace(/^\/+|\/+$/g, "");
+  if (!dir) return "";
+  const acc = accounts.value.find((a) => a.id === row.accountId);
+  return acc?.name ? `${acc.name}·/${dir}` : `/${dir}`;
+}
+
+// 该行未单独设置目录时会回落到哪个目录——把这个去向写进提示，用户才不用猜。
+const rowDirFallbackTitle = computed(() =>
+  defaultDirLabel.value
+    ? `未单独设置：将使用上方默认目录 ${defaultDirLabel.value}`
+    : "未单独设置：将转存到该网盘根目录",
+);
 
 // 每个网盘可选账号（按归一后的驱动类型过滤，仅取启用账号）。
 const accountOptions = computed<Record<string, { value: number; label: string }[]>>(() => {
@@ -154,8 +268,13 @@ onMounted(load);
         <span>启用通知渠道 .cas 文件自动转存</span>
       </label>
 
-      <FormField label="默认保存目录（留空为网盘根目录）" class="cas-auto__dir">
-        <AppInput v-model="defaultDir" placeholder="例如 CAS" />
+      <FormField label="默认保存目录（未单独配置的网盘使用此目录）" class="cas-auto__dir">
+        <AccountFolderField
+          :display="defaultDirLabel"
+          :title="defaultDirTitle"
+          placeholder="未设置：转存到各网盘根目录"
+          @browse="openDirPicker(DEFAULT_DIR_KEY)"
+        />
       </FormField>
 
       <div class="cas-auto__table-wrap">
@@ -164,7 +283,7 @@ onMounted(load);
             <tr>
               <th>网盘</th>
               <th>转存账号</th>
-              <th>保存目录（留空用默认）</th>
+              <th>保存目录</th>
             </tr>
           </thead>
           <tbody>
@@ -179,7 +298,12 @@ onMounted(load);
                 <AppSelect v-model="row.accountId" :options="accountOptions[row.key] ?? []" />
               </td>
               <td>
-                <AppInput v-model="row.saveDir" placeholder="例如 CAS/动画" />
+                <AccountFolderField
+                  :display="rowDirLabel(row)"
+                  :title="rowDirLabel(row) || rowDirFallbackTitle"
+                  placeholder="未设置：使用上方默认目录"
+                  @browse="openDirPicker(row.key)"
+                />
               </td>
             </tr>
           </tbody>
@@ -192,6 +316,18 @@ onMounted(load);
         </AppButton>
       </div>
     </div>
+
+    <FolderPickerModal
+      :open="pickerOpen"
+      :accounts="pickingAccounts()"
+      :account-id="pickingAccountId()"
+      :initial-path="pickingInitialPath()"
+      :allow-create-folder="true"
+      :title="pickerTitle"
+      confirm-text="使用此目录"
+      @close="pickerOpen = false"
+      @resolve="onDirPicked"
+    />
   </SettingsCard>
 </template>
 
@@ -260,7 +396,7 @@ onMounted(load);
 
 .cas-auto__table td:nth-child(3),
 .cas-auto__table th:nth-child(3) {
-  width: 220px;
+  width: 300px;
 }
 
 .cas-auto__actions {

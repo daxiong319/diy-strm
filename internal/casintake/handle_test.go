@@ -3,6 +3,7 @@ package casintake
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -226,5 +227,95 @@ func TestHandleDocumentUnsupportedArchiveNotifies(t *testing.T) {
 
 	if !strings.Contains(notified, "不受支持") {
 		t.Errorf("应通知用户格式不受支持，实际通知：%q", notified)
+	}
+}
+
+// captureLogger 把日志写到内存，便于断言日志字段。
+func captureLogger() (*slog.Logger, *strings.Builder) {
+	buf := &strings.Builder{}
+	return slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelInfo})), buf
+}
+
+// 用户抱怨「日志只显示 自动转存成功 / 账号 2」，
+// 看不出转存了什么文件、到哪个网盘、哪个目录。这条测试钉住日志必须三样齐全。
+func TestAutoSaveLogCarriesFileDriveAndDir(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/getFile"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true, "result": map[string]any{"file_path": "documents/x.cas"},
+			})
+		case strings.HasPrefix(r.URL.Path, "/file/bot"):
+			_, _ = w.Write([]byte(testCasContent))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	cas.BindAutoSaveSaver(func(context.Context, int64, string, cas.AutoSaveSourceFile) (string, error) {
+		return "file-1", nil
+	})
+	cas.BindAutoSaveAccounts(func(context.Context) ([]*domain.Account, error) {
+		return []*domain.Account{{ID: 2, DriverType: "123_open", IsActive: true}}, nil
+	})
+	cas.BindAutoSaveNotifier(func(context.Context, string, string, string, string, int64, int64) {})
+	log, buf := captureLogger()
+
+	handleDocument(context.Background(), ts.Client(), ts.URL, "test-token", 1,
+		&tgDocument{FileID: "doc-1", FileName: "movie.cas", FileSize: int64(len(testCasContent))}, log)
+
+	out := buf.String()
+	for _, want := range []string{
+		"CAS 接收：自动转存成功",
+		"file_name=movie.cas", // 转存了什么文件
+		"drive=\"123 网盘\"",    // 转到哪个网盘（中文展示名）
+		"save_dir=/CAS",       // 转到哪个目录
+		"account_id=2",        // 哪个账号
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("日志缺少 %q\n实际日志：%s", want, out)
+		}
+	}
+}
+
+// 失败路径同样要能看出文件/网盘/目录，否则用户不知道失败的是哪一个。
+func TestAutoSaveFailureLogCarriesFileDriveAndDir(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/getFile"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true, "result": map[string]any{"file_path": "documents/x.cas"},
+			})
+		case strings.HasPrefix(r.URL.Path, "/file/bot"):
+			_, _ = w.Write([]byte(testCasContent))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	cas.BindAutoSaveSaver(func(context.Context, int64, string, cas.AutoSaveSourceFile) (string, error) {
+		return "", errors.New("认证服务暂时不可用")
+	})
+	cas.BindAutoSaveAccounts(func(context.Context) ([]*domain.Account, error) {
+		return []*domain.Account{{ID: 2, DriverType: "123_open", IsActive: true}}, nil
+	})
+	log, buf := captureLogger()
+
+	handleDocument(context.Background(), ts.Client(), ts.URL, "test-token", 1,
+		&tgDocument{FileID: "doc-1", FileName: "movie.cas", FileSize: int64(len(testCasContent))}, log)
+
+	out := buf.String()
+	for _, want := range []string{
+		"CAS 接收：自动转存失败",
+		"file_name=movie.cas",
+		"drive=\"123 网盘\"",
+		"save_dir=/CAS",
+		"认证服务暂时不可用",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("日志缺少 %q\n实际日志：%s", want, out)
+		}
 	}
 }

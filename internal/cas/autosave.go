@@ -2,6 +2,7 @@ package cas
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"litepan/internal/cas/cloud189"
@@ -29,6 +30,7 @@ type AutoSaveSourceFile struct {
 }
 
 // AutoSaveResult 单个 .cas 的转存结果。
+// SaveDir 回填实际使用的目标目录，供调用方日志/通知复用，避免各自重算而出现分歧。
 type AutoSaveResult struct {
 	Saved         bool   `json:"saved"`
 	Skipped       bool   `json:"skipped"`
@@ -36,6 +38,7 @@ type AutoSaveResult struct {
 	DriveType     string `json:"drive_type,omitempty"`
 	AccountID     int64  `json:"account_id,omitempty"`
 	SavedFileName string `json:"saved_file_name,omitempty"`
+	SaveDir       string `json:"save_dir,omitempty"`
 }
 
 // AutoSaveSaver 由装配层注入：把 .cas 文本落到目标网盘目录，返回文件 ID。
@@ -127,6 +130,40 @@ func ResolveDriveType(m cloud189.CasManifestV2) string {
 		return d
 	}
 	return detectDriveTypeFromHashes(m.Hashes)
+}
+
+// DriveDisplayName 网盘编码转中文展示名，供通知文案与日志复用。
+//
+// 用户需要一眼看出「转存到了哪个网盘」，光给 cloud189 这样的内部编码
+// 不直观。注意 cloud139 是中国移动（和彩云），cloud189 才是中国电信天翼，
+// 两者不能都叫「天翼云盘」。
+// 未知编码原样返回，既不丢信息也不伪造名称。
+func DriveDisplayName(driveType string) string {
+	switch NormalizeDriveType(driveType) {
+	case "cloud189":
+		return "天翼云盘"
+	case "cloud139":
+		return "移动云盘"
+	case "quark":
+		return "夸克网盘"
+	case "115_open":
+		return "115 网盘"
+	case "123_open":
+		return "123 网盘"
+	case "guangya":
+		return "光鸭云盘"
+	case "baidu_open":
+		return "百度网盘"
+	case "onedrive":
+		return "OneDrive"
+	case "webdav":
+		return "WebDAV"
+	case "openlist":
+		return "OpenList"
+	case "localfs":
+		return "本地目录"
+	}
+	return driveType
 }
 
 // pickAutoSaveAccount 按网盘类型挑账号：优先配置指定且启用的，否则取第一个启用的匹配账号。
@@ -227,46 +264,70 @@ func AutoSaveCASFiles(ctx context.Context, files []AutoSaveSourceFile) []AutoSav
 		res.AccountID = acc.ID
 
 		saveDir := resolveSaveDir(cfg, driveType)
+		res.SaveDir = saveDir
 		outName := name
 		if !strings.HasSuffix(strings.ToLower(outName), ".cas") {
 			outName += ".cas"
 		}
 		fileID, err := autoSaveSaver(ctx, acc.ID, saveDir, AutoSaveSourceFile{FileName: outName, Content: f.Content})
 		if err != nil {
-			res.Skipped, res.Reason = true, "转存失败："+err.Error()
+			// Reason 只放底层错误原文：调用方（接收侧通知）会自行补「未转存：」前缀，
+			// 这里再写一次「转存失败：」会拼出「未转存：转存失败：…」的重复文案。
+			res.Skipped, res.Reason = true, err.Error()
 			results = append(results, res)
-			dutil.AppLogger.Warnf("CAS 自动转存：%s 转存到 %s 失败：%v", outName, driveType, err)
+			dutil.AppLogger.Warnf("CAS 自动转存：%s → %s %s 失败：%v",
+				outName, DriveDisplayName(driveType), "/"+saveDir, err)
 			continue
 		}
 		res.Saved, res.SavedFileName = true, outName
 		results = append(results, res)
-		dutil.AppLogger.Infof("CAS 自动转存：%s → %s（账号 %d，目录 %s，文件 %s）", outName, driveType, acc.ID, saveDir, fileID)
+		dutil.AppLogger.Infof("CAS 自动转存：%s → %s %s（账号 %d，文件 %s）",
+			outName, DriveDisplayName(driveType), "/"+saveDir, acc.ID, fileID)
 		notifyAutoSave(ctx, acc.ID, driveType, outName, saveDir)
 	}
 	return results
 }
 
+// DisplaySaveDir 把保存目录归一成可用于展示的形式：空目录显示为「根目录」，
+// 其余补上前导斜杠。与 notifyAutoSave 的文案保持一致。
+func DisplaySaveDir(saveDir string) string {
+	trimmed := strings.Trim(strings.TrimSpace(saveDir), "/")
+	if trimmed == "" {
+		return "根目录"
+	}
+	return "/" + trimmed
+}
+
 // notifyAutoSave 转存成功后向通知中心写入一条消息（未注入通知器时静默跳过）。
+//
+// 文案必须让用户一眼看清「转存了什么文件 → 到哪个网盘 → 哪个目录 → 成功还是失败」，
+// 否则只写「自动转存成功 / 账号 2」等于没说。
 func notifyAutoSave(ctx context.Context, accountID int64, driveType, fileName, saveDir string) {
 	if autoSaveNotifier == nil {
 		return
 	}
-	dir := saveDir
-	if dir == "" {
-		dir = "根目录"
-	}
-	autoSaveNotifier(ctx, "success", "cas", "CAS 清单已自动转存",
-		"已收到 "+fileName+"，识别为「"+driveType+"」，已保存到 "+dir+"/"+fileName+"。", accountID, 0)
+	drive := DriveDisplayName(driveType)
+	where := DisplaySaveDir(saveDir)
+	autoSaveNotifier(ctx, "success", "cas", "CAS 自动转存成功",
+		fmt.Sprintf("已转存「%s」→ %s %s（账号 %d），转存成功。", fileName, drive, where, accountID),
+		accountID, 0)
 }
 
 // NotifyAutoSaveFailure 供接收侧在下载/判定/落盘失败时提示用户（未注入通知器时静默跳过）。
-func NotifyAutoSaveFailure(ctx context.Context, level, fileName, message string) {
+// driveType 为空时表示尚未判定出网盘，文案会略去网盘与目录，只说明失败原因。
+func NotifyAutoSaveFailure(ctx context.Context, level, fileName, driveType, saveDir, message string) {
 	if autoSaveNotifier == nil {
 		return
 	}
 	if level == "" {
 		level = "warn"
 	}
-	autoSaveNotifier(ctx, level, "cas", "CAS 清单自动转存未完成",
-		"收到 "+fileName+"，"+message+"。", 0, 0)
+	subject := "收到「" + fileName + "」"
+	if d := strings.TrimSpace(driveType); d != "" {
+		subject += "，识别为 " + DriveDisplayName(d)
+		if where := strings.Trim(strings.TrimSpace(saveDir), "/"); where != "" {
+			subject += " /" + where
+		}
+	}
+	autoSaveNotifier(ctx, level, "cas", "CAS 自动转存未完成", subject+"，"+message+"。", 0, 0)
 }

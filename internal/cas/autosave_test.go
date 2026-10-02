@@ -3,6 +3,7 @@ package cas
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -162,7 +163,7 @@ func TestAutoSaveCASFilesSuccess(t *testing.T) {
 	if gotAccount != 7 || gotDir != "CAS" || gotName != "a.cas" || gotContent == "" {
 		t.Errorf("落盘参数不符：account=%d dir=%q name=%q content=%q", gotAccount, gotDir, gotName, gotContent)
 	}
-	if len(*notified) != 1 || !strings.Contains((*notified)[0], "已自动转存") {
+	if len(*notified) != 1 || !strings.Contains((*notified)[0], "转存成功") {
 		t.Errorf("应发出成功通知，got %v", *notified)
 	}
 }
@@ -276,5 +277,153 @@ func TestNormalizeAutoSaveOnSave(t *testing.T) {
 	}
 	if dc.SaveDir != "天翼" {
 		t.Errorf("账号级目录应归一，got %q", dc.SaveDir)
+	}
+}
+
+func TestDriveDisplayName(t *testing.T) {
+	cases := map[string]string{
+		"cloud189":      "天翼云盘",
+		"189_cloud":     "天翼云盘",
+		"cloud139":      "移动云盘",
+		"139_cloud":     "移动云盘",
+		"quark":         "夸克网盘",
+		"123_open":      "123 网盘",
+		"guangya":       "光鸭云盘",
+		"":              "",
+		"unknown_drive": "unknown_drive",
+	}
+	for in, want := range cases {
+		if got := DriveDisplayName(in); got != want {
+			t.Errorf("DriveDisplayName(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// 139 是移动、189 才是天翼，两者绝不能都叫「天翼云盘」，
+	// 否则用户看到通知会以为存错了网盘。
+	if DriveDisplayName("cloud139") == DriveDisplayName("cloud189") {
+		t.Errorf("cloud139 与 cloud189 的展示名不应相同")
+	}
+}
+
+func TestDisplaySaveDir(t *testing.T) {
+	cases := map[string]string{
+		"CAS":       "/CAS",
+		"/CAS/":     "/CAS",
+		"影视/CAS待整理": "/影视/CAS待整理",
+		"":          "根目录",
+		"  ":        "根目录",
+		"/":         "根目录",
+	}
+	for in, want := range cases {
+		if got := DisplaySaveDir(in); got != want {
+			t.Errorf("DisplaySaveDir(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// 用户原始抱怨：通知只写「CAS 接收：自动转存成功 / 账号 2」，
+// 看不出转存了什么文件、到哪个网盘、哪个目录。这条测试把这个信息量钉住。
+func TestAutoSaveSuccessNotificationCarriesFileDriveDir(t *testing.T) {
+	withConfig(t, CasConfig{
+		CASNotifyAutoSave:    true,
+		CASNotifyAutoSaveDir: "CAS",
+		CASNotifyAutoSaveDrives: map[string]AutoSaveDriveConfig{
+			"cloud189": {Enabled: true, SaveDir: "影视/CAS待整理", AccountID: 2},
+		},
+	})
+	notified := withAutoSave(t,
+		func(_ context.Context, _ int64, _ string, _ AutoSaveSourceFile) (string, error) {
+			return "file-1", nil
+		},
+		func(_ context.Context) ([]*domain.Account, error) {
+			return []*domain.Account{{ID: 2, Name: "天翼账号", IsActive: true, DriverType: "189_cloud"}}, nil
+		},
+	)
+	AutoSaveCASFiles(context.Background(), []AutoSaveSourceFile{
+		{FileName: "仙逆剧场版.mkv.cas", Content: cloud189.EncodeManifestV2(cloud189.CasManifestV2{
+			Version: 2, FileName: "仙逆剧场版.mkv", FileSize: 5458821532,
+			Hashes: cloud189.HashSet{FileMd5: "2CE1BD3051B3D1B60A56773C75BF699F"},
+		})},
+	})
+
+	if len(*notified) == 0 {
+		t.Fatalf("应产生转存成功通知")
+	}
+	got := (*notified)[0]
+	for _, want := range []string{
+		"success|",
+		"仙逆剧场版.mkv.cas", // 转存了什么文件
+		"天翼云盘",          // 转到哪个网盘（中文名，不是 cloud189 编码）
+		"/影视/CAS待整理",    // 转到哪个目录
+		"转存成功",          // 结果
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("通知文案 %q 缺少 %q", got, want)
+		}
+	}
+	// 不应再出现内部编码 cloud189，用户看不懂。
+	if strings.Contains(got, "cloud189") {
+		t.Errorf("通知文案不应出现内部编码 cloud189：%q", got)
+	}
+}
+
+func TestNotifyAutoSaveFailureOmitsUnknownDrive(t *testing.T) {
+	prevNotifier := autoSaveNotifier
+	t.Cleanup(func() { autoSaveNotifier = prevNotifier })
+	var got string
+	BindAutoSaveNotifier(func(_ context.Context, _, _, _, message string, _, _ int64) {
+		got = message
+	})
+
+	// 尚未判定出网盘（下载阶段就失败）：不应编造网盘与目录。
+	NotifyAutoSaveFailure(context.Background(), "error", "bad.zip", "", "", "下载失败：连接超时")
+	if !strings.Contains(got, "bad.zip") || !strings.Contains(got, "下载失败：连接超时") {
+		t.Errorf("失败通知应包含文件名与原因，got %q", got)
+	}
+	if strings.Contains(got, "识别为") {
+		t.Errorf("未判定出网盘时不应出现「识别为」，got %q", got)
+	}
+
+	// 已判定出网盘时带上网盘与目录，方便用户核对。
+	NotifyAutoSaveFailure(context.Background(), "warn", "a.cas", "cloud189", "影视/CAS待整理", "未转存：认证失效")
+	for _, want := range []string{"a.cas", "天翼云盘", "/影视/CAS待整理", "认证失效"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("失败通知 %q 缺少 %q", got, want)
+		}
+	}
+}
+
+// Reason 应是底层错误原文，不含「转存失败：」这类前缀——
+// 接收侧会补「未转存：」，否则拼出「未转存：转存失败：…」的重复文案。
+func TestSkippedReasonHasNoRedundantPrefix(t *testing.T) {
+	withConfig(t, CasConfig{
+		CASNotifyAutoSave:    true,
+		CASNotifyAutoSaveDir: "CAS",
+		CASNotifyAutoSaveDrives: map[string]AutoSaveDriveConfig{
+			"cloud189": {Enabled: true},
+		},
+	})
+	withAutoSave(t,
+		func(context.Context, int64, string, AutoSaveSourceFile) (string, error) {
+			return "", errors.New("认证服务暂时不可用")
+		},
+		func(context.Context) ([]*domain.Account, error) {
+			return []*domain.Account{{ID: 2, DriverType: "189_cloud", IsActive: true}}, nil
+		},
+	)
+	res := AutoSaveCASFiles(context.Background(), []AutoSaveSourceFile{{
+		FileName: "a.cas",
+		Content: cloud189.EncodeManifestV2(cloud189.CasManifestV2{
+			Version: 2, FileName: "a.mkv", FileSize: 10,
+			Hashes: cloud189.HashSet{FileMd5: "m"},
+		}),
+	}})
+	if len(res) != 1 || !res[0].Skipped {
+		t.Fatalf("应跳过，got %+v", res)
+	}
+	if !strings.Contains(res[0].Reason, "认证服务暂时不可用") {
+		t.Errorf("Reason 应保留底层错误原文，got %q", res[0].Reason)
+	}
+	if strings.Contains(res[0].Reason, "转存失败：") {
+		t.Errorf("Reason 不应带「转存失败：」前缀（会造成重复文案），got %q", res[0].Reason)
 	}
 }
