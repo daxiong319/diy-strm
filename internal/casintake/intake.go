@@ -461,7 +461,7 @@ func handleDocument(ctx context.Context, client *http.Client, host, token string
 func autoSaveItems(ctx context.Context, sourceName string, items []casItem, log *slog.Logger) {
 	files := make([]cas.AutoSaveSourceFile, 0, len(items))
 	for _, item := range items {
-		files = append(files, cas.AutoSaveSourceFile{FileName: item.Name, Content: item.Content})
+		files = append(files, cas.AutoSaveSourceFile{FileName: item.Name, Content: item.Content, Source: sourceName})
 	}
 	results := cas.AutoSaveCASFiles(ctx, files)
 	for _, r := range results {

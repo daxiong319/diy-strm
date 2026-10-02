@@ -30,6 +30,7 @@ import (
 	"litepan/internal/discover/dutil"
 	"litepan/internal/domain"
 	"litepan/internal/driver"
+	"litepan/internal/eventbus"
 	"litepan/internal/logx"
 	"litepan/internal/notification"
 	"litepan/internal/notifychannel"
@@ -69,6 +70,12 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	// CAS 自动转存：通知渠道收到用户发来的 .cas 文件后，保存到前端配置的网盘目录。
 	cas.BindAutoSaveAccounts(st.store.Accounts.List)
 	cas.BindAutoSaveNotifier(notifySvc.Notify)
+	// 转存成功后广播事件，自动化引擎据此触发「整理 → STRM → 元数据 → 扫库 → 入库通知」。
+	cas.BindAutoSaveEventPublisher(func(ctx context.Context, event eventbus.CasAutoSaved) {
+		if core.bus != nil {
+			core.bus.Publish(ctx, event)
+		}
+	})
 	cas.BindAutoSaveSaver(func(ctx context.Context, accountID int64, saveDir string, file cas.AutoSaveSourceFile) (string, error) {
 		rootID := casAccountRootID(ctx, st.store.Accounts, accountID)
 		folderID, err := svc.uploads.EnsureTargetDir(ctx, accountID, rootID, saveDir)
@@ -112,6 +119,14 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	})
 	if svc.automation != nil {
 		svc.automation.SetApiKeys(apiKeySvc)
+		// 入库通知动作复用通知中心；dispatcher 已订阅 NotificationCreated，
+		// 因此这一步就把 Telegram/Bark 外部渠道一并接上了。
+		svc.automation.SetNotifier(notifySvc.Notify)
+	}
+	if svc.embyWebhook != nil {
+		// embywebhook.Notifier 是 5 参数版本，notification.Service.Notify 多出
+		// accountID/refID 两个入参，这里用适配器补齐（站内广播，不绑定账号）。
+		svc.embyWebhook.SetNotifier(embyWebhookNotifier{notify: notifySvc.Notify})
 	}
 	backupRestoreSvc, err := backuprestore.New(backuprestore.Options{
 		DataDir:   cfg.DataDir,
@@ -217,6 +232,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		Strm:              svc.strm,
 		CacheRetention:    svc.cacheRetention,
 		MediaOrganize:     svc.mediaOrganize,
+		MoviePilot:        svc.moviePilot,
 		AIOrganize:        svc.aiOrganize,
 		ClassifyOrganize:  svc.classifyOrganize,
 		StrmScrape:        svc.strmScrape,
@@ -224,6 +240,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		Fuse:              svc.fuse,
 		CrossTransfer:     svc.crossTransfer,
 		EmbyProxy:         svc.embyProxy,
+		EmbyWebhook:       svc.embyWebhook,
 		FnosProxy:         svc.fnosProxy,
 		QuarkTV:           svc.quarktv,
 		ApiKeys:           apiKeySvc,
@@ -236,6 +253,8 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		SpaceCleanup:      spaceCleanupSvc,
 		CoverExtract:      coverExtractSvc,
 		NotifyChannels:    notifyChannelSvc,
+		PlaybackRecords:   st.store.PlaybackRecords,
+		Renames:           st.store.Renames,
 		DataDir:           cfg.DataDir,
 		StrmDir:           cfg.StrmDir,
 		MediaRoots:        cfg.MediaRoots(),
@@ -253,6 +272,20 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 // notifyFn 通知写入器（notification.Service.Notify 的方法值）。
 // 单独抽成类型是为了让 discoverInit 不必依赖 notification 包，避免装配层耦合。
 type notifyFn func(ctx context.Context, level, category, title, message string, accountID, refID int64)
+
+// embyWebhookNotifier 把 6 参数的 notifyFn 适配成 embywebhook.Notifier（5 参数）。
+// Emby 通知属于站内广播，不绑定具体账号与引用记录，因此 accountID/refID 传 0。
+type embyWebhookNotifier struct {
+	notify notifyFn
+}
+
+// Notify 实现 embywebhook.Notifier。
+func (n embyWebhookNotifier) Notify(ctx context.Context, level, category, title, message string) {
+	if n.notify == nil {
+		return
+	}
+	n.notify(ctx, level, category, title, message, 0, 0)
+}
 
 // discoverInit 初始化影视发现板块：GORM 数据层（复用主库）→ 桥接 TMDB 配置 → 建表 → 启动后台 Worker。
 // 失败仅记日志不阻断启动（发现板块为非核心增强功能）。

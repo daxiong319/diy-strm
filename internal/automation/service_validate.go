@@ -78,12 +78,16 @@ func (s *Service) ValidateRule(ctx context.Context, actions []RuleAction) (Valid
 			if mode == "" {
 				mode = "global"
 			}
-			if mode != "global" && mode != "library" {
+			if mode != "global" && mode != "library" && mode != "item" {
 				issues = append(issues, ValidationIssue{Level: "error", Message: "Emby/Jellyfin 执行范围无效", ActionIndex: index, ActionType: action.Type})
 				continue
 			}
 			if mode == "library" && strings.TrimSpace(anyString(action.Params["library_id"])) == "" {
 				issues = append(issues, ValidationIssue{Level: "error", Message: "请选择 Emby/Jellyfin 媒体库", ActionIndex: index, ActionType: action.Type})
+				continue
+			}
+			if mode == "item" && strings.TrimSpace(anyString(action.Params["item_id"])) == "" {
+				issues = append(issues, ValidationIssue{Level: "error", Message: "请选择 Emby/Jellyfin 条目", ActionIndex: index, ActionType: action.Type})
 				continue
 			}
 			embyID := strings.TrimSpace(anyString(action.Params["emby_id"]))
@@ -103,6 +107,13 @@ func (s *Service) ValidateRule(ctx context.Context, actions []RuleAction) (Valid
 				if mode != 0 && mode != 1 {
 					issues = append(issues, ValidationIssue{Level: "error", Message: "飞牛影视元数据刷新方式无效", ActionIndex: index, ActionType: action.Type})
 				}
+			}
+		case domain.AutomationActionNotify:
+			if level := strings.TrimSpace(anyString(action.Params["level"])); level != "" && level != "success" && level != "info" && level != "warn" {
+				issues = append(issues, ValidationIssue{Level: "error", Message: "通知级别无效", ActionIndex: index, ActionType: action.Type})
+			}
+			if mode := strings.TrimSpace(anyString(action.Params["batch_mode"])); mode != "" && mode != notifyBatchModePerFile && mode != notifyBatchModeOnce {
+				issues = append(issues, ValidationIssue{Level: "error", Message: "通知发送方式无效", ActionIndex: index, ActionType: action.Type})
 			}
 		}
 	}
@@ -179,7 +190,7 @@ func (s *Service) normalizeInput(ctx context.Context, in RuleInput) (RuleInput, 
 	}
 	in.TriggerType = strings.TrimSpace(in.TriggerType)
 	switch in.TriggerType {
-	case domain.AutomationTriggerDaily, domain.AutomationTriggerInterval, domain.AutomationTriggerAdvanced, domain.AutomationTriggerWebhook, domain.AutomationTriggerOfflineDownload:
+	case domain.AutomationTriggerDaily, domain.AutomationTriggerInterval, domain.AutomationTriggerAdvanced, domain.AutomationTriggerWebhook, domain.AutomationTriggerOfflineDownload, domain.AutomationTriggerCasAutoSave:
 	default:
 		return in, domain.Errorf(domain.CodeValidation, "触发条件不支持")
 	}
@@ -225,6 +236,9 @@ func (s *Service) normalizeInput(ctx context.Context, in RuleInput) (RuleInput, 
 		if strings.TrimSpace(anyString(in.TriggerConfig["path"])) == "" {
 			return in, domain.Errorf(domain.CodeValidation, "请选择离线下载目录")
 		}
+	case domain.AutomationTriggerCasAutoSave:
+		// 账号与目录都允许留空：留空表示「任意账号 / 任意目录」的转存都触发。
+		// 目录填了就按前缀匹配（见 matchCasAutoSave）。
 	}
 	if in.Status == "" {
 		in.Status = domain.AutomationStatusRunning
@@ -244,7 +258,7 @@ func (s *Service) normalizeInput(ctx context.Context, in RuleInput) (RuleInput, 
 		}
 		in.Actions[i].Type = strings.TrimSpace(in.Actions[i].Type)
 		switch in.Actions[i].Type {
-		case domain.AutomationActionOrganize, domain.AutomationActionStrm, domain.AutomationActionStrmScrape, domain.AutomationActionCacheClear, domain.AutomationActionDelay, domain.AutomationActionEmbyRefresh, domain.AutomationActionEmbyCompleteMediaInfo, domain.AutomationActionFnosScan, domain.AutomationActionFnosRefreshMetadata:
+		case domain.AutomationActionOrganize, domain.AutomationActionStrm, domain.AutomationActionStrmScrape, domain.AutomationActionCacheClear, domain.AutomationActionDelay, domain.AutomationActionEmbyRefresh, domain.AutomationActionEmbyCompleteMediaInfo, domain.AutomationActionFnosScan, domain.AutomationActionFnosRefreshMetadata, domain.AutomationActionNotify:
 		default:
 			return in, domain.Errorf(domain.CodeValidation, "存在不支持的动作")
 		}

@@ -22,6 +22,11 @@ type Store struct {
 	AutomationRuns      domain.AutomationRunRepository
 	QuarkTVBindings     domain.QuarkTVBindingRepository
 	NotifyChannels      domain.NotifyChannelRepository
+	EmbyRefreshTasks    domain.EmbyRefreshTaskRepository
+	EmbyIndex           domain.EmbyIndexRepository
+	MoviePilot          domain.MoviePilotRepository
+	PlaybackRecords     domain.PlaybackRecordRepository
+	Renames             domain.RenameRepository
 }
 
 // New 基于已打开的 DB 构造仓储集合。
@@ -45,5 +50,10 @@ func New(db *DB) *Store {
 		AutomationRuns:      &automationRunRepo{db: db},
 		QuarkTVBindings:     &quarktvBindingRepo{db: db},
 		NotifyChannels:      &notifyChannelRepo{db: db},
+		EmbyRefreshTasks:    &embyRefreshTaskRepo{db: db},
+		EmbyIndex:           &embyIndexRepo{db: db},
+		MoviePilot:          &moviePilotRepo{db: db},
+		PlaybackRecords:     &playbackRecordRepo{db: db},
+		Renames:             &renameRepo{db: db},
 	}
 }

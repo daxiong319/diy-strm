@@ -14,6 +14,7 @@ func (s *Service) Register(bus *eventbus.Bus) {
 		return
 	}
 	eventbus.Subscribe(bus, s.onOfflineDownloadCompleted)
+	eventbus.Subscribe(bus, s.onCasAutoSaved)
 }
 
 func (s *Service) onOfflineDownloadCompleted(ctx context.Context, event eventbus.OfflineDownloadCompleted) {

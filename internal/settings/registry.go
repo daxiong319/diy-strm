@@ -31,6 +31,12 @@ const (
 	KeyAnnouncementReadVersion     = "announcement_read_version"
 	KeyEmbyEnabled                 = "emby_enabled"
 	KeyEmbyProxyInstances          = "emby_proxy_instances"
+	KeyEmbyDeleteNetdiskEnabled    = "emby_delete_netdisk_enabled"
+	KeyEmbyWebhookEnabled          = "emby_webhook_enabled"
+	KeyEmbyWebhookAuthEnabled      = "emby_webhook_auth_enabled"
+	KeyEmbyNotifyEnabled           = "emby_notify_enabled"
+	KeyEmbyPlaybackNotifyEnabled   = "emby_playback_notify_enabled"
+	KeyEmbyPlaybackOverviewEnabled = "emby_playback_overview_enabled"
 	KeyFnosEnabled                 = "fnos_enabled"
 	KeyFnosName                    = "fnos_name"
 	KeyFnosURL                     = "fnos_url"
@@ -190,6 +196,12 @@ func defaultSpecs() []Spec {
 		intSpec(KeyLogRetentionDays, "system", "日志保留天数", "按天落盘日志的保留期。自动清理与日志页手动清理都会按该天数删除更早的旧日志。", "30", "天", 1, 365),
 		{Key: KeyEmbyEnabled, Type: TypeBool, Default: "false", Hidden: true},
 		{Key: KeyEmbyProxyInstances, Type: TypeString, Default: "[]", Sensitive: true, Hidden: true},
+		boolSpec(KeyEmbyDeleteNetdiskEnabled, "emby", "Emby 删除联动网盘删除", "默认关闭。开启后，在 Emby 删除影片/剧集时同步删除本地索引对应的网盘文件；映射不唯一或不明确时只会记录日志，不会删除。", "false"),
+		boolSpec(KeyEmbyWebhookEnabled, "emby", "启用 Emby Webhook 接收", "开启后对外开放 POST /open/emby/webhook，Emby 入库/删除/播放事件会转成站内通知。需先在 Emby 后台添加 Webhook。", "false"),
+		boolSpec(KeyEmbyWebhookAuthEnabled, "emby", "Webhook 校验 API Key", "开启后调用 Webhook 必须携带 X-API-Key 请求头或 api_key 查询参数，且该 Key 必须已在「API Key」页面创建。", "false"),
+		boolSpec(KeyEmbyNotifyEnabled, "emby", "入库与删除通知", "开启后 Emby 新增媒体、删除媒体时推送通知；单集入库会在 10 秒窗口内合并成一条剧集通知。", "true"),
+		boolSpec(KeyEmbyPlaybackNotifyEnabled, "emby", "播放状态通知", "开启后 Emby 开始播放/暂停/停止时推送通知；相同用户与设备的同一事件 1 分钟内只通知一次。", "false"),
+		boolSpec(KeyEmbyPlaybackOverviewEnabled, "emby", "播放通知附带简介", "开启后播放通知里会附带影片简介（最多 100 字）。", "false"),
 		boolSpec(KeyFnosEnabled, "fnos", "启用飞牛影视反代", "开启后且填写反代端口时，diy-strm 会启动飞牛影视反代服务。", "false"),
 		stringSpec(KeyFnosName, "fnos", "飞牛影视配置名称", "飞牛影视反代配置的名称，仅用于界面区分。", "飞牛影视"),
 		stringSpec(KeyFnosURL, "fnos", "飞牛影视地址", "飞牛影视服务地址，默认端口 8005，例如 http://192.168.1.10:8005。", ""),
@@ -368,5 +380,6 @@ func categories() []Category {
 		{ID: "performance", Label: "性能设置"},
 		{ID: "strm", Label: "STRM 设置"},
 		{ID: "media_organize", Label: "媒体整理设置"},
+		{ID: "emby", Label: "Emby 设置"},
 	}
 }

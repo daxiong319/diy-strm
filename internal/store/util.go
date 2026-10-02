@@ -2,7 +2,9 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -63,4 +65,50 @@ func wrapDB(err error) error {
 		return domain.Errf(domain.CodeNotFound)
 	}
 	return domain.Wrap(domain.CodeInternal, err)
+}
+
+// nowUnix 返回当前 Unix 时间戳（秒），与 emby_refresh_tasks 的时间列一致。
+func nowUnix() int64 {
+	return time.Now().Unix()
+}
+
+// mergeItemIDsJSON 合并两组以 JSON 数组文本保存的条目 ID，去重并排序。
+// 任一输入非法时按空集合处理，保证合并结果始终是可解析的 JSON 数组。
+func mergeItemIDsJSON(a, b string) string {
+	merged := append(decodeJSONStringArray(a), decodeJSONStringArray(b)...)
+	seen := make(map[string]struct{}, len(merged))
+	out := make([]string, 0, len(merged))
+	for _, id := range merged {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return "[]"
+	}
+	sort.Strings(out)
+	buf, err := json.Marshal(out)
+	if err != nil {
+		return "[]"
+	}
+	return string(buf)
+}
+
+// decodeJSONStringArray 解析以 JSON 文本保存的字符串数组，失败时返回 nil。
+func decodeJSONStringArray(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" {
+		return nil
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return nil
+	}
+	return ids
 }

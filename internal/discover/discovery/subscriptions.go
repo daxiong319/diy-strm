@@ -589,10 +589,9 @@ func effectiveSubscriptionRules(sub *DiscoverySubscription) []DiscoverySubscript
 
 // planAndTransferRuleCandidates 规则过滤 → 洗版去重 → 自动转存
 func planAndTransferRuleCandidates(sub *DiscoverySubscription, rule DiscoverySubscriptionRule, candidates []resourceCandidate, runID uint) (selected, skipped, transferred int, failures []map[string]any) {
-	match := rule.MatchData
-	keywords := stringListFromAny(match["message_keywords"])
-	mustContain := stringListFromAny(match["must_contain"])
-	mustNotContain := stringListFromAny(match["must_not_contain"])
+	// ★ 词表过滤统一走 rule_match.go 的 RuleFilter：预览接口 EvaluateRuleMatch
+	//   调用的就是同一组函数，保证 UI 展示的判定 = 这里实际的判定。
+	filter := RuleFilterFromMatch(rule.MatchData)
 	maxPoints := rule.MaxPoints
 	if v, ok := toFloat(rule.Pref["max_points"]); ok && int(v) > 0 {
 		maxPoints = int(v)
@@ -607,19 +606,8 @@ func planAndTransferRuleCandidates(sub *DiscoverySubscription, rule DiscoverySub
 		rememberSubscriptionItem(sub.ID, runID, itemKey, cand)
 		text := strings.ToLower(firstNonEmptyStr(cand.ChannelTitle, "") + "\n" + cand.Title + "\n" + cand.Remark)
 		_ = text
-		matchText := strings.ToLower(cand.Title + "\n" + cand.Remark)
-		if len(keywords) > 0 && !containsAny(matchText, keywords) {
-			setSubscriptionItemState(sub.ID, itemKey, "skipped", "未命中消息正文关键词")
-			skipped++
-			continue
-		}
-		if missing := firstMissing(matchText, mustContain); missing != "" {
-			setSubscriptionItemState(sub.ID, itemKey, "skipped", "标题正文未包含："+missing)
-			skipped++
-			continue
-		}
-		if hit := firstHit(matchText, mustNotContain); hit != "" {
-			setSubscriptionItemState(sub.ID, itemKey, "skipped", "标题正文命中排除词："+hit)
+		if reason, blocked := filter.RuleSkipReason(cand.Title, cand.Remark); blocked {
+			setSubscriptionItemState(sub.ID, itemKey, "skipped", reason)
 			skipped++
 			continue
 		}

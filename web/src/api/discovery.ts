@@ -538,6 +538,82 @@ export function runDueSubscriptions(limit = 5) {
   );
 }
 
+// ---------------------------- 视觉过滤规则（词表过滤） ----------------------------
+
+/**
+ * 订阅规则的过滤词表。
+ *
+ * ★ 这是真正拦截转存的字段：后端 internal/discover/discovery/subscriptions.go 的
+ *   planAndTransferRuleCandidates 读取 match.message_keywords / must_contain /
+ *   must_not_contain，命中排除条件就把候选标记为 skipped 并 continue，不转存。
+ *
+ * 语义（顺序即优先级）：
+ *   message_keywords  任意命中即通过（any-of 白名单闸门）；空数组 = 不做此项过滤
+ *   must_contain      全部命中才通过（all-of 必需项）；空数组 = 不做此项过滤
+ *   must_not_contain  任意命中即拦截（any-of 排除项）；空数组 = 不做此项过滤
+ */
+export interface SubscriptionRuleMatch {
+  message_keywords: string[];
+  must_contain: string[];
+  must_not_contain: string[];
+}
+
+/** 订阅自动规则（对齐 discovery.SubscriptionRulePayload） */
+export interface SubscriptionRule {
+  name: string;
+  enabled?: boolean;
+  target_provider?: string;
+  max_points?: number;
+  preferences?: Record<string, unknown>;
+  message_keywords?: string[];
+  must_contain?: string[];
+  must_not_contain?: string[];
+}
+
+/** 单条待测文本（预览用）。remark 会参与匹配，与生产一致 */
+export interface RulePreviewTitle {
+  title: string;
+  remark?: string;
+}
+
+/** 单条判定结果 */
+export interface RulePreviewResult {
+  title: string;
+  remark: string;
+  /** true = 生产转存路径会在此条上跳过 */
+  blocked: boolean;
+  /** 与候选明细里显示的中文原因逐字一致；放行时为空串 */
+  reason: string;
+  /** 实际参与比对的文本（已小写）：标题 + 换行 + 备注 */
+  match_text: string;
+}
+
+/** 预览汇总 */
+export interface RulePreviewOutput {
+  items: RulePreviewResult[];
+  total: number;
+  blocked_count: number;
+  passed_count: number;
+  /** 三条词表是否至少有一条非空；false = 不做任何过滤 */
+  active: boolean;
+}
+
+/**
+ * 预览过滤结果：把一批标题按当前词表逐条判定，返回"放行 / 拦截 + 原因"。
+ *
+ * ★ 后端直接复用生产转存路径的同一套匹配函数，因此这里 blocked=true 的条目
+ *   在真实转存时必然被跳过，reason 就是候选明细里能看到的那句话。
+ *   保存前先预览，能避免"配了规则却不知道会拦掉什么"。
+ */
+export function previewSubscriptionMatch(payload: {
+  message_keywords?: string[];
+  must_contain?: string[];
+  must_not_contain?: string[];
+  titles: RulePreviewTitle[];
+}) {
+  return http.post<RulePreviewOutput>("/admin/discovery/subscriptions/preview", payload);
+}
+
 // ------------------------------ 频道订阅 ------------------------------
 
 /**

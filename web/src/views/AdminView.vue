@@ -66,7 +66,7 @@ const PAGE_TABS: Record<string, { defaultTab: string; tabs: Record<string, strin
   },
   tasks: {
     defaultTab: "strm",
-    tabs: { strm: "STRM 任务", cache: "缓存任务", organize: "目录整理", automation: "自动联动" },
+    tabs: { strm: "STRM 任务", cache: "缓存任务", organize: "目录整理", automation: "自动联动", moviepilot: "MoviePilot" },
   },
   tools: {
     defaultTab: "scrape",

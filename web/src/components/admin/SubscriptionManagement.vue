@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { getApiErrorMessage } from "@/api/client";
 import {
   deleteSubscription,
+  fetchSubscription,
   fetchSubscriptionEvents,
   fetchSubscriptionItems,
   fetchSubscriptionRuns,
@@ -10,10 +11,12 @@ import {
   providerLabel,
   runDueSubscriptions,
   runSubscription,
+  saveSubscription,
   toggleSubscription,
   type DiscoverySubscription,
   type SubscriptionEvent,
   type SubscriptionItem,
+  type SubscriptionRuleMatch,
   type SubscriptionRun,
 } from "@/api/discovery";
 import AppBadge from "@/components/base/AppBadge.vue";
@@ -25,6 +28,7 @@ import AdminEnableToggle from "@/components/admin/AdminEnableToggle.vue";
 import AdminRowActions from "@/components/admin/AdminRowActions.vue";
 import AdminTableActionBtn from "@/components/admin/AdminTableActionBtn.vue";
 import SettingsCard from "@/components/admin/SettingsCard.vue";
+import VisualFilterRuleEditor from "@/components/admin/VisualFilterRuleEditor.vue";
 import { useConfirm } from "@/composables/useConfirm";
 import { toast } from "@/composables/useToast";
 import "@/styles/admin-table.css";
@@ -240,6 +244,117 @@ const detailEmptyText = computed(() => {
   return "暂无候选明细";
 });
 
+// ---------------------------- 过滤规则编辑（真正拦截转存的词表） ----------------------------
+
+const ruleOpen = ref(false);
+const ruleTarget = ref<DiscoverySubscription | null>(null);
+const ruleLoading = ref(false);
+const ruleSaving = ref(false);
+/** 编辑中的三条词表；保存时写进该订阅第一条规则的 match 字段 */
+const ruleMatch = ref<SubscriptionRuleMatch>({
+  message_keywords: [],
+  must_contain: [],
+  must_not_contain: [],
+});
+
+const EMPTY_MATCH: SubscriptionRuleMatch = {
+  message_keywords: [],
+  must_contain: [],
+  must_not_contain: [],
+};
+
+function asStringList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === "string");
+}
+
+/** 从订阅的规则里读出词表（后端返回的 rules[].message_keywords 等） */
+function matchFromSubscription(sub: DiscoverySubscription): SubscriptionRuleMatch {
+  const rule = (sub.rules ?? [])[0] as Record<string, unknown> | undefined;
+  if (!rule) return { ...EMPTY_MATCH };
+  return {
+    message_keywords: asStringList(rule.message_keywords),
+    must_contain: asStringList(rule.must_contain),
+    must_not_contain: asStringList(rule.must_not_contain),
+  };
+}
+
+/** 打开规则编辑器：拉最新详情，避免用列表里的陈旧快照覆盖别人的改动 */
+async function openRuleEditor(rec: DiscoverySubscription) {
+  ruleTarget.value = rec;
+  ruleOpen.value = true;
+  ruleLoading.value = true;
+  ruleMatch.value = { ...EMPTY_MATCH };
+  try {
+    const res = await fetchSubscription(rec.id);
+    ruleTarget.value = res.item ?? rec;
+    ruleMatch.value = matchFromSubscription(ruleTarget.value);
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "加载订阅规则失败"));
+  } finally {
+    ruleLoading.value = false;
+  }
+}
+
+/**
+ * 保存规则。
+ *
+ * ★ 必须连订阅的全部字段一起回写：POST /subscriptions 是按 entity_key 全量
+ *   UPSERT 且**全量替换规则**，只提交 rules 会把标题/网盘/间隔等一起清空。
+ *   这里复用 subscriptionToPayload 对应字段，逐一映射回去。
+ */
+async function saveRules() {
+  const rec = ruleTarget.value;
+  if (!rec) return;
+  ruleSaving.value = true;
+  try {
+    const existing = (rec.rules ?? [])[0] as Record<string, unknown> | undefined;
+    const rule = {
+      name: typeof existing?.name === "string" && existing.name ? existing.name : "自动规则 1",
+      enabled: typeof existing?.enabled === "boolean" ? existing.enabled : true,
+      target_provider:
+        typeof existing?.target_provider === "string" && existing.target_provider
+          ? existing.target_provider
+          : rec.target_provider,
+      max_points: typeof existing?.max_points === "number" ? existing.max_points : 0,
+      preferences:
+        existing?.preferences && typeof existing.preferences === "object"
+          ? (existing.preferences as Record<string, unknown>)
+          : {},
+      message_keywords: ruleMatch.value.message_keywords,
+      must_contain: ruleMatch.value.must_contain,
+      must_not_contain: ruleMatch.value.must_not_contain,
+    };
+    const res = await saveSubscription({
+      source: rec.source,
+      entity_type: rec.entity_type,
+      external_id: rec.external_id,
+      tmdb_id: rec.tmdb_id,
+      media_type: rec.media_type,
+      title: rec.title,
+      original_title: rec.original_title,
+      poster_url: rec.poster,
+      target_provider: rec.target_provider,
+      transfer_mode: rec.transfer_mode,
+      enabled: rec.enabled,
+      interval_minutes: rec.interval_minutes,
+      preferences: rec.preferences,
+      metadata: rec.metadata,
+      rules: [rule],
+    });
+    if (res.warning) {
+      toast.warning(res.warning);
+    }
+    toast.success("过滤规则已保存，下次执行订阅时生效");
+    ruleOpen.value = false;
+    await load();
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "保存过滤规则失败"));
+  } finally {
+    ruleSaving.value = false;
+  }
+}
+
 onMounted(() => {
   void load();
 });
@@ -312,6 +427,11 @@ onMounted(() => {
                       @click="handleRun(rec)"
                     />
                     <AdminTableActionBtn icon="log" title="执行明细" @click="openDetail(rec)" />
+                    <AdminTableActionBtn
+                      icon="edit"
+                      title="过滤规则"
+                      @click="openRuleEditor(rec)"
+                    />
                     <AdminTableActionBtn icon="delete" title="删除" danger @click="handleDelete(rec)" />
                   </div>
                   <template #menu>
@@ -325,6 +445,9 @@ onMounted(() => {
                     </button>
                     <button type="button" class="admin-row-actions__item" @click="openDetail(rec)">
                       执行明细
+                    </button>
+                    <button type="button" class="admin-row-actions__item" @click="openRuleEditor(rec)">
+                      过滤规则
                     </button>
                     <button
                       type="button"
@@ -460,10 +583,44 @@ onMounted(() => {
         </template>
       </div>
     </AppModal>
+
+    <!-- 过滤规则编辑器：编辑的正是 planAndTransferRuleCandidates 读取的三个字段 -->
+    <AppModal
+      :open="ruleOpen"
+      size="lg"
+      :title="`过滤规则 · ${ruleTarget?.title ?? ''}`"
+      @close="ruleOpen = false"
+    >
+      <div class="subm__rule">
+        <p class="subm__rule-meta">
+          目标网盘：{{ providerLabel(ruleTarget?.target_provider) }}
+          · 该订阅的自动规则会按下面的词表筛选候选资源
+        </p>
+        <AppStateBlock v-if="ruleLoading" message="加载规则中…" loading min-height="220px" />
+        <VisualFilterRuleEditor
+          v-else
+          v-model="ruleMatch"
+          :saving="ruleSaving"
+          @save="saveRules"
+        />
+      </div>
+    </AppModal>
   </div>
 </template>
 
 <style scoped>
+.subm__rule {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.subm__rule-meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted, var(--text-regular));
+}
+
 .subm__toolbar {
   display: flex;
   flex-wrap: wrap;

@@ -19,6 +19,8 @@ const (
 	AutomationTriggerAdvanced        = "advanced"
 	AutomationTriggerWebhook         = "webhook"
 	AutomationTriggerOfflineDownload = "offline_download"
+	// AutomationTriggerCasAutoSave CAS 清单经通知渠道自动转存到网盘目录后触发。
+	AutomationTriggerCasAutoSave = "cas_autosave"
 
 	AutomationActionOrganize              = "organize"
 	AutomationActionStrm                  = "strm"
@@ -29,6 +31,8 @@ const (
 	AutomationActionEmbyCompleteMediaInfo = "emby_complete_media_info"
 	AutomationActionFnosScan              = "fnos_scan"
 	AutomationActionFnosRefreshMetadata   = "fnos_refresh_metadata"
+	// AutomationActionNotify 向已配置的通知渠道发送一条消息（入库通知）。
+	AutomationActionNotify = "notify"
 
 	AutomationConditionAlways      = "always"
 	AutomationConditionPrevSuccess = "prev_success"

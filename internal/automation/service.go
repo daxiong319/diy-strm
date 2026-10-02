@@ -9,6 +9,7 @@ import (
 	"litepan/internal/apikey"
 	"litepan/internal/domain"
 	"litepan/internal/embyproxy"
+	"litepan/internal/embyrefresh"
 	filesvc "litepan/internal/file"
 	"litepan/internal/fnosproxy"
 	"litepan/internal/mediaorganize"
@@ -17,16 +18,18 @@ import (
 )
 
 type Service struct {
-	rules      domain.AutomationRuleRepository
-	runs       domain.AutomationRunRepository
-	apiKeys    *apikey.Service
-	strm       *strm.Service
-	strmScrape *strmscrape.Service
-	organize   *mediaorganize.Service
-	emby       *embyproxy.Service
-	fnos       *fnosproxy.Service
-	files      *filesvc.Service
-	log        *slog.Logger
+	rules        domain.AutomationRuleRepository
+	runs         domain.AutomationRunRepository
+	apiKeys      *apikey.Service
+	strm         *strm.Service
+	strmScrape   *strmscrape.Service
+	organize     *mediaorganize.Service
+	emby         *embyproxy.Service
+	fnos         *fnosproxy.Service
+	files        *filesvc.Service
+	notify       Notifier
+	refreshQueue RefreshQueue
+	log          *slog.Logger
 
 	mu            sync.Mutex
 	started       bool
@@ -49,7 +52,22 @@ type Options struct {
 	Emby       *embyproxy.Service
 	Fnos       *fnosproxy.Service
 	Files      *filesvc.Service
+	Notify     Notifier
 	Log        *slog.Logger
+}
+
+// Notifier 由装配层注入：把「入库通知」动作投递到站内通知中心，
+// 站内落库后由通知渠道 dispatcher 转发到 Telegram/Bark 等外部渠道。
+type Notifier func(ctx context.Context, level, category, title, message string, accountID, refID int64)
+
+// SetNotifier 注入通知写入器。
+//
+// 通知服务在 wire_http.go 里创建，晚于 wireServices，所以这里用 setter
+// 而不是 Options 字段，避免为了一个依赖把两段装配顺序对调。
+func (s *Service) SetNotifier(n Notifier) {
+	if s != nil {
+		s.notify = n
+	}
 }
 
 type RuleAction struct {
@@ -118,6 +136,7 @@ type WebhookEvent struct {
 type queuedRun struct {
 	ruleID        int64
 	triggerSource string
+	batch         *casTriggerBatch
 }
 
 func New(opts Options) *Service {
@@ -135,11 +154,46 @@ func New(opts Options) *Service {
 		emby:         opts.Emby,
 		fnos:         opts.Fnos,
 		files:        opts.Files,
+		notify:       opts.Notify,
 		log:          log,
 		runningStep:  make(map[int64]map[string]any),
 		pendingCount: make(map[int64]int),
 		startupReady: true,
 	}
+}
+
+// RefreshQueue 是刷新任务队列的最小接口，由 automation 注入以登记防抖刷新意图。
+//
+// 由 internal/embyrefresh.Service 实现；未装配时 RegisterRefreshIntent 直接返回错误。
+type RefreshQueue interface {
+	RequestRefresh(ctx context.Context, req embyrefresh.RequestRefreshParams) error
+}
+
+// SetRefreshQueue 注入防抖刷新队列；传 nil 表示关闭事件驱动的刷新登记。
+func (s *Service) SetRefreshQueue(q RefreshQueue) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.refreshQueue = q
+	s.mu.Unlock()
+}
+
+// RegisterRefreshIntent 供其它包登记一次事件驱动的刷新意图（防抖 + 合并）。
+//
+// 与 emby_refresh 动作的同步刷新不同：这里只登记意图，实际刷新由后台扫描器
+// 在防抖窗口结束后统一执行。
+func (s *Service) RegisterRefreshIntent(ctx context.Context, req embyrefresh.RequestRefreshParams) error {
+	if s == nil {
+		return domain.Errorf(domain.CodeValidation, "自动化服务未就绪")
+	}
+	s.mu.Lock()
+	q := s.refreshQueue
+	s.mu.Unlock()
+	if q == nil {
+		return domain.Errorf(domain.CodeValidation, "刷新任务队列未就绪")
+	}
+	return q.RequestRefresh(ctx, req)
 }
 
 // SetStartupGate 设置开机认证闸门；闸门放行前的自动触发只入队。

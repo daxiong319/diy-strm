@@ -8,6 +8,7 @@ import (
 	"litepan/internal/cas/cloud189"
 	"litepan/internal/discover/dutil"
 	"litepan/internal/domain"
+	"litepan/internal/eventbus"
 )
 
 // ---------------------------------------------------------------------------
@@ -24,9 +25,11 @@ type AutoSaveDriveConfig struct {
 }
 
 // AutoSaveSourceFile 待转存的 .cas 文件。
+// Source 是用户实际发来的文件名（可能是压缩包名），仅用于日志与联动溯源。
 type AutoSaveSourceFile struct {
 	FileName string `json:"file_name"`
 	Content  string `json:"content"`
+	Source   string `json:"source,omitempty"`
 }
 
 // AutoSaveResult 单个 .cas 的转存结果。
@@ -39,6 +42,8 @@ type AutoSaveResult struct {
 	AccountID     int64  `json:"account_id,omitempty"`
 	SavedFileName string `json:"saved_file_name,omitempty"`
 	SaveDir       string `json:"save_dir,omitempty"`
+	FileID        string `json:"file_id,omitempty"`
+	Source        string `json:"source,omitempty"`
 }
 
 // AutoSaveSaver 由装配层注入：把 .cas 文本落到目标网盘目录，返回文件 ID。
@@ -50,10 +55,15 @@ type AccountLister func(ctx context.Context) ([]*domain.Account, error)
 // AutoSaveNotifier 由装配层注入：写入通知中心消息。
 type AutoSaveNotifier func(ctx context.Context, level, category, title, message string, accountID, refID int64)
 
+// AutoSaveEventPublisher 由装配层注入：转存成功后广播 CasAutoSaved 事件，
+// 供自动化引擎触发「整理 → STRM → Emby 扫库 → 入库通知」联动。
+type AutoSaveEventPublisher func(ctx context.Context, event eventbus.CasAutoSaved)
+
 var (
 	autoSaveSaver    AutoSaveSaver
 	autoSaveAccounts AccountLister
 	autoSaveNotifier AutoSaveNotifier
+	autoSavePublish  AutoSaveEventPublisher
 )
 
 // BindAutoSaveSaver 注入 .cas 落盘器。
@@ -74,6 +84,14 @@ func BindAutoSaveAccounts(l AccountLister) {
 func BindAutoSaveNotifier(n AutoSaveNotifier) {
 	if n != nil {
 		autoSaveNotifier = n
+	}
+}
+
+// BindAutoSaveEventPublisher 注入转存成功事件发布器。
+// 未注入时静默跳过：自动转存本身仍可用，只是不会触发自动化联动。
+func BindAutoSaveEventPublisher(p AutoSaveEventPublisher) {
+	if p != nil {
+		autoSavePublish = p
 	}
 }
 
@@ -280,10 +298,23 @@ func AutoSaveCASFiles(ctx context.Context, files []AutoSaveSourceFile) []AutoSav
 			continue
 		}
 		res.Saved, res.SavedFileName = true, outName
+		res.FileID, res.Source = fileID, strings.TrimSpace(f.Source)
 		results = append(results, res)
 		dutil.AppLogger.Infof("CAS 自动转存：%s → %s %s（账号 %d，文件 %s）",
 			outName, DriveDisplayName(driveType), "/"+saveDir, acc.ID, fileID)
 		notifyAutoSave(ctx, acc.ID, driveType, outName, saveDir)
+		// 事件广播放在站内通知之后：自动化联动可能耗时很久（整理 + 扫库），
+		// 不能让「用户已看到通知」这件事排在长任务后面。
+		if autoSavePublish != nil {
+			autoSavePublish(ctx, eventbus.CasAutoSaved{
+				AccountID: acc.ID,
+				DriveType: driveType,
+				SaveDir:   saveDir,
+				FileName:  outName,
+				FileID:    fileID,
+				Source:    strings.TrimSpace(f.Source),
+			})
+		}
 	}
 	return results
 }

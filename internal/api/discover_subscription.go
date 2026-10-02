@@ -193,6 +193,28 @@ func (h *Handler) subscriptionItems(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, map[string]any{"items": items})
 }
 
+// subscriptionPreviewMatch 视觉过滤规则预览
+// POST /api/admin/discovery/subscriptions/preview
+//
+// 请求体（三条词表 + 一批待测标题）：
+//
+//	{"message_keywords":["..."],"must_contain":["..."],"must_not_contain":["..."],
+//	 "titles":[{"title":"某某剧 4K","remark":"备注"}]}
+//
+// 响应 data：{items:[{title,remark,blocked,reason,match_text}],total,blocked_count,passed_count,active}
+//
+// ★ 判定直接调用 discovery.EvaluateRuleMatch —— 与转存路径
+// planAndTransferRuleCandidates 共用同一套匹配函数，因此预览里 blocked=true
+// 的条目在生产转存时必然被跳过，reason 即为候选明细里可见的原文。
+func (h *Handler) subscriptionPreviewMatch(w http.ResponseWriter, r *http.Request) {
+	var req discovery.RulePreviewInput
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, discovery.EvaluateRuleMatch(&req))
+}
+
 // subscriptionRunDue 执行全部到期订阅（手动触发调度）
 // POST /api/admin/discovery/subscriptions/run-due
 func (h *Handler) subscriptionRunDue(w http.ResponseWriter, r *http.Request) {
