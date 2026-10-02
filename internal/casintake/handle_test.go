@@ -113,3 +113,118 @@ func TestHandleDocumentNotifyFailureOnBadManifest(t *testing.T) {
 func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
+
+// TestHandleDocumentExtractsCasFromArchive 压缩包投递的端到端验证：
+// 假 Telegram 返回一个 zip → handleDocument 解压 → 取出 .cas → 自动转存。
+// 这是用户报告的「打包发压缩包没反应」的直接回归测试。
+func TestHandleDocumentExtractsCasFromArchive(t *testing.T) {
+	zipData := makeZip(t, map[string]string{
+		"喜欢高兴爱 (2026)/": "",
+		"喜欢高兴爱 (2026)/喜欢高兴爱.Love.My.Way.2026.2160p.WEB-DL.AAC.H264-HDSWEB.mkv.cas": testCasContent,
+	})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/getFile"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true, "result": map[string]any{"file_path": "documents/pack.zip"},
+			})
+		case strings.HasPrefix(r.URL.Path, "/file/bot"):
+			_, _ = w.Write(zipData)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	state := &hookState{}
+	cas.BindAutoSaveSaver(func(ctx context.Context, accountID int64, dir string, file cas.AutoSaveSourceFile) (string, error) {
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		state.saved = append(state.saved, file)
+		state.saveDir = dir
+		return "file-zip", nil
+	})
+	cas.BindAutoSaveAccounts(func(ctx context.Context) ([]*domain.Account, error) {
+		return []*domain.Account{{ID: 3, DriverType: "123_open", IsActive: true}}, nil
+	})
+	cas.BindAutoSaveNotifier(func(ctx context.Context, level, category, title, message string, accountID, refID int64) {})
+
+	handleDocument(context.Background(), ts.Client(), ts.URL, "test-token", 1,
+		&tgDocument{FileID: "doc-zip", FileName: "喜欢高兴爱 (2026).zip", FileSize: int64(len(zipData))},
+		newTestLogger())
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.saved) != 1 {
+		t.Fatalf("压缩包内 1 个 .cas 应转存 1 个文件，实际 %d", len(state.saved))
+	}
+	// 保存名必须是清单名（.cas 结尾），而不是压缩包名。
+	if !strings.HasSuffix(state.saved[0].FileName, ".cas") {
+		t.Errorf("转存文件名应以 .cas 结尾，实际 %s", state.saved[0].FileName)
+	}
+	if !strings.Contains(state.saved[0].Content, "bee46317da4862449b09e107d3a95c23") {
+		t.Error("转存内容应包含清单 md5")
+	}
+}
+
+// TestHandleDocumentArchiveWithoutCasNotifies 压缩包里没有 .cas 时要通知用户，
+// 而不是静默当成功。
+func TestHandleDocumentArchiveWithoutCasNotifies(t *testing.T) {
+	zipData := makeZip(t, map[string]string{"readme.txt": "没有清单"})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/getFile"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true, "result": map[string]any{"file_path": "documents/empty.zip"},
+			})
+		case strings.HasPrefix(r.URL.Path, "/file/bot"):
+			_, _ = w.Write(zipData)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	cas.BindAutoSaveSaver(func(ctx context.Context, accountID int64, dir string, file cas.AutoSaveSourceFile) (string, error) {
+		t.Error("没有 .cas 时不应触发转存")
+		return "", nil
+	})
+	cas.BindAutoSaveAccounts(func(ctx context.Context) ([]*domain.Account, error) {
+		return []*domain.Account{{ID: 3, DriverType: "123_open", IsActive: true}}, nil
+	})
+	var notified string
+	cas.BindAutoSaveNotifier(func(ctx context.Context, level, category, title, message string, accountID, refID int64) {
+		notified = message
+	})
+
+	handleDocument(context.Background(), ts.Client(), ts.URL, "test-token", 1,
+		&tgDocument{FileID: "doc-empty", FileName: "empty.zip", FileSize: int64(len(zipData))},
+		newTestLogger())
+
+	if !strings.Contains(notified, "没有找到 .cas") {
+		t.Errorf("应通知用户压缩包内无 .cas，实际通知：%q", notified)
+	}
+}
+
+// TestHandleDocumentUnsupportedArchiveNotifies 不支持的压缩格式要给出明确提示。
+func TestHandleDocumentUnsupportedArchiveNotifies(t *testing.T) {
+	cas.BindAutoSaveSaver(func(ctx context.Context, accountID int64, dir string, file cas.AutoSaveSourceFile) (string, error) {
+		t.Error("不支持的格式不应触发转存")
+		return "", nil
+	})
+	cas.BindAutoSaveAccounts(func(ctx context.Context) ([]*domain.Account, error) {
+		return nil, nil
+	})
+	var notified string
+	cas.BindAutoSaveNotifier(func(ctx context.Context, level, category, title, message string, accountID, refID int64) {
+		notified = message
+	})
+
+	// 不应发起任何网络请求：格式在下载前就被拒绝。
+	handleDocument(context.Background(), http.DefaultClient, "http://127.0.0.1:1", "tok", 1,
+		&tgDocument{FileID: "doc-7z", FileName: "影片.7z"}, newTestLogger())
+
+	if !strings.Contains(notified, "不受支持") {
+		t.Errorf("应通知用户格式不受支持，实际通知：%q", notified)
+	}
+}
