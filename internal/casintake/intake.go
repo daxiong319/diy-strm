@@ -204,7 +204,10 @@ func pollTelegram(ctx context.Context, channelID int64, token, host string, log 
 			}
 			doc := u.Message.Document
 			name := strings.TrimSpace(doc.FileName)
-			if !isCasFileName(name) {
+			// 既要处理 .cas，也要处理压缩包（发送方常把清单打包发出）。
+			// 不匹配的文件仍然静默跳过：TG 群里日常还有别的文件，
+			// 逐个提示会变成刷屏。
+			if !isCasIntakeName(name) {
 				continue
 			}
 			handleDocument(ctx, client, host, token, channelID, doc, log)
@@ -402,27 +405,87 @@ func (t *failureTracker) recovered(channelID int64, log *slog.Logger) {
 		"failed_attempts", failures, "reason", kind.String())
 }
 
-// handleDocument 下载 .cas 内容并触发自动转存。
+// handleDocument 下载文件内容并触发自动转存。
+//
+// 支持两种投递形态：
+//   - 单个 .cas 清单（原有行为）
+//   - 压缩包（.zip/.tar/.tar.gz/.tgz/.gz），解压后取出里面的 .cas 逐个转存
+//
+// 压缩包形态在实践中很常见：发送方习惯把清单打包发出来。
+// 修复前 isCasFileName 只认 .cas 后缀，压缩包被静默 continue 丢弃，
+// 用户看到的现象就是「转发了但系统毫无反应，日志里也没有记录」。
 func handleDocument(ctx context.Context, client *http.Client, host, token string, channelID int64, doc *tgDocument, log *slog.Logger) {
-	content, err := downloadFile(ctx, client, host, token, doc.FileID)
-	if err != nil {
-		log.Warn("CAS 接收：下载 .cas 失败", "channel_id", channelID, "file_name", doc.FileName, "error", err.Error())
-		notifyResult(ctx, "error", doc.FileName, "下载失败："+err.Error())
+	name := strings.TrimSpace(doc.FileName)
+
+	if isUnsupportedArchiveName(name) {
+		// 明确告知而不是静默丢弃：用户以为自己发了，程序却当没看见。
+		log.Warn("CAS 接收：压缩包格式不受支持", "channel_id", channelID, "file_name", name)
+		notifyResult(ctx, "warn", name, "压缩包格式不受支持（当前仅支持 zip / tar / tar.gz / tgz / gz）")
 		return
 	}
-	log.Info("CAS 接收：收到 .cas 文件", "channel_id", channelID, "file_name", doc.FileName, "size", len(content))
 
-	results := cas.AutoSaveCASFiles(ctx, []cas.AutoSaveSourceFile{{FileName: doc.FileName, Content: content}})
+	limit := int64(maxCasFileBytes)
+	if isArchiveFileName(name) {
+		limit = maxArchiveFileBytes
+	}
+	content, err := downloadFile(ctx, client, host, token, doc.FileID, limit)
+	if err != nil {
+		kind := "下载 .cas 失败"
+		if isArchiveFileName(name) {
+			kind = "下载压缩包失败"
+		}
+		log.Warn("CAS 接收："+kind, "channel_id", channelID, "file_name", name, "error", err.Error())
+		notifyResult(ctx, "error", name, "下载失败："+err.Error())
+		return
+	}
+
+	if !isArchiveFileName(name) {
+		log.Info("CAS 接收：收到 .cas 文件", "channel_id", channelID, "file_name", name, "size", len(content))
+		autoSaveItems(ctx, name, []casItem{{Name: name, Content: string(content)}}, log)
+		return
+	}
+
+	log.Info("CAS 接收：收到压缩包", "channel_id", channelID, "file_name", name, "size", len(content))
+	items, err := extractCasFromArchive(name, content)
+	if err != nil {
+		log.Warn("CAS 接收：压缩包解压失败", "channel_id", channelID, "file_name", name, "error", err.Error())
+		notifyResult(ctx, "warn", name, "解压失败："+err.Error())
+		return
+	}
+	log.Info("CAS 接收：压缩包解压完成", "channel_id", channelID, "file_name", name, "cas_count", len(items))
+	autoSaveItems(ctx, name, items, log)
+}
+
+// autoSaveItems 把取出的一批 .cas 交给自动转存，并记录每个结果。
+// sourceName 是用户实际发来的文件名（可能是压缩包名），用于日志溯源。
+func autoSaveItems(ctx context.Context, sourceName string, items []casItem, log *slog.Logger) {
+	files := make([]cas.AutoSaveSourceFile, 0, len(items))
+	for _, item := range items {
+		files = append(files, cas.AutoSaveSourceFile{FileName: item.Name, Content: item.Content})
+	}
+	results := cas.AutoSaveCASFiles(ctx, files)
 	for _, r := range results {
 		switch {
 		case r.Saved:
-			log.Info("CAS 接收：自动转存成功", "file_name", r.SavedFileName, "drive_type", r.DriveType, "account_id", r.AccountID)
+			log.Info("CAS 接收：自动转存成功", "file_name", r.SavedFileName, "drive_type", r.DriveType,
+				"account_id", r.AccountID, "source", sourceName)
 			// 成功通知由 cas.AutoSaveCASFiles 内部经通知中心发出。
 		case r.Skipped:
-			log.Warn("CAS 接收：自动转存跳过", "file_name", doc.FileName, "reason", r.Reason)
-			notifyResult(ctx, "warn", doc.FileName, "未转存："+r.Reason)
+			log.Warn("CAS 接收：自动转存跳过", "file_name", r.SavedFileName, "source", sourceName, "reason", r.Reason)
+			// 跳过原因用清单名而不是压缩包名，用户才能对上是哪个文件出问题。
+			notifyResult(ctx, "warn", firstNonEmpty(r.SavedFileName, sourceName), "未转存："+r.Reason)
 		}
 	}
+}
+
+// firstNonEmpty 返回第一个非空字符串。
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // notifyResult 在未成功转存时提示用户原因（下载/判定/落盘失败）。
@@ -524,16 +587,20 @@ func getUpdates(ctx context.Context, client *http.Client, host, token string, of
 	return payload.Result, nil
 }
 
-// downloadFile 通过 getFile + 文件下载地址取回 .cas 内容（上限 maxCasFileBytes）。
-func downloadFile(ctx context.Context, client *http.Client, host, token, fileID string) (string, error) {
+// downloadFile 通过 getFile + 文件下载地址取回文件内容。
+//
+// 返回 []byte 而非 string：压缩包是二进制，用 string 承载虽然当前实现能
+// 保全字节，但语义上会诱导调用方做文本处理，这里直接按二进制返回。
+// limit 由调用方按对象类型给出（.cas 与压缩包的上限不同）。
+func downloadFile(ctx context.Context, client *http.Client, host, token, fileID string, limit int64) ([]byte, error) {
 	metaURL := fmt.Sprintf("%s/bot%s/getFile?file_id=%s", host, token, url.QueryEscape(fileID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metaURL, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var meta struct {
 		OK          bool   `json:"ok"`
@@ -545,36 +612,41 @@ func downloadFile(ctx context.Context, client *http.Client, host, token, fileID 
 	derr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&meta)
 	_ = resp.Body.Close()
 	if derr != nil {
-		return "", derr
+		return nil, derr
 	}
 	if !meta.OK {
-		return "", fmt.Errorf("getFile 失败: %s", meta.Description)
+		return nil, fmt.Errorf("getFile 失败: %s", meta.Description)
 	}
 	if meta.Result.FilePath == "" {
-		return "", fmt.Errorf("getFile 未返回文件路径")
+		return nil, fmt.Errorf("getFile 未返回文件路径")
 	}
 
 	dlURL := fmt.Sprintf("%s/file/bot%s/%s", host, token, meta.Result.FilePath)
 	dlReq, err := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	dlResp, err := client.Do(dlReq)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer func() { _ = dlResp.Body.Close() }()
 	if dlResp.StatusCode >= 400 {
-		return "", fmt.Errorf("下载文件 HTTP %d", dlResp.StatusCode)
+		return nil, fmt.Errorf("下载文件 HTTP %d", dlResp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(dlResp.Body, maxCasFileBytes))
+	// 多读 1 字节用于判断是否超限：只读到 limit 无法区分「刚好等于上限」
+	// 和「被截断」，会把超大文件当成完整内容传给解析器。
+	body, err := io.ReadAll(io.LimitReader(dlResp.Body, limit+1))
 	if err != nil {
-		return "", err
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("文件超过上限（%d 字节）", limit)
 	}
 	if len(body) == 0 {
-		return "", fmt.Errorf("文件内容为空")
+		return nil, fmt.Errorf("文件内容为空")
 	}
-	return string(body), nil
+	return body, nil
 }
 
 // decodeConfig 解析渠道配置 JSON（notifychannel 的解析器未导出，此处独立实现）。
