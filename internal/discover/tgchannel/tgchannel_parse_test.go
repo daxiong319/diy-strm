@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -301,6 +302,71 @@ func TestParseChannelPageRangeStallGuard(t *testing.T) {
 	}
 	if pages != 2 || len(posts) != 4 || len(rt.urls) != 2 {
 		t.Fatalf("空转守卫未生效：pages=%d posts=%d 请求=%d, want 2/4/2", pages, len(posts), len(rt.urls))
+	}
+}
+
+// 翻页中途失败：已得结果必须照常返回，同时把错误带出（调用方据此不推进游标）。
+// 若像旧实现那样返回 (结果, nil)，调用方无从判断窗口是否完整，会把游标推到本轮最旧帖，
+// 从而永久跳过没能扫到的中间积压。
+func TestParseChannelPageRangePartialError(t *testing.T) {
+	boom := errors.New("模拟第 2 页网络中断")
+	_ = boom
+	calls := 0
+	orig := channelHTTPClient
+	channelHTTPClient = &http.Client{
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			if req.URL.Query().Get("before") != "" {
+				return nil, boom
+			}
+			return &http.Response{
+				StatusCode: 200,
+				Body:       io.NopCloser(strings.NewReader(mockTMPageHTML(1100, 1099, 1098, 1097))),
+				Header:     http.Header{},
+				Request:    req,
+			}, nil
+		}),
+	}
+	defer func() { channelHTTPClient = orig }()
+
+	posts, pages, err := ParseChannelPageRange(context.Background(), "mockchan", "1000", 100)
+	if err == nil {
+		t.Fatal("翻页中断必须把错误带出（err == nil 会让调用方误判窗口完整并推进游标）")
+	}
+	// fetchChannelPage 会重试并包装错误（含 URL 与尝试次数），故用 Contains 而非 errors.Is。
+	if !strings.Contains(err.Error(), "模拟第 2 页网络中断") {
+		t.Fatalf("err = %v, want 含 %q", err, "模拟第 2 页网络中断")
+	}
+	if len(posts) != 4 {
+		t.Fatalf("已得帖子不得丢弃：len(posts) = %d, want 4", len(posts))
+	}
+	if pages != 1 {
+		t.Fatalf("pages = %d, want 1（第 2 页请求失败不计入成功页数）", pages)
+	}
+	if !wantIDs(idsOf(posts), "1100", "1099", "1098", "1097") {
+		t.Fatalf("已得帖子不符：%v", idsOf(posts))
+	}
+	if calls < 2 {
+		t.Fatalf("请求次数 = %d, want >= 2（首页成功 + 第 2 页失败即停；fetchChannelPage 内部会重试）", calls)
+	}
+}
+
+// 首页就失败：没有任何已得结果时仍须返回错误（不能被部分失败逻辑吞掉）
+func TestParseChannelPageRangeFirstPageError(t *testing.T) {
+	orig := channelHTTPClient
+	channelHTTPClient = &http.Client{
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			return nil, errors.New("网络不可达")
+		}),
+	}
+	defer func() { channelHTTPClient = orig }()
+
+	posts, pages, err := ParseChannelPageRange(context.Background(), "mockchan", "1000", 100)
+	if err == nil {
+		t.Fatal("首页失败必须返回错误")
+	}
+	if len(posts) != 0 || pages != 0 {
+		t.Fatalf("posts=%d pages=%d, want 0/0", len(posts), pages)
 	}
 }
 
