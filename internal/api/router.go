@@ -554,6 +554,7 @@ func NewRouter(d Deps) http.Handler {
 					r.Get("/setting", h.getMoviePilotConfig)
 					r.Put("/setting", h.updateMoviePilotConfig)
 					r.Post("/setting/test", h.testMoviePilotConnection)
+					r.Get("/version", h.getMoviePilotVersion)
 					r.Get("/subscribes", h.listMoviePilotSubscribes)
 					r.Post("/subscribes", h.createMoviePilotSubscribe)
 					r.Post("/subscribes/{id}/search", h.searchMoviePilotSubscribe)

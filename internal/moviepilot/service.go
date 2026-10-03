@@ -273,8 +273,7 @@ func (s *Service) LoadConfig(ctx context.Context) (*domain.MoviePilotConfig, err
 }
 
 // SaveConfig 保存配置并唤醒轮询（使新的间隔与开关立即生效）。
-func (s *Service) SaveConfig(ctx context.Context, cfg *domain.MoviePilotConfig) error {
-	if s == nil || s.repo == nil {
+func (s *Service) SaveConfig(ctx context.Context, cfg *domain.MoviePilotConfig) error {	if s == nil || s.repo == nil {
 		return domain.Errorf(domain.CodeNotImplement, "MoviePilot 服务未配置")
 	}
 	if cfg == nil {
@@ -291,4 +290,24 @@ func (s *Service) SaveConfig(ctx context.Context, cfg *domain.MoviePilotConfig) 
 	}
 	s.wake()
 	return nil
+}
+
+// MajorVersion 探测 MoviePilot 主版本（供 API 层展示与降级判断）。
+//
+// 探测失败不返回错误：按 MajorVersionUnknown 处理，由调用方回退到 v1/v2 请求形态。
+// 读取配置失败时才返回错误（那是配置问题，不是网络问题，调用方需要区分）。
+func (s *Service) MajorVersion(ctx context.Context) (int, error) {
+	if s == nil || s.repo == nil {
+		return MajorVersionUnknown, domain.Errorf(domain.CodeNotImplement, "MoviePilot 服务未配置")
+	}
+	cfg, err := s.repo.LoadConfig(ctx)
+	if err != nil {
+		return MajorVersionUnknown, err
+	}
+	if cfg == nil || strings.TrimSpace(cfg.BaseUrl) == "" {
+		// 未配置不视为错误：界面据此显示「未配置」，也不必发无谓请求。
+		return MajorVersionUnknown, nil
+	}
+	client := NewClient(cfg.BaseUrl, cfg.ApiToken)
+	return client.MajorVersion(ctx), nil
 }
