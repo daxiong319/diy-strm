@@ -39,6 +39,7 @@ type Service struct {
 
 	planner  PlannerBuilder
 	executor ExecutorApplier
+	subtitle SubtitleProcessor
 
 	mu              sync.Mutex
 	taskLogs        map[string][]LogEntry
@@ -58,6 +59,18 @@ type ServiceOptions struct {
 	Log      *slog.Logger
 	Planner  PlannerBuilder
 	Executor ExecutorApplier
+	// Subtitle 整理完成后的字幕自动处理回调（Muvyo 移植③）。
+	// 用接口注入而非直接 import subtitle，避免 mediaorganize → subtitle 的依赖；
+	// 为 nil 时整理流程完全不受影响（字幕模块可独立启用/关闭）。
+	Subtitle SubtitleProcessor
+}
+
+// SubtitleProcessor 整理流程完成后的字幕处理入口。
+//
+// 只在动作真正执行成功（Status == "done"）时被调用，且失败不影响整理结果：
+// 字幕是旁路增强，绝不能因为字幕来源不可用就让整理任务报错。
+type SubtitleProcessor interface {
+	ProcessOrganizedVideo(ctx context.Context, videoPath, title string, year, season, episode int, mediaType string, tmdbID int64) error
 }
 
 func NewService(opts ServiceOptions) *Service {
@@ -81,6 +94,7 @@ func NewService(opts ServiceOptions) *Service {
 		log:             log,
 		planner:         p,
 		executor:        e,
+		subtitle:        opts.Subtitle,
 		taskLogs:        make(map[string][]LogEntry),
 		taskProgress:    make(map[string]map[string]any),
 		running:         make(map[string]struct{}),
@@ -675,6 +689,129 @@ func (s *Service) applyPlanRunner(ctx context.Context, taskID string, plan *Plan
 		"account_id", accountID,
 		"result", formatSummaryZh(summary),
 	)
+	// 字幕自动处理（Muvyo 移植③）：只在动作真正成功时触发，且在汇总落库之后，
+	// 保证字幕失败绝不会改变整理任务本身的成功/失败判定。
+	s.processSubtitlesForPlan(ctx, taskID, task, plan)
+}
+
+// processSubtitlesForPlan 为整理成功的视频触发字幕自动检索与下载。
+//
+// 触发条件（缺一不可）：
+//   - 装配层注入了字幕处理器（未注入 = 字幕模块未启用，完全跳过）；
+//   - 动作 Kind 是视频搬运类且 Status == "done"（失败/跳过的文件不处理，
+//     否则会给没搬成功的文件找字幕，纯属浪费配额）；
+//   - 目标名看起来是视频（按扩展名判断）。
+//
+// 单个文件失败只记日志并继续下一个：一秒字幕失败不该让整批整理文件都拿不到字幕。
+func (s *Service) processSubtitlesForPlan(ctx context.Context, taskID string, task *domain.MediaOrganizeTask, plan *Plan) {
+	if s.subtitle == nil || plan == nil || len(plan.Actions) == 0 {
+		return
+	}
+	done := 0
+	for i := range plan.Actions {
+		action := &plan.Actions[i]
+		if action.Status != "done" {
+			continue
+		}
+		name := strings.TrimSpace(action.TargetName)
+		if name == "" {
+			name = strings.TrimSpace(action.SourceName)
+		}
+		if !isVideoFileName(name) {
+			continue
+		}
+		done++
+		if err := s.subtitle.ProcessOrganizedVideo(
+			ctx,
+			name,
+			task.TaskName,
+			mediaYearFromAction(action),
+			mediaSeasonFromAction(action),
+			mediaEpisodeFromAction(action),
+			mediaTypeFromAction(action),
+			mediaTmdbIDFromAction(action),
+		); err != nil {
+			s.appendLog(taskID, fmt.Sprintf("[MediaOrganize] 字幕处理失败: %s (%v)", name, err))
+			s.log.Warn("字幕自动处理失败", "task_id", taskID, "file", name, "error", err)
+		}
+	}
+	if done > 0 {
+		s.appendLog(taskID, fmt.Sprintf("[MediaOrganize] 已触发字幕自动处理: %d 个视频", done))
+	}
+}
+
+// isVideoFileName 按扩展名判断是否视频文件（字幕只对视频有意义）。
+func isVideoFileName(name string) bool {
+	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(name)))
+	switch ext {
+	case ".mp4", ".mkv", ".avi", ".ts", ".m2ts", ".mov", ".wmv", ".flv", ".webm", ".rmvb", ".iso":
+		return true
+	default:
+		return false
+	}
+}
+
+// 以下四个 helper 从动作元数据里取媒体信息：整理计划会把 TMDB 识别结果
+// 写进 Metadata，取不到时返回零值，字幕侧会退化为按文件名匹配。
+
+func mediaYearFromAction(action *PlanAction) int {
+	return intFromActionMeta(action, "year")
+}
+
+func mediaSeasonFromAction(action *PlanAction) int {
+	return intFromActionMeta(action, "season")
+}
+
+func mediaEpisodeFromAction(action *PlanAction) int {
+	return intFromActionMeta(action, "episode")
+}
+
+func mediaTmdbIDFromAction(action *PlanAction) int64 {
+	if action == nil || action.Metadata == nil {
+		return 0
+	}
+	switch v := action.Metadata["tmdb_id"].(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	case string:
+		n, _ := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		return n
+	default:
+		return 0
+	}
+}
+
+func mediaTypeFromAction(action *PlanAction) string {
+	if action == nil || action.Metadata == nil {
+		return ""
+	}
+	if v, ok := action.Metadata["media_type"].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+func intFromActionMeta(action *PlanAction, key string) int {
+	if action == nil || action.Metadata == nil {
+		return 0
+	}
+	switch v := action.Metadata[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		n, _ := strconv.Atoi(strings.TrimSpace(v))
+		return n
+	default:
+		return 0
+	}
 }
 
 func (s *Service) startRunner(taskID string, accountID int64, fn func(context.Context)) {

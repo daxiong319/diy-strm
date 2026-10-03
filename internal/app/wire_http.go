@@ -29,17 +29,17 @@ import (
 	"litepan/internal/discover/dmodels"
 	"litepan/internal/discover/dutil"
 	"litepan/internal/domain"
-	"litepan/internal/mcp"
-	"litepan/internal/subtitle"
 	"litepan/internal/driver"
 	"litepan/internal/eventbus"
 	"litepan/internal/logx"
+	"litepan/internal/mcp"
 	"litepan/internal/notification"
 	"litepan/internal/notifychannel"
 	"litepan/internal/offlinedownload"
 	"litepan/internal/settings"
 	"litepan/internal/spacecleanup"
 	"litepan/internal/strm"
+	"litepan/internal/subtitle"
 )
 
 func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core *coreBundle, svc *servicesBundle, onRestart func()) (*http.Server, error) {
@@ -217,48 +217,51 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		return nil, err
 	}
 	router := api.NewRouter(api.Deps{
-		Logs:              logs,
-		AccountSvc:        svc.account,
-		AccountProfile:    svc.accountProfile,
-		Accounts:          st.store.Accounts,
-		Configs:           st.store.Configs,
-		Settings:          st.settings,
-		Cache:             core.cache,
-		ListHitTracker:    core.listHits,
-		Files:             svc.files,
-		Favorites:         svc.favorites,
-		Uploads:           svc.uploads,
-		CASRunner:         casRunner,
-		OfflineDownloads:  svc.offlineDownloads,
-		Playback:          svc.playback,
-		Strm:              svc.strm,
-		CacheRetention:    svc.cacheRetention,
-		MediaOrganize:     svc.mediaOrganize,
-		MoviePilot:        svc.moviePilot,
-		AIOrganize:        svc.aiOrganize,
-		ClassifyOrganize:  svc.classifyOrganize,
-		StrmScrape:        svc.strmScrape,
-		Automation:        svc.automation,
-		Fuse:              svc.fuse,
-		CrossTransfer:     svc.crossTransfer,
-		EmbyProxy:         svc.embyProxy,
-		EmbyWebhook:       svc.embyWebhook,
-		FnosProxy:         svc.fnosProxy,
-		QuarkTV:           svc.quarktv,
-		ApiKeys:           apiKeySvc,
-		Auth:              core.auth,
-		AuthSched:         core.sched,
-		AdminAuth:         adminauth.New(st.store.Configs, core.secret, logs.For(logx.ModuleAPI)),
-		Notifications:     notifySvc,
-		Announcement:      announcement.New(announcement.DefaultURL),
-		BackupRestore:     backupRestoreSvc,
-		SpaceCleanup:      spaceCleanupSvc,
-		CoverExtract:      coverExtractSvc,
-		NotifyChannels:    notifyChannelSvc,
-		PlaybackRecords:   st.store.PlaybackRecords,
-		Renames:           st.store.Renames,
-		MCPChat:           mcp.NewChatStore(st.store.DB.WriteHandle()),
-		SubtitleTasks:     subtitle.NewTaskStore(st.store.DB.WriteHandle(), st.store.DB.ReadHandle()),
+		Logs:             logs,
+		AccountSvc:       svc.account,
+		AccountProfile:   svc.accountProfile,
+		Accounts:         st.store.Accounts,
+		Configs:          st.store.Configs,
+		Settings:         st.settings,
+		Cache:            core.cache,
+		ListHitTracker:   core.listHits,
+		Files:            svc.files,
+		Favorites:        svc.favorites,
+		Uploads:          svc.uploads,
+		CASRunner:        casRunner,
+		OfflineDownloads: svc.offlineDownloads,
+		Playback:         svc.playback,
+		Strm:             svc.strm,
+		CacheRetention:   svc.cacheRetention,
+		MediaOrganize:    svc.mediaOrganize,
+		MoviePilot:       svc.moviePilot,
+		AIOrganize:       svc.aiOrganize,
+		ClassifyOrganize: svc.classifyOrganize,
+		StrmScrape:       svc.strmScrape,
+		Automation:       svc.automation,
+		Fuse:             svc.fuse,
+		CrossTransfer:    svc.crossTransfer,
+		EmbyProxy:        svc.embyProxy,
+		EmbyWebhook:      svc.embyWebhook,
+		FnosProxy:        svc.fnosProxy,
+		QuarkTV:          svc.quarktv,
+		ApiKeys:          apiKeySvc,
+		Auth:             core.auth,
+		AuthSched:        core.sched,
+		AdminAuth:        adminauth.New(st.store.Configs, core.secret, logs.For(logx.ModuleAPI)),
+		Notifications:    notifySvc,
+		Announcement:     announcement.New(announcement.DefaultURL),
+		BackupRestore:    backupRestoreSvc,
+		SpaceCleanup:     spaceCleanupSvc,
+		CoverExtract:     coverExtractSvc,
+		NotifyChannels:   notifyChannelSvc,
+		PlaybackRecords:  st.store.PlaybackRecords,
+		Renames:          st.store.Renames,
+		MCPChat:          mcp.NewChatStore(st.store.DB.WriteHandle()),
+		SubtitleTasks:    subtitle.NewTaskStore(st.store.DB.WriteHandle(), st.store.DB.ReadHandle()),
+		// 复用装配层构造的字幕服务单例：整理流程自动下载字幕与管理页手动操作
+		// 必须看到同一份配置快照，否则管理页改了设置、整理流程仍按旧配置跑。
+		SubtitleService:   svc.subtitleSvc,
 		DataDir:           cfg.DataDir,
 		StrmDir:           cfg.StrmDir,
 		MediaRoots:        cfg.MediaRoots(),

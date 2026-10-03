@@ -51,6 +51,12 @@ var (
 // 只是不落任务历史（Service.saveTaskQuietly 对 nil 仓储是安全的）。
 func (h *Handler) SubtitleService() *subtitle.Service {
 	subtitleServiceOnce.Do(func() {
+		// 装配层已注入实例时直接复用：整理流程自动下载字幕用的是同一个实例，
+		// 两边共享一份配置快照，避免「管理页改了设置、整理流程还按旧配置跑」。
+		if h.subtitleSvc != nil {
+			subtitleServiceInst = h.subtitleSvc
+			return
+		}
 		var log *slog.Logger
 		if h.logs != nil {
 			log = h.logs.For(logx.ModuleSystem)
@@ -133,6 +139,7 @@ func (h *Handler) subtitleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 		ZimukuCookie     *string  `json:"zimuku_cookie"`
 		LanguagePriority *string  `json:"language_priority"`
 		FormatPriority   *string  `json:"format_priority"`
+		AutoMatch        *bool    `json:"auto_match"`
 		AutoDownload     *bool    `json:"auto_download"`
 		MinMatchScore    *int     `json:"min_match_score"`
 		AutoSync         *bool    `json:"auto_sync"`
@@ -163,6 +170,7 @@ func (h *Handler) subtitleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 	setString(updates, "subtitle_zimuku_cookie", req.ZimukuCookie, false)
 	setString(updates, "subtitle_language_priority", req.LanguagePriority, false)
 	setString(updates, "subtitle_format_priority", req.FormatPriority, false)
+	setBool(updates, "subtitle_auto_match", req.AutoMatch)
 	setBool(updates, "subtitle_auto_download", req.AutoDownload)
 	setInt(updates, "subtitle_min_match_score", req.MinMatchScore)
 	setBool(updates, "subtitle_auto_sync", req.AutoSync)

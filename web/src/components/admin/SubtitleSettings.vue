@@ -825,6 +825,19 @@ function goPage(page: number) {
         <SettingsCard title="自动处理">
           <SettingsRow>
             <template #info>
+              <div class="subtitle-label">整理时自动匹配</div>
+              <div class="subtitle-desc">媒体整理流程中为缺失字幕的视频自动检索并打分；已有同名字幕的视频直接跳过。</div>
+            </template>
+            <template #control>
+              <SettingsBoolSegment
+                :model-value="configForm.auto_match"
+                label="整理时自动匹配"
+                @update:model-value="(v: boolean) => { if (configForm) configForm.auto_match = v; markDirty('auto_match', v); }"
+              />
+            </template>
+          </SettingsRow>
+          <SettingsRow>
+            <template #info>
               <div class="subtitle-label">自动下载</div>
               <div class="subtitle-desc">整理流程中命中候选后直接下载，无需人工确认。</div>
             </template>

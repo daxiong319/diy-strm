@@ -33,8 +33,6 @@ import (
 	"litepan/internal/coverextract"
 	"litepan/internal/crosstransfer"
 	"litepan/internal/domain"
-	"litepan/internal/mcp"
-	"litepan/internal/subtitle"
 	"litepan/internal/embyproxy"
 	"litepan/internal/embywebhook"
 	"litepan/internal/favorites"
@@ -42,6 +40,7 @@ import (
 	"litepan/internal/fnosproxy"
 	"litepan/internal/fusemount"
 	"litepan/internal/logx"
+	"litepan/internal/mcp"
 	"litepan/internal/mediaorganize"
 	"litepan/internal/moviepilot"
 	"litepan/internal/notification"
@@ -54,6 +53,7 @@ import (
 	"litepan/internal/spacecleanup"
 	"litepan/internal/strm"
 	"litepan/internal/strmscrape"
+	"litepan/internal/subtitle"
 	"litepan/internal/upload"
 )
 
@@ -110,8 +110,14 @@ type Deps struct {
 	// SubtitleTasks 字幕任务历史仓储。为 nil 时字幕检索/下载/校正照常工作，
 	// 只是不落任务历史。
 	SubtitleTasks *subtitle.TaskStore
-	DataDir string
-	StrmDir string
+	// SubtitleService 字幕服务实例（Muvyo 移植③）。
+	//
+	// 由装配层构造并注入，使「整理流程自动下载字幕」与「管理页手动操作」
+	// 共用同一个实例与同一份配置快照；为 nil 时路由层按需自行惰性构造，
+	// 保证单独测试 Handler 时不依赖装配层。
+	SubtitleService *subtitle.Service
+	DataDir         string
+	StrmDir         string
 	// MediaRoots 本地媒体根目录白名单，供 POST /admin/cas/generate-local 校验本地路径。
 	// 为空切片表示该功能未启用。
 	MediaRoots        []string
@@ -162,10 +168,12 @@ type Handler struct {
 	renames              domain.RenameRepository
 	mcpChat              *mcp.ChatStore
 	subtitleTasks        *subtitle.TaskStore
-	dataDir              string
-	strmDir              string
-	mediaRoots           []string
-	onSettingsUpdated    func(map[string]string)
+	// subtitleSvc 装配层注入的字幕服务；为 nil 时 SubtitleService() 自行惰性构造。
+	subtitleSvc       *subtitle.Service
+	dataDir           string
+	strmDir           string
+	mediaRoots        []string
+	onSettingsUpdated func(map[string]string)
 
 	devMu       sync.Mutex
 	devUnlocked bool
@@ -221,6 +229,7 @@ func NewRouter(d Deps) http.Handler {
 		renames:              d.Renames,
 		mcpChat:              d.MCPChat,
 		subtitleTasks:        d.SubtitleTasks,
+		subtitleSvc:          d.SubtitleService,
 		dataDir:              d.DataDir,
 		strmDir:              d.StrmDir,
 		mediaRoots:           d.MediaRoots,
