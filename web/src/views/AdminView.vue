@@ -24,6 +24,9 @@ const adminPageLoaders = {
   cas: () => import("@/components/admin/CasManagementPage.vue"),
   share: () => import("@/components/admin/FileShareManagement.vue"),
   discover: () => import("@/components/admin/DiscoveryPage.vue"),
+  subtitle: () => import("@/components/admin/SubtitleSettings.vue"),
+  mcp: () => import("@/components/admin/McpSettings.vue"),
+  assistant: () => import("@/components/admin/McpAssistant.vue"),
 };
 const DashboardManagement = defineAsyncComponent(adminPageLoaders.dashboard);
 const AccountManagement = defineAsyncComponent(adminPageLoaders.accounts);
@@ -34,6 +37,9 @@ const CrossDriveTransferPage = defineAsyncComponent(adminPageLoaders["cross-tran
 const CasManagementPage = defineAsyncComponent(adminPageLoaders.cas);
 const FileShareManagement = defineAsyncComponent(adminPageLoaders.share);
 const DiscoveryPage = defineAsyncComponent(adminPageLoaders.discover);
+const SubtitleSettings = defineAsyncComponent(adminPageLoaders.subtitle);
+const McpSettings = defineAsyncComponent(adminPageLoaders.mcp);
+const McpAssistant = defineAsyncComponent(adminPageLoaders.assistant);
 import { logout, fetchSystemConfig } from "@/api/auth";
 import { useAuthStore } from "@/stores/auth";
 import { provideAdminPageContext } from "@/composables/useAdminLoadingBar";
@@ -54,6 +60,9 @@ const nav = [
   { key: "cas", label: "CAS 秒传", icon: "film" },
   { key: "share", label: "文件共享", icon: "share-alt" },
   { key: "discover", label: "影视发现", icon: "compass" },
+  { key: "subtitle", label: "字幕处理", icon: "closed-captioning-regular" },
+  { key: "mcp", label: "MCP 服务", icon: "plug" },
+  { key: "assistant", label: "智能助理", icon: "robot" },
 ];
 const navKeys = nav.map((n) => n.key);
 
@@ -298,7 +307,7 @@ onMounted(async () => {
     <AdminEmptyState
       v-if="
         !cachedPageComponent &&
-        !['settings', 'cross-transfer', 'cas', 'share', 'discover'].includes(page)
+        !['settings', 'cross-transfer', 'cas', 'share', 'discover', 'subtitle', 'mcp', 'assistant'].includes(page)
       "
       icon="screwdriver-wrench"
       :title="`「${nav.find((n) => n.key === page)?.label}」功能开发中`"
@@ -315,6 +324,9 @@ onMounted(async () => {
       <CasManagementPage v-else-if="page === 'cas'" />
       <FileShareManagement v-else-if="page === 'share'" />
       <DiscoveryPage v-else-if="page === 'discover'" />
+      <SubtitleSettings v-else-if="page === 'subtitle'" />
+      <McpSettings v-else-if="page === 'mcp'" />
+      <McpAssistant v-else-if="page === 'assistant'" />
       <component :is="cachedPageComponent" v-else-if="cachedPageComponent" :key="page" />
     </KeepAlive>
   </AdminShell>

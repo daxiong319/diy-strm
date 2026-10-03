@@ -81,6 +81,17 @@ type Service struct {
 	// lastHistoryID 下载历史扫描游标；historyAttempts 记录各 hash 的失败重试时间。
 	lastHistoryID   int64
 	historyAttempts map[string]time.Time
+
+	// subscriptionPauser 本地订阅暂停能力（可选注入）：兜底确认 MP 已接管订阅后，
+	// 由它暂停对应的本地订阅。未注入时不做任何事（兜底失败不影响本地订阅继续运行）。
+	subscriptionPauser SubscriptionPauser
+}
+
+// SubscriptionPauser 暂停本地订阅的能力（由 discovery 等子系统实现或包装）。
+//
+// 兜底动作在确认 MP 已接管订阅后调用；仅提交下载不调用。
+type SubscriptionPauser interface {
+	PauseSubscription(ctx context.Context, subscribeID int64) error
 }
 
 // UploadTaskLookup 查询某个 MoviePilot 任务下所有文件上传任务的收敛情况。
@@ -130,6 +141,16 @@ func (s *Service) SetUploadTaskLookup(lookup UploadTaskLookup) {
 	}
 	s.mu.Lock()
 	s.uploadTasks = lookup
+	s.mu.Unlock()
+}
+
+// SetSubscriptionPauser 注入本地订阅暂停能力（可选）：兜底确认 MP 已接管订阅后调用。
+func (s *Service) SetSubscriptionPauser(p SubscriptionPauser) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.subscriptionPauser = p
 	s.mu.Unlock()
 }
 
@@ -273,7 +294,8 @@ func (s *Service) LoadConfig(ctx context.Context) (*domain.MoviePilotConfig, err
 }
 
 // SaveConfig 保存配置并唤醒轮询（使新的间隔与开关立即生效）。
-func (s *Service) SaveConfig(ctx context.Context, cfg *domain.MoviePilotConfig) error {	if s == nil || s.repo == nil {
+func (s *Service) SaveConfig(ctx context.Context, cfg *domain.MoviePilotConfig) error {
+	if s == nil || s.repo == nil {
 		return domain.Errorf(domain.CodeNotImplement, "MoviePilot 服务未配置")
 	}
 	if cfg == nil {

@@ -105,6 +105,50 @@ const (
 	KeyUIBandHiddenCache    = "ui_band_hidden_cache"
 	KeyUIBandHiddenOrganize = "ui_band_hidden_organize"
 	KeyUIBandHiddenFuse     = "ui_band_hidden_fuse"
+
+	// MCP Server 与内置智能助理。助手 API Key 属敏感项：不进入普通设置快照。
+	KeyMcpEnabled          = "mcp_enabled"
+	KeyMcpAllowWriteTools  = "mcp_allow_write_tools"
+	KeyMcpDisabledTools    = "mcp_disabled_tools"
+	KeyMcpAssistantEnabled = "mcp_assistant_enabled"
+	KeyMcpAssistantBaseURL = "mcp_assistant_base_url"
+	KeyMcpAssistantAPIKey  = "mcp_assistant_api_key"
+	KeyMcpAssistantModel   = "mcp_assistant_model"
+	KeyMcpAssistantPrompt  = "mcp_assistant_prompt"
+	KeyMcpMaxToolRounds    = "mcp_max_tool_rounds"
+	KeyMcpTimeout          = "mcp_timeout"
+
+	// ---- 字幕智能处理（搜索下载 + 智能匹配 + 时间轴校正）----
+	// 对齐老版 diy-strm 的 models.SubtitleConfig；老版用单行 subtitle_configs 表存，
+	// 现版统一走声明式设置注册表（键值存 configs 表）。
+	KeySubtitleEnabled                = "subtitle_enabled"
+	KeySubtitleAssrtEnabled           = "subtitle_assrt_enabled"
+	KeySubtitleAssrtAPIKey            = "subtitle_assrt_api_key"
+	KeySubtitleOpenSubtitlesEnabled   = "subtitle_opensubtitles_enabled"
+	KeySubtitleOpenSubtitlesAPIKey    = "subtitle_opensubtitles_api_key"
+	KeySubtitleOpenSubtitlesUserAgent = "subtitle_opensubtitles_user_agent"
+	KeySubtitleOpenSubtitlesUsername  = "subtitle_opensubtitles_username"
+	KeySubtitleOpenSubtitlesPassword  = "subtitle_opensubtitles_password"
+	KeySubtitleSubhdEnabled           = "subtitle_subhd_enabled"
+	KeySubtitleSubhdCookie            = "subtitle_subhd_cookie"
+	KeySubtitleZimukuEnabled          = "subtitle_zimuku_enabled"
+	KeySubtitleZimukuCookie           = "subtitle_zimuku_cookie"
+	KeySubtitleLanguagePriority       = "subtitle_language_priority"
+	KeySubtitleFormatPriority         = "subtitle_format_priority"
+	KeySubtitleAutoMatch              = "subtitle_auto_match"
+	KeySubtitleAutoDownload           = "subtitle_auto_download"
+	KeySubtitleMinMatchScore          = "subtitle_min_match_score"
+	KeySubtitleAutoSync               = "subtitle_auto_sync"
+	KeySubtitleSyncMinConfidence      = "subtitle_sync_min_confidence"
+	KeySubtitleSyncMode               = "subtitle_sync_mode"
+	KeySubtitleSyncDryRun             = "subtitle_sync_dry_run"
+	KeySubtitleTargetDirPolicy        = "subtitle_target_dir_policy"
+	KeySubtitleKeepOriginal           = "subtitle_keep_original"
+	KeySubtitleOverwrite              = "subtitle_overwrite"
+	KeySubtitleConcurrency            = "subtitle_concurrency"
+	KeySubtitleTimeoutSeconds         = "subtitle_timeout_seconds"
+	KeySubtitleProxy                  = "subtitle_proxy"
+	KeySubtitleUserAgent              = "subtitle_user_agent"
 )
 
 // Type 决定后台表单控件与校验方式。
@@ -372,9 +416,89 @@ func defaultSpecs() []Spec {
 			Default: "vidhub",
 			Hidden:  true,
 		},
+		// MCP：全部 Hidden —— 本组设置由专用的 MCP 设置页管理，
+		// 不适合混在通用设置表单里（工具禁用清单是列表、助理提示词是长文本）。
+		{Key: KeyMcpEnabled, Type: TypeBool, Default: "false", Hidden: true},
+		{Key: KeyMcpAllowWriteTools, Type: TypeBool, Default: "false", Hidden: true},
+		{Key: KeyMcpDisabledTools, Type: TypeString, Default: "[]", Hidden: true, SilentLog: true},
+		{Key: KeyMcpAssistantEnabled, Type: TypeBool, Default: "true", Hidden: true},
+		{Key: KeyMcpAssistantBaseURL, Type: TypeString, Default: "", Hidden: true},
+		{Key: KeyMcpAssistantAPIKey, Type: TypeString, Default: "", Hidden: true, Sensitive: true},
+		{Key: KeyMcpAssistantModel, Type: TypeString, Default: "", Hidden: true},
+		{Key: KeyMcpAssistantPrompt, Type: TypeString, Default: "", Hidden: true, SilentLog: true},
+		intSpec(KeyMcpMaxToolRounds, "system", "MCP 工具调用轮数上限", "", "6", "轮", 1, 20),
+		intSpec(KeyMcpTimeout, "system", "MCP 助理超时", "", "120", "秒", 10, 600),
 		intSpec(KeyDiscoverChannelCatchupHours, "discover", "TG 频道停机追赶窗口",
 			"服务停机或频道长期拉取失败后重启，超过该时长就不再深翻积压历史，直接从频道最新一页开始处理，避免一次性补转存打爆网盘；被跳过的积压会冻结保存并在之后每轮回补一小段，直到追上。填 0 表示不限（停机多久都从头补）。",
 			"12", "小时", 0, 720),
+
+		// ---- 字幕智能处理 ----
+		boolSpec(KeySubtitleEnabled, "subtitle", "启用字幕智能处理",
+			"总开关。关闭后整理流程不会为视频自动检索字幕，接口仍可用于手动搜索与时间轴校正。", "false"),
+		boolSpec(KeySubtitleAssrtEnabled, "subtitle", "启用射手网(assrt)",
+			"需要在下方填入 API Token；免费额度有频率限制，触发限流会直接报错而不重试。", "false"),
+		stringSpec(KeySubtitleAssrtAPIKey, "subtitle", "射手网 API Token",
+			"射手网开放接口的访问令牌，未填写时该来源不可用。", ""),
+		boolSpec(KeySubtitleOpenSubtitlesEnabled, "subtitle", "启用 OpenSubtitles",
+			"需要 API Key；官方接口强制要求声明用途的 User-Agent，未登录时下载配额极低。", "false"),
+		stringSpec(KeySubtitleOpenSubtitlesAPIKey, "subtitle", "OpenSubtitles API Key",
+			"OpenSubtitles v1 REST 接口的订阅密钥。", ""),
+		stringSpec(KeySubtitleOpenSubtitlesUserAgent, "subtitle", "OpenSubtitles User-Agent",
+			"站点要求调用方标识自己，缺失会直接返回 403。", "litepan v1.0"),
+		stringSpec(KeySubtitleOpenSubtitlesUsername, "subtitle", "OpenSubtitles 账号",
+			"可选。填写账号密码可登录换取更高下载配额。", ""),
+		stringSpec(KeySubtitleOpenSubtitlesPassword, "subtitle", "OpenSubtitles 密码",
+			"可选。仅用于登录换取下载令牌，不会长期驻留内存。", ""),
+		boolSpec(KeySubtitleSubhdEnabled, "subtitle", "启用 SubHD",
+			"站点在 Cloudflare 之后，通常需要填 Cookie 才能检索；本模块不做挑战页绕过。", "false"),
+		stringSpec(KeySubtitleSubhdCookie, "subtitle", "SubHD Cookie",
+			"浏览器通过验证后复制站点的 Cookie 填入，可显著降低被反爬拦截的概率。", ""),
+		boolSpec(KeySubtitleZimukuEnabled, "subtitle", "启用字幕库(zimuku)",
+			"站点对高频访问有限流，被要求人机校验时需填入 Cookie；该来源打包为 zip，会自动解包挑选字幕。", "false"),
+		stringSpec(KeySubtitleZimukuCookie, "subtitle", "字幕库 Cookie",
+			"可选。被限流或要求校验时填入站点 Cookie。", ""),
+		stringSpec(KeySubtitleLanguagePriority, "subtitle", "语言优先级",
+			"逗号分隔，靠前的语言得分更高。支持 zh-cn、zh-tw、zh、en、ja、ko 等写法。", "zh-cn,zh-tw,zh,en"),
+		stringSpec(KeySubtitleFormatPriority, "subtitle", "格式优先级",
+			"逗号分隔，可填 srt、ass、ssa、sub、sup、vtt。ass/srt 支持时间轴校正，sup 为图形字幕无法校正。", "ass,srt,ssa,sub,sup"),
+		boolSpec(KeySubtitleAutoMatch, "subtitle", "整理时自动匹配字幕",
+			"媒体整理流程中为缺失字幕的视频自动检索并打分。已有同名字幕的视频会直接跳过。", "false"),
+		boolSpec(KeySubtitleAutoDownload, "subtitle", "自动下载匹配到的字幕",
+			"关闭时只记录匹配结果不下载，便于先观察匹配质量。", "true"),
+		intSpec(KeySubtitleMinMatchScore, "subtitle", "最低匹配分数",
+			"低于该分数的候选会被跳过而不下载。分数由发布组、标题、语言、年份、季集、格式加权得出，满分 100。", "60", "分", 0, 100),
+		boolSpec(KeySubtitleAutoSync, "subtitle", "下载后自动校正时间轴",
+			"基于语音活动检测对齐字幕时间轴，需要系统已安装 ffmpeg 与 ffprobe。", "false"),
+		stringSpec(KeySubtitleSyncMinConfidence, "subtitle", "时间轴校正最低置信度",
+			"0 到 1 之间。低于该置信度时保留原字幕不改写。", "0.7"),
+		selectSpec(KeySubtitleSyncMode, "subtitle", "时间轴校正方式",
+			"vad 用语音活动互相关对齐（推荐）；offset 只算固定偏移；scale 按视频/字幕时长比例拉伸后再算偏移；auto 由服务层择一。",
+			"vad", []Option{
+				{Value: "vad", Label: "语音活动检测（推荐）"},
+				{Value: "offset", Label: "仅固定偏移"},
+				{Value: "scale", Label: "时长比例 + 偏移"},
+				{Value: "auto", Label: "自动"},
+			}),
+		boolSpec(KeySubtitleSyncDryRun, "subtitle", "只试算不写入",
+			"开启后校正只计算偏移与置信度并返回，不修改字幕文件，适合先在库里验证效果。", "true"),
+		selectSpec(KeySubtitleTargetDirPolicy, "subtitle", "字幕存放位置",
+			"same 与视频同目录同名（播放器可自动挂载）；subtitle 放到视频目录下的 subtitle 子目录。",
+			"same", []Option{
+				{Value: "same", Label: "与视频同目录"},
+				{Value: "subtitle", Label: "subtitle 子目录"},
+			}),
+		boolSpec(KeySubtitleKeepOriginal, "subtitle", "校正前备份原字幕",
+			"写入前把原字幕另存为 .bak，便于回退。", "true"),
+		boolSpec(KeySubtitleOverwrite, "subtitle", "覆盖已存在的字幕",
+			"关闭时目标路径已存在字幕会跳过下载，不做覆盖。", "false"),
+		intSpec(KeySubtitleConcurrency, "subtitle", "批量处理并发数",
+			"批量整理字幕时的并发上限，实际会被收敛到 8 以内——上游字幕站对并发敏感。", "2", "个", 0, 16),
+		intSpec(KeySubtitleTimeoutSeconds, "subtitle", "字幕源请求超时",
+			"单个字幕源的检索与下载超时；批量与校正的接口超时会按该值放宽倍数。", "30", "秒", 0, 600),
+		stringSpec(KeySubtitleProxy, "subtitle", "字幕源代理地址",
+			"可选。形如 http://127.0.0.1:7890，仅用于访问字幕站点。留空表示直连。", ""),
+		stringSpec(KeySubtitleUserAgent, "subtitle", "字幕源 User-Agent",
+			"留空使用内置的常见浏览器 UA——字幕站点对空 UA 或 Go 默认 UA 敏感。", ""),
 	}
 }
 
@@ -388,5 +512,6 @@ func categories() []Category {
 		{ID: "media_organize", Label: "媒体整理设置"},
 		{ID: "emby", Label: "Emby 设置"},
 		{ID: "discover", Label: "影视发现设置"},
+		{ID: "subtitle", Label: "字幕智能处理"},
 	}
 }
