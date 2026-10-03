@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,7 +22,26 @@ type Client struct {
 	BaseURL string
 	Token   string
 	HTTP    *http.Client
+
+	// versionMu 保护探测结果的读写（客户端可能被多个 goroutine 共用）
+	versionMu sync.RWMutex
+	// majorVersion 缓存的主版本号（0=未探测成功）；探测后复用，避免每次请求都探测
+	majorVersion int
+	// versionProbed 是否已探测过（区分「未探测」与「探测失败」，
+	// 失败同样缓存，避免每次请求都重复探测不可达的服务）
+	versionProbed bool
+	// versionOnce 串行化首次探测：冷缓存下的并发调用只发一次探针，其余等待复用结果。
+	// 若只做「读-探测-写」双检，并发调用会各自发一次探针（实测 16 并发 = 16 次请求），
+	// 对不可达的 MoviePilot 而言等于把 60s 超时放大 16 倍。
+	versionOnce sync.Once
 }
+
+// 版本探测结果常量。0 表示探测失败或无法判定（此时全部请求回退现有 v1/v2 行为）。
+const (
+	MajorVersionUnknown = 0 // 未探测成功：按现有 v1/v2 形态发请求
+	MajorVersionV1V2    = 2 // MoviePilot v1/v2
+	MajorVersionV3      = 3 // MoviePilot v3
+)
 
 // NewClient 构造客户端，baseURL 末尾斜杠会被裁剪。
 func NewClient(baseURL, token string) *Client {
@@ -373,6 +394,60 @@ func (c *Client) RecognizeMedia(ctx context.Context, fileName string) (*MPRecogn
 		Episode:  int(toInt64(info.Episode)),
 		TmdbID:   tmdbID,
 	}, true
+}
+
+// detectMajorVersion 探测 MoviePilot 主版本并缓存结果。
+//
+// 探测策略（保守、不破坏现有可用部署）：
+//   - 用现有已确认可用的 v1/v2 端点 `/api/v1/download/clients` 作为探针，请求可达即判定为 v1/v2；
+//   - 探针失败（网络不可达 / 非 2xx / 解析失败）时缓存 0，记 Warn 日志后正常返回，
+//     绝不返回错误中断调用方——这是硬要求，否则会把现有可用部署打挂；
+//   - 探测结果在 client 实例上缓存，重复调用不重复发请求；并发安全（versionMu + versionOnce）。
+func (c *Client) detectMajorVersion(ctx context.Context) int {
+	if c == nil {
+		return MajorVersionUnknown
+	}
+	c.versionMu.RLock()
+	probed := c.versionProbed
+	v := c.majorVersion
+	c.versionMu.RUnlock()
+	if probed {
+		return v
+	}
+
+	// 冷缓存：single-flight。只有第一个 goroutine 发探针，其余在此等待并复用结果。
+	c.versionOnce.Do(func() {
+		version := c.probeMajorVersion(ctx)
+		c.versionMu.Lock()
+		c.majorVersion = version
+		c.versionProbed = true
+		c.versionMu.Unlock()
+	})
+
+	c.versionMu.RLock()
+	v = c.majorVersion
+	c.versionMu.RUnlock()
+	return v
+}
+
+// probeMajorVersion 真正执行一次探测（不做缓存）
+func (c *Client) probeMajorVersion(ctx context.Context) int {
+	var out any
+	if err := c.do(ctx, http.MethodGet, "/api/v1/download/clients", nil, &out); err != nil {
+		log.Printf("[moviepilot] 版本探测失败，回退默认 v1/v2 行为：%v", err)
+		return MajorVersionUnknown
+	}
+	// 探针可达：当前实现使用 v1/v2 端点，按 v1/v2 记录。
+	// 说明：未确证 v3 与 v1/v2 的具体路径差异，因此不做硬编码版本差异表，
+	// 仅暴露版本号供后续按需分派；无法判定时一律回退 v1/v2 行为。
+	log.Printf("[moviepilot] 版本探测完成：v1/v2（探针 /api/v1/download/clients 可用）")
+	return MajorVersionV1V2
+}
+
+// MajorVersion 返回缓存的主版本号（未探测时先探测）。
+// 供上层判断是否处于「降级」状态（探测失败 = 按 v1/v2 行为兜底）。
+func (c *Client) MajorVersion(ctx context.Context) int {
+	return c.detectMajorVersion(ctx)
 }
 
 // TestConnection 测试连通性：优先下载器接口，失败回退订阅列表。
