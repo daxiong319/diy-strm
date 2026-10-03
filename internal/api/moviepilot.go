@@ -597,3 +597,35 @@ func (h *Handler) listMoviePilotOrganizeHistory(w http.ResponseWriter, r *http.R
 	}
 	writeOK(w, out)
 }
+
+// moviePilotVersionDisplay 版本号展示文案。
+func moviePilotVersionDisplay(v int) string {
+	switch v {
+	case moviepilot.MajorVersionV3:
+		return "v3"
+	case moviepilot.MajorVersionV1V2:
+		return "v1/v2"
+	default:
+		return "未知"
+	}
+}
+
+// getMoviePilotVersion 探测 MoviePilot 主版本（GET /moviepilot/version）。
+//
+// 探测失败不报错：返回 major_version=0 且 degraded=true，调用方据此回退 v1/v2 行为。
+// 这样「MoviePilot 没起」不会让设置页报错，只提示降级。
+func (h *Handler) getMoviePilotVersion(w http.ResponseWriter, r *http.Request) {
+	if !ensureServiceReady(w, h.moviePilot != nil) {
+		return
+	}
+	v, err := h.moviePilot.MajorVersion(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, map[string]any{
+		"major_version": v,
+		"display":       moviePilotVersionDisplay(v),
+		"degraded":      v == moviepilot.MajorVersionUnknown,
+	})
+}
