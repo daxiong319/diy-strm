@@ -14,6 +14,7 @@ import (
 	"litepan/internal/mediaorganize/planner"
 	"litepan/internal/mediaorganize/tmdb"
 	"litepan/internal/settings"
+	"litepan/internal/subtitle"
 )
 
 func wireMediaOrganize(
@@ -23,6 +24,7 @@ func wireMediaOrganize(
 	dataDir string,
 	ai *aiorganize.Service,
 	classifier *classifyorganize.Service,
+	subtitleSvc *subtitle.Service,
 ) *mediaorganize.Service {
 	return mediaorganize.NewService(mediaorganize.ServiceOptions{
 		Repo:     st.store.MediaOrganizeTasks,
@@ -37,6 +39,9 @@ func wireMediaOrganize(
 			classification: classifier,
 		},
 		Executor: executorAdapter{files: files},
+		// 字幕服务为 nil 时 SubtitleProcessor 为 nil 接口，
+		// mediaorganize 内部直接跳过字幕处理，整理流程不受影响。
+		Subtitle: subtitleProcessorAdapter{svc: subtitleSvc},
 	})
 }
 

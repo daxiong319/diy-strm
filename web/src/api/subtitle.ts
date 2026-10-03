@@ -66,6 +66,7 @@ export type SubtitleConfigPatch = Partial<{
   opensubtitles_password: string;
   language_priority: string;
   format_priority: string;
+  auto_match: boolean;
   auto_download: boolean;
   min_match_score: number;
   auto_sync: boolean;

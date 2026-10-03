@@ -32,6 +32,7 @@ import (
 	"litepan/internal/settings"
 	"litepan/internal/strm"
 	"litepan/internal/strmscrape"
+	"litepan/internal/subtitle"
 	"litepan/internal/upload"
 )
 
@@ -45,6 +46,7 @@ type servicesBundle struct {
 	accountProfile   *accountprofile.Service
 	strm             *strm.Service
 	mediaOrganize    *mediaorganize.Service
+	subtitleSvc      *subtitle.Service
 	aiOrganize       *aiorganize.Service
 	classifyOrganize *classifyorganize.Service
 	strmScrape       *strmscrape.Service
@@ -77,7 +79,11 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 	retentionSvc, retentionCoord := wireCacheRetention(st, fileSvc, core.cache, core.bus, logs)
 	aiOrganizeSvc := aiorganize.New(st.settings)
 	classifyOrganizeSvc := classifyorganize.New(st.settings)
-	mediaOrganizeSvc := wireMediaOrganize(st, fileSvc, logs, cfg.DataDir, aiOrganizeSvc, classifyOrganizeSvc)
+	// 字幕服务在装配层构造一次，同时供「整理流程自动下载字幕」与
+	// API 管理端点使用，保证两边共享同一份配置快照与同一个任务仓储。
+	subtitleSvc := subtitle.NewService(st.settings, subtitle.NewLogger(logs.For(logx.ModuleSystem)))
+	subtitleSvc.SetTaskStore(subtitle.NewTaskStore(st.store.DB.WriteHandle(), st.store.DB.ReadHandle()))
+	mediaOrganizeSvc := wireMediaOrganize(st, fileSvc, logs, cfg.DataDir, aiOrganizeSvc, classifyOrganizeSvc, subtitleSvc)
 	strmScrapeSvc := strmscrape.New(strmscrape.Options{
 		Strm:     strmSvc,
 		Settings: st.settings,
@@ -296,6 +302,7 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 		accountProfile:   accountProfileSvc,
 		strm:             strmSvc,
 		mediaOrganize:    mediaOrganizeSvc,
+		subtitleSvc:      subtitleSvc,
 		aiOrganize:       aiOrganizeSvc,
 		classifyOrganize: classifyOrganizeSvc,
 		strmScrape:       strmScrapeSvc,

@@ -14,6 +14,7 @@ import (
 	"litepan/internal/discover/hdhive"
 	"litepan/internal/discover/seedhub"
 	"litepan/internal/domain"
+	"litepan/internal/moviepilot"
 )
 
 // 影视发现「关联资源」聚合搜索（对齐 tgto123 新版 /api/media/resources/* 形状）。
@@ -233,7 +234,68 @@ func (h *Handler) searchMediaResources(w http.ResponseWriter, r *http.Request) {
 		return resourceCandidateWeight(items[i]) > resourceCandidateWeight(items[j])
 	})
 
+	// MoviePilot 降级兜底计数（Muvyo 移植①）：本端点正是「资源搜索」本身，
+	// 因此把「正常完成且候选为 0」与「有候选」分别回报给兜底引擎。
+	//
+	// 计数入口只放在这里、不放在每个来源内部，是为了对齐参考实现语义：
+	//   - 只有整轮搜索「正常完成」才计数，报错/取消不计数
+	//     （本函数能走到这里，说明各来源都已完成，errs 只记录单源失败）；
+	//   - 只要有任一来源给出候选就算「有进展」，立即清零累计计数，
+	//     因此不会出现「多来源里一个空、一个有」被误判为无结果的情况。
+	// 兜底自身不可用（未配置/未开启）时是静默 no-op，绝不影响搜索响应。
+	h.recordSearchFallbackOutcome(r.Context(), req, mediaType, len(items) > 0)
+
 	writeOK(w, map[string]any{"items": items, "errors": errs, "skipped": skipped})
+}
+
+// recordSearchFallbackOutcome 把一轮资源搜索的结果回报给 MoviePilot 降级兜底引擎。
+//
+// 语义（严格对齐参考实现）：
+//   - 有候选 → ResetFallbackSearch 清零该「影片+季」的累计无结果次数；
+//   - 候选为 0 → RecordFallbackSearch 累加一次，达到阈值才触发降级；
+//   - 未配置 TMDB ID 时不参与计数（兜底无法据此定位影片）。
+//
+// 失败只记日志：兜底是旁路增强，任何异常都不得影响搜索这条主链路。
+func (h *Handler) recordSearchFallbackOutcome(ctx context.Context, req resourceSearchRequest, mediaType string, hasCandidates bool) {
+	if h == nil || h.moviePilot == nil || req.TmdbID <= 0 {
+		return
+	}
+	target := moviepilot.FallbackTarget{
+		MediaType: mediaType,
+		TmdbId:    req.TmdbID,
+		Title:     strings.TrimSpace(req.Title),
+		Season:    req.Season,
+	}
+	if hasCandidates {
+		if err := h.moviePilot.ResetFallbackSearch(ctx, target); err != nil {
+			h.logFallbackWarn("重置降级兜底搜索计数失败", err)
+		}
+		return
+	}
+	rec, triggered, err := h.moviePilot.RecordFallbackSearch(ctx, target)
+	if err != nil {
+		h.logFallbackWarn("记录降级兜底搜索计数失败", err)
+		return
+	}
+	if !triggered || rec == nil {
+		return
+	}
+	action, started := h.moviePilot.TriggerFallback(ctx, target, true)
+	if !started {
+		return
+	}
+	if h.log != nil {
+		h.log.Info("资源搜索连续无结果，已触发 MoviePilot 降级兜底",
+			"tmdb_id", target.TmdbId, "media_type", target.MediaType,
+			"season", target.Season, "action", action)
+	}
+}
+
+// logFallbackWarn 兜底旁路日志（h.log 可能为 nil，仅测试构造场景）。
+func (h *Handler) logFallbackWarn(msg string, err error) {
+	if h.log != nil {
+		h.log.Warn(msg, "error", err)
+	}
 }
 
 // normalizeResourceSources 归一化来源：hdhive→re0，去重，仅保留已知来源
