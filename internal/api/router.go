@@ -589,6 +589,8 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/failed-files/{id}/resolve", h.resolveMoviePilotFailedFile)
 					r.Post("/failed-files/{id}/skip", h.skipMoviePilotFailedFile)
 					r.Get("/organize-history", h.listMoviePilotOrganizeHistory)
+					r.Get("/fallbacks", h.listMoviePilotFallbacks)
+					r.Get("/fallbacks/summary", h.getMoviePilotFallbackSummary)
 				})
 				r.Route("/media-organize", func(r chi.Router) {
 					r.Get("/tasks", h.listMediaOrganizeTasks)

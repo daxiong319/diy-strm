@@ -629,3 +629,114 @@ func (h *Handler) getMoviePilotVersion(w http.ResponseWriter, r *http.Request) {
 		"degraded":      v == moviepilot.MajorVersionUnknown,
 	})
 }
+
+// moviePilotFallbackDTO 降级兜底记录（观测用）。
+type moviePilotFallbackDTO struct {
+	ID                int64  `json:"id"`
+	MediaKey          string `json:"media_key"`
+	Trigger           string `json:"trigger"`
+	MediaType         string `json:"media_type"`
+	TmdbId            int64  `json:"tmdb_id"`
+	Title             string `json:"title"`
+	Season            int    `json:"season"`
+	SearchCount       int    `json:"search_count"`
+	SubscriptionCount int    `json:"subscription_count"`
+	Progress          int    `json:"progress"`
+	Status            string `json:"status"`
+	Action            string `json:"action"`
+	DownloadEpisodes  string `json:"download_episodes"`
+	ExternalID        string `json:"external_id"`
+	Message           string `json:"message"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+}
+
+// toMoviePilotFallbackDTO 领域模型 → 观测 DTO。
+func toMoviePilotFallbackDTO(rec domain.MoviePilotFallback) moviePilotFallbackDTO {
+	return moviePilotFallbackDTO{
+		ID:                rec.ID,
+		MediaKey:          rec.MediaKey,
+		Trigger:           rec.Trigger,
+		MediaType:         rec.MediaType,
+		TmdbId:            rec.TmdbId,
+		Title:             rec.Title,
+		Season:            rec.Season,
+		SearchCount:       rec.SearchCount,
+		SubscriptionCount: rec.SubscriptionCount,
+		Progress:          rec.Progress,
+		Status:            rec.Status,
+		Action:            rec.Action,
+		DownloadEpisodes:  rec.DownloadEpisodes,
+		ExternalID:        rec.ExternalID,
+		Message:           rec.Message,
+		CreatedAt:         rec.CreatedAt.Format("2006-01-02 15:04:05"),
+		UpdatedAt:         rec.UpdatedAt.Format("2006-01-02 15:04:05"),
+	}
+}
+
+// moviePilotFallbackActionDTO 可选动作（前端下拉选项）。
+type moviePilotFallbackActionDTO struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// listMoviePilotFallbacks 列出降级兜底记录（GET /moviepilot/fallbacks）。
+func (h *Handler) listMoviePilotFallbacks(w http.ResponseWriter, r *http.Request) {
+	if !ensureServiceReady(w, h.moviePilot != nil) {
+		return
+	}
+	page := queryInt(r, "page", 1)
+	pageSize := queryInt(r, "page_size", 20)
+	status := r.URL.Query().Get("status")
+	items, total, err := h.moviePilot.ListFallbacks(r.Context(), page, pageSize, status)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	list := make([]moviePilotFallbackDTO, 0, len(items))
+	for _, it := range items {
+		list = append(list, toMoviePilotFallbackDTO(it))
+	}
+	pages := 0
+	if pageSize > 0 {
+		pages = int((total + int64(pageSize) - 1) / int64(pageSize))
+	}
+	writeOK(w, map[string]any{
+		"list":      list,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+		"pages":     pages,
+	})
+}
+
+// getMoviePilotFallbackSummary 降级兜底概览（GET /moviepilot/fallbacks/summary）。
+//
+// 与源实现一致：即使未配置 MoviePilot 也正常返回，由 configured 字段提示前端；
+// 阈值/动作在未显式配置时报默认值（3 / download）。
+func (h *Handler) getMoviePilotFallbackSummary(w http.ResponseWriter, r *http.Request) {
+	if !ensureServiceReady(w, h.moviePilot != nil) {
+		return
+	}
+	sum, err := h.moviePilot.FallbackSummary(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, map[string]any{
+		"configured":             sum.Configured,
+		"enabled":                sum.Enabled,
+		"search_enabled":         sum.SearchEnabled,
+		"search_threshold":       sum.SearchThreshold,
+		"search_action":          sum.SearchAction,
+		"subscription_enabled":   sum.SubscriptionEnabled,
+		"subscription_threshold": sum.SubscriptionThreshold,
+		"subscription_action":    sum.SubscriptionAction,
+		"active_count":           sum.ActiveCount,
+		"actions": []moviePilotFallbackActionDTO{
+			{Value: domain.MoviePilotFallbackActionSubscribe, Label: "仅添加 MoviePilot 订阅"},
+			{Value: domain.MoviePilotFallbackActionDownload, Label: "仅让 MoviePilot 搜索下载"},
+			{Value: domain.MoviePilotFallbackActionDownloadThenSubscribe, Label: "先搜索下载，无资源再订阅"},
+		},
+	})
+}

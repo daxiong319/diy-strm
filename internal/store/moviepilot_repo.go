@@ -37,24 +37,42 @@ func (r *moviePilotRepo) SaveConfig(ctx context.Context, cfg *domain.MoviePilotC
 			`UPDATE movie_pilot_configs SET enabled=?, base_url=?, api_token=?, download_root=?, local_view_root=?,
 			 upload_account_id=?, upload_root=?, upload_root_id=?, strm_local_dir=?, poll_interval=?, notify_enabled=?,
 			 category_config=?, promotion_order=?, promotion_patience_hours=?, seed_retention_hours=?,
-			 qbittorrent_url=?, qbittorrent_user=?, qbittorrent_pass=?, updated_at=CURRENT_TIMESTAMP
+			 qbittorrent_url=?, qbittorrent_user=?, qbittorrent_pass=?,
+			 mp_fallback_enabled=?, mp_fallback_search_enabled=?, mp_fallback_search_threshold=?, mp_fallback_search_action=?,
+			 mp_fallback_subscription_enabled=?, mp_fallback_subscription_threshold=?, mp_fallback_subscription_action=?,
+			 updated_at=CURRENT_TIMESTAMP
 			 WHERE id=?`,
 			boolToInt(cfg.Enabled), cfg.BaseUrl, cfg.ApiToken, cfg.DownloadRoot, cfg.LocalViewRoot,
 			cfg.UploadAccountId, cfg.UploadRoot, cfg.UploadRootId, cfg.StrmLocalDir, cfg.PollInterval, boolToInt(cfg.NotifyEnabled),
 			cfg.CategoryConfig, cfg.PromotionOrder, cfg.PromotionPatienceHours, cfg.SeedRetentionHours,
-			cfg.QbittorrentURL, cfg.QbittorrentUser, cfg.QbittorrentPass, cfg.ID)
+			cfg.QbittorrentURL, cfg.QbittorrentUser, cfg.QbittorrentPass,
+			boolToInt(cfg.MpFallbackEnabled), boolToInt(cfg.MpFallbackSearchEnabled),
+			domain.NormalizeMoviePilotFallbackThreshold(cfg.MpFallbackSearchThreshold),
+			domain.NormalizeMoviePilotFallbackAction(cfg.MpFallbackSearchAction),
+			boolToInt(cfg.MpFallbackSubscriptionEnabled),
+			domain.NormalizeMoviePilotFallbackThreshold(cfg.MpFallbackSubscriptionThreshold),
+			domain.NormalizeMoviePilotFallbackAction(cfg.MpFallbackSubscriptionAction),
+			cfg.ID)
 		return wrapDB(err)
 	}
 	res, err := r.db.write.ExecContext(ctx,
 		`INSERT INTO movie_pilot_configs(enabled, base_url, api_token, download_root, local_view_root,
 		 upload_account_id, upload_root, upload_root_id, strm_local_dir, poll_interval, notify_enabled,
 		 category_config, promotion_order, promotion_patience_hours, seed_retention_hours,
-		 qbittorrent_url, qbittorrent_user, qbittorrent_pass)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 qbittorrent_url, qbittorrent_user, qbittorrent_pass,
+		 mp_fallback_enabled, mp_fallback_search_enabled, mp_fallback_search_threshold, mp_fallback_search_action,
+		 mp_fallback_subscription_enabled, mp_fallback_subscription_threshold, mp_fallback_subscription_action)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		boolToInt(cfg.Enabled), cfg.BaseUrl, cfg.ApiToken, cfg.DownloadRoot, cfg.LocalViewRoot,
 		cfg.UploadAccountId, cfg.UploadRoot, cfg.UploadRootId, cfg.StrmLocalDir, cfg.PollInterval, boolToInt(cfg.NotifyEnabled),
 		cfg.CategoryConfig, cfg.PromotionOrder, cfg.PromotionPatienceHours, cfg.SeedRetentionHours,
-		cfg.QbittorrentURL, cfg.QbittorrentUser, cfg.QbittorrentPass)
+		cfg.QbittorrentURL, cfg.QbittorrentUser, cfg.QbittorrentPass,
+		boolToInt(cfg.MpFallbackEnabled), boolToInt(cfg.MpFallbackSearchEnabled),
+		domain.NormalizeMoviePilotFallbackThreshold(cfg.MpFallbackSearchThreshold),
+		domain.NormalizeMoviePilotFallbackAction(cfg.MpFallbackSearchAction),
+		boolToInt(cfg.MpFallbackSubscriptionEnabled),
+		domain.NormalizeMoviePilotFallbackThreshold(cfg.MpFallbackSubscriptionThreshold),
+		domain.NormalizeMoviePilotFallbackAction(cfg.MpFallbackSubscriptionAction))
 	if err != nil {
 		return wrapDB(err)
 	}
@@ -67,25 +85,41 @@ func (r *moviePilotRepo) SaveConfig(ctx context.Context, cfg *domain.MoviePilotC
 const moviePilotConfigCols = `id, enabled, base_url, api_token, download_root, local_view_root, upload_account_id,
 	upload_root, upload_root_id, strm_local_dir, poll_interval, notify_enabled, category_config,
 	promotion_order, promotion_patience_hours, seed_retention_hours, qbittorrent_url, qbittorrent_user,
-	qbittorrent_pass, created_at, updated_at`
+	qbittorrent_pass,
+	mp_fallback_enabled, mp_fallback_search_enabled, mp_fallback_search_threshold, mp_fallback_search_action,
+	mp_fallback_subscription_enabled, mp_fallback_subscription_threshold, mp_fallback_subscription_action,
+	created_at, updated_at`
 
 func scanMoviePilotConfig(row interface{ Scan(...any) error }) (*domain.MoviePilotConfig, error) {
 	var (
-		c             domain.MoviePilotConfig
-		enabled       int
-		notifyEnabled int
-		createdNull   sql.NullString
-		updatedNull   sql.NullString
+		c                         domain.MoviePilotConfig
+		enabled                   int
+		notifyEnabled             int
+		mpFallbackEnabled         int
+		mpFallbackSearchEnabled   int
+		mpFallbackSubscriptionEna int
+		createdNull               sql.NullString
+		updatedNull               sql.NullString
 	)
 	err := row.Scan(&c.ID, &enabled, &c.BaseUrl, &c.ApiToken, &c.DownloadRoot, &c.LocalViewRoot, &c.UploadAccountId,
 		&c.UploadRoot, &c.UploadRootId, &c.StrmLocalDir, &c.PollInterval, &notifyEnabled, &c.CategoryConfig,
 		&c.PromotionOrder, &c.PromotionPatienceHours, &c.SeedRetentionHours, &c.QbittorrentURL, &c.QbittorrentUser,
-		&c.QbittorrentPass, &createdNull, &updatedNull)
+		&c.QbittorrentPass,
+		&mpFallbackEnabled, &mpFallbackSearchEnabled, &c.MpFallbackSearchThreshold, &c.MpFallbackSearchAction,
+		&mpFallbackSubscriptionEna, &c.MpFallbackSubscriptionThreshold, &c.MpFallbackSubscriptionAction,
+		&createdNull, &updatedNull)
 	if err != nil {
 		return nil, wrapDB(err)
 	}
 	c.Enabled = enabled != 0
 	c.NotifyEnabled = notifyEnabled != 0
+	c.MpFallbackEnabled = mpFallbackEnabled != 0
+	c.MpFallbackSearchEnabled = mpFallbackSearchEnabled != 0
+	c.MpFallbackSubscriptionEnabled = mpFallbackSubscriptionEna != 0
+	c.MpFallbackSearchThreshold = domain.NormalizeMoviePilotFallbackThreshold(c.MpFallbackSearchThreshold)
+	c.MpFallbackSearchAction = domain.NormalizeMoviePilotFallbackAction(c.MpFallbackSearchAction)
+	c.MpFallbackSubscriptionThreshold = domain.NormalizeMoviePilotFallbackThreshold(c.MpFallbackSubscriptionThreshold)
+	c.MpFallbackSubscriptionAction = domain.NormalizeMoviePilotFallbackAction(c.MpFallbackSubscriptionAction)
 	c.CreatedAt = parseTS(createdNull)
 	c.UpdatedAt = parseTS(updatedNull)
 	return &c, nil
