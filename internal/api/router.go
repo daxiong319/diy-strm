@@ -34,6 +34,7 @@ import (
 	"litepan/internal/crosstransfer"
 	"litepan/internal/domain"
 	"litepan/internal/mcp"
+	"litepan/internal/subtitle"
 	"litepan/internal/embyproxy"
 	"litepan/internal/embywebhook"
 	"litepan/internal/favorites"
@@ -106,6 +107,9 @@ type Deps struct {
 	// MCPChat MCP 助理对话历史仓储。为 nil 时对话历史不落库（只做无状态单轮问答），
 	// 而不是让整个 MCP 功能不可用。
 	MCPChat *mcp.ChatStore
+	// SubtitleTasks 字幕任务历史仓储。为 nil 时字幕检索/下载/校正照常工作，
+	// 只是不落任务历史。
+	SubtitleTasks *subtitle.TaskStore
 	DataDir string
 	StrmDir string
 	// MediaRoots 本地媒体根目录白名单，供 POST /admin/cas/generate-local 校验本地路径。
@@ -157,6 +161,7 @@ type Handler struct {
 	storePlaybackRecords domain.PlaybackRecordRepository
 	renames              domain.RenameRepository
 	mcpChat              *mcp.ChatStore
+	subtitleTasks        *subtitle.TaskStore
 	dataDir              string
 	strmDir              string
 	mediaRoots           []string
@@ -215,6 +220,7 @@ func NewRouter(d Deps) http.Handler {
 		storePlaybackRecords: d.PlaybackRecords,
 		renames:              d.Renames,
 		mcpChat:              d.MCPChat,
+		subtitleTasks:        d.SubtitleTasks,
 		dataDir:              d.DataDir,
 		strmDir:              d.StrmDir,
 		mediaRoots:           d.MediaRoots,
@@ -287,6 +293,8 @@ func NewRouter(d Deps) http.Handler {
 			r.Use(h.requireAdmin)
 			// MCP 站内设置与助理对话端点：走管理员会话鉴权。
 			h.RegisterMcpAdminRoutes(r)
+			// 字幕智能处理端点：本函数内部自带 requireAdmin。
+			h.RegisterSubtitleRoutes(r)
 			r.Route("/cross-transfer", func(r chi.Router) {
 				r.Get("/routes", h.crossTransferRoutes)
 				r.Post("/scan", h.crossTransferScan)

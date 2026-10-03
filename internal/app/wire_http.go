@@ -30,6 +30,7 @@ import (
 	"litepan/internal/discover/dutil"
 	"litepan/internal/domain"
 	"litepan/internal/mcp"
+	"litepan/internal/subtitle"
 	"litepan/internal/driver"
 	"litepan/internal/eventbus"
 	"litepan/internal/logx"
@@ -257,6 +258,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		PlaybackRecords:   st.store.PlaybackRecords,
 		Renames:           st.store.Renames,
 		MCPChat:           mcp.NewChatStore(st.store.DB.WriteHandle()),
+		SubtitleTasks:     subtitle.NewTaskStore(st.store.DB.WriteHandle(), st.store.DB.ReadHandle()),
 		DataDir:           cfg.DataDir,
 		StrmDir:           cfg.StrmDir,
 		MediaRoots:        cfg.MediaRoots(),
