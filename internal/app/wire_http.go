@@ -29,6 +29,7 @@ import (
 	"litepan/internal/discover/dmodels"
 	"litepan/internal/discover/dutil"
 	"litepan/internal/domain"
+	"litepan/internal/mcp"
 	"litepan/internal/driver"
 	"litepan/internal/eventbus"
 	"litepan/internal/logx"
@@ -255,6 +256,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		NotifyChannels:    notifyChannelSvc,
 		PlaybackRecords:   st.store.PlaybackRecords,
 		Renames:           st.store.Renames,
+		MCPChat:           mcp.NewChatStore(st.store.DB.WriteHandle()),
 		DataDir:           cfg.DataDir,
 		StrmDir:           cfg.StrmDir,
 		MediaRoots:        cfg.MediaRoots(),

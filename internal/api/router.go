@@ -33,6 +33,7 @@ import (
 	"litepan/internal/coverextract"
 	"litepan/internal/crosstransfer"
 	"litepan/internal/domain"
+	"litepan/internal/mcp"
 	"litepan/internal/embyproxy"
 	"litepan/internal/embywebhook"
 	"litepan/internal/favorites"
@@ -102,6 +103,9 @@ type Deps struct {
 	PlaybackRecords domain.PlaybackRecordRepository
 	// Renames 批量重命名历史与常用组合仓储：文件操作类接口直接用仓储，与 PlaybackRecords 同风格。
 	Renames domain.RenameRepository
+	// MCPChat MCP 助理对话历史仓储。为 nil 时对话历史不落库（只做无状态单轮问答），
+	// 而不是让整个 MCP 功能不可用。
+	MCPChat *mcp.ChatStore
 	DataDir string
 	StrmDir string
 	// MediaRoots 本地媒体根目录白名单，供 POST /admin/cas/generate-local 校验本地路径。
@@ -152,6 +156,7 @@ type Handler struct {
 	casRunner            *cas.Runner
 	storePlaybackRecords domain.PlaybackRecordRepository
 	renames              domain.RenameRepository
+	mcpChat              *mcp.ChatStore
 	dataDir              string
 	strmDir              string
 	mediaRoots           []string
@@ -209,6 +214,7 @@ func NewRouter(d Deps) http.Handler {
 		casRunner:            d.CASRunner,
 		storePlaybackRecords: d.PlaybackRecords,
 		renames:              d.Renames,
+		mcpChat:              d.MCPChat,
 		dataDir:              d.DataDir,
 		strmDir:              d.StrmDir,
 		mediaRoots:           d.MediaRoots,
@@ -268,6 +274,10 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/system-config", h.publicSystemConfig)
 			r.Get("/cache/hit-rate", h.publicCacheHitRate)
 		})
+		// MCP 外部客户端入口：必须在 requireAdmin 组之外。
+		// 它用独立 API Key 鉴权（见 mcp.go 的 requireMcpAPIKey），
+		// 若挂在 requireAdmin 组内，无浏览器的 MCP 客户端会先被会话中间件拦掉。
+		h.RegisterMcpPublicRoutes(r)
 		r.Route("/open", func(r chi.Router) {
 			r.Post("/automation/events", h.automationWebhook)
 			// Emby/Jellyfin Webhook 回调：免会话鉴权，由处理器内的 API Key 开关保护。
@@ -275,6 +285,8 @@ func NewRouter(d Deps) http.Handler {
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(h.requireAdmin)
+			// MCP 站内设置与助理对话端点：走管理员会话鉴权。
+			h.RegisterMcpAdminRoutes(r)
 			r.Route("/cross-transfer", func(r chi.Router) {
 				r.Get("/routes", h.crossTransferRoutes)
 				r.Post("/scan", h.crossTransferScan)
