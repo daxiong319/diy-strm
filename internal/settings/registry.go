@@ -97,6 +97,9 @@ const (
 	KeyAIOrganizeModel         = "ai_organize_model"
 	KeyMOClassificationEnabled = "mo_classification_enabled"
 	KeyMOClassificationConfig  = "mo_classification_config"
+	// KeyDiscoverChannelCatchupHours TG 频道订阅停机追赶限制（小时）。
+	// 0 = 不限：停机多久都从旧游标一路回补（原行为）。
+	KeyDiscoverChannelCatchupHours = "discover_channel_catchup_hours"
 	// 界面偏好：信息条（仪表带）在各页的开合状态，随备份一起导入导出。
 	KeyUIBandHiddenStrm     = "ui_band_hidden_strm"
 	KeyUIBandHiddenCache    = "ui_band_hidden_cache"
@@ -369,6 +372,9 @@ func defaultSpecs() []Spec {
 			Default: "vidhub",
 			Hidden:  true,
 		},
+		intSpec(KeyDiscoverChannelCatchupHours, "discover", "TG 频道停机追赶窗口",
+			"服务停机或频道长期拉取失败后重启，超过该时长就不再深翻积压历史，直接从频道最新一页开始处理，避免一次性补转存打爆网盘；被跳过的积压会冻结保存并在之后每轮回补一小段，直到追上。填 0 表示不限（停机多久都从头补）。",
+			"12", "小时", 0, 720),
 	}
 }
 
@@ -381,5 +387,6 @@ func categories() []Category {
 		{ID: "strm", Label: "STRM 设置"},
 		{ID: "media_organize", Label: "媒体整理设置"},
 		{ID: "emby", Label: "Emby 设置"},
+		{ID: "discover", Label: "影视发现设置"},
 	}
 }

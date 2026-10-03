@@ -159,3 +159,34 @@ func GetEmbyConfig() (*EmbyConfig, error) {
 	}
 	return &EmbyConfig{EmbyUrl: first.EmbyURL, EmbyApiKey: first.APIKey}, nil
 }
+
+// ---------------------------------------------------------------------------
+// TG 频道停机追赶（对应老 models.GetHiveChannelCatchupHours）
+// ---------------------------------------------------------------------------
+
+// DefaultChannelCatchupHours TG 频道停机追赶窗口默认值（小时）。
+// 对齐参考实现语义：停机超过该时长就从最新消息开始，而不是深翻全部积压。
+const DefaultChannelCatchupHours = 12
+
+// GetChannelCatchupHours 返回 TG 频道停机追赶窗口（小时）。
+// 0 = 不限：停机多久都从旧游标一路回补（原行为）。settings 未装配或读取失败时用默认值。
+func GetChannelCatchupHours() int {
+	if catchupHoursOverride >= 0 {
+		return catchupHoursOverride
+	}
+	settingsMu.RLock()
+	svc := settingsSvc
+	settingsMu.RUnlock()
+	if svc == nil {
+		// 未装配 settings（如单元测试）：按参考实现默认值，不改变库中原行为
+		return DefaultChannelCatchupHours
+	}
+	return svc.Int(settings.KeyDiscoverChannelCatchupHours)
+}
+
+// catchupHoursOverride 测试钩子：非负值优先于设置服务，用于在不依赖 settings.Service
+// 的情况下验证追赶窗口的边界行为（0=不限、超窗跳转）。
+var catchupHoursOverride = -1
+
+// SetChannelCatchupHoursForTest 覆盖追赶窗口（仅测试用；负值恢复为读取设置服务）。
+func SetChannelCatchupHoursForTest(hours int) { catchupHoursOverride = hours }

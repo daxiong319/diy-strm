@@ -1,10 +1,16 @@
 package discovery
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"litepan/internal/discover/ddb"
+
+	"gorm.io/gorm"
 )
 
 // ---------------------------------------------------------------------------
@@ -21,8 +27,15 @@ type DiscoveryChannel struct {
 	Enabled    bool      `gorm:"default:true" json:"enabled"`                                  // 停用后 watcher 跳过，但保留历史游标便于恢复
 	LastPostID string    `gorm:"size:64" json:"last_post_id"`                                  // 增量游标（频道帖 ID）
 	LastRunAt  time.Time `json:"last_run_at"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	// NextCatchupAt 追赶进度保护的下一次可抽检时间（停机过久跳最新后，分批回补中间积压帖）。
+	NextCatchupAt time.Time `json:"next_catchup_at"`
+	// CatchupCheckpoints 追赶开始时冻结的「上一游标」快照（JSON 数组字符串）。
+	//
+	// 必须与 LastPostID 分开保存：追赶期间 LastPostID 会持续推进（转存失败回退更深的帖
+	// 靠它下次重扫），若借用 LastPostID 记起点，回退的帖会被推进到已处理区而永久丢失。
+	CatchupCheckpoints string    `gorm:"size:512" json:"catchup_checkpoints"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 func (DiscoveryChannel) TableName() string { return "discovery_channels" }
@@ -150,7 +163,18 @@ type DiscoveryTransferRecord struct {
 	Effect         int       `json:"effect"`                  // 0未知 1=SDR 2=HDR 3=DolbyVision
 	SizeGB         float64   `json:"size_gb"`
 	Status         string    `gorm:"size:16;index" json:"status"` // 空=正常 / superseded=被洗版替换（待清理旧版本）
-	CreatedAt      time.Time `json:"created_at"`
+	// IdempotencyKey 转存幂等键（唯一，仅对非空值生效）：同一订阅对同一资源只允许成功转存一次。
+	// 由 TransferIdempotencyKey 按「订阅 + 资源身份」生成，走唯一索引在并发下兜底去重 ——
+	// 单纯 query-then-insert（如 HasLinkRecord）在定时器与手动「立即搜索」同跑时有竞态窗口。
+	//
+	// 注意：用 where:"idempotency_key <> ''" 约束成**部分索引**。SQLite 的 UNIQUE 把空串
+	// 视为相等值，普通唯一索引会导致「第二条无幂等键的记录」插入失败（实测
+	// `constraint failed: UNIQUE constraint failed: ...idempotency_key`）——
+	// 而无幂等键的记录是合法的（资源身份缺失时退化为不去重）。
+	IdempotencyKey string `gorm:"size:64;index:idx_disc_transfer_idem,unique,where:idempotency_key <> ''" json:"idempotency_key"`
+	// TransferState 转存三段状态机：requested（已发起，落库占位）→ confirmed（转存成功）/ failed（失败可重试）。
+	TransferState string    `gorm:"size:16;index" json:"transfer_state"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 func (DiscoveryTransferRecord) TableName() string { return "discovery_transfer_records" }
@@ -175,6 +199,112 @@ func HasLinkRecord(linkURL string) bool {
 		return false
 	}
 	return cnt > 0
+}
+
+// ---------------------------------------------------------------------------
+// 转存幂等（占位 → 确认 / 失败）
+//
+// HasLinkRecord 这类 query-then-insert 去重在并发下有竞态窗口：定时器一轮与用户手动
+// 「立即搜索」同时跑到同一条资源，两边都查到「不存在」，然后都去转存。故引入幂等键 +
+// 唯一索引，把「是否已转存」的判定交给数据库的原子插入。
+// ---------------------------------------------------------------------------
+
+// 转存三段状态机取值
+const (
+	// TransferStateRequested 已发起转存（落库占位，尚未确认结果）
+	TransferStateRequested = "requested"
+	// TransferStateConfirmed 转存已确认成功
+	TransferStateConfirmed = "confirmed"
+	// TransferStateFailed 转存失败（可重试；占位记录保留以便重试时复用）
+	TransferStateFailed = "failed"
+)
+
+// ErrTransferDuplicate 该资源已转存过（幂等键命中），调用方应跳过而非报错
+var ErrTransferDuplicate = errors.New("该资源已转存过（幂等键命中）")
+
+// TransferIdempotencyKey 转存幂等键：同一订阅对同一资源只允许成功转存一次。
+//
+// 组成（用 | 连接后取 sha256 前 16 字节的十六进制）：
+//
+//	订阅 ID | 媒体类型 | TMDB ID | 季 | 资源身份
+//
+// 资源身份优先用分享链接（同一资源换帖重发也能拦住），链接为空时回落「频道|帖 ID」；
+// 两者都空则返回空串（无身份可比，退化为不去重）。
+// 刻意不带集号：同一帖的多集共用一次转存；洗版升级由 Status=superseded 与洗版分支
+// 另行处理，不靠幂等键，否则升级会被误判为重复转存而拒绝。
+func TransferIdempotencyKey(subID uint, mediaType string, tmdbID int64, season int, linkURL, channel, postID string) string {
+	identity := strings.TrimSpace(linkURL)
+	if identity == "" {
+		identity = strings.TrimSpace(channel) + "|" + strings.TrimSpace(postID)
+	}
+	if identity == "" {
+		return ""
+	}
+	raw := fmt.Sprintf("%d|%s|%d|%d|%s", subID, strings.TrimSpace(mediaType), tmdbID, season, identity)
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:16])
+}
+
+// ReserveTransfer 转存前占位：把幂等键以 requested 状态落库。
+//
+// 唯一索引 idx_disc_transfer_idem 在并发（定时器与手动「立即搜索」同跑）下兜底：
+// 重复插入即重复转存，返回已有的记录与 ErrTransferDuplicate，调用方据此跳过本次。
+// 返回的占位记录带 ID，后续由 ConfirmTransfer / FailTransfer 推进状态。
+func ReserveTransfer(r *DiscoveryTransferRecord) (*DiscoveryTransferRecord, error) {
+	if r.IdempotencyKey == "" {
+		// 无幂等键（资源身份缺失）：退化为普通写入，不阻断转存
+		return r, CreateTransferRecord(r)
+	}
+	if existing, err := FindTransferByIdempotencyKey(r.IdempotencyKey); err == nil && existing != nil {
+		return existing, ErrTransferDuplicate
+	}
+	r.TransferState = TransferStateRequested
+	if r.CreatedAt.IsZero() {
+		r.CreatedAt = time.Now()
+	}
+	if err := ddb.Db.Create(r).Error; err != nil {
+		// 唯一索引冲突（并发插入撞车）→ 查明是同键即视为重复
+		if existing, ferr := FindTransferByIdempotencyKey(r.IdempotencyKey); ferr == nil && existing != nil {
+			return existing, ErrTransferDuplicate
+		}
+		return nil, err
+	}
+	return r, nil
+}
+
+// ConfirmTransfer 把占位记录推进为 confirmed（转存成功）
+func ConfirmTransfer(id uint) error {
+	if id == 0 {
+		return nil
+	}
+	return ddb.Db.Model(&DiscoveryTransferRecord{}).Where("id = ?", id).
+		Update("transfer_state", TransferStateConfirmed).Error
+}
+
+// FailTransfer 把占位记录推进为 failed（转存失败，可重试）
+func FailTransfer(id uint) error {
+	if id == 0 {
+		return nil
+	}
+	return ddb.Db.Model(&DiscoveryTransferRecord{}).Where("id = ?", id).
+		Update("transfer_state", TransferStateFailed).Error
+}
+
+// FindTransferByIdempotencyKey 按幂等键查转存记录（不存在返回 nil, nil）
+func FindTransferByIdempotencyKey(key string) (*DiscoveryTransferRecord, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, nil
+	}
+	var rec DiscoveryTransferRecord
+	err := ddb.Db.Where("idempotency_key = ?", key).First(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &rec, nil
 }
 
 // HasSubscriptionRecord 影片级订阅去重：该订阅的指定片（+季）是否已转存过。

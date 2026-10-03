@@ -253,6 +253,12 @@ func runChannelBatchForSubs(subs []DiscoverySubscription, ch *DiscoveryChannel) 
 	ctx, cancel := context.WithTimeout(context.Background(), channelBatchTimeout)
 	defer cancel()
 
+	// ★ 停机追赶：停机超过追赶窗口时不再从旧游标深翻全部积压（会一次性补转存打爆网盘），
+	// 而是把游标直接提升到频道最新一页。被跳过的旧游标在存在回溯订阅时冻结保存，
+	// 之后每轮回补一小段直到追上。必须在抓取之前判定，因为它可能改写 stopID 与游标。
+	catchup := planChannelCatchup(ch, subs, 0)
+	applyChannelCatchup(ch, &ctx, &stopID, catchup)
+
 	posts, pages, err := tgchannel.ParseChannelPageRange(ctx, channelName, stopID, 100)
 	if err != nil {
 		// 部分失败：已抓到的帖照常分发（丢弃会让这些帖永远等不到下一轮），
@@ -267,6 +273,8 @@ func runChannelBatchForSubs(subs []DiscoverySubscription, ch *DiscoveryChannel) 
 	if len(posts) == 0 {
 		// 无新帖也要落 LastRunAt，前端才能显示「上次运行时间」。
 		ch.LastRunAt = now
+		// 追赶态下无新帖即已追平：清空冻结起点，避免下一轮继续按追赶窗口回补。
+		syncChannelCheckpoints(ch, posts)
 		if err := SaveChannel(ch); err != nil {
 			log.Printf("[discovery] TG 频道订阅：频道 %s 保存运行时间失败：%v", channelName, err)
 		}
@@ -297,8 +305,14 @@ func runChannelBatchForSubs(subs []DiscoverySubscription, ch *DiscoveryChannel) 
 
 	// 翻页中断（err != nil）时本轮窗口不完整：若把游标推到本轮最旧帖，中间没扫到的积压
 	// 会被永久越过，故只在完整窗口（err == nil）时才推进。
+	// 追赶态下同理：applyChannelCatchup 已把游标钉在最新帖，此处再推进只会前进游标而非越过积压。
 	if err == nil && batchCursor != "" && postIDGreater(batchCursor, ch.LastPostID) {
 		ch.LastPostID = batchCursor
+	}
+	// 追赶态下按本轮实际扫过的窗口推进冻结起点（追平则清空）。必须在游标推进之后调用：
+	// advanceChannelCatchup 会与本轮游标比较以判断是否已进入最新一页范围。
+	if err == nil {
+		advanceChannelCatchup(ch, posts)
 	}
 	ch.LastRunAt = now
 	if err := SaveChannel(ch); err != nil {
@@ -512,6 +526,14 @@ func runChannelSubscriptionOnce(sub *DiscoverySubscription, ch *DiscoveryChannel
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	// ★ 停机追赶（仅非回溯路径）。
+	// 回溯模式本来就有意忽略游标、翻固定页数去补历史，且本轮不推进游标，
+	// 故追赶判定对它没有意义，跳过以免干扰其语义。
+	if !backfill {
+		catchup := planChannelCatchup(ch, []DiscoverySubscription{*sub}, 0)
+		applyChannelCatchup(ch, &ctx, &stopID, catchup)
+	}
+
 	posts, pages, err := tgchannel.ParseChannelPageRange(ctx, channelName, stopID, maxPages)
 	if err != nil {
 		// 部分失败：已抓到的帖照常处理，但本轮窗口不完整，游标不推进（见下方 err == nil 判定）。
@@ -524,6 +546,10 @@ func runChannelSubscriptionOnce(sub *DiscoverySubscription, ch *DiscoveryChannel
 	now := time.Now()
 	if len(posts) == 0 {
 		ch.LastRunAt = now
+		if !backfill {
+			// 追赶态下无新帖即已追平：清空冻结起点。
+			syncChannelCheckpoints(ch, posts)
+		}
 		if err := SaveChannel(ch); err != nil {
 			log.Printf("[discovery] TG 频道订阅：频道 %s 保存运行时间失败：%v", channelName, err)
 		}
@@ -543,6 +569,10 @@ func runChannelSubscriptionOnce(sub *DiscoverySubscription, ch *DiscoveryChannel
 		if err == nil {
 			ch.LastPostID = newMaxID
 		}
+	}
+	// 追赶态下按本轮实际扫过的窗口推进冻结起点（追平则清空）。理由同 runChannelBatchForSubs。
+	if err == nil {
+		advanceChannelCatchup(ch, posts)
 	}
 	ch.LastRunAt = now
 	if err := SaveChannel(ch); err != nil {
