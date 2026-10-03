@@ -18,6 +18,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
@@ -755,29 +756,18 @@ func processChannelPostsForSub(sub *DiscoverySubscription, ch *DiscoveryChannel,
 				}
 			}
 
-			// ---- 转存（限流自动重试 + 槽位节流）----
-			if err := awaitTransferSlot(ctx, providerSlotKey(provider), transferSlotInterval(provider)); err != nil {
-				return newMaxID, buildChannelSummary(ch.ChannelName(), pages, hitPosts, linkCount, transferred, skipped, newMaxID, backfill), false
-			}
-			title, total, err := retryTransferOnRateLimit(ctx, func() (string, int, error) {
-				return TransferShareLink(ctx, l.URL, l.Pwd, provider)
-			})
-			if err != nil {
-				failedIDs = append(failedIDs, p.PostID)
-				recordMonitorFailed(sub, ch, p, msgURL, l.FullURL(), err.Error())
-				sendTransferFailedNotification(*sub, ch, l.FullURL(), err.Error())
-				log.Printf("[discovery] TG 频道订阅 #%d：帖 %s 转存失败：%v", sub.ID, p.PostID, err)
-				continue
-			}
-
-			transferred++
+			// ---- 转存幂等占位 ----
+			// 必须在调网盘接口【之前】落库：HasEpisodeRecord/HasLinkRecord 是「查询后插入」，
+			// 定时器一轮与用户手动「立即搜索」同时跑到同一条资源时，两边都会查到「不存在」
+			// 然后都去转存。占位写入把判定交给数据库的唯一索引，使并发轮次在「请求中」
+			// 窗口内也能被拦住。占位失败（非重复）不阻断转存，只退化为原有去重语义。
 			rec := &DiscoveryTransferRecord{
 				SourceType:     provider,
 				SubscriptionID: sub.ID,
 				MediaType:      sub.MediaType,
 				TMDBID:         sub.TMDBID,
 				Season:         season,
-				Title:          firstNonEmptyStr(recTitle(sub), firstNonEmptyStr(title, sub.Title)),
+				Title:          recTitle(sub),
 				PostID:         p.PostID,
 				LinkURL:        l.URL,
 				Episode:        JoinEpisodeKeys(epKeys),
@@ -789,8 +779,72 @@ func processChannelPostsForSub(sub *DiscoverySubscription, ch *DiscoveryChannel,
 				rec.Effect = spec.Effect
 				rec.SizeGB = spec.SizeGB
 			}
-			if err := CreateTransferRecord(rec); err != nil {
-				log.Printf("[discovery] TG 频道订阅 #%d：写转存记录失败：%v", sub.ID, err)
+			rec.IdempotencyKey = TransferIdempotencyKey(sub.ID, sub.MediaType, sub.TMDBID, season, l.URL, ch.ChannelName(), p.PostID)
+
+			// ---- 转存（限流自动重试 + 槽位节流）----
+			if err := awaitTransferSlot(ctx, providerSlotKey(provider), transferSlotInterval(provider)); err != nil {
+				return newMaxID, buildChannelSummary(ch.ChannelName(), pages, hitPosts, linkCount, transferred, skipped, newMaxID, backfill), false
+			}
+
+			rec, rerr := ReserveTransfer(rec)
+			if errors.Is(rerr, ErrTransferDuplicate) {
+				recordMonitorSkipped(sub, ch, p, msgURL, l.FullURL(), "去重跳过：该资源已转存过（幂等键命中）")
+				skipped++
+				continue
+			}
+			if rerr != nil {
+				// 占位失败（非重复）不阻断转存：退化为原有去重查询语义。
+				log.Printf("[discovery] TG 频道订阅 #%d：转存占位写入失败（继续转存）：%v", sub.ID, rerr)
+				rec = nil
+			}
+
+			title, total, err := retryTransferOnRateLimit(ctx, func() (string, int, error) {
+				return TransferShareLink(ctx, l.URL, l.Pwd, provider)
+			})
+			if err != nil {
+				if rec != nil {
+					if ferr := FailTransfer(rec.ID); ferr != nil {
+						log.Printf("[discovery] TG 频道订阅 #%d：转存失败状态写入失败：%v", sub.ID, ferr)
+					}
+				}
+				failedIDs = append(failedIDs, p.PostID)
+				recordMonitorFailed(sub, ch, p, msgURL, l.FullURL(), err.Error())
+				sendTransferFailedNotification(*sub, ch, l.FullURL(), err.Error())
+				log.Printf("[discovery] TG 频道订阅 #%d：帖 %s 转存失败：%v", sub.ID, p.PostID, err)
+				continue
+			}
+
+			transferred++
+			// 占位阶段已落库（rec 来自 ReserveTransfer），此处只补运行时才知道的字段并确认状态。
+			if rec != nil {
+				rec.Title = firstNonEmptyStr(recTitle(sub), firstNonEmptyStr(title, sub.Title))
+				if err := ConfirmTransfer(rec.ID); err != nil {
+					log.Printf("[discovery] TG 频道订阅 #%d：转存确认状态写入失败：%v", sub.ID, err)
+				}
+			} else {
+				// 占位失败退化为原语义时，仍需补一条记录（与旧行为一致）。
+				fallback := &DiscoveryTransferRecord{
+					SourceType:     provider,
+					SubscriptionID: sub.ID,
+					MediaType:      sub.MediaType,
+					TMDBID:         sub.TMDBID,
+					Season:         season,
+					Title:          firstNonEmptyStr(recTitle(sub), firstNonEmptyStr(title, sub.Title)),
+					PostID:         p.PostID,
+					LinkURL:        l.URL,
+					Episode:        JoinEpisodeKeys(epKeys),
+				}
+				if processingWash {
+					fallback.Resolution = spec.Resolution
+					fallback.Source = spec.Source
+					fallback.Codec = spec.Codec
+					fallback.Effect = spec.Effect
+					fallback.SizeGB = spec.SizeGB
+				}
+				if err := CreateTransferRecord(fallback); err != nil {
+					log.Printf("[discovery] TG 频道订阅 #%d：写转存记录失败：%v", sub.ID, err)
+				}
+				rec = fallback
 			}
 
 			// 洗版成功后把被替换的旧记录标记为 superseded（新仓库的收录判定已排除该状态，

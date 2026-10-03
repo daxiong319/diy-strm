@@ -235,9 +235,16 @@ var ErrTransferDuplicate = errors.New("该资源已转存过（幂等键命中�
 func TransferIdempotencyKey(subID uint, mediaType string, tmdbID int64, season int, linkURL, channel, postID string) string {
 	identity := strings.TrimSpace(linkURL)
 	if identity == "" {
-		identity = strings.TrimSpace(channel) + "|" + strings.TrimSpace(postID)
+		// 注意：必须先各自判空再拼，不能直接拼 "chan|post" —— 两者都空时会得到 "|"，
+		// 非空但毫无身份含义，于是所有「无身份」资源会撞到同一个键上，
+		// 第一条之后全被判为重复而永远转不进去。
+		c, pid := strings.TrimSpace(channel), strings.TrimSpace(postID)
+		if c != "" || pid != "" {
+			identity = c + "|" + pid
+		}
 	}
 	if identity == "" {
+		// 无任何可比的资源身份：返回空键，由调用方退化为「不去重」
 		return ""
 	}
 	raw := fmt.Sprintf("%d|%s|%d|%d|%s", subID, strings.TrimSpace(mediaType), tmdbID, season, identity)
