@@ -133,6 +133,10 @@ func ParseChannelPage(ctx context.Context, channel string) ([]ChannelPost, error
 //     空页 / 页数超 maxPages / ctx 取消。maxPages<=0 时按单页处理。
 //
 // 跨页按 PostID 去重、整体新→旧排序。返回帖子列表、实际请求页数与错误。
+//
+// 翻页中途失败（第 2 页起网络错误 / ctx 取消）时不丢弃已得结果，而是连同该错误一起返回：
+// 结果可能未追平 stopID 游标，调用方据此判断「是否已扫到游标边界」，避免把未追平的游标
+// 当成已追平推进，从而永久跳过中间的帖。
 func ParseChannelPageRange(ctx context.Context, channel string, stopID string, maxPages int) ([]ChannelPost, int, error) {
 	channel = normalizeChannelName(channel)
 	if channel == "" {
@@ -148,6 +152,9 @@ func ParseChannelPageRange(ctx context.Context, channel string, stopID string, m
 	beforeID := ""
 	pages := 0
 	stop := false
+	// partialErr 翻页中途失败时的错误：已得结果照常返回，同时把错误带出，
+	// 让调用方能区分「已扫到游标边界」与「翻页中断、后面还有没扫到的帖」。
+	var partialErr error
 
 	for page := 1; page <= maxPages && !stop; page++ {
 		select {
@@ -155,7 +162,9 @@ func ParseChannelPageRange(ctx context.Context, channel string, stopID string, m
 			if len(all) == 0 {
 				return nil, pages, ctx.Err()
 			}
-			return dedupChannelPosts(all, seen), pages, nil
+			partialErr = ctx.Err()
+			stop = true
+			continue
 		default:
 		}
 
@@ -168,8 +177,9 @@ func ParseChannelPageRange(ctx context.Context, channel string, stopID string, m
 			if len(all) == 0 {
 				return nil, pages, err
 			}
-			// 已翻到部分页后失败：返回已得结果，不再继续
-			return dedupChannelPosts(all, seen), pages, nil
+			// 已翻到部分页后失败：返回已得结果，不再继续（错误一并带出）
+			partialErr = err
+			break
 		}
 		pages++
 		if len(posts) == 0 {
@@ -207,9 +217,11 @@ func ParseChannelPageRange(ctx context.Context, channel string, stopID string, m
 			break
 		}
 
-		// 用本页最旧帖 ID 继续向前翻
+		// 用本页最旧帖 ID 继续向前翻（必须严格递减：服务端异常时 ?before= 可能不生效，
+		// 若不校验就会出现 beforeID 长期不变 → 逐页重复同一窗口直到 maxPages 的长尾空转。
+		// beforeID=="" 是首页，无参照点，直接采用）
 		oldest := posts[len(posts)-1].PostID
-		if oldest == "" {
+		if oldest == "" || (beforeID != "" && !postIDNewer(beforeID, oldest)) {
 			break
 		}
 		beforeID = oldest
@@ -226,7 +238,9 @@ func ParseChannelPageRange(ctx context.Context, channel string, stopID string, m
 	sort.Slice(all, func(i, j int) bool {
 		return postIDNewer(all[i].PostID, all[j].PostID)
 	})
-	return all, pages, nil
+	// 注意：这里不能调 dedupChannelPosts —— all 的成员已全部登记在 seen 中，
+	// 再按 seen 过滤会把结果清空（seen 是翻页期间的去重账本，不是待过滤集合）。
+	return all, pages, partialErr
 }
 
 // dedupChannelPosts 追加式去重辅助（ParseChannelPageRange 内部用，保持新→旧输入序）

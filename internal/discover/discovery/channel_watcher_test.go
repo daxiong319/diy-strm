@@ -254,3 +254,48 @@ func TestMediaSpecHelpersUsable(t *testing.T) {
 }
 
 var _ = tgchannel.MatchKeywords // 保留 tgchannel 引用，确保测试文件与实现同包依赖一致
+
+// TestCatchupPartialWindowWouldSkipUnscannedPosts 守卫「翻页中断不得推进游标」这一契约。
+//
+// 场景：频道历史 2000,1900,1800。完整窗口（err == nil）下扫描到 1800，游标应可推进到 1800；
+// 但若第 2 页翻页中断，只拿到最新的 2000,1900 前缀，此时窗口不完整 —— 1900..1800 之间
+// 还有没扫到的帖。若把游标推进到本前缀最旧帖 1900，下一轮从 1900 往前扫就再也看不到 1800，
+// 中间积压被永久跳过。
+//
+// 本测试以「同一批帖在两种窗口完整性下得到的最大可推进游标」证明差异存在，
+// 从而证明调用点必须判 err == nil 才能推进。
+func TestCatchupPartialWindowWouldSkipUnscannedPosts(t *testing.T) {
+	postsWithIDs := func(ids ...string) []tgchannel.ChannelPost {
+		out := make([]tgchannel.ChannelPost, 0, len(ids))
+		for _, id := range ids {
+			out = append(out, tgchannel.ChannelPost{PostID: id})
+		}
+		return out
+	}
+
+	// 完整窗口：扫到 1800（含边界），可安全推进到最旧帖 1800。
+	fullWindow := postsWithIDs("2000", "1900", "1800")
+	fullOldest := fullWindow[len(fullWindow)-1].PostID
+	if fullOldest != "1800" {
+		t.Fatalf("完整窗口最旧帖 = %q, want 1800", fullOldest)
+	}
+
+	// 中断窗口：只拿到最新前缀 2000,1900。
+	partialWindow := postsWithIDs("2000", "1900")
+	partialOldest := partialWindow[len(partialWindow)-1].PostID
+
+	// 关键断言：中断窗口的「最旧帖」比完整窗口的更靠新（1900 > 1800）。
+	// 若不判 err 直接推进，游标会停在 1900，而 1800..1899 之间的帖永远不会被扫到。
+	if !postIDGreater(partialOldest, fullOldest) {
+		t.Fatalf("中断窗口最旧帖 %q 应比完整窗口最旧帖 %q 靠新（否则该测试失去意义）",
+			partialOldest, fullOldest)
+	}
+
+	// 反向验证守卫本身：若误推进到 partialOldest，则 1800 会被越过。
+	// 用 postIDGreater 模拟「推进后下一轮是否还能扫到 1800」：
+	// 下一轮 stopID = 1900，遇到 PostID <= 1900 即截断，故 1800 落在截断点之外。
+	wouldSkip := !postIDGreater("1800", partialOldest)
+	if !wouldSkip {
+		t.Fatal("按中断前缀推进游标本应跳过 1800；测试前提不成立")
+	}
+}

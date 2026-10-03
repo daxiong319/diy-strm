@@ -255,8 +255,13 @@ func runChannelBatchForSubs(subs []DiscoverySubscription, ch *DiscoveryChannel) 
 
 	posts, pages, err := tgchannel.ParseChannelPageRange(ctx, channelName, stopID, 100)
 	if err != nil {
-		log.Printf("[discovery] TG 频道订阅：频道 %s 抓取失败：%v", channelName, err)
-		return fmt.Sprintf("频道 %s 抓取失败", channelName)
+		// 部分失败：已抓到的帖照常分发（丢弃会让这些帖永远等不到下一轮），
+		// 但本轮窗口不完整，下面的游标推进必须跳过。
+		if len(posts) == 0 {
+			log.Printf("[discovery] TG 频道订阅：频道 %s 抓取失败：%v", channelName, err)
+			return fmt.Sprintf("频道 %s 抓取失败", channelName)
+		}
+		log.Printf("[discovery] TG 频道订阅：频道 %s 翻页中断（已得 %d 帖，翻 %d 页），本轮按部分结果处理且不推进游标：%v", channelName, len(posts), pages, err)
 	}
 	now := time.Now()
 	if len(posts) == 0 {
@@ -290,7 +295,9 @@ func runChannelBatchForSubs(subs []DiscoverySubscription, ch *DiscoveryChannel) 
 		}
 	}
 
-	if batchCursor != "" && postIDGreater(batchCursor, ch.LastPostID) {
+	// 翻页中断（err != nil）时本轮窗口不完整：若把游标推到本轮最旧帖，中间没扫到的积压
+	// 会被永久越过，故只在完整窗口（err == nil）时才推进。
+	if err == nil && batchCursor != "" && postIDGreater(batchCursor, ch.LastPostID) {
 		ch.LastPostID = batchCursor
 	}
 	ch.LastRunAt = now
@@ -507,8 +514,12 @@ func runChannelSubscriptionOnce(sub *DiscoverySubscription, ch *DiscoveryChannel
 
 	posts, pages, err := tgchannel.ParseChannelPageRange(ctx, channelName, stopID, maxPages)
 	if err != nil {
-		log.Printf("[discovery] TG 频道订阅：频道 %s 抓取失败：%v", channelName, err)
-		return fmt.Sprintf("频道 %s 抓取失败：%v", channelName, err), false
+		// 部分失败：已抓到的帖照常处理，但本轮窗口不完整，游标不推进（见下方 err == nil 判定）。
+		if len(posts) == 0 {
+			log.Printf("[discovery] TG 频道订阅：频道 %s 抓取失败：%v", channelName, err)
+			return fmt.Sprintf("频道 %s 抓取失败：%v", channelName, err), false
+		}
+		log.Printf("[discovery] TG 频道订阅：频道 %s 翻页中断（已得 %d 帖，翻 %d 页），本轮按部分结果处理且不推进游标：%v", channelName, len(posts), pages, err)
 	}
 	now := time.Now()
 	if len(posts) == 0 {
@@ -528,7 +539,10 @@ func runChannelSubscriptionOnce(sub *DiscoverySubscription, ch *DiscoveryChannel
 		return summary, ok
 	}
 	if newMaxID != "" && postIDGreater(newMaxID, ch.LastPostID) {
-		ch.LastPostID = newMaxID
+		// 注意：这里只在完整窗口下才推进（err == nil）。
+		if err == nil {
+			ch.LastPostID = newMaxID
+		}
 	}
 	ch.LastRunAt = now
 	if err := SaveChannel(ch); err != nil {
