@@ -6,9 +6,13 @@ import AppButton from "@/components/base/AppButton.vue";
 import BandMenuButton from "@/components/admin/band/BandMenuButton.vue";
 import SectionTabBar from "@/components/admin/SectionTabBar.vue";
 import WebDAVSettings from "@/components/admin/WebDAVSettings.vue";
+import AsyncErrorPanel from "@/components/common/AsyncErrorPanel.vue";
 // 本地挂载面板较大且非默认 tab，按需加载；type-only import 仅用于 ref 类型，不引入代码。
 import type FuseManagementComponent from "@/components/admin/FuseManagement.vue";
-const FuseManagement = defineAsyncComponent(() => import("@/components/admin/FuseManagement.vue"));
+const FuseManagement = defineAsyncComponent({
+  loader: () => import("@/components/admin/FuseManagement.vue"),
+  errorComponent: AsyncErrorPanel,
+});
 import { useSectionTabRoute } from "@/composables/useSectionTabRoute";
 import { useSettingsPageDirty } from "@/composables/useSettingsPageDirty";
 import { toast } from "@/composables/useToast";

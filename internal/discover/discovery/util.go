@@ -36,6 +36,11 @@ type tmdbCreditItem = tmdb.PersonCreditItem
 // tmdbGenre TMDB 类型别名
 type tmdbGenre = tmdb.Genre
 
+// 详情/演职员响应类型别名
+type tmdbMovieDetail = tmdb.MovieDetail
+type tmdbTvDetail = tmdb.TvDetail
+type tmdbPepolesRes = tmdb.PepolesRes
+
 // models_globalTmdbClient TMDB 客户端快捷获取
 func models_globalTmdbClient() *tmdb.Client {
 	return dmodels.GlobalScrapeSettings.GetTmdbClient()

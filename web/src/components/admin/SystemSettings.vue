@@ -30,10 +30,14 @@ import SettingsHelpTooltip from "@/components/admin/SettingsHelpTooltip.vue";
 import ApiKeySettings from "@/components/admin/ApiKeySettings.vue";
 import NotifyChannelSettings from "@/components/admin/NotifyChannelSettings.vue";
 import SvgIcon from "@/components/icons/SvgIcon.vue";
+import AsyncErrorPanel from "@/components/common/AsyncErrorPanel.vue";
 import { isCacheSettingKey } from "@/constants/cacheSettings";
 import { getSkinPref, previewSkin, restoreSavedSkin, setSkinPref, type SkinPref } from "@/utils/theme";
 
-const BackupRestorePanel = defineAsyncComponent(() => import("@/components/admin/BackupRestorePanel.vue"));
+const BackupRestorePanel = defineAsyncComponent({
+  loader: () => import("@/components/admin/BackupRestorePanel.vue"),
+  errorComponent: AsyncErrorPanel,
+});
 
 const props = withDefaults(
   defineProps<{

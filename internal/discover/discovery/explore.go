@@ -14,6 +14,7 @@ import (
 	"litepan/internal/discover/hdhive"
 	"litepan/internal/discover/dmodels"
 	"litepan/internal/discover/tmdb"
+	"litepan/internal/domain"
 )
 
 // ---------------------------------------------------------------------------
@@ -466,16 +467,17 @@ func hdhiveStreamingTop(ctx context.Context, provider, region, mediaType string,
 		return fc.GetStreamingTop(ctx, provider, region, mediaType)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("获取RE0流媒体榜失败：%v", err)
+		// 上游（tgto123 反代）故障按上游错误返回可读文案，不再裸 500
+		return nil, domain.Errorf(domain.CodeDriverError, "榜单数据源（RE0）暂时不可用：%v", err)
 	}
 	if !resp.Success && len(resp.Data) == 0 {
 		msg := firstNonEmptyStr(resp.Message, resp.Description, "上游接口无数据")
-		return nil, fmt.Errorf("获取RE0流媒体榜失败：%s", msg)
+		return nil, domain.Errorf(domain.CodeDriverError, "榜单数据源（RE0）暂时不可用：%s", msg)
 	}
 	var payload FeedItemPayload
 	if len(resp.Data) > 0 {
 		if err := json.Unmarshal(resp.Data, &payload); err != nil {
-			return nil, fmt.Errorf("解析RE0流媒体榜失败：%v", err)
+			return nil, domain.Errorf(domain.CodeDriverError, "榜单数据源（RE0）暂时不可用：响应解析失败：%v", err)
 		}
 	}
 	items := make([]Item, 0, len(payload.Items))

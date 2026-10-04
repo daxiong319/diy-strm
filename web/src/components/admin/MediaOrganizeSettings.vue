@@ -88,6 +88,7 @@ const {
   tmdb_language: "zh-CN",
   tmdb_api_host: "https://api.themoviedb.org",
   tmdb_image_host: "https://image.tmdb.org",
+  tmdb_proxy_url: "",
   api_request_interval_ms: 300,
   tmdb_request_interval_ms: 250,
   file_extensions: "",
@@ -430,6 +431,21 @@ defineExpose(
           </template>
           <template #control>
             <AppInput v-model="settings.tmdb_image_host" placeholder="https://image.tmdb.org" />
+          </template>
+        </SettingsRow>
+
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('tmdb_proxy_url')">
+          <template #info>
+            <div class="settings-row__label">
+              <span>TMDB HTTP 代理</span>
+              <SettingsHelpTooltip title="TMDB HTTP 代理说明">
+                <p>仅用于 TMDB API 出站请求（影视发现与媒体整理），不影响其它功能。</p>
+                <p>格式：http://host:port 或 socks5://host:port；留空表示直连。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <AppInput v-model="settings.tmdb_proxy_url" placeholder="http://host:port 或 socks5://host:port，留空=直连" />
           </template>
         </SettingsRow>
       </SettingsCard>

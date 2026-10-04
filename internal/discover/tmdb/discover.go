@@ -23,7 +23,7 @@ func (c *Client) GetMovieList(category string, language string, page int) (*Sear
 	if language != "" {
 		req.SetQueryParam("language", language)
 	}
-	resp, err := c.doRequest(fmt.Sprintf("/movie/%s", category), req, MakeRequestConfig(2, 5, 5))
+	resp, err := c.doRequest(fmt.Sprintf("/movie/%s", category), req, MakeRequestConfig(1, 2, 5))
 	if err != nil {
 		dutil.TMDBLog.Errorf("获取电影榜单失败（%s）：%+v", category, err)
 		return nil, err
@@ -75,7 +75,7 @@ func (c *Client) GetTvList(category string, language string, page int) (*SearchT
 	if language != "" {
 		req.SetQueryParam("language", language)
 	}
-	resp, err := c.doRequest(fmt.Sprintf("/tv/%s", category), req, MakeRequestConfig(2, 5, 5))
+	resp, err := c.doRequest(fmt.Sprintf("/tv/%s", category), req, MakeRequestConfig(1, 2, 5))
 	if err != nil {
 		dutil.TMDBLog.Errorf("获取剧集榜单失败（%s）：%+v", category, err)
 		return nil, err
@@ -135,7 +135,7 @@ func (c *Client) DiscoverMovies(q DiscoverQuery, language string, page int) (*Se
 		req.SetQueryParam("language", language)
 	}
 	applyDiscoverParams(req, q, sortKey, "primary_release_year", "primary_release_date.desc")
-	resp, err := c.doRequest("/discover/movie", req, MakeRequestConfig(2, 5, 5))
+	resp, err := c.doRequest("/discover/movie", req, MakeRequestConfig(1, 2, 5))
 	if err != nil {
 		dutil.TMDBLog.Errorf("筛选电影失败：%+v", err)
 		return nil, err
@@ -163,7 +163,7 @@ func (c *Client) DiscoverTvs(q DiscoverQuery, language string, page int) (*Searc
 		req.SetQueryParam("language", language)
 	}
 	applyDiscoverParams(req, q, sortKey, "first_air_date_year", "first_air_date.desc")
-	resp, err := c.doRequest("/discover/tv", req, MakeRequestConfig(2, 5, 5))
+	resp, err := c.doRequest("/discover/tv", req, MakeRequestConfig(1, 2, 5))
 	if err != nil {
 		dutil.TMDBLog.Errorf("筛选剧集失败：%+v", err)
 		return nil, err

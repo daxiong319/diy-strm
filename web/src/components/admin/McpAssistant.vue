@@ -254,6 +254,7 @@ void loadSessions();
       </div>
 
       <AppStateBlock v-if="sessionsLoading" loading message="加载会话中…" min-height="120px" />
+      <div v-else-if="historyError" class="mcp-assistant__side-error">{{ historyError }}</div>
       <div v-else-if="!sessions.length" class="mcp-assistant__side-empty">
         还没有历史会话。左侧提问后会自动保存。
       </div>
@@ -407,6 +408,13 @@ void loadSessions();
   font-size: 12px;
   line-height: 1.6;
   color: var(--text-muted);
+}
+
+.mcp-assistant__side-error {
+  padding: 12px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--danger, #e5484d);
 }
 
 .mcp-assistant__sessions {

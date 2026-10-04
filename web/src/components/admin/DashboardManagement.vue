@@ -15,8 +15,12 @@ import type { Account } from "@/api/types";
 import type { StrmTask } from "@/api/strm";
 import SectionTabBar from "@/components/admin/SectionTabBar.vue";
 import AppCardActionButton from "@/components/base/AppCardActionButton.vue";
+import AsyncErrorPanel from "@/components/common/AsyncErrorPanel.vue";
 // 日志面板非默认 tab，按需加载,减小仪表盘首包。
-const SystemLogs = defineAsyncComponent(() => import("@/components/admin/SystemLogs.vue"));
+const SystemLogs = defineAsyncComponent({
+  loader: () => import("@/components/admin/SystemLogs.vue"),
+  errorComponent: AsyncErrorPanel,
+});
 import { useSectionTabRoute } from "@/composables/useSectionTabRoute";
 import { useAdminPageLoading } from "@/composables/useAdminLoadingBar";
 import { toast } from "@/composables/useToast";

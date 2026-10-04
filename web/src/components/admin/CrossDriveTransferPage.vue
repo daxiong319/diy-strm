@@ -2,17 +2,20 @@
 import { defineAsyncComponent, ref } from "vue";
 import AppButton from "@/components/base/AppButton.vue";
 import SectionTabBar from "@/components/admin/SectionTabBar.vue";
+import AsyncErrorPanel from "@/components/common/AsyncErrorPanel.vue";
 import { useSectionTabRoute } from "@/composables/useSectionTabRoute";
 
 // 普传视图（默认）：先下载后上传的整目录搬家。
-const CrossDrivePlainTransfer = defineAsyncComponent(
-  () => import("@/components/admin/CrossDrivePlainTransfer.vue"),
-);
+const CrossDrivePlainTransfer = defineAsyncComponent({
+  loader: () => import("@/components/admin/CrossDrivePlainTransfer.vue"),
+  errorComponent: AsyncErrorPanel,
+});
 // 秒传视图：沿用原「跨盘秒传」完整交互（scan/probe/execute + 兜底 relay），
 // 懒加载避免普传首屏拉取大组件；v-show 保活两边的状态。
-const CrossDriveTransfer = defineAsyncComponent(
-  () => import("@/components/admin/CrossDriveTransfer.vue"),
-);
+const CrossDriveTransfer = defineAsyncComponent({
+  loader: () => import("@/components/admin/CrossDriveTransfer.vue"),
+  errorComponent: AsyncErrorPanel,
+});
 
 const PLAIN_TAB = "plain";
 const RAPID_TAB = "rapid";

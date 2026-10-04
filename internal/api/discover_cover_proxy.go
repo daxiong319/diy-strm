@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"litepan/internal/discover/discovery"
+	"litepan/internal/discover/dmodels"
 )
 
 // 豆瓣海报防盗链代理。
@@ -19,8 +20,11 @@ import (
 // 豆瓣来源的海报在页面上恒为占位图。这里由服务端带上豆瓣域 Referer 抓图转发，
 // 前端只请求本站 /api/admin/discovery/cover 即可。
 //
-// 安全约束：只允许白名单内的豆瓣图片主机 + /view/photo/ 路径，避免变成任意 URL
-// 的开放代理（SSRF）。
+// TMDB 图床（image.tmdb.org / mo_tmdb_image_host 指向域）同样纳入：大陆网络下
+// 浏览器直连常加载不出，改由服务端抓图转发。
+//
+// 安全约束：只允许白名单内的豆瓣图片主机（+ /view/photo/ 路径）与 TMDB 图床主机，
+// 避免变成任意 URL 的开放代理（SSRF）。
 
 const (
 	doubanCoverReferer = "https://movie.douban.com/"
@@ -39,6 +43,21 @@ func doubanCoverAllowedHost(host string) bool {
 		return true
 	}
 	return strings.HasSuffix(host, ".doubanio.com") || strings.HasSuffix(host, ".douban.com")
+}
+
+// tmdbCoverAllowedHost 判断主机是否属于允许代理的 TMDB 图床
+// （官方 image.tmdb.org，或 mo_tmdb_image_host 当前指向的自建反代域）
+func tmdbCoverAllowedHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "image.tmdb.org" {
+		return true
+	}
+	if base := strings.TrimSpace(dmodels.GlobalScrapeSettings.GetTmdbImageUrl()); base != "" {
+		if u, err := url.Parse(base); err == nil && strings.EqualFold(u.Hostname(), host) {
+			return true
+		}
+	}
+	return false
 }
 
 // DoubanCoverProxyURL 把豆瓣图片 URL 改写为本站代理地址（非豆瓣图直接返回原值）。
@@ -64,8 +83,26 @@ func DoubanCoverProxyURL(raw string) string {
 	return doubanCoverProxyPath + "?u=" + url.QueryEscape(raw)
 }
 
-// discoveryCoverProxyURL 本包内对 DoubanCoverProxyURL 的短别名
-func discoveryCoverProxyURL(raw string) string { return DoubanCoverProxyURL(raw) }
+// discoveryCoverProxyURL 本包内出口改写入口：豆瓣（防盗链）与 TMDB 图床
+// （大陆直连常不可达）统一改写为本站代理地址，其它地址原样保留。
+func discoveryCoverProxyURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return raw
+	}
+	switch {
+	case tmdbCoverAllowedHost(u.Hostname()):
+		return doubanCoverProxyPath + "?u=" + url.QueryEscape(raw)
+	case doubanCoverAllowedHost(u.Hostname()) && strings.HasPrefix(u.Path, "/view/photo/"):
+		return DoubanCoverProxyURL(raw)
+	default:
+		return raw
+	}
+}
 
 // rewriteDiscoveryCovers 递归改写发现接口响应里的图片字段（poster/backdrop/
 // 演员 profile/still），把豆瓣图床地址换成本站代理地址；非豆瓣地址原样保留。
@@ -131,7 +168,9 @@ func (h *Handler) discoveryCoverProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "非法图片地址", http.StatusBadRequest)
 		return
 	}
-	if !doubanCoverAllowedHost(u.Hostname()) || !strings.HasPrefix(u.Path, "/view/photo/") {
+	isDouban := doubanCoverAllowedHost(u.Hostname()) && strings.HasPrefix(u.Path, "/view/photo/")
+	isTMDB := tmdbCoverAllowedHost(u.Hostname())
+	if !isDouban && !isTMDB {
 		http.Error(w, "不允许代理的图片地址", http.StatusForbidden)
 		return
 	}
@@ -143,8 +182,10 @@ func (h *Handler) discoveryCoverProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	// 豆瓣图床要求豆瓣域 Referer，否则 418
-	req.Header.Set("Referer", doubanCoverReferer)
+	if isDouban {
+		// 豆瓣图床要求豆瓣域 Referer，否则 418；TMDB 图床无此要求
+		req.Header.Set("Referer", doubanCoverReferer)
+	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
 	req.Header.Set("Accept", "image/avif,image/webp,image/*,*/*;q=0.8")
 
@@ -155,7 +196,7 @@ func (h *Handler) discoveryCoverProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		http.Error(w, fmt.Sprintf("豆瓣图床返回 %d", resp.StatusCode), http.StatusBadGateway)
+		http.Error(w, fmt.Sprintf("图床返回 %d", resp.StatusCode), http.StatusBadGateway)
 		return
 	}
 
@@ -178,8 +219,8 @@ var coverProxyClient = &http.Client{
 		if len(via) >= 3 {
 			return fmt.Errorf("重定向次数过多")
 		}
-		if !doubanCoverAllowedHost(req.URL.Hostname()) {
-			return fmt.Errorf("重定向到非豆瓣图床：%s", req.URL.Host)
+		if !doubanCoverAllowedHost(req.URL.Hostname()) && !tmdbCoverAllowedHost(req.URL.Hostname()) {
+			return fmt.Errorf("重定向到非白名单图床：%s", req.URL.Host)
 		}
 		return nil
 	},

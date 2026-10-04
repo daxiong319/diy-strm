@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,9 +14,11 @@ import (
 	"testing/fstest"
 	"time"
 
+	"litepan/internal/adminauth"
 	"litepan/internal/domain"
 	"litepan/internal/notification"
 	"litepan/internal/store"
+	"litepan/internal/upload"
 )
 
 func TestSPAHandlerCompressedAsset(t *testing.T) {
@@ -281,5 +284,81 @@ func TestStreamNotificationUnreadPushesCount(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("请求上下文取消后 SSE handler 未退出")
+	}
+}
+
+// TestSubtitleRoutesExistBehindAdminAuth 锁定字幕路由的挂载位置。
+//
+// 真实事故：前端 subtitle.ts 曾把 base 写成 "/admin/subtitle"，而后端
+// RegisterSubtitleRoutes 挂在 requireAdmin 组根（即 /api/subtitle/*，不在
+// /api/admin 之下，与 mcp.ts ↔ /api/mcp/* 同一约定），两边错位导致字幕页
+// 全部功能 404——chi 对未注册路径返回纯文本 404，前端只能报「请求失败 (404)」。
+//
+// 这里对每条已注册的字幕路由发未认证请求：路由存在时会被 requireAdmin
+// 拦成 401 JSON（error_type=ADMIN_AUTH_REQUIRED）；若有人把注册位置改回
+// /api/admin 之下或改名，本测试立即以 404 失败。
+func TestSubtitleRoutesExistBehindAdminAuth(t *testing.T) {
+	handler := NewRouter(Deps{
+		AdminAuth: adminauth.New(&mcpConfigRepoStub{values: map[string]string{}}, []byte("litepan-router-test-secret"), nil),
+		Uploads:   upload.NewManager(upload.Options{}),
+	})
+
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/subtitle/config"},
+		{http.MethodPut, "/api/subtitle/config"},
+		{http.MethodGet, "/api/subtitle/providers"},
+		{http.MethodPost, "/api/subtitle/providers/test"},
+		{http.MethodPost, "/api/subtitle/search"},
+		{http.MethodPost, "/api/subtitle/match"},
+		{http.MethodPost, "/api/subtitle/download"},
+		{http.MethodPost, "/api/subtitle/sync"},
+		{http.MethodPost, "/api/subtitle/sync/check"},
+		{http.MethodGet, "/api/subtitle/tasks"},
+		{http.MethodPost, "/api/subtitle/tasks/1/retry"},
+		{http.MethodDelete, "/api/subtitle/tasks/1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d（404 说明该路由未挂在 /api/subtitle 下），body = %s", rec.Code, rec.Body.String())
+			}
+			var body struct {
+				Success   bool   `json:"success"`
+				ErrorType string `json:"error_type"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("响应不是合法 JSON：%v（body=%s）", err, rec.Body.String())
+			}
+			if body.Success || body.ErrorType != string(domain.CodeAdminAuthRequired) {
+				t.Fatalf("error_type = %q, success = %v，期望 %s", body.ErrorType, body.Success, domain.CodeAdminAuthRequired)
+			}
+		})
+	}
+}
+
+// TestUnregisteredPathsStillReturn404 是上面的反向对照：确认 401 只来自
+// 「路由存在 + requireAdmin」，而不是 requireAdmin 被误挂到整个 /api
+// 导致未注册路径也返回 401（那种情况下存在性测试会假绿）。
+func TestUnregisteredPathsStillReturn404(t *testing.T) {
+	handler := NewRouter(Deps{
+		AdminAuth: adminauth.New(&mcpConfigRepoStub{values: map[string]string{}}, []byte("litepan-router-test-secret"), nil),
+		Uploads:   upload.NewManager(upload.Options{}),
+	})
+
+	for _, path := range []string{"/api/subtitle/nonexistent", "/api/definitely/not/registered"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("GET %s status = %d，未注册路径应保持 404（否则 401 存在性断言失去区分度）", path, rec.Code)
+		}
 	}
 }

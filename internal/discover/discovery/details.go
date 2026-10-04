@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
+
 	"litepan/internal/discover/dmodels"
 )
 
@@ -14,7 +16,9 @@ import (
 // tmdb movie/tv/person + anilist/bangumi anime + douban）
 // ---------------------------------------------------------------------------
 
-// MediaDetails 详情响应（统一 map，字段对齐参考实现详情渲染所需全集）
+// MediaDetails 详情响应（统一 map，字段对齐参考实现详情渲染所需全集）。
+// 结果整体走内存缓存（cache_ttl_minutes）；hdhive 榜单条目的 entity_key 本就是
+// tmdb:type:id（explore.go），详情同样映射到 tmdb 分支。
 func MediaDetails(source, entityType, externalID string) (map[string]any, error) {
 	source = strings.ToLower(strings.TrimSpace(source))
 	entityType = strings.ToLower(strings.TrimSpace(entityType))
@@ -23,12 +27,26 @@ func MediaDetails(source, entityType, externalID string) (map[string]any, error)
 		return nil, fmt.Errorf("非法条目 ID：%s", externalID)
 	}
 	language := dmodels.GlobalScrapeSettings.GetTmdbLanguage()
-	client := dmodels.GlobalScrapeSettings.GetTmdbClient()
+	cacheKey := fmt.Sprintf("discover:details:v1:%s:%s:%d:%s", source, entityType, id, language)
+	if cached := cacheGet(cacheKey); cached != nil {
+		return deepCopyJSONValue(cached).(map[string]any), nil
+	}
+	result, err := mediaDetailsUncached(source, entityType, externalID, id, language)
+	if err != nil {
+		return nil, err
+	}
+	cacheSet(cacheKey, result)
+	// 返回深拷贝：API 层会往结果里追加订阅状态，出口还会改写图片字段，不能污染缓存
+	return deepCopyJSONValue(result).(map[string]any), nil
+}
 
+// mediaDetailsUncached 实际抓取详情（未命中缓存时调用）
+func mediaDetailsUncached(source, entityType, externalID string, id int64, language string) (map[string]any, error) {
+	client := dmodels.GlobalScrapeSettings.GetTmdbClient()
 	switch {
-	case source == "tmdb" && entityType == "movie":
+	case (source == "tmdb" || source == "hdhive") && entityType == "movie":
 		return tmdbMovieDetails(client, language, id)
-	case source == "tmdb" && entityType == "tv":
+	case (source == "tmdb" || source == "hdhive") && entityType == "tv":
 		return tmdbTvDetails(client, language, id)
 	case source == "tmdb" && entityType == "person":
 		return actorProfile(id)
@@ -41,14 +59,64 @@ func MediaDetails(source, entityType, externalID string) (map[string]any, error)
 	}
 }
 
-// tmdbMovieDetails 电影详情（含演职员）
+// deepCopyJSONValue 深拷贝详情响应里的 map/slice：缓存命中返回副本，
+// 避免出口改写图片字段污染缓存、以及并发请求对共享嵌套 map 的读写竞争。
+func deepCopyJSONValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			out[k] = deepCopyJSONValue(val)
+		}
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(t))
+		for i := range t {
+			out[i] = deepCopyJSONValue(t[i]).(map[string]any)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i := range t {
+			out[i] = deepCopyJSONValue(t[i])
+		}
+		return out
+	case []Item:
+		out := make([]Item, len(t))
+		copy(out, t)
+		return out
+	default:
+		return v
+	}
+}
+
+// tmdbMovieDetails 电影详情（详情与演职员并发请求，演职员失败不阻断）
 func tmdbMovieDetails(client *tmdbClient, language string, id int64) (map[string]any, error) {
-	detail, err := client.GetMovieDetail(id, language)
-	if err != nil {
+	var (
+		detail  *tmdbMovieDetail
+		peoples *tmdbPepolesRes
+	)
+	g := new(errgroup.Group)
+	g.Go(func() error {
+		d, err := client.GetMovieDetail(id, language)
+		if err != nil {
+			return err
+		}
+		detail = d
+		return nil
+	})
+	g.Go(func() error {
+		// 演职员失败沿用原语义：cast/crew 留空，不影响详情主数据
+		if p, err := client.GetMoviePepoles(id, language); err == nil {
+			peoples = p
+		}
+		return nil
+	})
+	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 	cast, crew := []map[string]any{}, []map[string]any{}
-	if peoples, err := client.GetMoviePepoles(id, language); err == nil {
+	if peoples != nil {
 		for _, c := range peoples.Cast {
 			cast = append(cast, personCard(c.ID, c.Name, c.ProfilePath, c.Character, "演员"))
 		}
@@ -76,14 +144,33 @@ func tmdbMovieDetails(client *tmdbClient, language string, id int64) (map[string
 	}, nil
 }
 
-// tmdbTvDetails 剧集详情（含演职员与季列表）
+// tmdbTvDetails 剧集详情（详情与演职员并发请求，演职员失败不阻断）
 func tmdbTvDetails(client *tmdbClient, language string, id int64) (map[string]any, error) {
-	detail, err := client.GetTvDetail(id, language)
-	if err != nil {
+	var (
+		detail  *tmdbTvDetail
+		peoples *tmdbPepolesRes
+	)
+	g := new(errgroup.Group)
+	g.Go(func() error {
+		d, err := client.GetTvDetail(id, language)
+		if err != nil {
+			return err
+		}
+		detail = d
+		return nil
+	})
+	g.Go(func() error {
+		// 演职员失败沿用原语义：cast/crew 留空，不影响详情主数据
+		if p, err := client.GetTvCredits(id, language); err == nil {
+			peoples = p
+		}
+		return nil
+	})
+	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 	cast, crew := []map[string]any{}, []map[string]any{}
-	if peoples, err := client.GetTvCredits(id, language); err == nil {
+	if peoples != nil {
 		for _, c := range peoples.Cast {
 			cast = append(cast, personCard(c.ID, c.Name, c.ProfilePath, c.Character, "演员"))
 		}

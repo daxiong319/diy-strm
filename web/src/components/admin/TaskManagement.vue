@@ -11,6 +11,7 @@ import {
   ref,
   watch,
   watchEffect,
+  type Component,
 } from "vue";
 import { storeToRefs } from "pinia";
 import { getApiErrorMessage } from "@/api/client";
@@ -62,17 +63,21 @@ import AdminTableActionBtn from "@/components/admin/AdminTableActionBtn.vue";
 import AdminRowActions from "@/components/admin/AdminRowActions.vue";
 import SectionTabBar from "@/components/admin/SectionTabBar.vue";
 import BandMenuButton from "@/components/admin/band/BandMenuButton.vue";
+import AsyncErrorPanel from "@/components/common/AsyncErrorPanel.vue";
 import FolderPickerModal from "@/components/file/FolderPickerModal.vue";
   // 重面板仅在对应 Tab 或抽屉首次打开时加载。
 import type CacheRetentionPanelComponent from "@/components/admin/CacheRetentionPanel.vue";
 import type MediaOrganizePanelComponent from "@/components/admin/MediaOrganizePanel.vue";
-const CacheRetentionPanel = defineAsyncComponent(() => import("@/components/admin/CacheRetentionPanel.vue"));
-const CacheSettingsPanel = defineAsyncComponent(() => import("@/components/admin/CacheSettingsPanel.vue"));
-const AutomationPanel = defineAsyncComponent(() => import("@/components/admin/AutomationPanel.vue"));
-const PlaybackRecordPanel = defineAsyncComponent(() => import("@/components/admin/PlaybackRecordPanel.vue"));
-const MoviePilotPanel = defineAsyncComponent(() => import("@/components/admin/MoviePilotPanel.vue"));
-const MediaOrganizePanel = defineAsyncComponent(() => import("@/components/admin/MediaOrganizePanel.vue"));
-const MediaOrganizeSettings = defineAsyncComponent(() => import("@/components/admin/MediaOrganizeSettings.vue"));
+// 面板均为异步 chunk，加载失败时落到错误兜底，避免整块静默空白。
+const asyncPanel = (loader: () => Promise<Component>) =>
+  defineAsyncComponent({ loader, errorComponent: AsyncErrorPanel });
+const CacheRetentionPanel = asyncPanel(() => import("@/components/admin/CacheRetentionPanel.vue"));
+const CacheSettingsPanel = asyncPanel(() => import("@/components/admin/CacheSettingsPanel.vue"));
+const AutomationPanel = asyncPanel(() => import("@/components/admin/AutomationPanel.vue"));
+const PlaybackRecordPanel = asyncPanel(() => import("@/components/admin/PlaybackRecordPanel.vue"));
+const MoviePilotPanel = asyncPanel(() => import("@/components/admin/MoviePilotPanel.vue"));
+const MediaOrganizePanel = asyncPanel(() => import("@/components/admin/MediaOrganizePanel.vue"));
+const MediaOrganizeSettings = asyncPanel(() => import("@/components/admin/MediaOrganizeSettings.vue"));
 import CacheSignalBand from "@/components/admin/CacheSignalBand.vue";
 import AdminSettingsDrawer from "@/components/admin/AdminSettingsDrawer.vue";
 import { useAccountPathLabel } from "@/composables/useAccountPathLabel";

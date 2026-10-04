@@ -71,8 +71,16 @@ func (s *ScrapeSettings) GetTmdbClient() *tmdb.Client {
 	)
 }
 
-// GetProxyUrl 返回代理 URL（发现板块暂未接 LitePan 代理设置，留空=直连）。
-func (s *ScrapeSettings) GetProxyUrl() string { return "" }
+// GetProxyUrl 返回 TMDB 专用代理 URL（mo_tmdb_proxy_url，实时读取；留空=直连）。
+func (s *ScrapeSettings) GetProxyUrl() string {
+	settingsMu.RLock()
+	svc := settingsSvc
+	settingsMu.RUnlock()
+	if svc == nil {
+		return ""
+	}
+	return strings.TrimSpace(svc.String(settings.KeyMOTmdbProxyURL))
+}
 
 // ---------------------------------------------------------------------------
 // GlobalScrapeSettings：包级全局，方法调用时惰性从 LitePan settings 刷新 TMDB 配置。

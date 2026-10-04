@@ -55,7 +55,7 @@ const dirtyKeys = computed(() => Object.keys(dirty));
 
 /** 助理密钥输入框：后端只回传「是否已配置」，不回明文。 */
 const apiKeyInput = ref("");
-/** 用户点「清除密钥」后置位，提交时发空串告知后端删除。 */
+/** 用户点「清除密钥」后置位，提交时发 clear_assistant_api_key 告知后端删除。 */
 const clearApiKey = ref(false);
 
 const enabled = computed({
@@ -145,9 +145,9 @@ async function load() {
 
 function buildPatch(): McpConfigPatch {
   const patch: McpConfigPatch = { ...dirty };
-  // 传空串表示清除已保存的密钥；没动过输入框就不发这个字段。
+  // 后端把空串当「保持原值」，真正清空必须显式发 clear 标记。
   if (clearApiKey.value) {
-    patch.assistant_api_key = "";
+    patch.clear_assistant_api_key = true;
   } else if (apiKeyInput.value) {
     patch.assistant_api_key = apiKeyInput.value;
   }
@@ -401,6 +401,11 @@ onMounted(load);
         </div>
       </SettingsCard>
     </template>
+
+    <AppStateBlock
+      v-else
+      message="配置数据异常：前后端版本可能不匹配，请刷新页面或更新服务端"
+    />
   </div>
 </template>
 

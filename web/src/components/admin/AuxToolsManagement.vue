@@ -1,5 +1,15 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onDeactivated, reactive, ref, watch, watchEffect } from "vue";
+import {
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onDeactivated,
+  reactive,
+  ref,
+  watch,
+  watchEffect,
+  type Component,
+} from "vue";
 import { useRoute } from "vue-router";
 import AppButton from "@/components/base/AppButton.vue";
 import SectionTabBar from "@/components/admin/SectionTabBar.vue";
@@ -8,11 +18,15 @@ import type StrmScrapePanelComponent from "@/components/admin/StrmScrapePanel.vu
 import { useSectionTabRoute } from "@/composables/useSectionTabRoute";
 import { useSettingsPageDirty } from "@/composables/useSettingsPageDirty";
 import { readPanelSaving, type SettingsPanelExpose } from "@/composables/useSettingsForm";
+import AsyncErrorPanel from "@/components/common/AsyncErrorPanel.vue";
 
-const StrmScrapePanel = defineAsyncComponent(() => import("@/components/admin/StrmScrapePanel.vue"));
-const StrmScrapeSettings = defineAsyncComponent(() => import("@/components/admin/StrmScrapeSettings.vue"));
-const CloudToolsPanel = defineAsyncComponent(() => import("@/components/admin/CloudToolsPanel.vue"));
-const BackupRestorePanel = defineAsyncComponent(() => import("@/components/admin/BackupRestorePanel.vue"));
+// 面板均为异步 chunk，加载失败时落到错误兜底，避免整块静默空白。
+const asyncPanel = (loader: () => Promise<Component>) =>
+  defineAsyncComponent({ loader, errorComponent: AsyncErrorPanel });
+const StrmScrapePanel = asyncPanel(() => import("@/components/admin/StrmScrapePanel.vue"));
+const StrmScrapeSettings = asyncPanel(() => import("@/components/admin/StrmScrapeSettings.vue"));
+const CloudToolsPanel = asyncPanel(() => import("@/components/admin/CloudToolsPanel.vue"));
+const BackupRestorePanel = asyncPanel(() => import("@/components/admin/BackupRestorePanel.vue"));
 
 const SCRAPE_TAB = "scrape";
 const PROXY_TAB = "proxy";

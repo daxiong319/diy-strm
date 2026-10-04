@@ -46,8 +46,10 @@ export interface McpConfigPatch {
   assistant_base_url?: string;
   assistant_model_name?: string;
   assistant_prompt?: string;
-  /** 传空串表示清除已保存的密钥。 */
+  /** 新密钥明文；不发或为空串表示保持原值（后端从不回显密钥）。 */
   assistant_api_key?: string;
+  /** 置 true 清除已保存的密钥（空串会被后端当「保持原值」）。 */
+  clear_assistant_api_key?: boolean;
 }
 
 export interface McpTool {

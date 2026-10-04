@@ -12,6 +12,7 @@ import AdminShell from "@/components/admin/AdminShell.vue";
 import WarningBanner from "@/components/admin/WarningBanner.vue";
 import AdminEmptyState from "@/components/admin/AdminEmptyState.vue";
 import AdminAnnouncementModal from "@/components/admin/AdminAnnouncementModal.vue";
+import AsyncErrorPanel from "@/components/common/AsyncErrorPanel.vue";
 import { useAnnouncement } from "@/composables/useAnnouncement";
 
 const adminPageLoaders = {
@@ -28,18 +29,21 @@ const adminPageLoaders = {
   mcp: () => import("@/components/admin/McpSettings.vue"),
   assistant: () => import("@/components/admin/McpAssistant.vue"),
 };
-const DashboardManagement = defineAsyncComponent(adminPageLoaders.dashboard);
-const AccountManagement = defineAsyncComponent(adminPageLoaders.accounts);
-const SystemSettings = defineAsyncComponent(adminPageLoaders.settings);
-const TaskManagement = defineAsyncComponent(adminPageLoaders.tasks);
-const AuxToolsManagement = defineAsyncComponent(adminPageLoaders.tools);
-const CrossDriveTransferPage = defineAsyncComponent(adminPageLoaders["cross-transfer"]);
-const CasManagementPage = defineAsyncComponent(adminPageLoaders.cas);
-const FileShareManagement = defineAsyncComponent(adminPageLoaders.share);
-const DiscoveryPage = defineAsyncComponent(adminPageLoaders.discover);
-const SubtitleSettings = defineAsyncComponent(adminPageLoaders.subtitle);
-const McpSettings = defineAsyncComponent(adminPageLoaders.mcp);
-const McpAssistant = defineAsyncComponent(adminPageLoaders.assistant);
+// 后台页面全部为异步 chunk，加载失败时统一落到错误兜底，避免整页静默空白。
+const asyncPage = (loader: () => Promise<Component>) =>
+  defineAsyncComponent({ loader, errorComponent: AsyncErrorPanel });
+const DashboardManagement = asyncPage(adminPageLoaders.dashboard);
+const AccountManagement = asyncPage(adminPageLoaders.accounts);
+const SystemSettings = asyncPage(adminPageLoaders.settings);
+const TaskManagement = asyncPage(adminPageLoaders.tasks);
+const AuxToolsManagement = asyncPage(adminPageLoaders.tools);
+const CrossDriveTransferPage = asyncPage(adminPageLoaders["cross-transfer"]);
+const CasManagementPage = asyncPage(adminPageLoaders.cas);
+const FileShareManagement = asyncPage(adminPageLoaders.share);
+const DiscoveryPage = asyncPage(adminPageLoaders.discover);
+const SubtitleSettings = asyncPage(adminPageLoaders.subtitle);
+const McpSettings = asyncPage(adminPageLoaders.mcp);
+const McpAssistant = asyncPage(adminPageLoaders.assistant);
 import { logout, fetchSystemConfig } from "@/api/auth";
 import { useAuthStore } from "@/stores/auth";
 import { provideAdminPageContext } from "@/composables/useAdminLoadingBar";

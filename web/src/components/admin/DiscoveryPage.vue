@@ -1,20 +1,23 @@
 <script setup lang="ts">
-import { defineAsyncComponent } from "vue";
+import { defineAsyncComponent, type Component } from "vue";
 import SectionTabBar from "@/components/admin/SectionTabBar.vue";
+import AsyncErrorPanel from "@/components/common/AsyncErrorPanel.vue";
 import { useSectionTabRoute } from "@/composables/useSectionTabRoute";
 
 // 分区：影视探索（含番剧/演员子入口）/ 榜单推荐 / 追剧日历 / 我的收藏 /
 // 资源搜索 / 订阅管理 / 频道管理 / 监控历史 / 缺集补档。
-// 懒加载避免首屏拉取全部大组件。
-const DiscoverExplore = defineAsyncComponent(() => import("@/components/discover/DiscoverExplore.vue"));
-const DiscoverRankings = defineAsyncComponent(() => import("@/components/discover/DiscoverRankings.vue"));
-const DiscoverCalendar = defineAsyncComponent(() => import("@/components/discover/DiscoverCalendar.vue"));
-const DiscoverFavorites = defineAsyncComponent(() => import("@/components/discover/DiscoverFavorites.vue"));
-const DiscoverResourceSearch = defineAsyncComponent(() => import("@/components/admin/DiscoverResourceSearch.vue"));
-const SubscriptionManagement = defineAsyncComponent(() => import("@/components/admin/SubscriptionManagement.vue"));
-const ChannelManagement = defineAsyncComponent(() => import("@/components/admin/ChannelManagement.vue"));
-const MonitorHistoryPanel = defineAsyncComponent(() => import("@/components/admin/MonitorHistoryPanel.vue"));
-const EmbyMissingPanel = defineAsyncComponent(() => import("@/components/admin/EmbyMissingPanel.vue"));
+// 懒加载避免首屏拉取全部大组件；加载失败时落到错误兜底，避免整块静默空白。
+const asyncPanel = (loader: () => Promise<Component>) =>
+  defineAsyncComponent({ loader, errorComponent: AsyncErrorPanel });
+const DiscoverExplore = asyncPanel(() => import("@/components/discover/DiscoverExplore.vue"));
+const DiscoverRankings = asyncPanel(() => import("@/components/discover/DiscoverRankings.vue"));
+const DiscoverCalendar = asyncPanel(() => import("@/components/discover/DiscoverCalendar.vue"));
+const DiscoverFavorites = asyncPanel(() => import("@/components/discover/DiscoverFavorites.vue"));
+const DiscoverResourceSearch = asyncPanel(() => import("@/components/admin/DiscoverResourceSearch.vue"));
+const SubscriptionManagement = asyncPanel(() => import("@/components/admin/SubscriptionManagement.vue"));
+const ChannelManagement = asyncPanel(() => import("@/components/admin/ChannelManagement.vue"));
+const MonitorHistoryPanel = asyncPanel(() => import("@/components/admin/MonitorHistoryPanel.vue"));
+const EmbyMissingPanel = asyncPanel(() => import("@/components/admin/EmbyMissingPanel.vue"));
 
 const EXPLORE_TAB = "explore";
 const RANKINGS_TAB = "rankings";

@@ -82,6 +82,7 @@ const (
 	KeyMOTmdbLanguage          = "mo_tmdb_language"
 	KeyMOTmdbAPIHost           = "mo_tmdb_api_host"
 	KeyMOTmdbImageHost         = "mo_tmdb_image_host"
+	KeyMOTmdbProxyURL          = "mo_tmdb_proxy_url"
 	KeyMOAPIRequestIntervalMS  = "mo_api_request_interval_ms"
 	KeyMOTmdbRequestIntervalMS = "mo_tmdb_request_interval_ms"
 	KeyMOFileExtensions        = "mo_file_extensions"
@@ -294,6 +295,7 @@ func defaultSpecs() []Spec {
 		stringSpec(KeyMOTmdbLanguage, "media_organize", "TMDB 搜索语言", "TMDB 搜索与详情语言，例如 zh-CN。", "zh-CN"),
 		stringSpec(KeyMOTmdbAPIHost, "media_organize", "TMDB API 主域名", "自建反代时填写主域名，程序自动补 /3。", "https://api.themoviedb.org"),
 		stringSpec(KeyMOTmdbImageHost, "media_organize", "TMDB 图片主域名", "自建反代时填写主域名，程序自动补 /t/p。", "https://image.tmdb.org"),
+		stringSpec(KeyMOTmdbProxyURL, "media_organize", "TMDB HTTP 代理", "仅用于 TMDB API 出站请求，形如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080。留空表示直连。", ""),
 		intSpec(KeyMOAPIRequestIntervalMS, "media_organize", "API 额外补偿间隔", "网盘 API 请求之间的额外等待时间。", "300", "毫秒", 50, 10000),
 		intSpec(KeyMOTmdbRequestIntervalMS, "media_organize", "TMDB 请求间隔", "两次 TMDB API 请求之间的最小间隔。", "250", "毫秒", 100, 5000),
 		stringSpec(KeyMOFileExtensions, "media_organize", "媒体文件扩展名", "参与整理的媒体扩展名，英文分号分隔。", "mkv;mp4;avi;ts;mov;wmv;iso;m2ts;rmvb;flv;m4v;webm"),

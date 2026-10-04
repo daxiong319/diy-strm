@@ -139,7 +139,7 @@ func (c *Client) GetTvDetail(tvID int64, language string) (*TvDetail, error) {
 	respResult := TvDetail{}
 	req := c.resty.R().SetMethod("GET").SetResult(&respResult)
 	// req.SetQueryParam("api_key", c.apiKey)
-	resp, err := c.doRequest(fmt.Sprintf("/tv/%d?language=%s", tvID, language), req, MakeRequestConfig(2, 5, 5))
+	resp, err := c.doRequest(fmt.Sprintf("/tv/%d?language=%s", tvID, language), req, MakeRequestConfig(1, 2, 5))
 	if err != nil {
 		dutil.TMDBLog.Errorf("获取电视剧详情失败：%+v", err)
 		return nil, err
@@ -190,7 +190,7 @@ func (c *Client) GetTvCredits(tvId int64, langauge string) (*PepolesRes, error) 
 	respResult := PepolesRes{}
 	req := c.resty.R().SetMethod("GET").SetResult(&respResult)
 	// req.SetQueryParam("api_key", c.apiKey)
-	resp, err := c.doRequest(fmt.Sprintf("/tv/%d/credits?language=%s", tvId, langauge), req, MakeRequestConfig(2, 5, 5))
+	resp, err := c.doRequest(fmt.Sprintf("/tv/%d/credits?language=%s", tvId, langauge), req, MakeRequestConfig(1, 2, 5))
 	if err != nil {
 		dutil.TMDBLog.Errorf("获取电视剧演职人员失败：%+v", err)
 		return nil, err

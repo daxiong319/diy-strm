@@ -3,7 +3,9 @@ import { http } from "./client";
 // 字幕智能处理：搜索下载 + 智能匹配 + 时间轴校正。
 //
 // 所有端点都挂在 /api 前缀下、由 requireAdmin 保护（对应后端
-// internal/api/subtitle.go 的 RegisterSubtitleRoutes）。
+// internal/api/subtitle.go 的 RegisterSubtitleRoutes）。与 mcp.ts 同一约定：
+// 该组挂在 /api 而非 /api/admin，base 不能写成 "/admin/subtitle"，
+// 否则所有请求都会 404（router_test.go 有路由存在性测试锁死）。
 
 export interface SubtitleProviderStatus {
   name: string;
@@ -179,7 +181,7 @@ export interface SubtitleSyncCheck {
   ffprobe: { available: boolean; message: string };
 }
 
-const base = "/admin/subtitle";
+const base = "/subtitle";
 
 export const subtitleApi = {
   getConfig: () => http.get<SubtitleConfig>(`${base}/config`),

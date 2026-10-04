@@ -102,6 +102,7 @@ export interface MediaOrganizeSettings {
   tmdb_language: string;
   tmdb_api_host: string;
   tmdb_image_host: string;
+  tmdb_proxy_url: string;
   api_request_interval_ms: number;
   tmdb_request_interval_ms: number;
   file_extensions: string;

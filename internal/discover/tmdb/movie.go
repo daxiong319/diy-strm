@@ -178,7 +178,7 @@ func (c *Client) GetMovieDetail(movieID int64, language string) (*MovieDetail, e
 	respResult := MovieDetail{}
 	req := c.resty.R().SetMethod("GET").SetResult(&respResult)
 	// req.SetQueryParam("api_key", c.apiKey)
-	resp, err := c.doRequest(fmt.Sprintf("/movie/%d?language=%s", movieID, language), req, MakeRequestConfig(2, 5, 5))
+	resp, err := c.doRequest(fmt.Sprintf("/movie/%d?language=%s", movieID, language), req, MakeRequestConfig(1, 2, 5))
 	if err != nil {
 		dutil.TMDBLog.Errorf("获取电影详情失败：%+v", err)
 		return nil, err
@@ -193,7 +193,7 @@ func (c *Client) GetMovieDetail(movieID int64, language string) (*MovieDetail, e
 func (c *Client) GetMoviePepoles(movieID int64, language string) (*PepolesRes, error) {
 	respResult := PepolesRes{}
 	req := c.resty.R().SetMethod("GET").SetResult(&respResult)
-	resp, err := c.doRequest(fmt.Sprintf("/movie/%d/credits?language=%s", movieID, language), req, MakeRequestConfig(2, 5, 5))
+	resp, err := c.doRequest(fmt.Sprintf("/movie/%d/credits?language=%s", movieID, language), req, MakeRequestConfig(1, 2, 5))
 	if err != nil {
 		dutil.TMDBLog.Errorf("获取电影演员失败：%+v", err)
 		return nil, err
