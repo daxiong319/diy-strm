@@ -1,8 +1,8 @@
 -- T16 · RSS 订阅源
 --
--- 字段照搬 muvyo 的 rss_subscription.py（SQLAlchemy 模型，见
--- /root/dsh/muvyo_latest_recovered/src/app/models/rss_subscription.py）。
--- 与任务书草图不同的地方，以 muvyo 真实模型为准：
+-- 字段照搬 参考实现 的 rss_subscription.py（SQLAlchemy 模型，见
+-- /root/dsh/reference_recovered/src/app/models/rss_subscription.py）。
+-- 与任务书草图不同的地方，以 参考实现 真实模型为准：
 --   - 源表**没有** target_tmdb_id / media_type / season / poll_interval_minutes /
 --     last_guid / last_title。RSS 源不绑 TMDB 实体，它靠 target_path 直接转存。
 --   - 源表**多了** include_regex / exclude_regex / last_status / last_message /
@@ -24,12 +24,12 @@ CREATE TABLE IF NOT EXISTS rss_subscription_sources (
     poster_url    TEXT    NOT NULL DEFAULT '',
     include_regex TEXT    NOT NULL DEFAULT '',
     exclude_regex TEXT    NOT NULL DEFAULT '',
-    -- media_type 与 action 是 litepan 在 muvyo 模型之外补的两个字段。
+    -- media_type 与 action 是 litepan 在 参考实现 模型之外补的两个字段。
     -- media_type（movie/tv）参与身份校验：订阅源声明它追的是电影还是剧集，
     --   条目标题解析出的类型与之冲突时按 MEDIA_TYPE_MISMATCH 挡下。
     -- action（transfer/offline）决定产出候选的落地通道：网盘分享走转存，
     --   磁力/ed2k 走离线下载（磁力没有网盘分享可转存）。
-    --   muvyo 没有这一列 —— 它的 RSS 走的是订阅执行器，由订阅的规则决定落地方式；
+    --   参考实现 没有这一列 —— 它的 RSS 走的是订阅执行器，由订阅的规则决定落地方式；
     --   litepan 把这个决定上提到源上，因为 RSS 源不生成 DiscoverySubscription 行。
     media_type    TEXT    NOT NULL DEFAULT 'tv',
     action        TEXT    NOT NULL DEFAULT 'transfer',

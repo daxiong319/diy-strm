@@ -10,7 +10,7 @@
 -- 本迁移给出三张表：
 --   media_upgrade_scans    一次扫描任务（只判定不执行）
 --   media_upgrade_records  每条洗版判定结果（含判定输入快照，供提交阶段复核）
---   media_upgrade_rules    规则集（对应 muvyo 的 upgrade_rules JSON）
+--   media_upgrade_rules    规则集（对应 参考实现 的 upgrade_rules JSON）
 --
 -- 为什么要「判定」与「提交」分成两张表：
 -- 洗版会删用户文件。扫描时的结论基于**当时**看到的旧文件集合，如果从扫描到执行
@@ -20,7 +20,7 @@
 --
 -- 字段口径：
 --   quality_relation  new_wins / new_loses / tie / no_dimension
---                     前三个照搬 muvyo 的 quality_relation 四态；
+--                     前三个照搬 参考实现 的 quality_relation 四态；
 --                     no_dimension = 无可比维度（两边都没解析出可比的分辨率/编码等），
 --                     这种一律不执行（宁可漏洗不误删）。
 --   status            pending 待提交 / executing 提交中（锁）/ executed 已执行 /
@@ -32,7 +32,7 @@
 --   snapshot_hash     快照的 sha256，执行时重算比对，防 TOCTOU
 --   loser_action      快照住判定当时生效的动作，执行时按快照执行（避免中途改配置导致行为漂移）
 --
--- 与 muvyo 的两处刻意偏差（逆向时 muvyo 叫 min_audio_tracks，这里叫 min_channels）：
+-- 与 参考实现 的两处刻意偏差（逆向时 参考实现 叫 min_audio_tracks，这里叫 min_channels）：
 --   min_channels 不是 min_audio_tracks —— 本仓解析器从文件名拿到的是**声道数**，
 --     不是音轨条数，两者不等价。列名跟着语义走，避免日后按名字误用。
 --   loser_action 默认为 keep 而非恒删，理由见变更说明：这是会删用户文件的功能，默认必须安全。

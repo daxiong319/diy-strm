@@ -1,24 +1,24 @@
--- T10 · 免登录分享页（Muvyo 移植⑩）。
+-- T10 · 免登录分享页（参考实现 移植⑩）。
 --
 -- 背景：litepan 现有的免鉴权区只覆盖「自己家里用」的路径（/cas/play、/api/strm/play、
 -- /api/guanying）。缺的是把某个片发给局域网外的人（同学、同事、远程的家人），
 -- 对方没有账号也能看。
 --
--- 表结构对着 muvyo 的真实模型落，而不是任务书草图那张两表草图。取舍理由写在这里：
+-- 表结构对着 参考实现 的真实模型落，而不是任务书草图那张两表草图。取舍理由写在这里：
 --
 --   1. 草图是 library_shares + library_share_events（一张按 event_type 分类的流水）。
 --      但草图表达不了验收第 4 条「同一浏览器 24 小时内多次访问只计 1 次 visitor」：
 --      要去重就得有一个「这个访客是谁」的实体，流水表只能记事件、记不下「首次」。
 --   2. 草图表达不了「令牌按访客签发」：草图的 token_hash 挂在分享上，
 --      等于整个分享共用一个令牌，一旦泄露就只能重建整个分享。
---      muvyo 把令牌挂在 library_share_visits 上（每访客一行、token_hash 唯一），
+--      参考实现 把令牌挂在 library_share_visits 上（每访客一行、token_hash 唯一），
 --      泄露一个只废掉一个访客的会话，其它人照常看。
---   3. 因此落 muvyo 的三张表：library_shares / library_share_visits / library_share_plays，
+--   3. 因此落 参考实现 的三张表：library_shares / library_share_visits / library_share_plays，
 --      第四张 library_share_settings（存 JSON 字典）本期不移植 ——
 --      litepan 的配置项走 internal/settings/registry.go，不需要再造一个设置表。
 --
 -- 密码：library_shares.password_hash 存 bcrypt 风格的哈希，空串表示无口令
---（对齐 muvyo 的默认空值）。litepan 现有的口令哈希实现在 internal/adminauth，
+--（对齐 参考实现 的默认空值）。litepan 现有的口令哈希实现在 internal/adminauth，
 -- 本期直接复用同一个算法，避免两套口令校验。
 --
 -- ⚠️ 本仓的 splitStatements（internal/store/migrate.go:180）是直接按分号切语句的，
@@ -101,7 +101,7 @@ CREATE INDEX IF NOT EXISTS idx_library_share_visits_seen
 -- library_share_plays 一次实际的取流。
 --
 -- 与 visits 分开是因为「打开页面」和「真的开始放」是两个动作：
--- 打开页面的人可能在密码框前就走了。muvyo 也是这么分的。
+-- 打开页面的人可能在密码框前就走了。参考实现 也是这么分的。
 -- method 留 direct（litepan 目前只有直链/代理两种取流方式，没有第三种）。
 CREATE TABLE IF NOT EXISTS library_share_plays (
   id           TEXT    PRIMARY KEY,

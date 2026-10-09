@@ -43,7 +43,7 @@ CREATE INDEX IF NOT EXISTS idx_playback_records_app_user_id ON playback_records(
 
 -- 每日流量桶。⚠️ 唯一键 (day, user_id) 与它自己的注释语义
 -- 「用户 × 条目 × 天」**不一致** —— 同一个用户同一天看两部片子只落一行，
--- 两部的流量会被合并。这是 muvyo 原设计（可能是有意的去重，也可能是 bug）。
+-- 两部的流量会被合并。这是 参考实现 原设计（可能是有意的去重，也可能是 bug）。
 -- 这里**照搬结构**以保持口径一致，但在代码里标注为待确认点：
 -- 若要改成 (day, user_id, item_scope)，需要一次带数据迁移，不能靠改约束。
 CREATE TABLE IF NOT EXISTS play_traffic_daily (

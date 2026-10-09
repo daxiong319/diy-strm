@@ -1,14 +1,14 @@
--- T08 · 用户与权限 RBAC（Muvyo 移植②）。
+-- T08 · 用户与权限 RBAC（参考实现 移植②）。
 --
 -- 背景：internal/adminauth/ 只有「一个管理员账号」的概念（admin_username /
 -- admin_password 两个配置项）。一家人共用一个账号，谁改了什么没有 accountability，
 -- 也没有「只让家人加订阅、不让他删文件」这种粒度。T09 求片中心、T10 分享页、
 -- T18 Telegram Bot 都以「区分谁是谁」为前置。
 --
--- 本迁移给出六张表。前五张照 muvyo 的 RBAC 五表（mv_permissions /
+-- 本迁移给出六张表。前五张照 参考实现 的 RBAC 五表（mv_permissions /
 -- mv_user_groups / mv_user_group_members / mv_group_permissions /
 -- mv_user_permission_overrides），第六张 rbac_users 是 litepan 特有：
--- muvyo 的用户池在其余系统里，litepan 在此之前根本没有用户表。
+-- 参考实现 的用户池在其余系统里，litepan 在此之前根本没有用户表。
 --
 -- 语义（原样落地，不做简化）：
 --   1. 组权限矩阵 + 用户级三态覆盖（继承/允许/拒绝）

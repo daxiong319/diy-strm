@@ -1,10 +1,10 @@
--- T09 · 求片中心（Muvyo 移植⑨）。
+-- T09 · 求片中心（参考实现 移植⑨）。
 --
 -- 背景：litepan 到 T08 为止，订阅只能由「登录后台的人」手动添加。一家人的典型场景是
--- 奶奶在电视上看到一部剧，想看，但没人会打开管理台 —— muvyo 的做法是给家人一个
+-- 奶奶在电视上看到一部剧，想看，但没人会打开管理台 —— 参考实现 的做法是给家人一个
 -- 只在手机上打开的「求片站」，她搜一下、点一下，剩下的交给订阅流水线自动完成。
 --
--- 本迁移给出四张表，与任务书列出的四张一一对应。muvyo 那边还有一张
+-- 本迁移给出四张表，与任务书列出的四张一一对应。参考实现 那边还有一张
 -- media_request_round（每次「再求一次」记一行）与一张 media_request_follower，
 -- 本期不移植：前者是给「追更到第几轮」这类精细流程用的，本期一条请求就是一次求片；
 -- 后者的 tag_sync_* 字段是「给 Emby 打标签失败后重试」用的，本期 litepan 不改 Emby
@@ -25,7 +25,7 @@
 --
 -- 列在任务书列出的那一组之外，本表多了 season / original_title / year /
 -- poster_url / subscription_id 五列。理由逐条写在这里而不是留给后来人猜：
---   - season：任务书的列表没写它，但 muvyo 的 MediaRequest 有（season + 0..200），
+--   - season：任务书的列表没写它，但 参考实现 的 MediaRequest 有（season + 0..200），
 --     schema 的 SubmitMediaRequest 也有。一部剧「第 2 季还没出」是求片最常见的理由，
 --     没有 season 这一列就只能表达「我想要这部剧」这种弱需求。
 --   - original_title / year / poster_url：纯展示字段。求片站是手机页面，列表里
@@ -82,7 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_media_requests_identity
 
 -- 同一部作品**待审期间**只允许一条求片单。
 --
--- 为什么是 partial index：muvyo 在 (media_type, tmdb_id, season) 上建了无条件唯一索引，
+-- 为什么是 partial index：参考实现 在 (media_type, tmdb_id, season) 上建了无条件唯一索引，
 -- 也就是说这部片一旦有人求过，别人就永远不能再求（驳回之后也不行），家人只能靠
 -- 「再求一次」按钮而那条路径本仓还没有。照搬那个约束等于把「驳回」变成终局。
 -- 这里改成只约束待审状态：驳回或已完成之后可以再求。
@@ -98,7 +98,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_media_requests_pending_identity
 --
 -- ⚠️ **这张表刻意没有 season 列。**
 --
--- muvyo 那边 movie / tv 都能标标签，媒体服务器扫到作品就追加，失败会重试
+-- 参考实现 那边 movie / tv 都能标标签，媒体服务器扫到作品就追加，失败会重试
 -- （MediaRequestFollower.tag_sync_state 就是干这个的）。任务书点名要照搬的
 -- 产品决策是：「**电视剧的标签标在整部剧上，不按季隔离** —— 用户对『第 2 季』的
 -- 标签不该只挂在第 2 季」。
@@ -136,7 +136,7 @@ CREATE INDEX IF NOT EXISTS idx_media_request_tags_lookup
 -- 优先级高的覆盖先建的」。
 --
 -- ⚠️ 这里存的是**上限与自动通过**这类全局性策略，不存「谁负责审」
--- （muvyo 的 assigned_user_id/group_id 指向它的审核工作流，那是另一套排班机制，
+-- （参考实现 的 assigned_user_id/group_id 指向它的审核工作流，那是另一套排班机制，
 -- 本期审核就是管理台里谁看到谁审，见 internal/mediarequest/service.go 的 Review）。
 CREATE TABLE IF NOT EXISTS media_request_rules (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
