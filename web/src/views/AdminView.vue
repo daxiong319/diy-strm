@@ -2,6 +2,7 @@
 import {
   computed,
   defineAsyncComponent,
+  nextTick,
   onMounted,
   ref,
   watch,
@@ -9,6 +10,8 @@ import {
 } from "vue";
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 import AdminShell from "@/components/admin/AdminShell.vue";
+import CommandPalette from "@/components/admin/CommandPalette.vue";
+import SetupWizard from "@/components/admin/SetupWizard.vue";
 import WarningBanner from "@/components/admin/WarningBanner.vue";
 import AdminEmptyState from "@/components/admin/AdminEmptyState.vue";
 import AdminAnnouncementModal from "@/components/admin/AdminAnnouncementModal.vue";
@@ -56,6 +59,18 @@ import { useAuthStore } from "@/stores/auth";
 import { provideAdminPageContext } from "@/composables/useAdminLoadingBar";
 import { useUnsavedChanges } from "@/composables/useUnsavedChanges";
 import { toast } from "@/composables/useToast";
+import {
+  applyHidden,
+  applyOrder,
+  canHide,
+  clearLayoutPrefs,
+  isHidden,
+  loadLayoutPrefs,
+  moveItem,
+  saveLayoutPrefs,
+  setHidden,
+  type LayoutPrefs,
+} from "@/composables/layoutPrefs";
 
 const BROWSER_LOCATION_STORAGE_KEY = "litepan:index:browser-location";
 const BROWSER_LOCATION_RESET_ONCE_KEY = "litepan:index:reset-once";
@@ -91,6 +106,62 @@ const visibleNav = computed(() =>
 // 在整个文件里只有一个来源，不会出现「导航里没有但地址栏能进」的分叉。
 const visibleNavKeys = computed(() => visibleNav.value.map((n) => n.key));
 
+// ---- 布局编排（T13 · F-2/F-3）----
+//
+// arrangedNav 排在 visibleNav **之后**：权限决定「能不能进」，编排只决定
+// 「在能进的里面怎么排、藏哪几个」。这个顺序不能倒过来 —— 反了的话编排
+// 就变成了绕过权限的一道后门，而 visibleNav 的 fail-open 特性会让它
+// 看起来像「用户自己加的菜单」。
+//
+// 侧边栏、手机底栏、⌘G 面板全部读这一个数组：分三处各算一遍的话，
+// 用户拖了一个菜单而底栏没跟着动，那正是这个功能要消灭的不一致。
+const layoutPrefs = ref<LayoutPrefs>(loadLayoutPrefs());
+const arrangedNav = computed(() => applyHidden(applyOrder(visibleNav.value, layoutPrefs.value.order), layoutPrefs.value.hidden));
+
+function persistLayout() {
+  saveLayoutPrefs(layoutPrefs.value);
+}
+
+function reorderNav(from: number, to: number) {
+  const next = moveItem(arrangedNav.value, from, to);
+  if (next === arrangedNav.value) return;
+  // 存**完整**顺序而不是增量：新增页面后未排序的项会追加到末尾，
+  // 只存增量的话下次读取时它们又回到注册顺序，等于白存。
+  layoutPrefs.value = { ...layoutPrefs.value, order: next.map((n) => n.key) };
+  persistLayout();
+}
+
+function toggleNavHidden(key: string) {
+  if (!canHide(key)) return; // 仪表盘/插件库不可隐藏
+  layoutPrefs.value = { ...layoutPrefs.value, hidden: setHidden(layoutPrefs.value.hidden, key, !isNavHidden(key)) };
+  persistLayout();
+}
+
+function isNavHidden(key: string): boolean {
+  // 锁定项交给 isHidden 自己判断，别在这儿另抄一份名单 ——
+  // 两处名单一旦不同步，症状是「按钮禁用了但侧边栏里还是被藏了」。
+  return isHidden(key, layoutPrefs.value.hidden);
+}
+
+/** 编排面板里的「已隐藏」清单：菜单在，但被用户收起来了。 */
+const hiddenNavItems = computed(() =>
+  nav.filter((n) => visibleNavKeys.value.includes(n.key) && isNavHidden(n.key)),
+);
+
+const layoutEditing = ref(false);
+
+// 拖到被隐藏的菜单上 = 放出来；点隐藏区里的项 = 收回去。
+function unhideNav(key: string) {
+  layoutPrefs.value = { ...layoutPrefs.value, hidden: setHidden(layoutPrefs.value.hidden, key, false) };
+  persistLayout();
+}
+
+function resetLayout() {
+  clearLayoutPrefs();
+  layoutPrefs.value = loadLayoutPrefs();
+  toast.success("已恢复默认布局");
+}
+
 
 // ---- 菜单按权限过滤（验收④：菜单前后端一致）----
 //
@@ -121,7 +192,17 @@ const PAGE_TABS: Record<string, { defaultTab: string; tabs: Record<string, strin
   dashboard: { defaultTab: "overview", tabs: { overview: "运行概况", logs: "系统日志" } },
   settings: {
     defaultTab: "security",
-    tabs: { security: "账号安全", homepage: "首页设置", service: "其他设置", "api-keys": "API 秘钥" },
+    // tab key 必须与 SystemSettings.vue 里的常量一致（services/apiKeys/
+    // notifyChannels/notifyRetries）。写成 service/api-keys 的话
+    // 面包屑 :255 取不到 label，页面上就少一级，而且没人知道是这里错了。
+    tabs: {
+      security: "账号安全",
+      homepage: "首页设置",
+      services: "其他设置",
+      apiKeys: "API 秘钥",
+      notifyChannels: "通知渠道",
+      notifyRetries: "补发队列",
+    },
   },
   tasks: {
     defaultTab: "strm",
@@ -324,6 +405,41 @@ watch(mustChangePassword, (locked) => {
   }
 });
 
+// ---- 功能直达的页内定位（T13 · F-1）----
+//
+// 索引给出的锚点约定是 `setting-<key>`（后端 internal/settings/index.go 的
+// Anchor 字段，前端 SettingsRow 按同一个约定渲染 id）。
+// 用 query 而不是全局事件传 field：目标页可能还没挂载（异步 chunk），
+// 事件那时没有接收者，症状是「跳过去了但没滚到那一行」。
+async function focusSettingField(key: string | undefined) {
+  const k = String(key ?? "").trim();
+  if (!k) return;
+  // 最多试几次：异步页面 chunk 加载完之前锚点还不存在。
+  // 失败就安静收场 —— 页面已经跳对了，定位不到不该弹错误打扰用户。
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const el = document.querySelector(`#setting-${CSS.escape(k)}`);
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("settings-row--flash");
+      window.setTimeout(() => el.classList.remove("settings-row--flash"), 1600);
+      return;
+    }
+    await new Promise((r) => window.setTimeout(r, 50));
+  }
+}
+
+watch(
+  () => [route.query.page, route.query.tab, route.query.field] as const,
+  async ([qPage, , qField], prev) => {
+    // 只在自己真的换了 field 时定位，否则每切一次 tab 都白滚一次。
+    if (prev && prev[2] === qField) return;
+    const target = normalize(qPage);
+    if (target !== page.value) page.value = target;
+    await nextTick();
+    void focusSettingField(String(qField ?? ""));
+  },
+);
+
 // 菜单加载完（含 fail-open 的 null）后重新校正当前页：
 // 用户可能带着一个无权访问的 ?page=... 直接进来（收藏的旧链接、别人发的地址）。
 // 这里把他送回第一个可见页面，而不是让他停在一个空白的页面上。
@@ -354,7 +470,7 @@ onMounted(async () => {
 
 <template>
   <AdminShell
-    :nav="visibleNav"
+    :nav="arrangedNav"
     :model-value="page"
     :page-title="pageTitle"
     :crumbs="crumbs"
@@ -363,6 +479,13 @@ onMounted(async () => {
     :locked-keys="mustChangePassword ? visibleNavKeys.filter((k) => k !== 'settings') : []"
     @update:model-value="changePage"
     @preload="preloadAdminPage"
+    :editing="layoutEditing"
+    :hidden-items="hiddenNavItems"
+    @update:editing="layoutEditing = $event"
+    @reorder="(p) => reorderNav(p.from, p.to)"
+    @hide="toggleNavHidden"
+    @unhide="unhideNav"
+    @reset-layout="resetLayout"
     @go-home="goHome"
     @logout="handleLogout"
   >
@@ -405,6 +528,12 @@ onMounted(async () => {
       <McpAssistant v-else-if="page === 'assistant'" />
       <component :is="cachedPageComponent" v-else-if="cachedPageComponent" :key="page" />
     </KeepAlive>
+
+    <!-- 功能直达（⌘K）。放在 AdminShell 外面而不是 slot 里：
+         面板要在任何后台页面上都能唤起，塞进 slot 会被 KeepAlive
+         与页面切换一起缓存/销毁。 -->
+    <CommandPalette />
+    <SetupWizard />
   </AdminShell>
 </template>
 

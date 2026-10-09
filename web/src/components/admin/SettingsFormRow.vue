@@ -26,7 +26,11 @@ function displayLabel(): string {
 </script>
 
 <template>
-  <SettingsRow :changed="changed" :show-changed-badge="false">
+  <SettingsRow
+    :changed="changed"
+    :show-changed-badge="false"
+    :setting-key="item.key"
+  >
     <template #info>
       <SettingsRowLabel
         :label="displayLabel()"

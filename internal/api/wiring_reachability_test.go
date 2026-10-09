@@ -270,6 +270,31 @@ func TestProductionCallSitesExist(t *testing.T) {
 			callee:   "NormalizePath",
 			callerIn: "cloudref.go",
 		},
+		{
+			// T13：搜索索引的唯一来源是注册表。AllSpecs 不导出的话，
+			// 调用方只能手写一份清单 —— 那份清单在第一次加新 key 时就会漏，
+			// 而症状是「设置页上找得到、搜索里搜不到」，用户只会得出
+			// 「这个功能没做」这一个结论。
+			name:     "索引从注册表导出",
+			dir:      "../settings",
+			callee:   "AllSpecs",
+			callerIn: "index.go",
+		},
+		{
+			// 同上：分组名也是登记来的，不是从 key 前缀猜的。
+			name:     "索引的分组名来自登记",
+			dir:      "../settings",
+			callee:   "Categories",
+			callerIn: "index.go",
+		},
+		{
+			// T13：索引端点唯一的条目来源。绕过 BuildIndex 自己拼 items，
+			// 接口照样 200、路由守卫照样绿，而注册表新增的 key 永远进不了搜索。
+			name:     "索引端点委托给 BuildIndex",
+			dir:      ".",
+			callee:   "BuildIndex",
+			callerIn: "settings.go",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -700,7 +725,13 @@ func TestRBACFrontendIsWired(t *testing.T) {
 		`{ key: "rbac", label: "用户与权限"`,                                   // 导航条目
 		`rbac: () => import("@/components/admin/RbacManagementPage.vue")`, // 页面加载器
 		`<RbacManagementPage v-else-if="page === 'rbac'" />`,              // 页面渲染分支
-		`:nav="visibleNav"`, // 侧边栏用的是过滤后的那份
+		// 侧边栏用的必须是**经过权限过滤**的那一份。
+		// T13 之后侧边栏渲染的是 arrangedNav（编排后的顺序/隐藏），
+		// 而 arrangedNav 是在 visibleNav 之上派生的 —— 权限决定「能不能进」，
+		// 编排只决定「在能进的里面怎么排」。两条都要断：只断第一条，
+		// 哪天有人把 :nav 改回 visibleNav 就没人发现编排被绕过了。
+		`:nav="arrangedNav"`,
+		`applyHidden(applyOrder(visibleNav.value`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("AdminView.vue 里找不到 %q —— 前端的用户与权限入口没有接上", want)

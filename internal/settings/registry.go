@@ -760,21 +760,21 @@ func defaultSpecs() []Spec {
 				"总集数从资源标题的「全N集」推；**推不出来就不判完结**，宁可继续搜也不会误杀。\n"+
 				"设为 0 表示转存齐后立即停止检索。",
 			"7", "天", 0, 3650),
-		stringSpec(KeyMOMediaParseResAliases, "mediaorganize", "分辨率别名表",
+		stringSpec(KeyMOMediaParseResAliases, "media_organize", "分辨率别名表",
 			"解析资源名里的分辨率时，额外认这些写法。格式 `别名=标准值`，多个用逗号分隔，例如 "+
 				"`超高清=2160p,蓝光原盘=2160p,BD=1080p`。\n"+
 				"**默认表里的取值是推测值**（参考实现 的原始词表在编译产物里读不出来），"+
 				"按主流资源站命名习惯补齐；碰到没覆盖的写法在这里补一条即可，不用改代码发版。",
 			""),
-		stringSpec(KeyMOMediaParseHDRTexts, "mediaorganize", "HDR 识别文本（追加）",
+		stringSpec(KeyMOMediaParseHDRTexts, "media_organize", "HDR 识别文本（追加）",
 			"识别 HDR 用的文本，逗号分隔。这张表是**追加**到内置表上，不是替换。"+
 				"内置：hdr、hdr10、hdr10+、hlg。",
 			""),
-		stringSpec(KeyMOMediaParseDVTexts, "mediaorganize", "杜比视界识别文本（追加）",
+		stringSpec(KeyMOMediaParseDVTexts, "media_organize", "杜比视界识别文本（追加）",
 			"识别 Dolby Vision 用的文本，逗号分隔，追加到内置表。内置：dolby vision、dovi、dv、杜比视界。\n"+
 				"单个词的条目按**词边界**匹配，所以 DVDRip（DVD 压制）不会被误判成杜比视界。",
 			""),
-		stringSpec(KeyMOMediaParseSDRTexts, "mediaorganize", "SDR 识别文本（追加）",
+		stringSpec(KeyMOMediaParseSDRTexts, "media_organize", "SDR 识别文本（追加）",
 			"识别 SDR 用的文本，逗号分隔，追加到内置表。内置：sdr、standard dynamic range。",
 			""),
 
@@ -1091,5 +1091,41 @@ func categories() []Category {
 		{ID: "emby", Label: "Emby 设置"},
 		{ID: "discover", Label: "影视发现设置"},
 		{ID: "subtitle", Label: "字幕智能处理"},
+		// fnos 这组以前有 5 个 key 却没有登记过分类：界面上它们拿不到分组标题，
+		// 搜索索引也没法归位。宁可补一条登记，也不要把它们悄悄并进别的分组 ——
+		// 并进去等于告诉用户「这属于系统设置」，而它其实是另一项功能的开关。
+		{ID: "fnos", Label: "飞牛影视"},
 	}
+}
+
+// AllSpecs 返回全部设置声明的副本（按声明顺序），供派生型功能使用 ——
+// 目前是设置项搜索索引（后台 ⌘G 直达）。
+//
+// 为什么导出它而不是让调用方手写一份清单：手写清单必然会漏。
+// 注册表里新增一个 key 而清单没更新，症状是「设置页上找得到、搜索里搜不到」，
+// 而用户只会得出「这个功能没做」这一个结论。
+//
+// 返回的是副本而不是内部切片：Spec 里的 Min/Max 是指针、Options 是切片，
+// 直接把内部切片交出去，调用方改一下就等于绕过 Service.Update 的校验改注册表。
+func AllSpecs() []Spec {
+	src := defaultSpecs()
+	out := make([]Spec, 0, len(src))
+	for _, sp := range src {
+		if sp.Options != nil {
+			sp.Options = append([]Option(nil), sp.Options...)
+		}
+		out = append(out, sp)
+	}
+	return out
+}
+
+// Categories 返回有序分组定义的副本。
+//
+// ⚠️ 它**不是**「实际用到的分组的全集」，只是一份手维护的登记列表。
+// 注册表里的 Spec.Category 指向一个这里没登记的 ID 时，那组设置项在界面上
+// 就没有标题可用 —— 所以 AllSpecs 的调用方不许假设它穷尽。
+// 为什么不改成从注册表派生：派生的分组标题得有一套从 key 推名字的映射，
+// 那套映射比手写这张表更容易错，而且错的时候没有编译期检查。
+func Categories() []Category {
+	return append([]Category(nil), categories()...)
 }

@@ -13,6 +13,7 @@ import "./styles/dropdown-menu.css";
 import "./styles/confirm-modal.css";
 import "./styles/dust-removal.css";
 import "./styles/skins/brutal.css";
+import "./styles/skins/paper.css";
 
 initTheme();
 

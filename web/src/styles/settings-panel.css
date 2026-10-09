@@ -337,3 +337,29 @@
     display: none;
   }
 }
+
+/* 功能直达（F-1）跳转到某个设置行时的定位高亮。
+   不用 outline：它是唯一一处「短暂出现又不承载焦点」的高亮，
+   outline 会让人以为这里仍可 Tab 进去。 */
+.settings-row--flash {
+  animation: settings-row-flash 1.6s ease-out;
+  border-radius: var(--radius-sm, 6px);
+}
+
+@keyframes settings-row-flash {
+  0%,
+  55% {
+    background: color-mix(in srgb, var(--brand, #3b82f6) 14%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand, #3b82f6) 35%, transparent);
+  }
+  100% {
+    background: transparent;
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-row--flash {
+    animation: none;
+  }
+}

@@ -486,6 +486,10 @@ func NewRouter(d Deps) http.Handler {
 					r.Use(h.requirePermission(rbac.PermSystemManage))
 					r.Get("/settings", h.getSettings)
 					r.Put("/settings", h.updateSettings)
+					// 设置项搜索索引（⌘G）。刻意挂在 system.manage 组内：
+					// 它虽然不含任何配置值，但条目本身就是一张功能清单，
+					// 对谁开放等同于对谁开放「本系统有哪些功能」。
+					r.Get("/settings/index", h.getSettingsIndex)
 				})
 				r.Route("/api-keys", func(r chi.Router) {
 					// API Key 是绕过会话的长期凭据，权限与系统设置同级。

@@ -681,6 +681,12 @@ func TestWiringGuardCommandActuallySelectsGuards(t *testing.T) {
 		// T31：规则试算端点的两条守卫。
 		"TestWiringMediaUpgradeRuleTrialDelegatesVerdict",
 		"TestWiringMediaUpgradeRuleTrialRouteReachable",
+		// T13：设置项搜索索引的五条守卫。
+		"TestWiringSettingsIndexRoutesReachable",
+		"TestWiringSettingsIndexSitsInAdminSubtree",
+		"TestWiringSettingsIndexHandlerAnswers",
+		"TestWiringSettingsIndexHandlerDelegatesToBuildIndex",
+		"TestWiringSettingsIndexFrontEndCallsThisPath",
 	}
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {

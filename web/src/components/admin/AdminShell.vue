@@ -5,6 +5,11 @@ import AdminAccountChip from "@/components/admin/AdminAccountChip.vue";
 import AdminGlobalActions from "@/components/admin/AdminGlobalActions.vue";
 import AdminNavIcon from "@/components/admin/AdminNavIcon.vue";
 import { useAdminLoadingBar } from "@/composables/useAdminLoadingBar";
+import { installPaletteHotkey, openPalette } from "@/composables/useCommandPalette";
+import { canHide } from "@/composables/layoutPrefs";
+
+/** ⌘K 快捷键的注销函数；onBeforeUnmount 里要用。 */
+let removePaletteHotkey: (() => void) | null = null;
 
 interface NavItem {
   key: string;
@@ -14,8 +19,12 @@ interface NavItem {
 
 const SIDEBAR_COLLAPSED_KEY = "litepan-admin-sidebar-collapsed";
 const MOBILE_BREAKPOINT = 768;
+// 手机底栏固定显示前三项：管理这台机器的最小闭环（看状态 / 管账号 / 改设置）。
+// 取编排后的前三而不是写死三项 —— 用户把某个菜单拖到第一位，底栏就该跟着变。
+// 写死前三会让「底栏跟随编排」看起来只在某一种顺序下成立。
+const MOBILE_DOCK_SIZE = 3;
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     nav: NavItem[];
     modelValue: string;
@@ -23,8 +32,12 @@ withDefaults(
     crumbs?: Array<{ label: string; to?: { page: string; tab?: string } }>;
     lockedKeys?: string[];
     homeReturnMode?: "sidebar" | "top_icon";
+    /** 编排态：显示拖拽手柄与「隐藏」入口（父组件持有真实偏好）。 */
+    editing?: boolean;
+    /** 被藏起来的菜单，编排面板里可以拖回来。 */
+    hiddenItems?: NavItem[];
   }>(),
-  { homeReturnMode: "top_icon" },
+  { homeReturnMode: "top_icon", editing: false },
 );
 const emit = defineEmits<{
   "update:modelValue": [string];
@@ -32,7 +45,49 @@ const emit = defineEmits<{
   logout: [];
   goHome: [];
   navigate: [{ page: string; tab?: string }];
+  /** 编排操作：重排 / 隐藏 / 放回 / 恢复默认。 */
+  reorder: [{ from: number; to: number }];
+  hide: [string];
+  unhide: [string];
+  resetLayout: [];
+  "update:editing": [boolean];
 }>();
+
+const editing = ref(props.editing);
+watch(
+  () => props.editing,
+  (v) => {
+    editing.value = v;
+  },
+);
+function toggleEditing() {
+  editing.value = !editing.value;
+  emit("update:editing", editing.value);
+}
+
+// 拖拽：用 pointerdown/pointerup 而不是 HTML5 drag-and-drop。
+// 后者在触摸设备上完全不可用，而「手机底栏跟随编排」意味着这个功能
+// 必须能在手机上用 —— 否则编排在手机上是个只能看不能改的摆设。
+const dragFrom = ref<number | null>(null);
+function onItemPointerDown(index: number, ev: PointerEvent) {
+  if (!editing.value || dragFrom.value !== null) return;
+  dragFrom.value = index;
+  (ev.currentTarget as HTMLElement)?.setPointerCapture?.(ev.pointerId);
+}
+function onItemPointerEnter(index: number) {
+  // 悬停即预载对应页面组件（原来的 @pointerenter 行为）。
+  // 合并到这一个处理器里，是因为同一个元素上写两个 @pointerenter
+  // 会被编译期判成重复属性（vue-tsc 不报，vite build 才炸）。
+  emit("preload", props.nav[index]?.key);
+  if (!editing.value || dragFrom.value === null) return;
+  if (dragFrom.value === index) return;
+  emit("reorder", { from: dragFrom.value, to: index });
+  // 拖动源跟着目标走：否则一次手势只能挪一格，跨几位要拖十几次。
+  dragFrom.value = index;
+}
+function endDrag() {
+  dragFrom.value = null;
+}
 
 const sidebarCollapsed = ref(false);
 const mobileDrawerOpen = ref(false);
@@ -40,6 +95,9 @@ const isMobile = ref(false);
 const { visible: pageLoadingVisible } = useAdminLoadingBar();
 
 const sidebarCompact = computed(() => !isMobile.value && sidebarCollapsed.value);
+
+// 手机底栏：取编排后的前三。编排改一次，这里跟着变，不需要额外同步。
+const mobileDock = computed(() => props.nav.slice(0, MOBILE_DOCK_SIZE));
 
 const sidebarToggleLabel = computed(() => {
   if (isMobile.value) return mobileDrawerOpen.value ? "关闭菜单" : "打开菜单";
@@ -103,6 +161,10 @@ onMounted(() => {
   syncSidebarWidthVar();
   window.addEventListener("resize", syncViewport);
   window.addEventListener("keydown", onKeydown);
+  // ⌘K 装在 capture 阶段：面板可能被某个局部 stopPropagation 的组件盖住，
+  // 冒泡阶段就收不到了 —— 而「搜索框失焦后 ⌘K 唤不回来」正是
+  // 用户第一次遇到就会放弃的故障。
+  removePaletteHotkey = installPaletteHotkey();
 });
 
 watch([sidebarCollapsed, isMobile], () => {
@@ -117,6 +179,7 @@ watch(mobileDrawerOpen, (open) => {
 onBeforeUnmount(() => {
   window.removeEventListener("resize", syncViewport);
   window.removeEventListener("keydown", onKeydown);
+  removePaletteHotkey?.();
   document.body.style.overflow = "";
   document.documentElement.style.removeProperty("--sidebar-width");
 });
@@ -158,23 +221,42 @@ onBeforeUnmount(() => {
         </span>
       </header>
 
-      <nav class="sidebar__nav">
-        <button
-          v-for="item in nav"
-          :key="item.key"
-          class="nav-item"
-          :class="{
-            'nav-item--active': item.key === modelValue,
-            'nav-item--locked': lockedKeys?.includes(item.key),
-          }"
-          :disabled="lockedKeys?.includes(item.key)"
-          @pointerenter="emit('preload', item.key)"
-          @focus="emit('preload', item.key)"
-          @click="selectNav(item.key)"
-        >
-          <AdminNavIcon :name="item.icon" class="nav-item__icon" />
-          <span class="nav-item__label">{{ item.label }}</span>
-        </button>
+      <nav
+        class="sidebar__nav"
+        @pointerup="endDrag"
+        @pointercancel="endDrag"
+        @pointerleave="endDrag"
+      >
+        <div v-for="(item, i) in nav" :key="item.key" class="nav-slot">
+          <button
+            class="nav-item"
+            :class="{
+              'nav-item--active': item.key === modelValue,
+              'nav-item--locked': lockedKeys?.includes(item.key),
+              'nav-item--dragging': editing && dragFrom === i,
+            }"
+            :disabled="lockedKeys?.includes(item.key)"
+            @focus="emit('preload', item.key)"
+            @pointerdown="onItemPointerDown(i, $event)"
+            @pointerenter="onItemPointerEnter(i)"
+            @pointerup="endDrag"
+            @click="selectNav(item.key)"
+          >
+            <AdminNavIcon :name="item.icon" class="nav-item__icon" />
+            <span class="nav-item__label">{{ item.label }}</span>
+          </button>
+          <button
+            v-if="editing && !sidebarCompact"
+            type="button"
+            class="nav-item-hide"
+            :disabled="!canHide(item.key)"
+            :title="canHide(item.key) ? `隐藏「${item.label}」` : '该入口不可隐藏'"
+            @click.stop="emit('hide', item.key)"
+          >
+            <span aria-hidden="true">×</span>
+            <span class="nav-item-hide__text">{{ canHide(item.key) ? "隐藏" : "锁定" }}</span>
+          </button>
+        </div>
         <button
           v-if="homeReturnMode === 'sidebar'"
           type="button"
@@ -190,6 +272,25 @@ onBeforeUnmount(() => {
         <AdminAccountChip :compact="sidebarCompact" @logout="emit('logout')" />
       </footer>
     </aside>
+
+    <!-- 编排面板：只在编排态出现 -->
+    <div v-if="editing" class="nav-editor">
+      <div class="nav-editor__head">
+        <span class="nav-editor__title">编排菜单</span>
+        <div class="nav-editor__actions">
+          <button type="button" class="nav-editor__btn" @click="emit('resetLayout')">恢复默认</button>
+          <button type="button" class="nav-editor__btn" @click="toggleEditing">完成</button>
+        </div>
+      </div>
+      <p class="nav-editor__hint">拖动菜单调整顺序。手机底栏固定跟随排序后的前三项。</p>
+      <ul v-if="hiddenItems?.length" class="nav-editor__hidden">
+        <li v-for="item in hiddenItems" :key="item.key">
+          <span>{{ item.label }}</span>
+          <button type="button" class="nav-editor__btn" @click="emit('unhide', item.key)">放回</button>
+        </li>
+      </ul>
+      <p v-else class="nav-editor__empty">当前没有隐藏的菜单。</p>
+    </div>
 
     <header class="global-chrome">
       <!-- 移动端：汉堡按钮打开抽屉（桌面端收缩入口移到侧栏边缘按钮） -->
@@ -226,6 +327,26 @@ onBeforeUnmount(() => {
         <span class="global-chrome__title">{{ pageTitle }}</span>
       </div>
       <div class="global-chrome__spacer" />
+      <button
+        type="button"
+        class="global-chrome__edit"
+        :aria-pressed="editing"
+        title="编排菜单"
+        @click="toggleEditing"
+      >
+        <SvgIcon name="sliders-h" :size="16" />
+        <span class="global-chrome__edit-text">编排</span>
+      </button>
+      <button
+        type="button"
+        class="global-chrome__search"
+        title="功能直达（Ctrl/⌘ + K）"
+        @click="openPalette()"
+      >
+        <SvgIcon name="search" :size="16" />
+        <span class="global-chrome__search-text">功能直达</span>
+        <kbd class="global-chrome__kbd">⌘K</kbd>
+      </button>
       <AdminGlobalActions
         :show-home-return="homeReturnMode === 'top_icon'"
         @go-home="emit('goHome')"
@@ -240,6 +361,24 @@ onBeforeUnmount(() => {
     <main class="admin__body">
       <slot />
     </main>
+
+    <!-- 手机底栏：编排后的前三项 -->
+    <nav v-if="isMobile" class="mobile-dock" aria-label="快捷导航">
+      <button
+        v-for="item in mobileDock"
+        :key="item.key"
+        type="button"
+        class="mobile-dock__item"
+        :class="{ 'mobile-dock__item--active': item.key === modelValue }"
+        :aria-current="item.key === modelValue ? 'page' : undefined"
+        @pointerenter="emit('preload', item.key)"
+        @focus="emit('preload', item.key)"
+        @click="selectNav(item.key)"
+      >
+        <AdminNavIcon :name="item.icon" />
+        <span class="mobile-dock__label">{{ item.label }}</span>
+      </button>
+    </nav>
   </div>
 </template>
 
@@ -629,6 +768,181 @@ onBeforeUnmount(() => {
   overflow-x: clip;
   overflow-y: auto;
   background: var(--bg);
+}
+
+/* ---- 编排（F-2）---- */
+.nav-slot {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.nav-item--dragging {
+  opacity: 0.5;
+}
+
+.nav-item-hide {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  border: 1px solid var(--border-soft, rgba(15, 23, 42, 0.12));
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-muted, #64748b);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.nav-item-hide:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.nav-editor {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
+  justify-self: end;
+  width: min(320px, 92vw);
+  margin: 12px;
+  padding: 12px 14px;
+  z-index: 130;
+  border: 1px solid var(--border-soft, rgba(15, 23, 42, 0.12));
+  border-radius: var(--radius-md, 10px);
+  background: var(--surface, #fff);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+  font-size: 12px;
+}
+
+.nav-editor__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nav-editor__title {
+  font-weight: 600;
+}
+
+.nav-editor__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.nav-editor__btn {
+  padding: 3px 8px;
+  border: 1px solid var(--border-soft, rgba(15, 23, 42, 0.12));
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nav-editor__hint,
+.nav-editor__empty {
+  margin: 8px 0 0;
+  color: var(--text-muted, #64748b);
+  line-height: 1.6;
+}
+
+.nav-editor__hidden {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.nav-editor__hidden li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ---- 顶栏入口 ---- */
+.global-chrome__edit,
+.global-chrome__search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-soft, rgba(15, 23, 42, 0.12));
+  border-radius: var(--radius-pill, 999px);
+  background: transparent;
+  color: var(--text-muted, #64748b);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.global-chrome__edit[aria-pressed='true'] {
+  border-color: var(--brand, #3b82f6);
+  color: var(--brand, #3b82f6);
+}
+
+.global-chrome__kbd {
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+/* ---- 手机底栏（F-2）---- */
+.mobile-dock {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .mobile-dock {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    /* 高于抽屉（110/120）但低于顶栏以外的弹层，避免盖住模态。 */
+    z-index: 115;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    align-items: stretch;
+    background: var(--admin-sidebar-bg, #fff);
+    border-top: 1px solid var(--admin-sidebar-border, rgba(15, 23, 42, 0.1));
+  }
+
+  .mobile-dock__item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 2px 8px;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted, #64748b);
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .mobile-dock__item--active {
+    color: var(--brand, #3b82f6);
+  }
+
+  .mobile-dock__label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 底栏占了正文底部，给滚动区留出等高空白，
+     否则最后一行表单项会被固定底栏永久遮住。 */
+  .admin__body {
+    padding-bottom: 68px;
+  }
 }
 
 @media (max-width: 768px) {

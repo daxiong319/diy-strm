@@ -10,7 +10,10 @@
     "build:request": "vite build --config vite.request.config.ts",
     "preview": "vite preview",
     "type-check": "vue-tsc -b",
-    "test:upload": "node scripts/test-upload-dispatcher.mjs"
+    "test:upload": "node scripts/test-upload-dispatcher.mjs",
+    "test:layout": "node scripts/test-layout-prefs.mjs",
+    "test:palette": "node scripts/test-command-palette.mjs",
+    "test:web": "npm run test:upload && npm run test:layout && npm run test:palette"
   },
   "dependencies": {
     "@aiden0z/pptx-renderer": "^1.2.4",

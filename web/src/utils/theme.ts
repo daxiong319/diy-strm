@@ -1,7 +1,18 @@
 import { ref } from "vue";
 
 export type ThemePref = "light" | "dark" | "auto";
-export type SkinPref = "default" | "brutal";
+export type SkinPref = "default" | "brutal" | "paper";
+
+/**
+ * 全部内置皮肤。系统设置页的选择项由这份清单驱动，
+ * 不要在别处再写一份 skin id 的数组 —— 两份清单漂移的表现是
+ * 「选得到但套不上」（applySkin 写了个没人认的 data-skin 值，界面没反应）。
+ */
+export const SKIN_IDS: SkinPref[] = ["default", "brutal", "paper"];
+
+export function isSkinPref(v: string): v is SkinPref {
+  return (SKIN_IDS as string[]).includes(v);
+}
 
 const KEY = "litepan_theme";
 const KEY_SKIN = "litepan_skin";
@@ -16,8 +27,10 @@ const THEME_LABELS: Record<ThemePref, string> = {
 let mediaQuery: MediaQueryList | null = null;
 
 function readSkinPref(): SkinPref {
-  const v = localStorage.getItem(KEY_SKIN);
-  return v === "brutal" ? "brutal" : "default";
+  const v = localStorage.getItem(KEY_SKIN) ?? "";
+  // 读到不认识的 skin id（手改过 localStorage，或旧版本残留）
+  // 回落默认，而不是把一个没人认的值写进 data-skin。
+  return isSkinPref(v) ? v : "default";
 }
 
 const skinState = ref<SkinPref>(readSkinPref());
@@ -37,7 +50,8 @@ function activeSkin(): SkinPref {
   if (typeof document === "undefined") {
     return skinState.value;
   }
-  return document.documentElement.dataset.skin === "brutal" ? "brutal" : "default";
+  const v = document.documentElement.dataset.skin ?? "";
+  return isSkinPref(v) ? v : "default";
 }
 
 function applyThemeDataset(pref: ThemePref): void {

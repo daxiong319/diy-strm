@@ -72,6 +72,7 @@ const TASK_PANEL_SETTING_KEYS = new Set([
 const SKIN_OPTIONS: { id: SkinPref; label: string; desc: string }[] = [
   { id: "default", label: "经典主题", desc: "现行品牌风格，支持深色模式与顶栏光效。" },
   { id: "brutal", label: "野兽风格", desc: "粗黑边 + 硬阴影 + 直角的高对比风格，不随深色模式变化。" },
+  { id: "paper", label: "纸感风格", desc: "暖纸底色 + 细边框 + 大圆角与柔阴影，长时间盯着更省眼。" },
 ];
 const skinDraft = ref<SkinPref>(getSkinPref());
 const skinSaved = ref<SkinPref>(getSkinPref());

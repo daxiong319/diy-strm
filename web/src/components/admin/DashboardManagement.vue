@@ -27,6 +27,35 @@ import { toast } from "@/composables/useToast";
 import { formatRelativeTimeAgo, formatSize } from "@/utils/format";
 import "@/styles/admin-shared.css";
 import SvgIcon from "@/components/icons/SvgIcon.vue";
+import HomeTodoCard from "@/components/admin/HomeTodoCard.vue";
+import { fetchSettingsIndex, type SettingIndexEntry } from "@/api/settings";
+import { useRouter } from "vue-router";
+
+// 首页待办（T13 · F-5）。
+//
+// 复用 ⌘K 的索引：待办条目与搜索结果是同一份来源，
+// 两处各列一份必然出现「待办里有、搜索里搜不到」的不一致。
+const indexItems = ref<SettingIndexEntry[]>([]);
+const indexCoverage = ref("");
+onMounted(async () => {
+  try {
+    const payload = await fetchSettingsIndex();
+    indexItems.value = payload.items ?? [];
+    indexCoverage.value = payload.coverage ?? "";
+  } catch {
+    // 拉不到就渲染成空列表：HomeTodoCard 会隐藏自己，
+    // 宁可没有这一块，也不要一块内容为假的「待办」。
+    indexItems.value = [];
+  }
+});
+const router = useRouter();
+async function openTodoItem(it: SettingIndexEntry) {
+  if (!it.page) return;
+  await router.push({
+    path: "/admin",
+    query: { page: it.page, ...(it.tab ? { tab: it.tab } : {}), ...(it.anchor ? { field: it.key } : {}) },
+  });
+}
 
 const OVERVIEW_TAB = "overview";
 const LOGS_TAB = "logs";
@@ -426,6 +455,12 @@ onMounted(() => {
     <SectionTabBar :model-value="activeTab" :tabs="tabs" @update:model-value="setActiveTab" />
 
     <div v-if="activeTab === OVERVIEW_TAB && !loading" class="dashboard-overview">
+      <HomeTodoCard
+        v-if="indexItems.length"
+        :items="indexItems"
+        :coverage="indexCoverage"
+        @open="openTodoItem"
+      />
       <section class="ov-board" aria-label="运行概况" :class="`ov-board--${systemStatus.tone}`">
         <div class="ov-ring">
           <svg class="ov-ring__svg" viewBox="0 0 120 120" aria-hidden="true">
