@@ -137,6 +137,22 @@ const (
 	// 调成 0 = 立刻可重转（排查用，会导致反复转存）。
 	KeyMOSubscriptionTransferProtectHours = "mo_subscription_transfer_protect_hours"
 
+	// ---- T14 刮削落盘 / 未识别兜底 / 备份目标 ----
+
+	// KeyMOScrapeNFOEnabled 整理完成后自动生成 NFO + 海报。
+	KeyMOScrapeNFOEnabled = "mo_scrape_nfo_enabled"
+	// KeyMOScrapeNFOTarget 刮削落盘目标：local 写本地 STRM 目录，cloud 上传网盘。
+	KeyMOScrapeNFOTarget = "mo_scrape_nfo_target"
+	// KeyMOScrapeUnrecognizedDir 未识别文件的兜底目录（三种填法见
+	// mediaorganize.ResolveUnrecognizedTarget：绝对路径 / 纯目录名 / 留空）。
+	KeyMOScrapeUnrecognizedDir = "mo_scrape_unrecognized_dir"
+	// KeyMOScrapeFollowExistingLocation 从 Emby 反查该作品已有的库内位置。
+	KeyMOScrapeFollowExistingLocation = "mo_scrape_follow_existing_location"
+	// KeyMOScrapeSkipAction 未识别文件的动作：keep 留在源目录，move 移到兜底目录。
+	KeyMOScrapeSkipAction = "mo_scrape_skip_action"
+	// KeyMOBackupTarget 备份恢复目标：local 恢复到本地，cloud 恢复到网盘。
+	KeyMOBackupTarget = "mo_backup_target"
+
 	// ---- T05 搜索连接器 ----
 
 	// KeyMOSubscriptionSearchSources 订阅默认使用的搜索源 key 列表（逗号分隔）。
@@ -533,6 +549,25 @@ func defaultSpecs() []Spec {
 		stringSpec(KeyMOMediaTagOrder, "media_organize", "媒体信息标签排序", "重命名时媒体标签的排列顺序，JSON 数组字符串。", `["screen_size","video_codec","audio_codec","audio_channels"]`),
 		boolSpec(KeyMOAlignMediaTags, "media_organize", "强迫症模式", "同后缀文件保持媒体信息标签一致。", "false"),
 		intSpec(KeyMOMaxWorksPerRun, "media_organize", "每次最多整理作品数", "单次执行最多处理的作品数，0 表示不限制。", "50", "", 0, 10000),
+		// ---- T14 ----
+		boolSpec(KeyMOScrapeNFOEnabled, "media_organize", "刮削落盘",
+			"整理完成后自动生成 NFO 与海报。格式取社区通用写法（Emby/Jellyfin 都认），不是逆向出来的专有 schema。", "false"),
+		selectSpec(KeyMOScrapeNFOTarget, "media_organize", "刮削落盘目标", "NFO 与海报写到哪里。", "local", []Option{
+			{Value: "local", Label: "本地目录（整理目录旁的同名文件夹）"},
+			{Value: "cloud", Label: "网盘（与媒体文件同目录）"},
+		}),
+		stringSpec(KeyMOScrapeUnrecognizedDir, "media_organize", "未识别兜底目录",
+			"识别不出标题的文件往哪放。三种填法：以 / 开头的绝对路径直接落该目录；纯目录名落在整理目录下的一级分类里；留空则留在源目录只记一条识别失败。", "未识别"),
+		boolSpec(KeyMOScrapeFollowExistingLocation, "media_organize", "未识别时沿用已有位置",
+			"开启后先向 Emby 反查这个作品已经在库里的位置，查到就落那里。只有 Emby 支持且需要 Emby 在线；查不到则按「未识别兜底目录」处理。", "false"),
+		selectSpec(KeyMOScrapeSkipAction, "media_organize", "未识别文件动作", "识别失败的文件留在源目录还是移到兜底目录。", "keep", []Option{
+			{Value: "keep", Label: "留在源目录（只记一条识别失败）"},
+			{Value: "move", Label: "移到未识别兜底目录"},
+		}),
+		selectSpec(KeyMOBackupTarget, "media_organize", "备份恢复目标", "备份里的配置与 STRM 目录恢复到本地还是网盘。", "local", []Option{
+			{Value: "local", Label: "本地目录"},
+			{Value: "cloud", Label: "网盘"},
+		}),
 		boolSpec(KeyMOOverwriteExisting, "media_organize", "同名冲突时覆盖", "目标位置已有同名文件时覆盖，默认跳过。", "false"),
 		{
 			Key:     KeyAIOrganizeEnabled,

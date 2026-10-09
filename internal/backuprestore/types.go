@@ -64,6 +64,8 @@ type CreateRequest struct {
 type RestoreRequest struct {
 	Password     string `json:"password"`
 	RestoreAdmin bool   `json:"restore_admin"`
+	// STRMTarget 说清 STRM 目录恢复到哪（nil 等价于 Local）。
+	STRMTarget *RestoreTarget `json:"strm_target,omitempty"`
 }
 
 type Summary struct {
@@ -73,6 +75,13 @@ type Summary struct {
 	RestoreAdmin  bool   `json:"restore_admin"`
 	NeedsRestart  bool   `json:"needs_restart"`
 	SecretFromEnv bool   `json:"secret_from_env"`
+	// STRMCount 是这次恢复落到 STRM 目录里的文件数（0 = 备份里没有 STRM）。
+	STRMCount int `json:"strm_count"`
+	// STRMTarget 说明 STRM 恢复到了哪里（"local" / "cloud"）。
+	STRMTarget string `json:"strm_target,omitempty"`
+	// STRMFailures 是恢复 STRM 时失败的条目。整体不失败，但如实列出，
+	// 因为「恢复完成但少了几集」比「恢复失败」更难被用户自己发现。
+	STRMFailures []string `json:"strm_failures,omitempty"`
 }
 
 type Status struct {
@@ -97,6 +106,7 @@ type payloadManifest struct {
 	SchemaVersion int           `json:"schema_version"`
 	AccountCount  int           `json:"account_count"`
 	TaskCount     int           `json:"task_count"`
+	StrmCount     int           `json:"strm_count"`
 	Files         []payloadFile `json:"files"`
 }
 
@@ -110,7 +120,11 @@ type pendingPlan struct {
 	StageDir      string `json:"stage_dir"`
 	ReplaceSecret bool   `json:"replace_secret"`
 	ReplaceFavs   bool   `json:"replace_favorites"`
-	CreatedAt     string `json:"created_at"`
+	// STRMRestore 记着 STRM 目录要恢复到哪；STRMStaged 是解出来的暂存目录名。
+	// 两者都空表示这次备份没有 STRM 目录，或恢复已在 PrepareRestore 阶段完成。
+	STRMTarget *RestoreTarget `json:"strm_target,omitempty"`
+	STRMStaged string         `json:"strm_staged,omitempty"`
+	CreatedAt  string         `json:"created_at"`
 }
 
 type restoreResult struct {

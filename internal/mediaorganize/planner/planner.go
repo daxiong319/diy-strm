@@ -65,6 +65,22 @@ type Planner struct {
 	classification    classification.Enhancer
 	deferred          []deferredGroup
 	applyingAI        bool
+
+	// T14 未识别兜底用。unrecognizedDirPath 只解析一次：一次整理跑动里
+	// 兜底判定可能有几十组，而整理目录自己的路径不会变。
+	unrecognizedDirPath     string
+	unrecognizedDirPathDone bool
+	// embyLookup 反查作品在媒体库里已有的位置，由外层注入；返回空表示查不到。
+	// 刻意不放进 FileService：媒体库客户端不是网盘驱动的一部分，
+	// 塞进 FileService 会让 planner 依赖一个它根本用不到的能力。
+	embyLookup func(ctx context.Context, accountID int64, title string, year *int) string
+}
+
+// SetEmbyLocationLookup 注入「按标题+年份反查媒体库里已有位置」的能力。
+// nil 表示不支持 —— 此时「沿用已有位置」开关打开也会安静落回兜底目录，
+// 因为「查不到」和「不支持」对用户的期望是同一件事：别把文件放乱。
+func (p *Planner) SetEmbyLocationLookup(fn func(ctx context.Context, accountID int64, title string, year *int) string) {
+	p.embyLookup = fn
 }
 
 func (p *Planner) SetRecognitionEnhancer(enhancer recognition.Enhancer) {

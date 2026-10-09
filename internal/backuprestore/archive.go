@@ -14,6 +14,20 @@ import (
 	"time"
 )
 
+// strmPayloadPrefix 是 STRM 目录在载荷里的命名空间（T14）。
+//
+// 载荷里其余条目都是固定文件名（配置、数据库、密钥、收藏），只有 STRM 目录
+// 是一棵任意深度的目录树，所以单独给它一个前缀 + 前缀内逐条白名单校验，
+// 而不是把 allowedPayloadName 直接改成接受任意路径 —— 那会让任意绝对路径、
+// `..`、符号链接重新变成可写的目标。
+const strmPayloadPrefix = "strm/"
+
+// maxStrmPayloadFiles 给「一个备份里塞了几十万个小文件」设一个刹车。
+//
+// 这不是安全边界（大小上限才是），STRM 目录通常只有几百到几千个 .strm 文件，
+// 超出这个量级基本可以断定是把整个媒体目录误配成了 STRM 目录。
+const maxStrmPayloadFiles = 4096
+
 const payloadManifestName = "payload/manifest.json"
 
 type archiveSource struct {
@@ -148,7 +162,7 @@ func extractPayloadArchive(archivePath, destination string) (payloadManifest, er
 		return payloadManifest{}, fmt.Errorf("解析备份载荷：%w", err)
 	}
 	defer reader.Close()
-	if len(reader.File) == 0 || len(reader.File) > 17 {
+	if len(reader.File) == 0 || len(reader.File) > maxPayloadFiles() {
 		return payloadManifest{}, fmt.Errorf("备份载荷文件数无效")
 	}
 	entries := make(map[string]*zip.File, len(reader.File))
@@ -183,7 +197,7 @@ func extractPayloadArchive(archivePath, destination string) (payloadManifest, er
 	if manifest.FormatVersion != FormatVersion || (manifest.Scope != ScopeSettings && manifest.Scope != ScopeFull) {
 		return payloadManifest{}, fmt.Errorf("备份载荷清单版本或范围无效")
 	}
-	if len(manifest.Files) == 0 || len(manifest.Files) > 16 || len(entries) != len(manifest.Files)+1 {
+	if len(manifest.Files) == 0 || len(manifest.Files) > maxPayloadFiles()-1 || len(entries) != len(manifest.Files)+1 {
 		return payloadManifest{}, fmt.Errorf("备份载荷文件数不匹配")
 	}
 	seen := make(map[string]bool, len(manifest.Files))
@@ -240,6 +254,14 @@ func allowedPayloadName(name string) bool {
 	if clean != name || clean == "." || strings.HasPrefix(clean, "../") {
 		return false
 	}
+	// STRM 目录打成的是一个 zip 条目，名字本身不是 .strm，
+	// 必须在进 strm/ 前缀分支之前单独放行，否则会被当成单个 .strm 挡掉。
+	if name == strmArchiveEntry {
+		return true
+	}
+	if strings.HasPrefix(name, strmPayloadPrefix) {
+		return allowedStrmPayloadName(name)
+	}
 	switch name {
 	case payloadManifestName,
 		"settings/configs.json",
@@ -250,4 +272,41 @@ func allowedPayloadName(name string) bool {
 	default:
 		return false
 	}
+}
+
+// allowedStrmPayloadName 校验 STRM 命名空间里的条目。
+//
+// 三条限制，每条都对应一类真实事故：
+//   - 后缀必须是 .strm：STRM 目录里只有指针文件，任何其它后缀都说明这个目录
+//     配错了（多半是把媒体目录填成了 STRM 目录），顺手全量备份下去会让
+//     一个几百 GB 的媒体库变成一个几百 GB 的备份。
+//   - 段内不许出现 `.`/`..`/空段（filepath.Clean 之后仍等于原名即已挡掉）。
+//   - 路径长度有上限：备份文件会原样落到网盘/容器上，超长名在部分目标上会被
+//     静默截断成同名文件。
+func allowedStrmPayloadName(name string) bool {
+	rest := strings.TrimPrefix(name, strmPayloadPrefix)
+	if rest == "" || !strings.HasSuffix(rest, ".strm") {
+		return false
+	}
+	if len(rest) > 240 {
+		return false
+	}
+	for _, part := range strings.Split(rest, "/") {
+		switch part {
+		case "", ".", "..":
+			return false
+		}
+		if strings.ContainsAny(part, "\x00\r\n") {
+			return false
+		}
+	}
+	return true
+}
+
+// maxPayloadFiles 是载荷条目总数上限。
+//
+// 固定条目只有 5 个（清单 + 配置 + 数据库 + 密钥 + 收藏），剩下的额度全部
+// 留给 STRM 目录；T14 之前这里硬编码 17，是为了给固定条目留冗余。
+func maxPayloadFiles() int {
+	return 5 + 1 + maxStrmPayloadFiles
 }

@@ -37,6 +37,11 @@ func (p *Planner) planGroupWithMatch(
 		if allowRecognition && p.deferForRecognition(key, items, alignDefaults, "无法识别标题，请手动匹配", "无法识别", nil) {
 			return nil
 		}
+		// T14：兜底优先于 skip —— 先给文件一个确定去处，再记 needs_match。
+		// 顺序反了的话，skip 会把文件永远留在源目录，兜底目录永远空着。
+		if p.planUnrecognizedFallback(key, items, "无法识别标题，请手动匹配") {
+			return nil
+		}
 		p.recordNeedsMatch(key, items, "无法识别标题，请手动匹配", nil)
 		for _, entry := range items {
 			p.skip(entry.item, "无法识别")
@@ -45,6 +50,9 @@ func (p *Planner) planGroupWithMatch(
 	}
 	if allowRecognition && p.isLowConfidenceGroup(key, items) {
 		if p.deferForRecognition(key, items, alignDefaults, "识别置信度过低，请手动匹配", "识别置信度过低", nil) {
+			return nil
+		}
+		if p.planUnrecognizedFallback(key, items, "识别置信度过低，请手动匹配") {
 			return nil
 		}
 		p.recordNeedsMatch(key, items, "识别置信度过低，请手动匹配", nil)

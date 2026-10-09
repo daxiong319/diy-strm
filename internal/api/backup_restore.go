@@ -110,6 +110,9 @@ func (h *Handler) prepareBackupRestore(w http.ResponseWriter, r *http.Request) {
 	if !ensureServiceReady(w, h.backupRestore != nil) {
 		return
 	}
+	// RestoreRequest 整体反序列化，所以前端多传的 strm_target 会自动带进来；
+	// 这里刻意不逐字段拷贝 —— 漏一个字段的表现是「界面上选了网盘，
+	// 恢复却落到了本地」，而这种错位很难从日志里看出来。
 	var req backuprestore.RestoreRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, err)

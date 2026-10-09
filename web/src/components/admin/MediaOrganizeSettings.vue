@@ -35,6 +35,21 @@ const tmdbLanguageOptions = [
   { value: "en-US", label: "English" },
 ];
 
+const scrapeTargetOptions = [
+  { value: "local", label: "本地目录" },
+  { value: "cloud", label: "网盘（与媒体文件同目录）" },
+];
+
+const skipActionOptions = [
+  { value: "keep", label: "留在源目录" },
+  { value: "move", label: "移到兜底目录" },
+];
+
+const backupTargetOptions = [
+  { value: "local", label: "本地目录" },
+  { value: "cloud", label: "网盘" },
+];
+
 const conflictPolicyOptions = [
   { value: "skip", label: "跳过（推荐）" },
   { value: "overwrite", label: "覆盖" },
@@ -97,6 +112,12 @@ const {
   align_media_tags: false,
   max_works_per_run: 50,
   overwrite_existing: false,
+  scrape_nfo_enabled: false,
+  scrape_nfo_target: "local",
+  scrape_unrecognized_dir: "未识别",
+  scrape_follow_existing_location: false,
+  scrape_skip_action: "keep",
+  backup_target: "local",
 });
 const tagOrder = reactive<string[]>([...ALL_TAG_KEYS]);
 
@@ -614,6 +635,106 @@ defineExpose(
             </template>
           </SettingsRow>
         </div>
+      </SettingsCard>
+
+      <SettingsCard title="刮削元数据落盘" :accent="ORGANIZE_SETTINGS_ACCENT">
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('scrape_nfo_enabled')">
+          <template #info>
+            <div class="settings-row__label">
+              <span>刮削落盘</span>
+              <SettingsHelpTooltip title="刮削落盘说明">
+                <p>整理完成后自动生成 NFO 与海报。格式取社区通用写法，Emby / Jellyfin 都能直接识别。</p>
+                <p>图片下载失败不会让整理失败，只会在任务日志里记一条警告。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <SettingsBoolSegment v-model="settings.scrape_nfo_enabled" label="刮削落盘" />
+          </template>
+        </SettingsRow>
+
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('scrape_nfo_target')">
+          <template #info>
+            <div class="settings-row__label"><span>落盘目标</span></div>
+          </template>
+          <template #control>
+            <AppSelect v-model="settings.scrape_nfo_target" :options="scrapeTargetOptions" />
+          </template>
+        </SettingsRow>
+      </SettingsCard>
+
+      <SettingsCard title="未识别兜底" :accent="ORGANIZE_SETTINGS_ACCENT">
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('scrape_skip_action')">
+          <template #info>
+            <div class="settings-row__label">
+              <span>未识别文件动作</span>
+              <SettingsHelpTooltip title="未识别文件动作说明">
+                <p>识别不出标题的文件，默认留在源目录只记一条「媒体识别失败」。</p>
+                <p>选「移到兜底目录」后才会有一个确定去处。注意：动作是「原地重命名」的任务里兜底不生效——原地重命名的约定就是只改名不动位置。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <AppSelect v-model="settings.scrape_skip_action" :options="skipActionOptions" />
+          </template>
+        </SettingsRow>
+
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('scrape_unrecognized_dir')">
+          <template #info>
+            <div class="settings-row__label">
+              <span>兜底目录</span>
+              <SettingsHelpTooltip title="兜底目录的三种填法">
+                <p><b>/ 开头</b>：绝对路径，直接落那个目录。</p>
+                <p><b>纯目录名</b>：落在「目标根目录 / 媒体类型 / 该目录名」下。</p>
+                <p><b>留空</b>：仍留在源目录，等于只记一条识别失败。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <AppInput
+              v-model="settings.scrape_unrecognized_dir"
+              placeholder="未识别"
+            />
+          </template>
+        </SettingsRow>
+
+        <SettingsRow
+          :show-changed-badge="true"
+          :changed="isFieldChanged('scrape_follow_existing_location')"
+        >
+          <template #info>
+            <div class="settings-row__label">
+              <span>沿用媒体库已有位置</span>
+              <SettingsHelpTooltip title="沿用已有位置说明">
+                <p>开启后先向 Emby 反查这个作品已经在库里的位置，查到就落那里。</p>
+                <p>只支持 Emby，且需要 Emby 在线；查不到就安静落回兜底目录。查错作品比不查更糟，所以命中判定很严：名称必须完全一致，年份要对得上才算。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <SettingsBoolSegment
+              v-model="settings.scrape_follow_existing_location"
+              label="沿用媒体库已有位置"
+            />
+          </template>
+        </SettingsRow>
+      </SettingsCard>
+
+      <SettingsCard title="备份恢复目标" :accent="ORGANIZE_SETTINGS_ACCENT">
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('backup_target')">
+          <template #info>
+            <div class="settings-row__label">
+              <span>恢复目标</span>
+              <SettingsHelpTooltip title="备份恢复目标说明">
+                <p>备份里的配置与 STRM 目录恢复到本地还是网盘。恢复时网盘会先落一份本地暂存再上传，传完即删。</p>
+                <p>STRM 目录只在「完整备份」时才会被打进去——设置级备份带上几百 MB 指针文件会让「先导出一份配置试试」变成苦等。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <AppSelect v-model="settings.backup_target" :options="backupTargetOptions" />
+          </template>
+        </SettingsRow>
       </SettingsCard>
     </template>
   </div>

@@ -91,7 +91,14 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 	// API 管理端点使用，保证两边共享同一份配置快照与同一个任务仓储。
 	subtitleSvc := subtitle.NewService(st.settings, subtitle.NewLogger(logs.For(logx.ModuleSystem)))
 	subtitleSvc.SetTaskStore(subtitle.NewTaskStore(st.store.DB.WriteHandle(), st.store.DB.ReadHandle()))
-	mediaOrganizeSvc := wireMediaOrganize(st, fileSvc, logs, cfg.DataDir, aiOrganizeSvc, classifyOrganizeSvc, subtitleSvc)
+	// Emby 反查闭包：embyProxySvc 在下面才构造（它依赖整理服务之外的一批依赖），
+	// 所以这里先放一个间接层，等 Emby 服务建好后再把实现塞进去。
+	// 用闭包而不是直接传值，是因为 planner 每次 Build 计划时才需要它，
+	// 那时 Emby 服务早已就绪。
+	var embyLocationLookupFn func(ctx context.Context, accountID int64, title string, year *int) string
+	mediaOrganizeSvc := wireMediaOrganize(st, fileSvc, logs, cfg.DataDir, aiOrganizeSvc, classifyOrganizeSvc, subtitleSvc, func() func(context.Context, int64, string, *int) string {
+		return embyLocationLookupFn
+	})
 	strmScrapeSvc := strmscrape.New(strmscrape.Options{
 		Strm:     strmSvc,
 		Settings: st.settings,
@@ -251,6 +258,7 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 			return item.ID, nil
 		},
 	})
+	embyLocationLookupFn = wireEmbyLocationLookup(embyProxySvc)
 	refreshAdapter := embyproxy.NewRefreshTaskAdapter(embyProxySvc)
 	embyRefreshSvc := embyrefresh.New(embyrefresh.Options{
 		Tasks:     st.store.EmbyRefreshTasks,

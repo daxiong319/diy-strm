@@ -21,6 +21,15 @@ func (m *mockExecFS) List(_ context.Context, _ int64, parentID string, _ bool) (
 	return append([]domain.FileItem(nil), m.dirs[parentID]...), nil
 }
 
+// ResolveDirPath 让它同时满足 planner.FileService：整理任务组装时会把同一个
+// mock 传给 planner（executor 用例里的 RunTask 路径会经过那里）。
+func (m *mockExecFS) ResolveDirPath(_ context.Context, _ int64, dirID string) (string, error) {
+	if dirID == "" {
+		return "", nil
+	}
+	return "/" + dirID, nil
+}
+
 func (m *mockExecFS) MoveFiles(_ context.Context, _ int64, fileIDs []string, targetParentID, sourceParentID string) error {
 	items := m.dirs[sourceParentID]
 	moved := make([]domain.FileItem, 0, len(fileIDs))
@@ -345,6 +354,14 @@ type simulatedFS struct {
 
 func (m *simulatedFS) List(_ context.Context, _ int64, parentID string, _ bool) ([]domain.FileItem, error) {
 	return append([]domain.FileItem(nil), m.dirs[parentID]...), nil
+}
+
+// ResolveDirPath 让它同时满足 planner.FileService（整理任务的计划阶段会用到）。
+func (m *simulatedFS) ResolveDirPath(_ context.Context, _ int64, dirID string) (string, error) {
+	if dirID == "" {
+		return "", nil
+	}
+	return "/" + dirID, nil
 }
 
 func (m *simulatedFS) MoveFiles(_ context.Context, _ int64, fileIDs []string, targetParentID, sourceParentID string) error {

@@ -40,6 +40,8 @@ type Service struct {
 	planner  PlannerBuilder
 	executor ExecutorApplier
 	subtitle SubtitleProcessor
+	nfo      ScrapeNFOWriter
+	tmdb     WorkDetailLookup
 
 	mu              sync.Mutex
 	taskLogs        map[string][]LogEntry
@@ -59,6 +61,11 @@ type ServiceOptions struct {
 	Log      *slog.Logger
 	Planner  PlannerBuilder
 	Executor ExecutorApplier
+	// NFO 刮削落盘器（T14）。为 nil 时整个落盘环节跳过，
+	// 整理行为与落盘未启用时完全一致。
+	NFO ScrapeNFOWriter
+	// TMDBWork 作品详情查询（T14）：海报/简介的补齐来源。为 nil 时只用动作元数据。
+	TMDBWork WorkDetailLookup
 	// Subtitle 整理完成后的字幕自动处理回调（参考实现 移植③）。
 	// 用接口注入而非直接 import subtitle，避免 mediaorganize → subtitle 的依赖；
 	// 为 nil 时整理流程完全不受影响（字幕模块可独立启用/关闭）。
@@ -95,6 +102,8 @@ func NewService(opts ServiceOptions) *Service {
 		planner:         p,
 		executor:        e,
 		subtitle:        opts.Subtitle,
+		nfo:             opts.NFO,
+		tmdb:            opts.TMDBWork,
 		taskLogs:        make(map[string][]LogEntry),
 		taskProgress:    make(map[string]map[string]any),
 		running:         make(map[string]struct{}),
@@ -699,6 +708,9 @@ func (s *Service) applyPlanRunner(ctx context.Context, taskID string, plan *Plan
 	// 字幕自动处理（参考实现 移植③）：只在动作真正成功时触发，且在汇总落库之后，
 	// 保证字幕失败绝不会改变整理任务本身的成功/失败判定。
 	s.processSubtitlesForPlan(ctx, taskID, task, plan)
+	// 刮削落盘（T14）：排在字幕之后、汇总之后 —— 只有动作真的成功才写元数据，
+	// 而元数据写失败绝不改变整理任务本身的成功判定。
+	s.processNFOMetadata(ctx, taskID, plan, cfg, accountID)
 }
 
 // processSubtitlesForPlan 为整理成功的视频触发字幕自动检索与下载。

@@ -111,6 +111,18 @@ export interface MediaOrganizeSettings {
   align_media_tags: boolean;
   max_works_per_run: number;
   overwrite_existing: boolean;
+  /** T14：整理完成后自动生成 NFO 与海报（社区通用格式）。 */
+  scrape_nfo_enabled: boolean;
+  /** T14：NFO 与海报写本地目录还是网盘。 */
+  scrape_nfo_target: string;
+  /** T14：识别不出标题的文件往哪放（三种填法）。 */
+  scrape_unrecognized_dir: string;
+  /** T14：开启后先向 Emby 反查作品已有位置（只支持 Emby，需在线）。 */
+  scrape_follow_existing_location: boolean;
+  /** T14：识别失败的文件留源目录（keep）还是移到兜底目录（move）。 */
+  scrape_skip_action: string;
+  /** T14：备份恢复目标：local 或 cloud。 */
+  backup_target: string;
 }
 
 export type MediaOrganizeTaskInput = {

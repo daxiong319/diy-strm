@@ -251,8 +251,10 @@ func TestWiringSettingsIndexDoesNotLeakValues(t *testing.T) {
 func TestWiringSettingsIndexRegistryHasNotSilentlyShrunk(t *testing.T) {
 	specs := settings.AllSpecs()
 	// 总数：新增设置时这个数会变，届时把它改成新值并在提交信息里说明；
-	// 「静默少一项」则会直接变红。
-	const wantTotal = 190
+	// 「静默少一项」则会直接变红。190 → 196 是 T14 加的 6 个整理设置
+	//（mo_scrape_nfo_enabled / mo_scrape_nfo_target / mo_scrape_unrecognized_dir /
+	//  mo_scrape_follow_existing_location / mo_scrape_skip_action / mo_backup_target）。
+	const wantTotal = 196
 	if len(specs) != wantTotal {
 		t.Errorf("注册表条目数 = %d，期望 %d（新增设置请同步改这个数；"+
 			"若真的少了条目，说明 AllSpecs 漏导出或 defaultSpecs 被改坏）",

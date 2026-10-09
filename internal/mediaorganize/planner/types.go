@@ -8,6 +8,10 @@ import (
 
 type FileService interface {
 	List(ctx context.Context, accountID int64, parentID string, forceRefresh bool) ([]domain.FileItem, error)
+	// ResolveDirPath 把目录 ID 解析成它自己的路径。
+	// T14 的「沿用媒体库已有位置」需要路径：反查是按路径问媒体库的，
+	// 而计划期能拿到的只有 ID。解析失败不该让整理失败，调用方一律当空处理。
+	ResolveDirPath(ctx context.Context, accountID int64, dirID string) (string, error)
 }
 
 type LogFunc func(string)

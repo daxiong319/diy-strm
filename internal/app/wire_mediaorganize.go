@@ -25,7 +25,18 @@ func wireMediaOrganize(
 	ai *aiorganize.Service,
 	classifier *classifyorganize.Service,
 	subtitleSvc *subtitle.Service,
+	embyLocations func() func(ctx context.Context, accountID int64, title string, year *int) string,
 ) *mediaorganize.Service {
+	tmdbOpts := func() tmdb.Options {
+		plannerSettings := mediaorganize.EnrichPlannerSettings(st.settings, nil)
+		return tmdb.Options{
+			APIKey:        mediaorganize.PlannerTMDBAPIKey(plannerSettings),
+			Language:      mediaorganize.PlannerTMDBLanguage(plannerSettings),
+			ProxyURL:      tmdb.BuildProxyURL(mediaorganize.TmdbProxyFromSettings(plannerSettings)),
+			APIBaseHost:   mediaorganize.PlannerTMDBAPIHost(plannerSettings),
+			ImageBaseHost: mediaorganize.PlannerTMDBImageHost(plannerSettings),
+		}
+	}
 	return mediaorganize.NewService(mediaorganize.ServiceOptions{
 		Repo:     st.store.MediaOrganizeTasks,
 		Files:    files,
@@ -37,11 +48,24 @@ func wireMediaOrganize(
 			settings:       st.settings,
 			recognition:    ai,
 			classification: classifier,
+			embyLocations: func(ctx context.Context, accountID int64, title string, year *int) string {
+				if embyLocations == nil {
+					return ""
+				}
+				fn := embyLocations()
+				if fn == nil {
+					return ""
+				}
+				return fn(ctx, accountID, title, year)
+			},
 		},
 		Executor: executorAdapter{files: files},
 		// 字幕服务为 nil 时 SubtitleProcessor 为 nil 接口，
 		// mediaorganize 内部直接跳过字幕处理，整理流程不受影响。
 		Subtitle: subtitleProcessorAdapter{svc: subtitleSvc},
+		// 刮削落盘（T14）：装配层不判断开关，开关在 mediaorganize 内部读。
+		NFO:      wireScrapeNFO(files, tmdbOpts, dataDir),
+		TMDBWork: tmdbWorkSource{client: tmdb.NewClient(tmdbOpts())},
 	})
 }
 
@@ -50,6 +74,9 @@ type plannerAdapter struct {
 	settings       *settings.Service
 	recognition    *aiorganize.Service
 	classification *classifyorganize.Service
+	// embyLocations 反查作品在 Emby 里的已有位置（T14 未识别兜底）。
+	// 为 nil 表示当前部署没配可用的 Emby，开关打开也安静落回兜底目录。
+	embyLocations func(ctx context.Context, accountID int64, title string, year *int) string
 }
 
 func (a plannerAdapter) Build(
@@ -123,6 +150,9 @@ func (a plannerAdapter) Build(
 		progressFn,
 		stopFn,
 	)
+	if a.embyLocations != nil {
+		p.SetEmbyLocationLookup(a.embyLocations)
+	}
 	p.SetRecognitionEnhancer(a.recognition)
 	p.SetClassificationEnhancer(a.classification)
 	return p.Build()

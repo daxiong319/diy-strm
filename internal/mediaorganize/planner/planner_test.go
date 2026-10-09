@@ -22,6 +22,16 @@ func (m *mockFS) List(_ context.Context, _ int64, parentID string, _ bool) ([]do
 	return append([]domain.FileItem(nil), m.dirs[parentID]...), nil
 }
 
+// ResolveDirPath 是 T14 未识别兜底要用的：整理目录自己的路径只用于拼出
+// 「整理目录/一级/未识别」的提示文案、以及拿去问媒体库，所以测试里按目录名
+// 拼一个绝对路径，与真实驱动的返回形状一致。
+func (m *mockFS) ResolveDirPath(_ context.Context, _ int64, dirID string) (string, error) {
+	if dirID == "" {
+		return "", nil
+	}
+	return "/" + dirID, nil
+}
+
 type mockTMDB struct {
 	searchFn     func(query string, year *int) []map[string]any
 	searchErr    error

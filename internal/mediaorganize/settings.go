@@ -29,6 +29,29 @@ var moSettingFieldToKey = map[string]string{
 	"align_media_tags":         settings.KeyMOAlignMediaTags,
 	"max_works_per_run":        settings.KeyMOMaxWorksPerRun,
 	"overwrite_existing":       settings.KeyMOOverwriteExisting,
+	// T14：刮削落盘、未识别兜底、备份恢复目标。
+	"scrape_nfo_enabled":              settings.KeyMOScrapeNFOEnabled,
+	"scrape_nfo_target":               settings.KeyMOScrapeNFOTarget,
+	"scrape_unrecognized_dir":         settings.KeyMOScrapeUnrecognizedDir,
+	"scrape_follow_existing_location": settings.KeyMOScrapeFollowExistingLocation,
+	"scrape_skip_action":              settings.KeyMOScrapeSkipAction,
+	"backup_target":                   settings.KeyMOBackupTarget,
+}
+
+// 这些字段在更新接口里必须仍是布尔：anyToSettingString 对 bool 用严格类型断言，
+// 收到字符串会直接报「需为布尔值」，避免前端悄悄写进 "false" 这种非空字符串。
+var moBoolSettingFields = map[string]bool{
+	"proxy_enabled":                   true,
+	"align_media_tags":                true,
+	"overwrite_existing":              true,
+	"scrape_nfo_enabled":              true,
+	"scrape_follow_existing_location": true,
+}
+
+var moIntSettingFields = map[string]bool{
+	"api_request_interval_ms":  true,
+	"tmdb_request_interval_ms": true,
+	"max_works_per_run":        true,
 }
 
 var validMediaTagKeys = map[string]struct{}{
@@ -42,10 +65,10 @@ func SettingsDict(svc *settings.Service) map[string]any {
 	}
 	out := make(map[string]any, len(moSettingFieldToKey))
 	for field, key := range moSettingFieldToKey {
-		switch field {
-		case "proxy_enabled", "align_media_tags", "overwrite_existing":
+		switch {
+		case moBoolSettingFields[field]:
 			out[field] = svc.Bool(key)
-		case "api_request_interval_ms", "tmdb_request_interval_ms", "max_works_per_run":
+		case moIntSettingFields[field]:
 			out[field] = svc.Int(key)
 		default:
 			out[field] = svc.String(key)
@@ -140,14 +163,14 @@ func parseMediaTagOrder(raw any) (json.RawMessage, error) {
 }
 
 func anyToSettingString(field string, raw any) (string, error) {
-	switch field {
-	case "proxy_enabled", "align_media_tags", "overwrite_existing":
+	switch {
+	case moBoolSettingFields[field]:
 		b, ok := raw.(bool)
 		if !ok {
 			return "", fmt.Errorf("%s 需为布尔值", field)
 		}
 		return strconv.FormatBool(b), nil
-	case "api_request_interval_ms", "tmdb_request_interval_ms", "max_works_per_run":
+	case moIntSettingFields[field]:
 		switch n := raw.(type) {
 		case float64:
 			return strconv.Itoa(int(n)), nil

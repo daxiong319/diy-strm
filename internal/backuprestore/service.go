@@ -53,6 +53,13 @@ type Options struct {
 	Secret    []byte
 	Log       *slog.Logger
 	OnRestart func()
+	// StrmDir 是要一并备份的 STRM 目录（T14）。留空则不备份 STRM。
+	// 只在完整备份（IncludeAccounts）时生效：设置级备份只动配置，
+	// 混进几百 MB 的指针文件会让「先导出一份配置试试」变成一次苦等。
+	StrmDir string
+	// UploadToLocal 把恢复出来的 STRM 文件上传到网盘（T14）。
+	// 为 nil 时恢复只落本地目录。
+	UploadToLocal Uploader
 }
 
 type Service struct {
@@ -64,6 +71,8 @@ type Service struct {
 	db         *store.DB
 	configs    domain.ConfigRepository
 	secret     []byte
+	strmDir    string
+	uploader   Uploader
 	log        *slog.Logger
 	onRestart  func()
 	mu         sync.Mutex
@@ -88,6 +97,8 @@ func New(opts Options) (*Service, error) {
 		db:         opts.DB,
 		configs:    opts.Configs,
 		secret:     append([]byte(nil), opts.Secret...),
+		strmDir:    strings.TrimSpace(opts.StrmDir),
+		uploader:   opts.UploadToLocal,
 		log:        opts.Log,
 		onRestart:  opts.OnRestart,
 	}
@@ -138,6 +149,19 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Record, error)
 	}
 	if err != nil {
 		return Record{}, err
+	}
+	// STRM 目录只在完整备份里带上：设置级备份用户图的是「导一份配置试试」，
+	// 混进几百 MB 指针文件会让这个动作变成一次苦等。
+	if scope == ScopeFull {
+		strmData, strmCount, strmOK, strmErr := buildSTRMArchive(s.strmDir)
+		if strmErr != nil {
+			return Record{}, domain.Wrap(domain.CodeInternal, strmErr)
+		}
+		if strmOK {
+			sources = append(sources, archiveSource{Name: strmArchiveEntry, Data: strmData})
+			components = append(components, "strm")
+			payload.StrmCount = strmCount
+		}
 	}
 
 	archivePath := filepath.Join(workDir, "payload.tar")
@@ -383,6 +407,30 @@ func (s *Service) PrepareRestore(ctx context.Context, id string, req RestoreRequ
 	if err := s.prepareStagedDatabase(ctx, manifest.Scope, stageDir, req.RestoreAdmin); err != nil {
 		return Summary{}, err
 	}
+	// STRM 目录在准备阶段就恢复完：它跟数据库换不换是两件事，
+	// 而数据库恢复要等重启、STRM 恢复要上传网盘 —— 混在一起会让
+	// 「点了恢复但什么也没发生，要重启才生效」把用户困在等待里。
+	strmTarget := RestoreTarget{Local: true}
+	if req.STRMTarget != nil {
+		strmTarget = *req.STRMTarget
+	}
+	strmFiles, strmErr := s.readStagedSTRM(stageDir)
+	if strmErr != nil {
+		return Summary{}, strmErr
+	}
+	strmCount := 0
+	var strmFailures []string
+	if len(strmFiles) > 0 {
+		if strmTarget.CloudConfigured() {
+			strmFailures, strmErr = s.uploadSTRMToCloud(ctx, strmTarget, strmFiles, filepath.Join(stageDir, "strm-staging"))
+			if strmErr != nil {
+				return Summary{}, strmErr
+			}
+		} else if err := restoreSTRMFiles(s.strmDir, strmFiles); err != nil {
+			return Summary{}, domain.Wrap(domain.CodeInternal, err)
+		}
+		strmCount = len(strmFiles)
+	}
 	plan := pendingPlan{
 		Version:       1,
 		ID:            stageID,
@@ -401,6 +449,13 @@ func (s *Service) PrepareRestore(ctx context.Context, id string, req RestoreRequ
 	_ = os.Remove(s.resultPath())
 	ok = true
 	s.log.Warn("备份恢复已准备，等待重启", "backup_id", id, "scope", manifest.Scope, "restore_admin", req.RestoreAdmin)
+	strmTargetLabel := ""
+	if len(strmFiles) > 0 {
+		strmTargetLabel = "local"
+		if strmTarget.CloudConfigured() {
+			strmTargetLabel = "cloud"
+		}
+	}
 	return Summary{
 		Record:        record,
 		AccountCount:  payload.AccountCount,
@@ -408,7 +463,30 @@ func (s *Service) PrepareRestore(ctx context.Context, id string, req RestoreRequ
 		RestoreAdmin:  req.RestoreAdmin,
 		NeedsRestart:  true,
 		SecretFromEnv: strings.TrimSpace(os.Getenv("LITEPAN_SECRET_KEY")) != "",
+		STRMCount:     strmCount,
+		STRMTarget:    strmTargetLabel,
+		STRMFailures:  strmFailures,
 	}, nil
+}
+
+// readStagedSTRM 从已解包的暂存目录里取出 STRM 包并解开。
+//
+// 备份里没有 STRM 目录时返回空 map 而不是错误：那说明这份备份是老格式，
+// 或者用户建备份时没开 STRM 生成，都不该让「恢复数据库」被拦住。
+func (s *Service) readStagedSTRM(stageDir string) (map[string][]byte, error) {
+	archivePath := filepath.Join(stageDir, strmArchiveEntry)
+	data, err := os.ReadFile(archivePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, domain.Wrap(domain.CodeInternal, err)
+	}
+	files, err := strmFilesFromArchive(data)
+	if err != nil {
+		return nil, domain.Errorf(domain.CodeValidation, "%v", err)
+	}
+	return files, nil
 }
 
 func (s *Service) prepareStagedDatabase(ctx context.Context, scope, stageDir string, restoreAdmin bool) error {
