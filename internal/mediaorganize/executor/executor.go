@@ -39,6 +39,10 @@ type Executor struct {
 	stopFn    StopFunc
 	resolved  map[string]string
 	dirCache  map[string][]domain.FileItem
+	// quarantine 是小文件隔离策略（T15）。零值 = 整条通道关闭。
+	quarantine QuarantinePolicy
+	// moveMode 由装配层按任务 action_type 设置；false 时隔离通道不动作。
+	moveMode bool
 }
 
 func New(
@@ -99,6 +103,10 @@ func (e *Executor) Apply() (map[string]any, error) {
 	}
 
 	if err := e.prescanConflicts(relocateActions); err != nil {
+		return nil, err
+	}
+	// 小文件隔离必须在 executeRelocates 之前：被搬走的文件不该再进 relocate 的 pending。
+	if err := e.quarantineSmallFiles(relocateActions); err != nil {
 		return nil, err
 	}
 	if err := e.executeRelocates(relocateActions); err != nil {

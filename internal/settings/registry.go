@@ -153,6 +153,27 @@ const (
 	// KeyMOBackupTarget 备份恢复目标：local 恢复到本地，cloud 恢复到网盘。
 	KeyMOBackupTarget = "mo_backup_target"
 
+	// ---- T15 目录监控风控三件套 ----
+	// 阈值语义见 internal/guardrail/guardrail.go 顶部的「哪些数字是文档确认的」注释。
+	// 连续调用接口次数超限就暂停，0 表示不限。
+	KeyMOScrapeMaxCallsPerWindow = "mo_scrape_max_calls_per_window"
+	// 连续调用次数的统计窗口（秒）。
+	KeyMOScrapeCallWindowSeconds = "mo_scrape_call_window_seconds"
+	// 触顶后的暂停时长上限（秒）。文档确认的上限是 86400（24 小时）。
+	KeyMOScrapeCallPauseSeconds = "mo_scrape_call_pause_seconds"
+	// 连续整理时长超限就暂停，0 表示不限（分钟）。
+	KeyMOScrapeMaxWorkMinutes = "mo_scrape_max_work_minutes"
+	// 整理时长触顶后的暂停时长（分钟）。文档确认的上限是 1440（24 小时）。
+	KeyMOScrapeWorkPauseMinutes = "mo_scrape_work_pause_minutes"
+	// 媒体文件最小体积（字节）。0 = 不启用；启用后 move 模式下小于它的文件会被
+	// 移到隔离目录而不是真删（见 guardrail 的说明）。
+	KeyMOMinMediaSizeBytes = "mo_min_media_size_bytes"
+	// KeyMOQuarantineDir 小文件隔离目录（网盘路径）。小文件被移到这里，可恢复。
+	KeyMOQuarantineDir = "mo_quarantine_dir"
+	// KeyMOSmallFileAcked 小文件隔离的二次确认标记。
+	// 默认 false：不勾选就只报告不动手，避免「打开阈值 = 静默搬走文件」。
+	KeyMOSmallFileAcked = "mo_small_file_acked"
+
 	// ---- T05 搜索连接器 ----
 
 	// KeyMOSubscriptionSearchSources 订阅默认使用的搜索源 key 列表（逗号分隔）。
@@ -568,6 +589,28 @@ func defaultSpecs() []Spec {
 			{Value: "local", Label: "本地目录"},
 			{Value: "cloud", Label: "网盘"},
 		}),
+		intSpec(KeyMOScrapeMaxCallsPerWindow, "media_organize", "风控·连续调用上限",
+			"一段时间内累计的网盘接口调用次数超过这个数就暂停，0 表示不限。建议设成你所用网盘单日安全调用量的一小部分——风控的目的是别把账号用废。",
+			"次", "0", 0, 1000000),
+		intSpec(KeyMOScrapeCallWindowSeconds, "media_organize", "风控·调用统计窗口",
+			"「连续调用次数」在多长的窗口内累计。窗口太短会把正常的批量扫描误判成连续调用。",
+			"秒", "3600", 60, 86400),
+		intSpec(KeyMOScrapeCallPauseSeconds, "media_organize", "风控·调用暂停时长",
+			"调用次数触顶后暂停多久。最长 86400 秒（24 小时），填更大的值会被截到这个上限。",
+			"秒", "3600", 60, 86400),
+		intSpec(KeyMOScrapeMaxWorkMinutes, "media_organize", "风控·连续整理时长上限",
+			"一轮连续整理超过这个时长就暂停，0 表示不限。",
+			"分钟", "0", 0, 10080),
+		intSpec(KeyMOScrapeWorkPauseMinutes, "media_organize", "风控·整理暂停时长",
+			"整理时长触顶后暂停多久。最长 1440 分钟（24 小时），填更大的值会被截到这个上限。",
+			"分钟", "60", 1, 1440),
+		intSpec(KeyMOMinMediaSizeBytes, "media_organize", "媒体文件最小体积",
+			"move 模式下小于这个体积的文件会被移到隔离目录而不是真删——孤儿目录清理要求目录里没有杂物，几百 KB 的 .nfo 或 .txt 会让目录永远不被判定为空。0 表示不启用。",
+			"字节", "0", 0, 1073741824),
+		stringSpec(KeyMOQuarantineDir, "media_organize", "小文件隔离目录",
+			"低于「媒体文件最小体积」的文件被移到这里而不是删除。留空则用整理根目录下的「_隔离」子目录。文件随时可以搬回去。", ""),
+		boolSpec(KeyMOSmallFileAcked, "media_organize", "已确认小文件会被移走",
+			"打开「媒体文件最小体积」前需要先勾这一项表示知情。取消勾选即刻停止隔离，已有文件不受影响。", "false"),
 		boolSpec(KeyMOOverwriteExisting, "media_organize", "同名冲突时覆盖", "目标位置已有同名文件时覆盖，默认跳过。", "false"),
 		{
 			Key:     KeyAIOrganizeEnabled,

@@ -48,6 +48,15 @@ func NewManager(repo domain.AccountRepository, authStates domain.AuthStateReposi
 	}
 }
 
+// SetCallObserver 把网盘 API 调用观察者注入账号级间隔门。
+//
+// 风控熔断靠这一个注入点覆盖全部 9 个驱动：驱动各自调 driver.WaitRequestInterval，
+// 最终都收敛到 DelayController.Gate(accountID) 返回的那一个门。观察者可以是 nil
+// （不启用风控，例如单测或只跑本地的部署）。
+func (m *Manager) SetCallObserver(obs CallObserver) {
+	m.delays.SetCallObserver(obs)
+}
+
 // SetAuthPersistHook 注册认证凭证写回后的回调（认证子系统用于同步状态机）。
 func (m *Manager) SetAuthPersistHook(fn func(ctx context.Context, accountID int64)) {
 	m.onAuthPersist = fn

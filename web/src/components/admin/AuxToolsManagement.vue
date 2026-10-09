@@ -27,15 +27,20 @@ const StrmScrapePanel = asyncPanel(() => import("@/components/admin/StrmScrapePa
 const StrmScrapeSettings = asyncPanel(() => import("@/components/admin/StrmScrapeSettings.vue"));
 const CloudToolsPanel = asyncPanel(() => import("@/components/admin/CloudToolsPanel.vue"));
 const BackupRestorePanel = asyncPanel(() => import("@/components/admin/BackupRestorePanel.vue"));
+const InspectionPage = asyncPanel(() => import("@/components/admin/InspectionPage.vue"));
 
 const SCRAPE_TAB = "scrape";
 const PROXY_TAB = "proxy";
 const ENHANCED_TAB = "enhanced";
 const BACKUP_TAB = "backup";
+// 巡检放在这里而不是新开一级导航：它和增强工具一样是「对已有数据做事」，
+// 而不是系统的一等功能模块；多一个一级页面就多一处 RBAC 菜单授权要维护。
+const INSPECTION_TAB = "inspection";
 const tabs = [
   { key: SCRAPE_TAB, label: "STRM 刮削" },
   { key: ENHANCED_TAB, label: "增强工具" },
   { key: BACKUP_TAB, label: "备份管理" },
+  { key: INSPECTION_TAB, label: "目录巡检" },
 ];
 
 const settingsDrawerOpen = ref(false);
@@ -88,6 +93,7 @@ const drawerSaving = computed(() => readPanelSaving(scrapeSettingsRef.value?.sav
 const isScrapeTab = computed(() => activeTab.value === SCRAPE_TAB);
 const isEnhancedTab = computed(() => activeTab.value === ENHANCED_TAB);
 const isBackupTab = computed(() => activeTab.value === BACKUP_TAB);
+const isInspectionTab = computed(() => activeTab.value === INSPECTION_TAB);
 
 async function openScrapeSettings() {
   scrapeSettingsVisited.value = true;
@@ -151,6 +157,7 @@ async function handleDrawerSave() {
       @update:search-open="enhancedSearchOpen = $event"
     />
     <BackupRestorePanel v-if="tabsVisited[BACKUP_TAB]" v-show="isBackupTab" />
+    <InspectionPage v-if="tabsVisited[INSPECTION_TAB]" v-show="isInspectionTab" />
 
     <AdminSettingsDrawer
       :open="settingsDrawerOpen"

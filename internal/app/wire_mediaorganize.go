@@ -8,6 +8,7 @@ import (
 	"litepan/internal/classifyorganize"
 	"litepan/internal/domain"
 	"litepan/internal/file"
+	"litepan/internal/guardrail"
 	"litepan/internal/logx"
 	"litepan/internal/mediaorganize"
 	"litepan/internal/mediaorganize/executor"
@@ -25,6 +26,7 @@ func wireMediaOrganize(
 	ai *aiorganize.Service,
 	classifier *classifyorganize.Service,
 	subtitleSvc *subtitle.Service,
+	breaker *guardrail.Breaker,
 	embyLocations func() func(ctx context.Context, accountID int64, title string, year *int) string,
 ) *mediaorganize.Service {
 	tmdbOpts := func() tmdb.Options {
@@ -59,10 +61,13 @@ func wireMediaOrganize(
 				return fn(ctx, accountID, title, year)
 			},
 		},
-		Executor: executorAdapter{files: files},
+		Executor: executorAdapter{files: files, settings: st.settings},
 		// 字幕服务为 nil 时 SubtitleProcessor 为 nil 接口，
 		// mediaorganize 内部直接跳过字幕处理，整理流程不受影响。
 		Subtitle: subtitleProcessorAdapter{svc: subtitleSvc},
+		// 风控熔断（T15）：注入 core 层建好的同一个 breaker 实例 ——
+		// 驱动侧计数与整理侧时长必须记在同一份状态上。
+		Breaker: breaker,
 		// 刮削落盘（T14）：装配层不判断开关，开关在 mediaorganize 内部读。
 		NFO:      wireScrapeNFO(files, tmdbOpts, dataDir),
 		TMDBWork: tmdbWorkSource{client: tmdb.NewClient(tmdbOpts())},
@@ -160,6 +165,60 @@ func (a plannerAdapter) Build(
 
 type executorAdapter struct {
 	files *file.Service
+	// settings 用于读小文件隔离的三个键（阈值 / 隔离目录 / 知情确认）。
+	// 为 nil 时整条通道关闭：装配没给 = 用户没要求过。
+	settings *settings.Service
+}
+
+// quarantinePolicyFromSettings 把设置读成隔离策略。
+//
+// 这一层不做任何判断，只做翻译 —— 「该不该搬」是 executor 的事，
+// 而 executor 不该知道 settings 的存在。
+func quarantinePolicyFromSettings(set *settings.Service) executor.QuarantinePolicy {
+	if set == nil {
+		return executor.QuarantinePolicy{}
+	}
+	min := int64(set.Int(settings.KeyMOMinMediaSizeBytes))
+	if min <= 0 {
+		return executor.QuarantinePolicy{}
+	}
+	dir := strings.TrimSpace(set.String(settings.KeyMOQuarantineDir))
+	p := executor.QuarantinePolicy{
+		// 阈值非 0 就算「开着」；下面再由知情确认决定是真搬还是只报告。
+		Enabled:  min > 0,
+		MinBytes: min,
+		DirPath:  dir,
+	}
+	if strings.TrimSpace(dir) != "" {
+		p.DirName = lastPathSegment(dir)
+	}
+	p.ReportOnly = !set.Bool(settings.KeyMOSmallFileAcked)
+	return p
+}
+
+// isMoveMode 判断任务配置是不是 move 模式。
+//
+// 只认 "move"；空值按 move 处理，因为 planner 自己的默认值就是 move
+// （planner/planner.go:157-162），两边必须一致，否则会出现
+// 「整理按 move 干了、隔离按 rename 没干」这种最难查的偏差。
+func isMoveMode(v any) bool {
+	s, ok := v.(string)
+	if !ok {
+		return true
+	}
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return true
+	}
+	return s != "rename" && s != "copy"
+}
+
+func lastPathSegment(path string) string {
+	path = strings.TrimRight(path, "/")
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return path[idx+1:]
+	}
+	return path
 }
 
 func (a executorAdapter) Apply(
@@ -189,6 +248,9 @@ func (a executorAdapter) Apply(
 		}
 	}
 	ex := executor.New(ctx, a.files, plan, accountID, overwrite, logFn, stopFn)
+	// move 模式才有隔离语义：rename 模式文件根本不动，copy 模式源文件必须留下。
+	ex.SetQuarantine(quarantinePolicyFromSettings(a.settings))
+	ex.SetMoveMode(isMoveMode(settings["action_type"]))
 	_, err := ex.Apply()
 	if err != nil && strings.Contains(err.Error(), "stopped") {
 		return mediaorganize.ErrTaskAborted

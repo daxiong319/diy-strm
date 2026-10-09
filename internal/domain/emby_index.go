@@ -101,10 +101,14 @@ type EmbyIndexRepository interface {
 	CreateMediaSyncFile(ctx context.Context, rel *EmbyMediaSyncFile) error
 	// MediaSyncFilesByItemID 返回某条目的全部文件关联。
 	MediaSyncFilesByItemID(ctx context.Context, embyItemID int64) ([]EmbyMediaSyncFile, error)
+	// ListMediaSyncFiles 返回全部关联，供巡检做「索引 vs 网盘」差集比对。
+	ListMediaSyncFiles(ctx context.Context) ([]EmbyMediaSyncFile, error)
 	// DeleteMediaSyncFilesBySyncFileID 按网盘文件删除关联。
 	DeleteMediaSyncFilesBySyncFileID(ctx context.Context, syncFileID int64) error
 	// DeleteMediaSyncFilesByPickCode 按 PickCode 删除关联。
 	DeleteMediaSyncFilesByPickCode(ctx context.Context, pickCode string) error
+	// DeleteMediaSyncFileRow 按行号删除单条关联，供巡检精确清理失效记录。
+	DeleteMediaSyncFileRow(ctx context.Context, rowID int64) error
 
 	// CreateOrUpdateLibrarySyncPath 创建或更新媒体库↔同步任务关联（已存在则跳过）。
 	CreateOrUpdateLibrarySyncPath(ctx context.Context, libraryID string, syncPathID int64, libraryName string) error

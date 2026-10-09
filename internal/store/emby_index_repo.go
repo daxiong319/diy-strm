@@ -395,6 +395,31 @@ func (r *embyIndexRepo) MediaSyncFilesByItemID(ctx context.Context, embyItemID i
 	return out, wrapDB(rows.Err())
 }
 
+// ListMediaSyncFiles 返回全部条目↔文件关联。
+//
+// 巡检的「115 索引异常文件」检查器要拿索引里记录的每个文件去和网盘实际清单
+// 比对，所以需要一个整表读取口。按 item 查只能证明「这个条目关联的文件」存在，
+// 证明不了「网盘上多出来、索引里根本没有」的那一类。
+func (r *embyIndexRepo) ListMediaSyncFiles(ctx context.Context) ([]domain.EmbyMediaSyncFile, error) {
+	rows, err := r.db.read.QueryContext(ctx,
+		`SELECT id,emby_item_id,sync_file_id,pick_code,sync_path_id,account_id,root_id,relative_path,file_name
+		 FROM emby_media_sync_files ORDER BY id`)
+	if err != nil {
+		return nil, wrapDB(err)
+	}
+	defer rows.Close()
+	var out []domain.EmbyMediaSyncFile
+	for rows.Next() {
+		var rel domain.EmbyMediaSyncFile
+		if err := rows.Scan(&rel.ID, &rel.EmbyItemID, &rel.SyncFileID, &rel.PickCode, &rel.SyncPathID,
+			&rel.AccountID, &rel.RootID, &rel.RelativePath, &rel.FileName); err != nil {
+			return nil, wrapDB(err)
+		}
+		out = append(out, rel)
+	}
+	return out, wrapDB(rows.Err())
+}
+
 func (r *embyIndexRepo) DeleteMediaSyncFilesBySyncFileID(ctx context.Context, syncFileID int64) error {
 	_, err := r.db.write.ExecContext(ctx, `DELETE FROM emby_media_sync_files WHERE sync_file_id=?`, syncFileID)
 	return wrapDB(err)
@@ -405,6 +430,15 @@ func (r *embyIndexRepo) DeleteMediaSyncFilesByPickCode(ctx context.Context, pick
 		return nil
 	}
 	_, err := r.db.write.ExecContext(ctx, `DELETE FROM emby_media_sync_files WHERE pick_code=?`, pickCode)
+	return wrapDB(err)
+}
+
+// DeleteMediaSyncFileRow 按行号删除单条索引关联。
+//
+// 巡检修复「索引异常文件」用这条：清理的对象是**某一条具体记录**，
+// 按行删比按文件/提取码删范围更小，也不会牵连同一文件下的其它条目。
+func (r *embyIndexRepo) DeleteMediaSyncFileRow(ctx context.Context, rowID int64) error {
+	_, err := r.db.write.ExecContext(ctx, `DELETE FROM emby_media_sync_files WHERE id=?`, rowID)
 	return wrapDB(err)
 }
 

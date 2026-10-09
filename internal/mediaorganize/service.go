@@ -16,6 +16,7 @@ import (
 	"litepan/internal/domain"
 	"litepan/internal/driver"
 	"litepan/internal/file"
+	"litepan/internal/guardrail"
 	"litepan/internal/mediaorganize/rules"
 	"litepan/internal/mediaorganize/tmdb"
 	"litepan/internal/settings"
@@ -42,6 +43,7 @@ type Service struct {
 	subtitle SubtitleProcessor
 	nfo      ScrapeNFOWriter
 	tmdb     WorkDetailLookup
+	breaker  CircuitBreaker
 
 	mu              sync.Mutex
 	taskLogs        map[string][]LogEntry
@@ -66,10 +68,28 @@ type ServiceOptions struct {
 	NFO ScrapeNFOWriter
 	// TMDBWork 作品详情查询（T14）：海报/简介的补齐来源。为 nil 时只用动作元数据。
 	TMDBWork WorkDetailLookup
+	// Breaker 风控熔断（T15）。为 nil 时不设闸 —— 熔断器接不接进来
+	// 不应该决定整理功能能不能用，只决定它有没有护栏。
+	Breaker CircuitBreaker
 	// Subtitle 整理完成后的字幕自动处理回调（参考实现 移植③）。
 	// 用接口注入而非直接 import subtitle，避免 mediaorganize → subtitle 的依赖；
 	// 为 nil 时整理流程完全不受影响（字幕模块可独立启用/关闭）。
 	Subtitle SubtitleProcessor
+}
+
+// CircuitBreaker 是整理流程看到的熔断器面（interface{} 化，方法集同 guardrail.Breaker）。
+//
+// 抽成接口有两个理由：
+//  1. mediaorganize 包不该 import guardrail 的状态存储 —— 熔断是策略，
+//     落库是别的包的事，这里只需要「能不能跑」和「跑完了记账」两个动作。
+//  2. 测试里可以塞一个只会 Trip 的假熔断器，断言闸门真的在 startRunner 之前。
+type CircuitBreaker interface {
+	// Allow 返回非 nil 时本轮不该开始（ErrPaused 及其包装）。
+	Allow(ctx context.Context) error
+	// BeginRun 开一轮计时；返回 false 表示熔断中，本轮不该继续。
+	BeginRun(ctx context.Context) bool
+	// FinishRun 结束计时，可能因超时长触发新的暂停。
+	FinishRun(ctx context.Context) guardrail.Decision
 }
 
 // SubtitleProcessor 整理流程完成后的字幕处理入口。
@@ -103,6 +123,7 @@ func NewService(opts ServiceOptions) *Service {
 		executor:        e,
 		subtitle:        opts.Subtitle,
 		nfo:             opts.NFO,
+		breaker:         opts.Breaker,
 		tmdb:            opts.TMDBWork,
 		taskLogs:        make(map[string][]LogEntry),
 		taskProgress:    make(map[string]map[string]any),
@@ -320,12 +341,62 @@ func (s *Service) ApplyTask(ctx context.Context, taskID string) (map[string]any,
 		return nil, domain.Errorf(domain.CodeValidation, "当前没有可执行的计划，请先生成计划")
 	}
 
+	// 闸门同样在 startRunner 之前，见 RunTask 的注释。
+	if err := s.guardRun(ctx, taskID); err != nil {
+		return nil, err
+	}
+
 	s.discardStop(taskID)
 	s.appendLog(taskID, "[MediaOrganize] 开始执行计划")
 	s.startRunner(taskID, accountID, func(runCtx context.Context) {
+		defer s.settleRun(runCtx, taskID)
 		s.applyPlanRunner(runCtx, taskID, plan, task, cfg, accountID)
 	})
 	return map[string]any{"task_id": taskID, "submitted": true}, nil
+}
+
+// guardRun 是整理任务的熔断闸门：暂停期内直接拒绝，且不排期补跑。
+//
+// 「不补跑」是刻意的：风控要挡的是封号，不是排队。攒一队列恢复后一起冲，
+// 恰恰是风控最该避免的场景。被拦下时把原因写进任务日志，
+// 否则用户只会看到任务「没反应」。
+func (s *Service) guardRun(ctx context.Context, taskID string) error {
+	if s.breaker == nil {
+		return nil
+	}
+	if err := s.breaker.Allow(ctx); err != nil {
+		var pe *guardrail.PauseError
+		reason := err.Error()
+		resume := ""
+		if errors.As(err, &pe) {
+			reason = pe.Reason
+			if !pe.ResumeAt.IsZero() {
+				resume = pe.ResumeAt.Format("2006-01-02 15:04:05")
+			}
+		}
+		s.appendLog(taskID, fmt.Sprintf("[MediaOrganize] 风控暂停中，本轮跳过（不补跑）: %s", reason))
+		if resume != "" {
+			s.appendLog(taskID, fmt.Sprintf("[MediaOrganize] 预计恢复时间: %s", resume))
+		}
+		s.log.Warn("整理任务被风控熔断跳过", "task_id", taskID, "reason", reason, "resume_at", resume)
+		return domain.Errorf(domain.CodeValidation, "风控暂停中，本轮不执行：%s", reason)
+	}
+	if !s.breaker.BeginRun(ctx) {
+		s.appendLog(taskID, "[MediaOrganize] 风控暂停中，本轮跳过（不补跑）")
+		return domain.Errorf(domain.CodeValidation, "风控暂停中，本轮不执行")
+	}
+	return nil
+}
+
+// settleRun 在一轮结束时结算整理时长；超阈值会在熔断器里触发新暂停，
+// 下一轮自然被 guardRun 挡住，这里只负责把结果写进日志。
+func (s *Service) settleRun(ctx context.Context, taskID string) {
+	if s.breaker == nil {
+		return
+	}
+	if d := s.breaker.FinishRun(ctx); d.Triggered && d.Paused {
+		s.appendLog(taskID, fmt.Sprintf("[MediaOrganize] 整理时长超限，已暂停后续执行: %s", d.Reason))
+	}
 }
 
 // withAPIDelay 按全局 API 间隔设置给上下文叠加请求延迟。
@@ -341,11 +412,18 @@ func (s *Service) RunTask(ctx context.Context, taskID string) (map[string]any, e
 		return nil, err
 	}
 
+	// 风控闸门必须排在 startRunner 之前：startRunner 一调就已经
+	// beginRun 并起 goroutine，那时候再判暂停就变成了「已经开始」。
+	if err := s.guardRun(ctx, taskID); err != nil {
+		return nil, err
+	}
+
 	s.discardStop(taskID)
 	s.clearLogs(taskID)
 	s.appendLog(taskID, "[MediaOrganize] 任务已提交，开始生成计划")
 	s.log.Info("整理任务开始执行", "task_id", taskID, "task_name", task.TaskName, "account_id", accountID)
 	s.startRunner(taskID, accountID, func(runCtx context.Context) {
+		defer s.settleRun(runCtx, taskID)
 		settingsDict := SettingsDict(s.settings)
 		runCtx = s.withAPIDelay(runCtx)
 

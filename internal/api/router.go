@@ -55,6 +55,7 @@ import (
 	"litepan/internal/rbac"
 	"litepan/internal/settings"
 	"litepan/internal/share/dav"
+	"litepan/internal/inspection"
 	"litepan/internal/spacecleanup"
 	"litepan/internal/strm"
 	"litepan/internal/strmscrape"
@@ -102,6 +103,7 @@ type Deps struct {
 	Announcement     *announcement.Service
 	BackupRestore    *backuprestore.Service
 	SpaceCleanup     *spacecleanup.Service
+	Inspection       *inspection.Service
 	CoverExtract     *coverextract.Service
 	NotifyChannels   *notifychannel.Service
 	// NotifyRetries 补发队列仓储：webhook 投递失败的记录与手动重投。
@@ -218,6 +220,7 @@ type Handler struct {
 	announcement         *announcement.Service
 	backupRestore        *backuprestore.Service
 	spaceCleanup         *spacecleanup.Service
+	inspection           *inspection.Service
 	coverExtract         *coverextract.Service
 	notifyChannels       *notifychannel.Service
 	notifyRetries        domain.NotifyRetryRepository
@@ -305,6 +308,7 @@ func newHandler(d Deps) *Handler {
 		announcement:         d.Announcement,
 		backupRestore:        d.BackupRestore,
 		spaceCleanup:         d.SpaceCleanup,
+		inspection:           d.Inspection,
 		coverExtract:         d.CoverExtract,
 		notifyChannels:       d.NotifyChannels,
 		notifyRetries:        d.NotifyRetries,
@@ -720,6 +724,16 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/bind/poll", h.pollQuarkTVBind)
 					r.Put("/binding/settings", h.updateQuarkTVBindingSettings)
 					r.Delete("/bind", h.unbindQuarkTV)
+				})
+				// 巡检与空间清理分成两条路由：两者都扫描网盘目录树，
+				// 但语义完全不同 —— 巡检只报告与执行有预览的修复，
+				// 清理是另一套参数与报告模型。共用一个前缀会让前端
+				// 出现「scan 到底打哪边」的歧义。
+				r.Route("/tools/inspection", func(r chi.Router) {
+					r.Get("/checkers", h.inspectionCheckers)
+					r.Post("/scan", h.inspectionScan)
+					r.Get("/preview", h.inspectionPreview)
+					r.Post("/repair", h.inspectionRepair)
 				})
 				r.Route("/tools/cleanup", func(r chi.Router) {
 					r.Post("/scan", h.scanSpaceCleanup)

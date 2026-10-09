@@ -10,6 +10,7 @@ import (
 	"litepan/internal/core/driverexec"
 	"litepan/internal/driver"
 	"litepan/internal/eventbus"
+	"litepan/internal/guardrail"
 	"litepan/internal/logx"
 	"litepan/internal/settings"
 	"litepan/pkg/secretkey"
@@ -23,7 +24,10 @@ type coreBundle struct {
 	sched    *auth.Scheduler
 	exec     *driverexec.Executor
 	listHits *cache.HitTracker
-	secret   []byte
+	// breaker 是风控熔断器（T15）。放在 core 层而不是 services 层：
+	// 它要在 file/mediaorganize 之前就接进 driver.Manager，装配顺序不能反。
+	breaker *guardrail.Breaker
+	secret  []byte
 }
 
 func wireCore(ctx context.Context, cfg config.Config, logs *logx.Manager, st *storeBundle) (*coreBundle, error) {
@@ -57,6 +61,10 @@ func wireCore(ctx context.Context, cfg config.Config, logs *logx.Manager, st *st
 		return nil, fmt.Errorf("load secret key: %w", err)
 	}
 
+	// 风控熔断（T15）必须在 drivers 建好之后、file 服务之前接进去：
+	// 熔断靠 driver.Manager 的调用观察者计数，接晚了就漏掉前面的调用。
+	breaker := wireGuardrail(st, mgr, logs)
+
 	return &coreBundle{
 		bus:      bus,
 		cache:    cacheSvc,
@@ -65,6 +73,7 @@ func wireCore(ctx context.Context, cfg config.Config, logs *logx.Manager, st *st
 		sched:    auth.NewScheduler(authSvc, logs.For(logx.ModuleAuth)),
 		exec:     driverexec.New(mgr, authSvc.Gate()),
 		listHits: cache.NewHitTracker(),
+		breaker:  breaker,
 		secret:   secret,
 	}, nil
 }

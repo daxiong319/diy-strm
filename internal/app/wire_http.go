@@ -174,6 +174,9 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	// 巡检套件在 HTTP 层构造：它只需要 file.Service 与 store，
+	// 而 file.Service 在 wire_services 里、store 在更早的 wireCore 里。
+	inspectionSvc := wireInspection(svc.files, st)
 	spaceCleanupSvc, err := spacecleanup.New(spacecleanup.Options{
 		DataDir:   cfg.DataDir,
 		StrmDir:   cfg.StrmDir,
@@ -313,6 +316,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		Announcement:      announcement.New(announcement.DefaultURL),
 		BackupRestore:     backupRestoreSvc,
 		SpaceCleanup:      spaceCleanupSvc,
+		Inspection:        inspectionSvc,
 		CoverExtract:      coverExtractSvc,
 		NotifyChannels:    notifyChannelSvc,
 		NotifyRetries:     st.store.NotifyRetries,

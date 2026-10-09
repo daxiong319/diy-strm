@@ -16,10 +16,12 @@ import SettingsRow from "@/components/admin/SettingsRow.vue";
 import TmdbHostsHelpTip from "@/components/admin/TmdbHostsHelpTip.vue";
 import { useSettingsForm, bindSettingsPanelExpose, useSettingsSave } from "@/composables/useSettingsForm";
 import { useSettingsLoad } from "@/composables/useSettingsLoad";
+import { useConfirm } from "@/composables/useConfirm";
 import { runTmdbTest } from "@/composables/useTmdbTest";
 import "@/styles/admin-shared.css";
 
 const ORGANIZE_SETTINGS_ACCENT = "#10b981";
+const { showConfirm } = useConfirm();
 const ALL_TAG_KEYS = ["screen_size", "frame_rate", "video_codec", "audio_codec", "audio_channels"] as const;
 const TAG_LABELS: Record<string, string> = {
   screen_size: "分辨率",
@@ -118,6 +120,16 @@ const {
   scrape_follow_existing_location: false,
   scrape_skip_action: "keep",
   backup_target: "local",
+  // T15：风控熔断与小文件隔离的默认值必须和 internal/settings/registry.go
+  // 里的 spec 默认值一字不差。前后端各写一份默认值不是问题，两份写得不一样才是。
+  scrape_max_calls_per_window: 0,
+  scrape_call_window_seconds: 3600,
+  scrape_call_pause_seconds: 3600,
+  scrape_max_work_minutes: 0,
+  scrape_work_pause_minutes: 60,
+  min_media_size_bytes: 0,
+  quarantine_dir: "",
+  small_file_acked: false,
 });
 const tagOrder = reactive<string[]>([...ALL_TAG_KEYS]);
 
@@ -295,8 +307,42 @@ async function loadSettings(options?: { silent?: boolean }) {
   }, "加载整理设置失败", options);
 }
 
+// 把「小文件会被移走」这件事在保存这一刻再说一次。
+//
+// 为什么放在保存时而不是靠那个勾选框就够了：勾选框和阈值是同一次保存里
+// 一起改的，用户很容易顺手把两个都打勾而没细看阈值是多少。这里问的是
+// 一个不同的问题——「你知不知道下一次整理就会开始搬文件」，和勾选框
+// 表达的「我承认有这回事」不是一回事。
+async function confirmQuarantineIfTurningOn() {
+  const prevMin = Number(snapshotBaseline.value.min_media_size_bytes ?? 0) || 0;
+  const nextMin = Number(settings.min_media_size_bytes ?? 0) || 0;
+  if (nextMin <= 0 || prevMin > 0) return true;
+  const dir = settings.quarantine_dir.trim() || "每个整理根目录下的 _隔离 子目录";
+  try {
+    await showConfirm({
+      title: "开启小文件隔离",
+      message: [
+        `从下一次整理开始，move 模式下小于 ${nextMin} 字节的文件会被移入：`,
+        dir,
+        "",
+        "这些文件不会被删除，但会从原来的目录里消失。",
+        "如果某个目录里只剩这些小文件，那个目录会被判定为空并进入清理流程。",
+      ].join("\n"),
+      hint: "这是不可逆的位置变化：文件内容不会丢，但 strm 指针、刮削工具不会自动把它们搬回去。",
+      icon: "trash",
+      confirmText: "我确认，开启隔离",
+      danger: true,
+      checkboxLabel: "我已经检查过上面的隔离目录路径，确认无误",
+    });
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 async function saveSettings() {
   if (!settingsChanged.value) return;
+  if (!(await confirmQuarantineIfTurningOn())) return;
   await runSave(async () => {
     flushTagOrderToSettings();
     const data = await saveMediaOrganizeSettings({ ...settings });
@@ -736,11 +782,177 @@ defineExpose(
           </template>
         </SettingsRow>
       </SettingsCard>
+
+      <SettingsCard title="风控熔断" :accent="ORGANIZE_SETTINGS_ACCENT">
+        <p class="mo-risk-intro">
+          下面是硬性保护，不是提示：触顶后整理与刮削会被<b>强制暂停</b>，状态存在库里，重启也不会丢。
+          之所以默认全关，是因为这两个闸门只在你明确知道自己的网盘能承受多少调用时才有意义；
+          宁可先跑出问题，也不要被一个猜出来的阈值卡住。
+        </p>
+
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('scrape_max_calls_per_window')">
+          <template #info>
+            <div class="settings-row__label">
+              <span>连续调用上限（次）</span>
+              <SettingsHelpTooltip title="连续调用上限说明">
+                <p>在统计窗口内累计调用网盘接口到这个次数就熔断，0 表示不限。</p>
+                <p>调用不是只在「整理」时发生：列目录、查详情、搬文件各算一次。大库一次全量扫描很容易上万次。</p>
+                <p>建议设成你所用网盘单日安全调用量的一小部分。这个闸门的作用是「宁可慢也别把账号用废」——账号封了，搬走的是几百 GB 的整理成果。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <AppInput v-model="settings.scrape_max_calls_per_window" type="number" min="0" max="1000000" placeholder="0（不限）" />
+          </template>
+        </SettingsRow>
+
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('scrape_call_window_seconds')">
+          <template #info>
+            <div class="settings-row__label">
+              <span>调用统计窗口（秒）</span>
+              <SettingsHelpTooltip title="统计窗口说明">
+                <p>「连续调用次数」在多长的窗口内累计，默认 1 小时。</p>
+                <p>窗口太短会把一次正常的批量扫描切成好几段，等于把上限废掉了；太长则会在你已经停手之后才熔断，失去意义。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <AppInput v-model="settings.scrape_call_window_seconds" type="number" min="60" max="86400" placeholder="3600" />
+          </template>
+        </SettingsRow>
+
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('scrape_call_pause_seconds')">
+          <template #info>
+            <div class="settings-row__label">
+              <span>调用暂停时长（秒）</span>
+              <SettingsHelpTooltip title="暂停时长说明">
+                <p>调用触顶后暂停多久，默认 1 小时，最长 86400 秒（24 小时），填更大的值会被截到这个上限。</p>
+                <p>暂停期内启动的任务会被直接拒绝，不会排队、也不会等到期后偷偷补跑。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <AppInput v-model="settings.scrape_call_pause_seconds" type="number" min="60" max="86400" placeholder="3600" />
+          </template>
+        </SettingsRow>
+
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('scrape_max_work_minutes')">
+          <template #info>
+            <div class="settings-row__label">
+              <span>连续整理时长上限（分钟）</span>
+              <SettingsHelpTooltip title="整理时长上限说明">
+                <p>一轮整理跑过这么久就熔断，0 表示不限，默认不限。</p>
+                <p>和调用次数是两道独立的闸门：一个防「单轮跑太久把账号打爆」，一个防「单轮太长把连接挂住」。大库建议开一个 120~240 分钟的上限。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <AppInput v-model="settings.scrape_max_work_minutes" type="number" min="0" max="10080" placeholder="0（不限）" />
+          </template>
+        </SettingsRow>
+
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('scrape_work_pause_minutes')">
+          <template #info>
+            <div class="settings-row__label">
+              <span>整理暂停时长（分钟）</span>
+              <SettingsHelpTooltip title="整理暂停时长说明">
+                <p>整理时长触顶后暂停多久，默认 60 分钟，最长 1440 分钟（24 小时），填更大的值会被截到这个上限。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <AppInput v-model="settings.scrape_work_pause_minutes" type="number" min="1" max="1440" placeholder="60" />
+          </template>
+        </SettingsRow>
+      </SettingsCard>
+
+      <SettingsCard title="小文件隔离" :accent="ORGANIZE_SETTINGS_ACCENT">
+        <p class="mo-risk-intro">
+          move 模式要腾出目标目录时，只移动大文件会把几百 KB 的 <code>.nfo</code>、<code>.txt</code>、封面图留在原地，
+          目录因此永远不被判定为空，整理会一直失败。开这个开关让它们被移走。
+        </p>
+        <p class="mo-risk-warn">
+          <b>注意语义是「移走」，不是「删除」。</b>
+          被判为小文件的会移到隔离目录（默认整理根下的 <code>_隔离</code>），文件完整保留、随时可以搬回去。
+          之所以不做真删：占空间的代价远小于误删一个没有备份的文件的代价。
+        </p>
+
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('min_media_size_bytes')">
+          <template #info>
+            <div class="settings-row__label">
+              <span>媒体文件最小体积（字节）</span>
+              <SettingsHelpTooltip title="最小体积说明">
+                <p>低于这个体积的文件在 move 模式下会被移入隔离目录。0 表示不启用（默认）。</p>
+                <p>参考值：一集 1080p 剧约 700MB~2GB，720p 约 300~800MB。想把 nfo/字幕/封面这类几十 KB 的杂物挪走，设 1 MB（1048576）通常就够了。</p>
+                <p>只有 move 模式受影响：copy 模式本来就不动源目录，rename 模式不腾位置。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <AppInput v-model="settings.min_media_size_bytes" type="number" min="0" max="1073741824" placeholder="0（不启用）" />
+          </template>
+        </SettingsRow>
+
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('quarantine_dir')">
+          <template #info>
+            <div class="settings-row__label">
+              <span>隔离目录</span>
+              <SettingsHelpTooltip title="隔离目录说明">
+                <p>网盘路径。留空则用整理根目录下的 <code>_隔离</code> 子目录（不存在会自动创建）。</p>
+                <p>隔离目录本身不会被巡检当成孤儿目录清理：它一直在被使用。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <AppInput v-model="settings.quarantine_dir" placeholder="留空使用 _隔离" />
+          </template>
+        </SettingsRow>
+
+        <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('small_file_acked')">
+          <template #info>
+            <div class="settings-row__label">
+              <span>已确认小文件会被移走</span>
+              <SettingsHelpTooltip title="知情确认说明">
+                <p>必须先勾这一项，小文件隔离才会真正生效。没勾时设置页会照常保存，整理页会明确列出「因未确认而跳过的文件」，不会静默搬走。</p>
+                <p>取消勾选即刻停止隔离，已移走的文件不会被自动搬回来——它们还在隔离目录里，手动处理即可。</p>
+              </SettingsHelpTooltip>
+            </div>
+          </template>
+          <template #control>
+            <SettingsBoolSegment v-model="settings.small_file_acked" label="我知道文件会被移动到隔离目录" />
+          </template>
+        </SettingsRow>
+      </SettingsCard>
     </template>
   </div>
 </template>
 
 <style scoped>
+.mo-risk-intro {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--text-muted);
+}
+.mo-risk-warn {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--text-muted);
+}
+.mo-risk-warn b {
+  color: var(--danger);
+}
+.mo-risk-intro code,
+.mo-risk-warn code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-soft);
+  font-size: 11px;
+}
 .mo-settings {
   display: flex;
   flex-direction: column;

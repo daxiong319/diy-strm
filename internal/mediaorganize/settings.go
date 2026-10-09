@@ -36,6 +36,17 @@ var moSettingFieldToKey = map[string]string{
 	"scrape_follow_existing_location": settings.KeyMOScrapeFollowExistingLocation,
 	"scrape_skip_action":              settings.KeyMOScrapeSkipAction,
 	"backup_target":                   settings.KeyMOBackupTarget,
+	// T15：风控熔断阈值与小文件隔离。挂在 /admin/media-organize/settings
+	// 而不是通用系统设置，是因为这三组值只在整理执行路径上起作用，
+	// 整理页上的用户才是能判断「我这库一天能承受多少调用」的人。
+	"scrape_max_calls_per_window":   settings.KeyMOScrapeMaxCallsPerWindow,
+	"scrape_call_window_seconds":    settings.KeyMOScrapeCallWindowSeconds,
+	"scrape_call_pause_seconds":     settings.KeyMOScrapeCallPauseSeconds,
+	"scrape_max_work_minutes":       settings.KeyMOScrapeMaxWorkMinutes,
+	"scrape_work_pause_minutes":     settings.KeyMOScrapeWorkPauseMinutes,
+	"min_media_size_bytes":          settings.KeyMOMinMediaSizeBytes,
+	"quarantine_dir":                settings.KeyMOQuarantineDir,
+	"small_file_acked":              settings.KeyMOSmallFileAcked,
 }
 
 // 这些字段在更新接口里必须仍是布尔：anyToSettingString 对 bool 用严格类型断言，
@@ -46,12 +57,19 @@ var moBoolSettingFields = map[string]bool{
 	"overwrite_existing":              true,
 	"scrape_nfo_enabled":              true,
 	"scrape_follow_existing_location": true,
+	"small_file_acked":                true,
 }
 
 var moIntSettingFields = map[string]bool{
-	"api_request_interval_ms":  true,
-	"tmdb_request_interval_ms": true,
-	"max_works_per_run":        true,
+	"api_request_interval_ms":       true,
+	"tmdb_request_interval_ms":      true,
+	"max_works_per_run":             true,
+	"scrape_max_calls_per_window":   true,
+	"scrape_call_window_seconds":    true,
+	"scrape_call_pause_seconds":     true,
+	"scrape_max_work_minutes":       true,
+	"scrape_work_pause_minutes":     true,
+	"min_media_size_bytes":          true,
 }
 
 var validMediaTagKeys = map[string]struct{}{

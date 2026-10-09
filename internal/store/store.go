@@ -31,6 +31,7 @@ type Store struct {
 	RSSSources          domain.RSSSourceRepository
 	RSSHistory          domain.RSSHistoryRepository
 	Renames             domain.RenameRepository
+	Inspection          domain.InspectionRepository
 }
 
 // New 基于已打开的 DB 构造仓储集合。
@@ -63,5 +64,6 @@ func New(db *DB) *Store {
 		RSSSources:          &rssSourceRepo{db: db},
 		RSSHistory:          &rssHistoryRepo{db: db},
 		Renames:             &renameRepo{db: db},
+		Inspection:          &inspectionSnapshotRepo{db: db},
 	}
 }

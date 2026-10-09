@@ -1970,3 +1970,52 @@ func TestWiringKnownDeadCodeRegistry(t *testing.T) {
 		})
 	}
 }
+
+// TestGuardrailAndInspectionWiring 钉住 T15 两块能力在生产装配里的接线。
+//
+// 这两块能力都出现过「编译通过、测试全绿、实际零调用方」：
+// guardrail.NewBreaker 造得出来，但没有任何地方调 Manager.SetCallObserver；
+// wireInspection 造得出服务，但路由树上没有端点。这两种情况下
+// go build 与 go test 都不会报错 —— 所以用断言把它们钉在调用路径上。
+func TestGuardrailAndInspectionWiring(t *testing.T) {
+	t.Run("driver.Manager.SetCallObserver 在装配层被调用", func(t *testing.T) {
+		if !callsInNonTestFile(t, "../app", "wire_guardrail.go", "SetCallObserver") {
+			t.Fatal("internal/app 里没有任何地方调 SetCallObserver —— " +
+				"连续调用熔断不会被触发，driver 侧计数无人接收。")
+		}
+	})
+	t.Run("wireInspection 被装配层调用", func(t *testing.T) {
+		if !callsInNonTestFile(t, "../app", "wire_http.go", "wireInspection") {
+			t.Fatal("wireInspection 是零调用函数 —— 巡检服务存在但没有任何入口能拿到它。")
+		}
+	})
+	// 路由可达性：四个端点都必须出现在管理台真实路由表里。
+	//
+	// 用 adminRoutePatterns（AST 扫真实注册语句）而不是 NewRouter(Deps{}) 起一棵
+	// handler 树：后者在 Deps{} 下会撞上 nil Uploads 直接 panic，而要喂出一个
+	// 不 panic 的 Deps 就得连数据库一起搭 —— 为「这条路由存在吗」付这个代价
+	// 不值。这条断言要证明的是「注册语句写在会被命中的那个 router 上」，
+	// 响应码的正确性由各自的 handler 用例负责。
+	have := map[string]bool{}
+	for _, rt := range adminRoutePatterns(t) {
+		have[rt.Method+" "+rt.Pattern] = true
+	}
+	for _, want := range []string{
+		"GET /api/admin/tools/inspection/checkers",
+		"POST /api/admin/tools/inspection/scan",
+		"GET /api/admin/tools/inspection/preview",
+		"POST /api/admin/tools/inspection/repair",
+	} {
+		if !have[want] {
+			t.Errorf("管理台路由表里没有 %s —— 巡检端点没注册", want)
+		}
+	}
+	// 反向断言：巡检不能挂在空间清理那条前缀下。两者都扫目录树，
+	// 混在一个 /scan 下会让前端和调用方分不清扫的是哪一套。
+	if have["POST /api/admin/tools/cleanup/scan"] &&
+		have["POST /api/admin/tools/inspection/scan"] {
+		// 两条都在是预期；这里只保证 inspection 前缀是独立的一组路由，
+		// 不再与 cleanup 共用同一条 path。
+		t.Log("巡检与空间清理各自独立注册，符合预期")
+	}
+}

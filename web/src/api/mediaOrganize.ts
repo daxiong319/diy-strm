@@ -123,6 +123,35 @@ export interface MediaOrganizeSettings {
   scrape_skip_action: string;
   /** T14：备份恢复目标：local 或 cloud。 */
   backup_target: string;
+  /**
+   * T15：风控熔断阈值。
+   *
+   * 这一组值决定「整理/刮削什么时候被强制暂停」，直接关系到网盘账号会不会被限流或封禁，
+   * 所以在 UI 上必须连同解释一起出现，不给「一个孤零零的数字输入框」。
+   */
+  /** 统计窗口内累计到这么多次网盘调用就暂停，0 = 不限。 */
+  scrape_max_calls_per_window: number;
+  /** 调用次数的统计窗口（秒）。 */
+  scrape_call_window_seconds: number;
+  /** 调用触顶后暂停多久（秒，后端会截到 86400）。 */
+  scrape_call_pause_seconds: number;
+  /** 一轮连续整理超过这么多分钟就暂停，0 = 不限。 */
+  scrape_max_work_minutes: number;
+  /** 整理时长触顶后暂停多久（分钟，后端会截到 1440）。 */
+  scrape_work_pause_minutes: number;
+  /**
+   * T15：媒体文件最小体积（字节），0 = 不启用。
+   * 注意语义：是「移到隔离目录」，不是删除。
+   */
+  min_media_size_bytes: number;
+  /** 小文件隔离目录（网盘路径），留空用整理根下的「_隔离」。 */
+  quarantine_dir: string;
+  /**
+   * T15：小文件隔离的知情确认。
+   * 没有它，min_media_size_bytes 只会让整理把文件标成 skipped —— 宁可不做，
+   * 也不在用户没意识到的情况下把文件搬走。
+   */
+  small_file_acked: boolean;
 }
 
 export type MediaOrganizeTaskInput = {

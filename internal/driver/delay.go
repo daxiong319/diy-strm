@@ -6,10 +6,24 @@ import (
 	"time"
 )
 
+// CallObserver 观察每一次网盘 API 调用，用于风控熔断计数。
+//
+// 为什么挂在间隔门上而不是散落在各个 driver 里：9 个驱动各自调
+// driver.WaitRequestInterval，而它最终都收敛到 DelayController.Gate 返回的这一个门。
+// 收在这里，一处就能覆盖全部驱动；放进任一驱动的 transport 就必然漏。
+type CallObserver interface {
+	// RecordAPICall 记一次调用。它必须是**非阻塞**的：它在请求路径上，
+	// 任何阻塞都会变成全局串行，把驱动拖垮。
+	RecordAPICall(accountID int64)
+}
+
 // DelayController 按账号维度串行化 API 请求间隔，同一 accountID 的请求不会短于 interval 连续发出。
 type DelayController struct {
 	mu       sync.Mutex
 	accounts map[int64]*accountDelay
+
+	observerMu sync.RWMutex
+	observer   CallObserver
 }
 
 type accountDelay struct {
@@ -32,7 +46,28 @@ type accountGate struct {
 }
 
 func (g accountGate) Wait(ctx context.Context, interval time.Duration) error {
+	// 计数发生在**等待之前**：interval<=0 时这一行也不该被跳过，
+	// 否则用户把请求间隔配成 0（不限速）就会让熔断计数彻底失效 ——
+	// 而不限速恰恰是最容易触发风控的配置。
+	g.dc.recordCall(g.accountID)
 	return g.dc.wait(ctx, g.accountID, interval)
+}
+
+// SetCallObserver 注入调用观察者（生产装配层传熔断器）。nil 表示不计数。
+func (dc *DelayController) SetCallObserver(obs CallObserver) {
+	dc.observerMu.Lock()
+	dc.observer = obs
+	dc.observerMu.Unlock()
+}
+
+func (dc *DelayController) recordCall(accountID int64) {
+	dc.observerMu.RLock()
+	obs := dc.observer
+	dc.observerMu.RUnlock()
+	if obs == nil {
+		return
+	}
+	obs.RecordAPICall(accountID)
 }
 
 // Gate 返回绑定到指定账号的间隔门，供 Manager 注入驱动。

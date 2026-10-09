@@ -96,7 +96,7 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 	// 用闭包而不是直接传值，是因为 planner 每次 Build 计划时才需要它，
 	// 那时 Emby 服务早已就绪。
 	var embyLocationLookupFn func(ctx context.Context, accountID int64, title string, year *int) string
-	mediaOrganizeSvc := wireMediaOrganize(st, fileSvc, logs, cfg.DataDir, aiOrganizeSvc, classifyOrganizeSvc, subtitleSvc, func() func(context.Context, int64, string, *int) string {
+	mediaOrganizeSvc := wireMediaOrganize(st, fileSvc, logs, cfg.DataDir, aiOrganizeSvc, classifyOrganizeSvc, subtitleSvc, core.breaker, func() func(context.Context, int64, string, *int) string {
 		return embyLocationLookupFn
 	})
 	strmScrapeSvc := strmscrape.New(strmscrape.Options{
