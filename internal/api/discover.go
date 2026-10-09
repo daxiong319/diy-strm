@@ -21,19 +21,19 @@ func chiPathParam(r *http.Request, name string) string { return chi.URLParam(r, 
 
 // discoverMeta 发现页元数据（筛选器选项）。
 type discoverMeta struct {
-	GenresMovie    map[string]string            `json:"genres_movie"`
-	GenresTv       map[string]string            `json:"genres_tv"`
-	Providers      []map[string]string          `json:"providers"`
-	Regions        []map[string]string          `json:"regions"`
-	Collections    []map[string]string          `json:"collections"`
-	DoubanTags     map[string][]string          `json:"douban_tags"`
-	DefaultSource  string                       `json:"default_source"`
-	DoubanCategory map[string][]string          `json:"douban_category"`
-	DoubanSort     []map[string]string          `json:"douban_sort"`
-	AnimeGenres    []string                     `json:"anime_genres"`
-	AnimeRegions   []map[string]string          `json:"anime_regions"`
-	AnimeSort      []map[string]string          `json:"anime_sort"`
-	MaoyanCategory []discovery.MaoyanCategory   `json:"maoyan_category"`
+	GenresMovie    map[string]string          `json:"genres_movie"`
+	GenresTv       map[string]string          `json:"genres_tv"`
+	Providers      []map[string]string        `json:"providers"`
+	Regions        []map[string]string        `json:"regions"`
+	Collections    []map[string]string        `json:"collections"`
+	DoubanTags     map[string][]string        `json:"douban_tags"`
+	DefaultSource  string                     `json:"default_source"`
+	DoubanCategory map[string][]string        `json:"douban_category"`
+	DoubanSort     []map[string]string        `json:"douban_sort"`
+	AnimeGenres    []string                   `json:"anime_genres"`
+	AnimeRegions   []map[string]string        `json:"anime_regions"`
+	AnimeSort      []map[string]string        `json:"anime_sort"`
+	MaoyanCategory []discovery.MaoyanCategory `json:"maoyan_category"`
 }
 
 // discoverMetaHandler 发现页元数据
@@ -89,10 +89,33 @@ func (h *Handler) discoverRankings(w http.ResponseWriter, r *http.Request) {
 	force := q.Get("force") == "true" || q.Get("force") == "1"
 	result, err := discovery.Rankings(r.Context(), q.Get("provider"), q.Get("region"), q.Get("media_type"), page, force)
 	if err != nil {
-		writeErr(w, err)
+		// 榜单是外部数据源（RE0 反代 / 猫眼 / 豆瓣 / TMDB），失败属于预期内的
+		// 降级场景而不是服务端故障：直接 500 会让整个页面弹「服务内部错误」。
+		// 这里照参照实现的做法返回 200 + 可读提示，前端按空列表渲染即可。
+		writeRankingsDegraded(w, err)
 		return
 	}
 	writeDiscoveryOK(w, result)
+}
+
+// writeRankingsDegraded 榜单拉取失败时的降级响应。
+//
+// 刻意返回 success=true + 空列表 + 顶部 message，而不是 success=false：
+// 前端 web/src/api/client.ts 在 success=false 时一律 throw，页面会切到
+// 「加载榜单失败」错误态 —— 那正是用户看到的「服务内部错误」的观感。
+// 榜单源（RE0 反代/猫眼/豆瓣/TMDB）不可用属于预期内的降级，应该安静地
+// 退化成「暂无榜单数据」，而不是把整页变成报错。
+func writeRankingsDegraded(w http.ResponseWriter, err error) {
+	writeJSON(w, http.StatusOK, Resp{
+		Success: true,
+		Data: map[string]any{
+			"items":       []any{},
+			"total_pages": 0,
+			"has_more":    false,
+			"degraded":    true,
+		},
+		Message: "获取榜单失败：" + err.Error(),
+	})
 }
 
 // discoverCalendar 追剧日历（RE0 feed 按天分组，TMDB 兜底）

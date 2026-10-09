@@ -13,6 +13,13 @@ internal/api/web
 *.tar
 *.tar.gz
 
+# 例外：Dockerfile.runtime（运行时镜像）的唯一输入就是交叉编译好的
+# dist/litepan-amd64。注意必须连同父目录 dist 一起放行 —— 只写
+# `!dist/litepan-amd64` 无效，因为 dist 作为目录已被整体剪枝。
+# 主 Dockerfile 不受影响：它自己从源码构建，不会 COPY dist。
+!dist
+!dist/litepan-amd64
+
 # 依赖、缓存与本地备份
 .bak
 **/.bak

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"log/slog"
 
 	"litepan/internal/account"
 	"litepan/internal/accountprofile"
@@ -24,10 +25,12 @@ import (
 	"litepan/internal/logx"
 	"litepan/internal/mediaorganize"
 	"litepan/internal/mediaorganize/tmdb"
+	"litepan/internal/mediaupgrade"
 	"litepan/internal/moviepilot"
 	"litepan/internal/offlinedownload"
 	"litepan/internal/playback"
 	"litepan/internal/playbackrecord"
+	"litepan/internal/playmonitor"
 	"litepan/internal/quarktv"
 	"litepan/internal/settings"
 	"litepan/internal/strm"
@@ -42,10 +45,12 @@ type servicesBundle struct {
 	offlineDownloads *offlinedownload.Service
 	playback         *playback.Service
 	playbackRecord   *playbackrecord.Service
+	playMonitor      *playmonitor.Service
 	account          *account.Service
 	accountProfile   *accountprofile.Service
 	strm             *strm.Service
 	mediaOrganize    *mediaorganize.Service
+	mediaUpgrade     *mediaupgrade.Service
 	subtitleSvc      *subtitle.Service
 	aiOrganize       *aiorganize.Service
 	classifyOrganize *classifyorganize.Service
@@ -79,6 +84,9 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 	retentionSvc, retentionCoord := wireCacheRetention(st, fileSvc, core.cache, core.bus, logs)
 	aiOrganizeSvc := aiorganize.New(st.settings)
 	classifyOrganizeSvc := classifyorganize.New(st.settings)
+	// 熔断打开时会打一行 Warn，解释「为什么这批文件全落在一级目录」。
+	// 不接日志的话这条诊断信息就丢了 —— 用户只能看到分类结果突然变了。
+	classifyOrganizeSvc.SetLogger(classifyOrganizeLogger{logs.For(logx.ModuleSystem)})
 	// 字幕服务在装配层构造一次，同时供「整理流程自动下载字幕」与
 	// API 管理端点使用，保证两边共享同一份配置快照与同一个任务仓储。
 	subtitleSvc := subtitle.NewService(st.settings, subtitle.NewLogger(logs.For(logx.ModuleSystem)))
@@ -174,6 +182,26 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 			newPlaybackRecordObserverWithAccounts(playbackRecordSvc, st.store.Accounts),
 		)
 	}
+	// 播放监控（计费中 / CDN 直连 / 局域网 三态 + 观影报告）。
+	//
+	// 装配顺序有讲究：监控器必须在 automationSvc 之前构造，
+	// 因为观影报告触发器要拿它当生成器（见下面的 SetPlayReportGenerator）。
+	// 仓储不可用时降级为「不监控」—— 取流链路照常工作，
+	// 只是列表恒空、流量恒 0；绝不让监控器把播放拖垮。
+	var playMonitorSvc *playmonitor.Service
+	if st.store.PlaybackRecords != nil && st.store.PlayTraffic != nil {
+		playMonitorSvc = playmonitor.New(playmonitor.Options{
+			Settings: st.settings,
+			Records:  st.store.PlaybackRecords,
+			Traffic:  st.store.PlayTraffic,
+			Log:      logs.For(logx.ModuleSystem).Warn,
+		})
+		// 三态判定挂在取流入口上（internal/playback.Service.ServeHTTP），
+		// 而不是各个 api handler —— internal/api/cas.go 的 casPlay 也走
+		// 同一条 ServeHTTP，挂 handler 层会漏掉 CAS 取流。
+		playbackSvc.SetStreamMonitor(playMonitorSvc)
+		logs.For(logx.ModuleSystem).Info("播放监控已接入")
+	}
 	uploadSvc := upload.NewManager(upload.Options{
 		Exec:        core.exec,
 		Files:       fileSvc,
@@ -244,6 +272,14 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 	automationSvc.SetRefreshQueue(embyRefreshSvc)
 	automationSvc.SetStartupGate(startupGate)
 	automationSvc.Register(core.bus)
+	// 观影报告触发器（play_report）：到点生成排行图，
+	// 再由规则里的 notify 动作推出去 —— 生成与推送解耦，
+	// 用户不配 notify 就只生成不推送，不会莫名收到消息。
+	// 监控器没装配时**不注入**，让规则明确报「播放监控服务未就绪」，
+	// 而不是静默成功（静默成功会让用户以为报告发出去了）。
+	if playMonitorSvc != nil {
+		automationSvc.SetPlayReportGenerator(playReportAdapter{monitor: playMonitorSvc})
+	}
 	// Emby 本地索引：扫描 Emby 媒体库条目并落到 emby_media_items，
 	// 发现新增/变更条目后登记刷新意图，形成「索引 → 刷新队列」的自动链路。
 	// 配置由 embyProxySvc.LiveConfigs() 投影（需明文 API Key，不能用脱敏的 Snapshots）。
@@ -298,6 +334,7 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 		offlineDownloads: offlineDownloadSvc,
 		playback:         playbackSvc,
 		playbackRecord:   playbackRecordSvc,
+		playMonitor:      playMonitorSvc,
 		account:          accountSvc,
 		accountProfile:   accountProfileSvc,
 		strm:             strmSvc,
@@ -319,5 +356,21 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 		fnosProxy:        fnosProxySvc,
 		favorites:        favoritesSvc,
 		quarktv:          quarktvSvc,
+	}
+}
+
+// classifyOrganizeLogger 把 *slog.Logger 适配成 classifyorganize.Logger。
+// 在装配层而不是包内定义，是为了 classifyorganize 不必 import slog。
+type classifyOrganizeLogger struct{ l *slog.Logger }
+
+func (a classifyOrganizeLogger) Warn(msg string, args ...any) {
+	if a.l != nil {
+		a.l.Warn(msg, args...)
+	}
+}
+
+func (a classifyOrganizeLogger) Info(msg string, args ...any) {
+	if a.l != nil {
+		a.l.Info(msg, args...)
 	}
 }

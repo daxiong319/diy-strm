@@ -107,6 +107,9 @@ func computeNextRun(triggerType string, cfg map[string]any, base time.Time) time
 		return computeIntervalStartRun(cfg, base)
 	case domain.AutomationTriggerAdvanced:
 		return nextAdvancedRun(cfg, base)
+	case domain.AutomationTriggerPlayReport:
+		// 观影报告复用 advanced 的排期语义（见 domain 常量注释）。
+		return nextAdvancedRun(cfg, base)
 	default:
 		return time.Time{}
 	}
@@ -122,6 +125,8 @@ func advanceNextRun(triggerType string, cfg map[string]any, current time.Time) t
 	case domain.AutomationTriggerInterval:
 		return advanceIntervalRun(cfg, current)
 	case domain.AutomationTriggerAdvanced:
+		return nextAdvancedRun(cfg, current)
+	case domain.AutomationTriggerPlayReport:
 		return nextAdvancedRun(cfg, current)
 	default:
 		return time.Time{}

@@ -738,7 +738,10 @@ func StartDiscoveryWorkers() {
 		go embyMissingWorker()
 		// StartChannelWatcher 自带幂等保护，这里直接起 goroutine 与其它 worker 保持一致。
 		go StartChannelWatcher(context.Background())
-		log.Println("[discovery] 后台 Worker 已启动（目录预抓/TMDB匹配/订阅调度/缺集扫描/TG频道订阅）")
+		// T16：RSS 订阅源的定时同步。StartRSSWatcher 自带 sync.Once，
+		// 且开关关着时连 goroutine 都不起（省一个空转的定时器）。
+		go StartRSSWatcher(context.Background())
+		log.Println("[discovery] 后台 Worker 已启动（目录预抓/TMDB匹配/订阅调度/缺集扫描/TG频道订阅/RSS订阅）")
 	})
 }
 

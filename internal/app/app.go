@@ -27,9 +27,12 @@ import (
 	"litepan/internal/fusemount"
 	"litepan/internal/logx"
 	"litepan/internal/mediaorganize"
+	"litepan/internal/mediarequest"
 	"litepan/internal/moviepilot"
+	"litepan/internal/notifychannel"
 	"litepan/internal/offlinedownload"
 	"litepan/internal/playback"
+	"litepan/internal/playmonitor"
 	"litepan/internal/settings"
 	"litepan/internal/store"
 	"litepan/internal/strm"
@@ -56,6 +59,7 @@ type App struct {
 	uploads          *upload.Manager
 	offlineDownloads *offlinedownload.Service
 	playback         *playback.Service
+	playMonitor      *playmonitor.Service
 	strm             *strm.Service
 	mediaOrganize    *mediaorganize.Service
 	automation       *automation.Service
@@ -68,8 +72,13 @@ type App struct {
 	embyWebhook      *embywebhook.Service
 	fnosProxy        *fnosproxy.Service
 	httpSrv          *http.Server
-	httpBaseCancel   context.CancelFunc
-	restartCh        <-chan struct{}
+	// notifyRetry 通知补发 worker（webhook 投递失败的退避重发）。
+	notifyRetry     *notifychannel.RetryWorker
+	requestCenter   *requestCenterBundle
+	requestListener *mediarequest.Listener
+	httpBaseCtx     context.Context
+	httpBaseCancel  context.CancelFunc
+	restartCh       <-chan struct{}
 }
 
 // Options 是构造 App 所需的外部依赖。
@@ -119,7 +128,9 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	restartCh := make(chan struct{})
 	var restartOnce sync.Once
 	requestRestart := func() { restartOnce.Do(func() { close(restartCh) }) }
-	httpSrv, err := wireHTTPServer(cfg, logs, stBundle, core, svc, requestRestart)
+	reqCenter := wireRequestCenter(stBundle, logs)
+	libShare := wireLibraryShare(stBundle, logs)
+	httpSrv, reqListener, notifyRetry, err := wireHTTPServer(cfg, logs, stBundle, core, svc, reqCenter, libShare, requestRestart)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +154,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		uploads:          svc.uploads,
 		offlineDownloads: svc.offlineDownloads,
 		playback:         svc.playback,
+		playMonitor:      svc.playMonitor,
 		strm:             svc.strm,
 		mediaOrganize:    svc.mediaOrganize,
 		automation:       svc.automation,
@@ -155,6 +167,10 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		embyWebhook:      svc.embyWebhook,
 		fnosProxy:        svc.fnosProxy,
 		httpSrv:          httpSrv,
+		notifyRetry:      notifyRetry,
+		requestCenter:    reqCenter,
+		requestListener:  reqListener,
+		httpBaseCtx:      httpBaseCtx,
 		httpBaseCancel:   httpBaseCancel,
 		restartCh:        restartCh,
 	}, nil
@@ -207,6 +223,27 @@ func (a *App) Run(ctx context.Context) error {
 	if a.fnosProxy != nil {
 		a.fnosProxy.Start(ctx)
 	}
+	// 播放监控采样循环：每 sampleSeconds 秒把「码率 × 间隔」累进当日桶。
+	// 未启用（mo_play_monitor_enabled=false）时 Start 自行返回，列表恒空。
+	if a.playMonitor != nil {
+		a.playMonitor.Start(ctx)
+	}
+	// 通知补发 worker：轮询到点的 webhook 失败记录并重发。
+	// 刻意独立 goroutine 而不是挂在事件总线的消费者上 ——
+	// 总线只有一个消费者且队列满时 Publish 会阻塞调用方，
+	// 在那里做 HTTP 重试会卡住后续所有事件的所有订阅者。
+	if a.notifyRetry != nil {
+		a.notifyRetry.Start(ctx)
+	}
+	// 求片站端口与后台对账。
+	//
+	// 监听挂 httpBaseCtx 而不是 ctx：它得跟 HTTP 服务同一个生命周期，
+	// 否则 Shutdown 之后 7812 端口还会继续接请求 ——
+	// 那种「关了应用还能求片」的僵尸状态比没开更难查。
+	if a.requestListener != nil && a.httpBaseCtx != nil {
+		go a.requestListener.Run(a.httpBaseCtx)
+	}
+	a.requestCenter.Start(ctx, a.logs)
 	errCh := make(chan error, 1)
 	go func() {
 		a.log.Info("HTTP 服务已监听", "addr", a.cfg.ListenAddr)
@@ -270,6 +307,18 @@ func (a *App) Shutdown(ctx context.Context) error {
 	}
 	if a.fnosProxy != nil {
 		a.fnosProxy.Shutdown(ctx)
+	}
+	// 播放监控：关掉后台采样循环。
+	// 刻意**不**在这里强行关掉所有活跃会话 —— 关会话会补一条停播记录，
+	// 而正常关闭时用户未必真停播了，那条记录是假的。
+	// 在途会话的心跳本来就会随 ctx 取消而停止，下一次启动自然过期。
+	if a.playMonitor != nil {
+		a.playMonitor.Stop()
+	}
+	// 通知补发 worker：在 HTTP 服务关停之前先停，让在途重发走完，
+	// 不留下「一条记录卡在 sending」的状态。
+	if a.notifyRetry != nil {
+		a.notifyRetry.Stop()
 	}
 
 	httpCtx, cancelHTTP := context.WithTimeout(ctx, shutdownHTTPBudget)

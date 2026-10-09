@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"litepan/internal/discover/dmodels"
 	"litepan/internal/discover/douban"
 	"litepan/internal/discover/hdhive"
-	"litepan/internal/discover/dmodels"
 	"litepan/internal/discover/tmdb"
 	"litepan/internal/domain"
 )
@@ -23,9 +23,9 @@ import (
 
 // Item 发现页统一条目
 type Item struct {
-	Source        string   `json:"source"`                  // tmdb/douban/bangumi/anilist/hdhive
-	MediaType     string   `json:"media_type"`              // movie/tv
-	EntityKey     string   `json:"entity_key"`              // source:type:id（收藏键）
+	Source        string   `json:"source"`     // tmdb/douban/bangumi/anilist/hdhive
+	MediaType     string   `json:"media_type"` // movie/tv
+	EntityKey     string   `json:"entity_key"` // source:type:id（收藏键）
 	TMDBID        int64    `json:"tmdb_id,omitempty"`
 	DoubanID      string   `json:"douban_id,omitempty"`
 	ExternalID    string   `json:"external_id,omitempty"`
@@ -36,11 +36,11 @@ type Item struct {
 	VoteAvg       float64  `json:"vote_avg"`
 	ReleaseDate   string   `json:"release_date,omitempty"`
 	Year          int      `json:"year,omitempty"`
-	Rank          int      `json:"rank,omitempty"`           // 榜单名次
-	Providers     []string `json:"providers,omitempty"`      // 流媒体平台（RE0榜单条目）
-	Genres        []string `json:"genres,omitempty"`         // 番剧类型标签
-	AirDate       string   `json:"air_date,omitempty"`       // 日历播出时间（完整时间戳）
-	EpisodeTitle  string   `json:"episode_title,omitempty"`  // 日历集标题
+	Rank          int      `json:"rank,omitempty"`          // 榜单名次
+	Providers     []string `json:"providers,omitempty"`     // 流媒体平台（RE0榜单条目）
+	Genres        []string `json:"genres,omitempty"`        // 番剧类型标签
+	AirDate       string   `json:"air_date,omitempty"`      // 日历播出时间（完整时间戳）
+	EpisodeTitle  string   `json:"episode_title,omitempty"` // 日历集标题
 	SeasonNumber  int      `json:"season_number,omitempty"`
 	EpisodeNumber int      `json:"episode_number,omitempty"`
 }
@@ -374,14 +374,14 @@ var StreamingRegions = []map[string]string{
 
 // doubanCollectionList 豆瓣片单（与 controllers/discover.go 保持一致并扩展）
 var doubanRankingCollections = map[string]string{
-	"movie_hot_gaia":       "电影热门",
-	"tv_hot_gaia":          "剧集热门",
-	"movie_weekly_best":    "一周口碑电影榜",
-	"tv_weekly_best":       "一周口碑剧集榜",
-	"movie_new_movie":      "新片速递",
+	"movie_hot_gaia":         "电影热门",
+	"tv_hot_gaia":            "剧集热门",
+	"movie_weekly_best":      "一周口碑电影榜",
+	"tv_weekly_best":         "一周口碑剧集榜",
+	"movie_new_movie":        "新片速递",
 	"tv_chinese_best_weekly": "华语口碑剧集榜",
 	"tv_global_best_weekly":  "全球口碑剧集榜",
-	"movie_top250":         "豆瓣 Top250",
+	"movie_top250":           "豆瓣 Top250",
 }
 
 // DoubanCollections 片单列表（供前端选择器）
@@ -419,6 +419,12 @@ func Rankings(ctx context.Context, provider, region, mediaType string, page int,
 		collection := strings.TrimPrefix(provider, "douban:")
 		return doubanCollectionRanking(collection, page, force)
 	default:
+		// 容错：历史版本前端会把豆瓣片单的裸 key（如 movie_weekly_best）
+		// 直接当 provider 传过来，缺少 "douban:" 前缀。这里补上前缀重试，
+		// 避免老书签/老页面拿到 500。
+		if _, ok := doubanRankingCollections[provider]; ok {
+			return doubanCollectionRanking(provider, page, force)
+		}
 		return nil, fmt.Errorf("不支持的榜单来源：%s", provider)
 	}
 }
@@ -426,17 +432,17 @@ func Rankings(ctx context.Context, provider, region, mediaType string, page int,
 // FeedItemPayload RE0 streaming-top feed 响应结构（data 字段）
 type FeedItemPayload struct {
 	Items []struct {
-		ID          string `json:"id"`
-		Title       string `json:"title"`
-		MediaType   string `json:"media_type"`
-		PosterPath  string `json:"poster_path"`
-		Backdrop    string `json:"backdrop_path"`
+		ID          string  `json:"id"`
+		Title       string  `json:"title"`
+		MediaType   string  `json:"media_type"`
+		PosterPath  string  `json:"poster_path"`
+		Backdrop    string  `json:"backdrop_path"`
 		VoteAvg     float64 `json:"vote_average"`
-		ReleaseDate string `json:"release_date"`
-		Overview    string `json:"overview"`
-		TMDBID      int64  `json:"tmdb_id"`
-		Provider    string `json:"provider"`
-		Rank        int    `json:"rank"`
+		ReleaseDate string  `json:"release_date"`
+		Overview    string  `json:"overview"`
+		TMDBID      int64   `json:"tmdb_id"`
+		Provider    string  `json:"provider"`
+		Rank        int     `json:"rank"`
 	} `json:"items"`
 	AvailableRegions []struct {
 		Key   string `json:"key"`

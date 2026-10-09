@@ -58,8 +58,8 @@ func TestPlaybackRecordsHandlerListAndStats(t *testing.T) {
 	ctx := context.Background()
 
 	for _, rec := range []*domain.PlaybackRecord{
-		{UserID: "u1", ItemName: "三体.mkv", StrmPath: "/115/三体.mkv", Provider: "115", PlaybackAt: "2024-05-01T00:00:00Z"},
-		{UserID: "u2", ItemName: "沙丘2.mkv", StrmPath: "/123/沙丘2.mkv", Provider: "123", PlaybackAt: "2024-05-02T00:00:00Z"},
+		{EmbyUserID: "u1", ItemName: "三体.mkv", StrmPath: "/115/三体.mkv", Provider: "115", PlaybackAt: "2024-05-01T00:00:00Z"},
+		{EmbyUserID: "u2", ItemName: "沙丘2.mkv", StrmPath: "/123/沙丘2.mkv", Provider: "123", PlaybackAt: "2024-05-02T00:00:00Z"},
 	} {
 		if _, err := repo.Insert(ctx, rec); err != nil {
 			t.Fatalf("预置记录: %v", err)
@@ -89,7 +89,13 @@ func TestPlaybackRecordsHandlerListAndStats(t *testing.T) {
 		t.Fatalf("首条应为最新记录, 实际 %v", first["item_name"])
 	}
 	// 字段名必须与前端 DTO 一致
-	for _, key := range []string{"id", "rule_id", "user_id", "client", "device_id", "item_name", "strm_path", "provider", "playback_at"} {
+	// 字段名必须与前端 DTO 一致。
+	//
+	// ⚠️ 注意 user 字段已经**改名**成 emby_user_id：0043 引入双用户标识后，
+	// 0028 遗留的 user_id 列语义是「Emby 侧用户标识（字符串）」，
+	// RBAC 用户走新增的 app_user_id。沿用 user_id 这个名字，
+	// 前端迟早会把两者当成同一个用户。
+	for _, key := range []string{"id", "rule_id", "emby_user_id", "app_user_id", "client", "device_id", "item_name", "strm_path", "provider", "playback_at"} {
 		if _, exists := first[key]; !exists {
 			t.Fatalf("响应缺少字段 %q", key)
 		}
@@ -117,8 +123,8 @@ func TestPlaybackRecordsHandlerFilters(t *testing.T) {
 	ctx := context.Background()
 
 	for _, rec := range []*domain.PlaybackRecord{
-		{RuleID: "1", UserID: "u1", ItemName: "三体.mkv", StrmPath: "/115/三体.mkv", Provider: "115", PlaybackAt: "2024-05-01T00:00:00Z"},
-		{RuleID: "2", UserID: "u1", ItemName: "沙丘2.mkv", StrmPath: "/123/沙丘2.mkv", Provider: "123", PlaybackAt: "2024-05-02T00:00:00Z"},
+		{RuleID: "1", EmbyUserID: "u1", ItemName: "三体.mkv", StrmPath: "/115/三体.mkv", Provider: "115", PlaybackAt: "2024-05-01T00:00:00Z"},
+		{RuleID: "2", EmbyUserID: "u1", ItemName: "沙丘2.mkv", StrmPath: "/123/沙丘2.mkv", Provider: "123", PlaybackAt: "2024-05-02T00:00:00Z"},
 	} {
 		if _, err := repo.Insert(ctx, rec); err != nil {
 			t.Fatalf("预置记录: %v", err)
@@ -155,8 +161,8 @@ func TestPlaybackRecordsHandlerDeleteAndClear(t *testing.T) {
 	h, repo := newPlaybackRecordTestHandler(t)
 	ctx := context.Background()
 
-	first := &domain.PlaybackRecord{RuleID: "1", UserID: "u1", ItemName: "a.mkv", PlaybackAt: "2024-05-01T00:00:00Z"}
-	second := &domain.PlaybackRecord{RuleID: "2", UserID: "u2", ItemName: "b.mkv", PlaybackAt: "2024-05-02T00:00:00Z"}
+	first := &domain.PlaybackRecord{RuleID: "1", EmbyUserID: "u1", ItemName: "a.mkv", PlaybackAt: "2024-05-01T00:00:00Z"}
+	second := &domain.PlaybackRecord{RuleID: "2", EmbyUserID: "u2", ItemName: "b.mkv", PlaybackAt: "2024-05-02T00:00:00Z"}
 	for _, rec := range []*domain.PlaybackRecord{first, second} {
 		if _, err := repo.Insert(ctx, rec); err != nil {
 			t.Fatalf("预置记录: %v", err)
@@ -199,7 +205,7 @@ func TestPlaybackRecordsHandlerDeleteAndClear(t *testing.T) {
 	}
 
 	// 按规则清空
-	if _, err := repo.Insert(ctx, &domain.PlaybackRecord{RuleID: "7", UserID: "u9", ItemName: "z.mkv"}); err != nil {
+	if _, err := repo.Insert(ctx, &domain.PlaybackRecord{RuleID: "7", EmbyUserID: "u9", ItemName: "z.mkv"}); err != nil {
 		t.Fatalf("预置记录: %v", err)
 	}
 	req = httptest.NewRequest(http.MethodPost, "/api/admin/playback-records/clear",

@@ -207,7 +207,7 @@ func (d *Driver) rawJSON(ctx context.Context, method, rawURL string, query url.V
 	if err != nil {
 		return domain.Wrap(domain.CodeDriverError, err)
 	}
-	if resp.StatusCode == http.StatusUnauthorized || (resp.StatusCode == http.StatusOK && is189AuthExpiredPayload(data)) {
+	if resp.StatusCode == http.StatusUnauthorized || is189AuthExpiredPayload(data) {
 		return domain.Errorf(domain.CodeAuthExpired, "天翼云盘认证会话已失效")
 	}
 	if resp.StatusCode == http.StatusForbidden {
@@ -241,7 +241,7 @@ func (d *Driver) rawForm(ctx context.Context, method, rawURL string, query url.V
 	if err != nil {
 		return domain.Wrap(domain.CodeDriverError, err)
 	}
-	if resp.StatusCode == http.StatusUnauthorized || (resp.StatusCode == http.StatusOK && is189AuthExpiredPayload(data)) {
+	if resp.StatusCode == http.StatusUnauthorized || is189AuthExpiredPayload(data) {
 		return domain.Errorf(domain.CodeAuthExpired, "天翼云盘认证会话已失效")
 	}
 	if resp.StatusCode == http.StatusForbidden {
@@ -350,9 +350,22 @@ func isSessionExpired(err error) bool {
 		return false
 	}
 	if ae, ok := domain.AsAppError(err); ok {
-		return ae.Code == domain.CodeAuthExpired
+		// 优先看错误码；但上游可能把「会话失效」塞进 4xx 的 DRIVER_ERROR 文案里
+		// （如 HTTP 400 + InvalidSessionKey），此时错误码对不上，必须回退做字符串匹配。
+		if ae.Code == domain.CodeAuthExpired {
+			return true
+		}
+		if msg := ae.Error(); is189SessionExpiredText(msg) {
+			return true
+		}
+		return false
 	}
-	msg := err.Error()
+	return is189SessionExpiredText(err.Error())
+}
+
+// is189SessionExpiredText 统一判断一段错误文本是否属于「天翼云盘会话失效」，
+// 与 is189AuthExpiredPayload 的标记保持一致。
+func is189SessionExpiredText(msg string) bool {
 	lower := strings.ToLower(msg)
 	return strings.Contains(lower, "invalidsessionkey") ||
 		strings.Contains(lower, "usersessionbo is null") ||

@@ -37,7 +37,10 @@ const providerOptions = computed(() => {
     { value: "maoyan", label: "猫眼热播榜" },
   ];
   for (const c of meta.value?.collections ?? []) {
-    if (c.key) opts.push({ value: c.key, label: `豆瓣·${c.label || c.key}` });
+    // 必须带 douban: 前缀 —— 后端 Rankings 靠前缀区分来源，
+    // 直接传裸 key（如 movie_weekly_best）会落到 default 分支报
+    // 「不支持的榜单来源」并返回 500。
+    if (c.key) opts.push({ value: `douban:${c.key}`, label: `豆瓣·${c.label || c.key}` });
   }
   return opts;
 });

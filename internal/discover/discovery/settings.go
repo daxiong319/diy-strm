@@ -181,5 +181,9 @@ func EnsureDiscoverySchema() error {
 		&DiscoveryEmbyMissingScan{},
 		&DiscoveryEmbyMissingResult{},
 		&DiscoveryEmbyMissingEvent{},
+		// 订阅身份校验判定记录（转存前闸门的可查历史）。
+		&DiscoverySubscriptionIdentityCheck{},
+		// 订阅转存幂等账本（跨轮去重的唯一权威判据）。
+		&DiscoveryTransferItem{},
 	)
 }

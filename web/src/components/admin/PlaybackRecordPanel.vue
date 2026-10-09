@@ -227,7 +227,7 @@ onMounted(() => {
             <tr v-for="rec in records" :key="rec.id" class="pbh__row">
               <td class="pbh__muted">{{ formatTime(rec.playback_at) }}</td>
               <td><AppBadge tone="info">{{ providerLabel(rec.provider) }}</AppBadge></td>
-              <td class="pbh__muted">{{ rec.user_id || "-" }}</td>
+              <td class="pbh__muted">{{ rec.emby_user_id || "-" }}</td>
               <td>
                 <span class="pbh__clamp" :title="rec.item_name">{{ rec.item_name || "-" }}</span>
               </td>

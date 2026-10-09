@@ -188,6 +188,19 @@ var washRuleFields = map[string]bool{
 	"resolution": true, "codec": true, "format": true, "bitdepth": true, "channels": true, "group": true,
 }
 
+// WashRuleFields 允许出现在洗版维度规则里的维度名。
+//
+// 导出是因为调用方（规则试算的校验）需要区分「规则字段写错了」与
+// 「规则字段没填」：这两种情况在 ParseWashRules 里都会静默回落默认规则，
+// 而对用户是完全不同的两件事 —— 前者是配错了，后者是根本没配。
+func WashRuleFields() map[string]bool {
+	out := make(map[string]bool, len(washRuleFields))
+	for k, v := range washRuleFields {
+		out[k] = v
+	}
+	return out
+}
+
 // ParseWashRules 解析配置的规则 JSON；空或非法回退默认规则。
 func ParseWashRules(raw string) []WashRule {
 	raw = strings.TrimSpace(raw)
@@ -343,16 +356,42 @@ func qualityFieldDisplay(field string, q *FileQuality) string {
 	return "?"
 }
 
-// QualityCompareTrace 洗版逐项对比描述：按规则顺序输出「字段 新值/旧值 关系」，
-// 在决出胜负的字段处标注（新优/新差），后面的项不再列出。
-func QualityCompareTrace(newQ, oldQ *FileQuality, groupPriority []string, rules []WashRule) string {
+// QualityDimension 一次逐维度比较的结构化结果。
+//
+// **这是 Trace 与结构化驳回理由唯一的真相来源**（T31）：
+// `QualityCompareTrace` 的每一段话、`RejectReason` 的每一行，指的都是这里
+// 同一个维度对象。早先它们是各自遍历一遍规则算出来的两份结果，
+// 症状是界面上写着「分辨率 1080<2160（新差）」而结构化理由里写着 codec ——
+// 两份真相互相矛盾时谁也说不清到底哪个是真的。
+type QualityDimension struct {
+	// Field 维度名：resolution/codec/format/channels/bitdepth/group。
+	Field string `json:"field"`
+	// Label 中文标签（分辨率/编码/来源/声道/色深/组名）。
+	Label string `json:"label"`
+	// New / Old 两侧的可读显示值（如 "2160p" / "H265"）。
+	New string `json:"new"`
+	Old string `json:"old"`
+	// Better 新版更优、Worse 新版更劣。逐项持平时两者都是 false。
+	Better bool `json:"better"`
+	Worse  bool `json:"worse"`
+}
+
+// QualityDimensions 按规则顺序逐项比较，返回到**决出胜负的那个维度为止**的明细。
+//
+// 为什么在决胜处停：CompareQuality 也在这里 return，后面那些维度根本没参与
+// 这次判定。把它们列进「驳回理由」等于声称「它也驳回过」，那是假的。
+// 逐项全平的维度也会列出来（Better/Worse 都为 false）——
+// 「这两边一样，没法比」本身就是用户想看的信息。
+//
+// nil 参数返回 nil：此时「无信息」不该伪装成「有明细」。
+func QualityDimensions(newQ, oldQ *FileQuality, groupPriority []string, rules []WashRule) []QualityDimension {
 	if newQ == nil || oldQ == nil {
-		return "任一侧质量不可解析"
+		return nil
 	}
 	if len(rules) == 0 {
 		rules = DefaultWashRules
 	}
-	parts := make([]string, 0, len(rules))
+	out := make([]QualityDimension, 0, len(rules))
 	for _, r := range rules {
 		var nv, ov int
 		if r.Field == "group" {
@@ -366,22 +405,55 @@ func QualityCompareTrace(newQ, oldQ *FileQuality, groupPriority []string, rules 
 		if label == "" {
 			label = r.Field
 		}
-		nd, od := qualityFieldDisplay(r.Field, newQ), qualityFieldDisplay(r.Field, oldQ)
+		d := QualityDimension{
+			Field: r.Field,
+			Label: label,
+			New:   qualityFieldDisplay(r.Field, newQ),
+			Old:   qualityFieldDisplay(r.Field, oldQ),
+		}
 		if nv == ov {
-			if nd == od {
-				parts = append(parts, fmt.Sprintf("%s %s=%s", label, nd, od))
-			} else {
-				parts = append(parts, fmt.Sprintf("%s %s/%s 同档", label, nd, od))
-			}
+			out = append(out, d)
 			continue
 		}
-		better := (r.Higher && nv > ov) || (!r.Higher && nv < ov)
-		if better {
-			parts = append(parts, fmt.Sprintf("%s %s>%s（新优）", label, nd, od))
-		} else {
-			parts = append(parts, fmt.Sprintf("%s %s<%s（新差）", label, nd, od))
+		d.Better = (r.Higher && nv > ov) || (!r.Higher && nv < ov)
+		d.Worse = !d.Better
+		out = append(out, d)
+		return out
+	}
+	return out
+}
+
+// QualityCompareTrace 洗版逐项对比描述：按规则顺序输出「字段 新值/旧值 关系」，
+// 在决出胜负的字段处标注（新优/新差），后面的项不再列出。
+func QualityCompareTrace(newQ, oldQ *FileQuality, groupPriority []string, rules []WashRule) string {
+	if newQ == nil || oldQ == nil {
+		return "任一侧质量不可解析"
+	}
+	return TraceFromDimensions(QualityDimensions(newQ, oldQ, groupPriority, rules))
+}
+
+// TraceFromDimensions 把 QualityDimensions 的明细渲染成人读的一句话说明。
+//
+// 单独导出是因为结构化驳回理由要拿**同一份明细**去拼 reasons：
+// 如果 compareOne 一边调 QualityCompareTrace（内部自己再遍历一遍规则）、
+// 一边调 QualityDimensions，两条路各自算一遍，早晚会分叉 ——
+// 症状是界面上写着「分辨率 1080<2160（新差）」而 reasons 里写着 codec。
+func TraceFromDimensions(dims []QualityDimension) string {
+	parts := make([]string, 0, len(dims))
+	for _, d := range dims {
+		switch {
+		case d.Better:
+			parts = append(parts, fmt.Sprintf("%s %s>%s（新优）", d.Label, d.New, d.Old))
+		case d.Worse:
+			parts = append(parts, fmt.Sprintf("%s %s<%s（新差）", d.Label, d.New, d.Old))
+		case d.New == d.Old:
+			parts = append(parts, fmt.Sprintf("%s %s=%s", d.Label, d.New, d.Old))
+		default:
+			parts = append(parts, fmt.Sprintf("%s %s/%s 同档", d.Label, d.New, d.Old))
 		}
-		return strings.Join(parts, "；")
+		if d.Better || d.Worse {
+			return strings.Join(parts, "；")
+		}
 	}
 	if len(parts) == 0 {
 		return "逐项持平"

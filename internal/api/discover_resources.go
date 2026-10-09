@@ -234,7 +234,7 @@ func (h *Handler) searchMediaResources(w http.ResponseWriter, r *http.Request) {
 		return resourceCandidateWeight(items[i]) > resourceCandidateWeight(items[j])
 	})
 
-	// MoviePilot 降级兜底计数（Muvyo 移植①）：本端点正是「资源搜索」本身，
+	// MoviePilot 降级兜底计数（参考实现 移植①）：本端点正是「资源搜索」本身，
 	// 因此把「正常完成且候选为 0」与「有候选」分别回报给兜底引擎。
 	//
 	// 计数入口只放在这里、不放在每个来源内部，是为了对齐参考实现语义：

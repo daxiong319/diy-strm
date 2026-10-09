@@ -27,15 +27,33 @@ type Message struct {
 	Title   string // 标题（不含前缀）
 	Content string // 多行正文
 	Tone    string // info/success/warn/error
+
+	// Scene / SceneLabel 是 T12 起注入的场景字段，供渠道模板引用。
+	//
+	// 为什么不让渠道自己去查 category→场景的映射：那张表住在
+	// internal/domain，而 17 个渠道只认 Message。让每个渠道各自 import
+	// domain 去查，等于把场景判定复制了 17 份。发送侧查一次传进来，
+	// 渠道侧就只剩"把字段填进模板"这一件事。
+	//
+	// 未归入任何场景的通知（见 domain.UnmappedCategories）两个字段都留空 ——
+	// 模板里写了 {{.Scene}} 会渲染成空串，而不是把整条 `{{.Scene}}` 原样吐出来。
+	Scene      string
+	SceneLabel string
 }
+
+// ChannelWebhook 自定义 Webhook 渠道的 ID。
+//
+// 单独提成常量是因为补发队列（outbox）只对这一个渠道生效，
+// 判定散落在 dispatcher 里用字面量 "webhook" 迟早会写错。
+const ChannelWebhook = "webhook"
 
 // ChannelMeta 渠道元数据（驱动前端配置表单渲染）
 type ChannelMeta struct {
-	ID       string        `json:"id"`
-	Title    string        `json:"title"`
-	Required []string      `json:"required"`
-	Note     string        `json:"note,omitempty"`
-	Fields   []FieldMeta   `json:"fields"`
+	ID       string      `json:"id"`
+	Title    string      `json:"title"`
+	Required []string    `json:"required"`
+	Note     string      `json:"note,omitempty"`
+	Fields   []FieldMeta `json:"fields"`
 }
 
 type FieldMeta struct {
@@ -44,7 +62,7 @@ type FieldMeta struct {
 	Type        string   `json:"text"` // text/password/select/textarea
 	Placeholder string   `json:"placeholder,omitempty"`
 	Hint        string   `json:"hint,omitempty"`
-	Rows        int      `json:"rows,omitempty"` // textarea
+	Rows        int      `json:"rows,omitempty"`    // textarea
 	Options     []Option `json:"options,omitempty"` // select
 }
 
@@ -69,8 +87,8 @@ type Sender func(ctx context.Context, cfg map[string]string, msg Message) error
 
 // Registry 渠道注册表
 var Registry = map[string]struct {
-	Meta  ChannelMeta
-	Send  Sender
+	Meta ChannelMeta
+	Send Sender
 }{}
 
 func register(meta ChannelMeta, send Sender) {
@@ -93,12 +111,15 @@ func ChannelsMeta() []ChannelMeta {
 func Send(ctx context.Context, channelID string, cfg map[string]string, msg Message) error {
 	ch, ok := Registry[channelID]
 	if !ok {
-		return fmt.Errorf("未知通知渠道: %s", channelID)
+		// 未知渠道不可能通过补发解决（重发还是同样的渠道 ID）。
+		return newConfigError(channelID, "未知通知渠道")
 	}
 	// 校验必填字段
 	for _, req := range ch.Meta.Required {
 		if strings.TrimSpace(cfg[req]) == "" {
-			return fmt.Errorf("渠道 %s 缺少必填字段 %s", channelID, req)
+			// 配置缺失同样不可重试：补发时用的是发送当时的快照，
+			// 快照里缺什么字段，补发一万次还是缺。
+			return newConfigError(channelID, "缺少必填字段 %s", req)
 		}
 	}
 	return ch.Send(ctx, cfg, msg)

@@ -65,8 +65,8 @@ func TestPlaybackRecordObserverRecordsRedirect(t *testing.T) {
 		t.Fatalf("期望 1 条记录, 实际 total=%d len=%d", total, len(items))
 	}
 	got := items[0]
-	if got.UserID != "u1" {
-		t.Fatalf("UserID = %q", got.UserID)
+	if got.EmbyUserID != "u1" {
+		t.Fatalf("EmbyUserID = %q", got.EmbyUserID)
 	}
 	if got.Client != "Emby Theater" {
 		t.Fatalf("Client = %q", got.Client)

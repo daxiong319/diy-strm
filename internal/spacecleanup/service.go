@@ -58,7 +58,7 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 		return Report{}, err
 	}
 	activePaths := s.activeStrmPaths(tasks)
-	strmItems, err := s.scanStrm(ctx, activePaths)
+	strmItems, err := s.scanStrm(ctx, activePaths, s.categoryGuard())
 	if err != nil {
 		return Report{}, domain.Wrap(domain.CodeInternal, err)
 	}

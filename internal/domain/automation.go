@@ -21,6 +21,12 @@ const (
 	AutomationTriggerOfflineDownload = "offline_download"
 	// AutomationTriggerCasAutoSave CAS 清单经通知渠道自动转存到网盘目录后触发。
 	AutomationTriggerCasAutoSave = "cas_autosave"
+	// AutomationTriggerPlayReport 观影报告：到点生成排行图并推送。
+	//
+	// 它是一个**排期型**触发器（每天/每周某天某时跑一次），但复用
+	// advanced 的 weekly/monthly 语义而不是自己再发明一套 —— 排期计算
+	// (nextAdvancedRun) 与校正逻辑已经在那里，少一个触发器就少一份分叉。
+	AutomationTriggerPlayReport = "play_report"
 
 	AutomationActionOrganize              = "organize"
 	AutomationActionStrm                  = "strm"

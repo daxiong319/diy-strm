@@ -34,3 +34,10 @@ dist/*.tar.gz
 .env
 .env.*
 drivers/115/
+
+# 前端构建产物（由 web/scripts/compress-build.mjs 生成，不入库）
+internal/api/web/
+
+# 调研与交付报告（变更说明统一放 handoff/T*-变更说明.md，不入库）
+reports/
+handoff/

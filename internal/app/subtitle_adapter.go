@@ -8,7 +8,7 @@ import (
 	"litepan/internal/subtitle"
 )
 
-// subtitleProcessorAdapter 把字幕服务接到整理流程的完成钩子上（Muvyo 移植③）。
+// subtitleProcessorAdapter 把字幕服务接到整理流程的完成钩子上（参考实现 移植③）。
 //
 // 依赖方向刻意是 app → subtitle：mediaorganize 只认自己的 SubtitleProcessor
 // 接口，不认识 subtitle 包，因此不会出现 mediaorganize ↔ subtitle 的循环依赖。

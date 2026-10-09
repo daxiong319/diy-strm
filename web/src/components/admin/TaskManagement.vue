@@ -75,6 +75,7 @@ const CacheRetentionPanel = asyncPanel(() => import("@/components/admin/CacheRet
 const CacheSettingsPanel = asyncPanel(() => import("@/components/admin/CacheSettingsPanel.vue"));
 const AutomationPanel = asyncPanel(() => import("@/components/admin/AutomationPanel.vue"));
 const PlaybackRecordPanel = asyncPanel(() => import("@/components/admin/PlaybackRecordPanel.vue"));
+const PlayMonitorPanel = asyncPanel(() => import("@/components/admin/PlayMonitorPanel.vue"));
 const MoviePilotPanel = asyncPanel(() => import("@/components/admin/MoviePilotPanel.vue"));
 const MediaOrganizePanel = asyncPanel(() => import("@/components/admin/MediaOrganizePanel.vue"));
 const MediaOrganizeSettings = asyncPanel(() => import("@/components/admin/MediaOrganizeSettings.vue"));
@@ -110,6 +111,7 @@ const STRM_TAB = "strm";
 const ORGANIZE_TAB = "organize";
 const AUTOMATION_TAB = "automation";
 const PLAYBACK_TAB = "playback";
+const PLAY_MONITOR_TAB = "play-monitor";
 const MOVIEPILOT_TAB = "moviepilot";
 const DEFAULT_STRM_SCAN_INTERVAL_MINUTES = 6 * 60;
 const tabs = [
@@ -117,6 +119,7 @@ const tabs = [
   { key: CACHE_TAB, label: "缓存任务" },
   { key: ORGANIZE_TAB, label: "目录整理" },
   { key: AUTOMATION_TAB, label: "自动联动" },
+  { key: PLAY_MONITOR_TAB, label: "播放监控" },
   { key: PLAYBACK_TAB, label: "播放记录" },
   { key: MOVIEPILOT_TAB, label: "MoviePilot" },
 ];
@@ -186,7 +189,7 @@ const { confirmDiscardChanges } = useSettingsPageDirty(settingsPageDirty, revert
 
 const { activeTab, setActiveTab } = useSectionTabRoute(
   STRM_TAB,
-  [STRM_TAB, CACHE_TAB, ORGANIZE_TAB, AUTOMATION_TAB, PLAYBACK_TAB, MOVIEPILOT_TAB],
+  [STRM_TAB, CACHE_TAB, ORGANIZE_TAB, AUTOMATION_TAB, PLAY_MONITOR_TAB, PLAYBACK_TAB, MOVIEPILOT_TAB],
   {
   beforeTabChange: async (_from, _to) => {
     if (!settingsDrawerOpen.value) return true;
@@ -1295,6 +1298,10 @@ watch(activeTab, (tab) => {
 
     <div v-if="tabsVisited[AUTOMATION_TAB]" v-show="activeTab === AUTOMATION_TAB">
       <AutomationPanel ref="automationPanelRef" />
+    </div>
+
+    <div v-if="tabsVisited[PLAY_MONITOR_TAB]" v-show="activeTab === PLAY_MONITOR_TAB">
+      <PlayMonitorPanel />
     </div>
 
     <div v-if="tabsVisited[PLAYBACK_TAB]" v-show="activeTab === PLAYBACK_TAB">

@@ -190,7 +190,7 @@ func (s *Service) normalizeInput(ctx context.Context, in RuleInput) (RuleInput, 
 	}
 	in.TriggerType = strings.TrimSpace(in.TriggerType)
 	switch in.TriggerType {
-	case domain.AutomationTriggerDaily, domain.AutomationTriggerInterval, domain.AutomationTriggerAdvanced, domain.AutomationTriggerWebhook, domain.AutomationTriggerOfflineDownload, domain.AutomationTriggerCasAutoSave:
+	case domain.AutomationTriggerDaily, domain.AutomationTriggerInterval, domain.AutomationTriggerAdvanced, domain.AutomationTriggerWebhook, domain.AutomationTriggerOfflineDownload, domain.AutomationTriggerCasAutoSave, domain.AutomationTriggerPlayReport:
 	default:
 		return in, domain.Errorf(domain.CodeValidation, "触发条件不支持")
 	}
@@ -210,20 +210,36 @@ func (s *Service) normalizeInput(ctx context.Context, in RuleInput) (RuleInput, 
 			return in, domain.Errorf(domain.CodeValidation, "间隔小时必须大于 0")
 		}
 	case domain.AutomationTriggerAdvanced:
+		// 观影报告与高级定时共用同一段排期校验（见 domain 常量注释），
+		// 但错误文案要说人话：用户是在配「报告什么时候发」，
+		// 让他去解决「高级定时类型不支持」只会一头雾水。
+		invalidType := in.TriggerType == domain.AutomationTriggerAdvanced
 		if strings.TrimSpace(anyString(in.TriggerConfig["time"])) == "" {
-			return in, domain.Errorf(domain.CodeValidation, "请选择触发时间")
+			if invalidType {
+				return in, domain.Errorf(domain.CodeValidation, "请选择触发时间")
+			}
+			return in, domain.Errorf(domain.CodeValidation, "请选择观影报告的推送时间")
 		}
 		switch anyString(in.TriggerConfig["schedule_mode"]) {
 		case "weekly":
 			if !validScheduleValues(in.TriggerConfig["weekdays"], 1, 7) {
-				return in, domain.Errorf(domain.CodeValidation, "请至少选择一个星期")
+				if invalidType {
+					return in, domain.Errorf(domain.CodeValidation, "请至少选择一个星期")
+				}
+				return in, domain.Errorf(domain.CodeValidation, "请至少选择一个星期推送观影报告")
 			}
 		case "monthly":
 			if !validScheduleValues(in.TriggerConfig["month_days"], 1, 31) {
-				return in, domain.Errorf(domain.CodeValidation, "请至少选择一个日期")
+				if invalidType {
+					return in, domain.Errorf(domain.CodeValidation, "请至少选择一个日期")
+				}
+				return in, domain.Errorf(domain.CodeValidation, "请至少选择一个日期推送观影报告")
 			}
 		default:
-			return in, domain.Errorf(domain.CodeValidation, "高级定时类型不支持")
+			if invalidType {
+				return in, domain.Errorf(domain.CodeValidation, "高级定时类型不支持")
+			}
+			return in, domain.Errorf(domain.CodeValidation, "观影报告推送周期不支持")
 		}
 	case domain.AutomationTriggerWebhook:
 		if strings.TrimSpace(anyString(in.TriggerConfig["event"])) == "" {

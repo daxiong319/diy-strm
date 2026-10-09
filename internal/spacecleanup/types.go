@@ -137,6 +137,16 @@ type Options struct {
 	CoverExtractStats  func() (files, frames int, bytes int64)
 	ClearCoverExtract  func() (files, frames int, bytes int64)
 	AfterMetadataClear func()
+
+	// CategoryProtection 保护分类目录，返回 nil 表示没有分类保护
+	// （分类功能没启用、或规则表里一条分类都没有）。
+	//
+	// 做成函数注入而不是一个固定的 guard 值，理由是分类模板是运行期可改的：
+	// 启动时抓一份名单存到字段里，用户改完模板再点清理就会按旧名单判，
+	// 于是刚加的分类目录照样被删。按需构造的形状与这个包里其它保护一致
+	// （UploadActivePaths / OfflineActivePaths），调用点也便宜 ——
+	// 判一个路径只是几次 map 查询，分类引擎只在函数里被调用一次。
+	CategoryProtection func() *CategoryGuard
 }
 
 type planItem struct {

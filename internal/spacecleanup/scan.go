@@ -9,7 +9,11 @@ import (
 	"time"
 )
 
-func (s *Service) scanStrm(ctx context.Context, activePaths []string) ([]planItem, error) {
+// scanStrm 里的分类保护名单只取一次，由调用方传进来。
+// 不在循环里现取是有原因的：categoryGuard 会去读 settings 并解析配置 JSON，
+// 而这个循环每个目录项都跑一遍 —— 一个几千条目的媒体库就是几千次
+// 配置读取。activePaths 当初也是这么传的，保持同一个形状。
+func (s *Service) scanStrm(ctx context.Context, activePaths []string, guard *CategoryGuard) ([]planItem, error) {
 	root := filepath.Clean(s.opts.StrmDir)
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -36,6 +40,9 @@ func (s *Service) scanStrm(ctx context.Context, activePaths []string) ([]planIte
 					}
 					continue
 				}
+				if guard.Protected(path) {
+					continue
+				}
 				if !pathCoveredByActive(path, activePaths) {
 					if info, statErr := entry.Info(); statErr == nil {
 						out = append(out, orphanStrmFileItem(path, info.Size()))
@@ -44,6 +51,12 @@ func (s *Service) scanStrm(ctx context.Context, activePaths []string) ([]planIte
 				continue
 			}
 			if entry.Name() == "@聚合" && dir == root {
+				continue
+			}
+			// 扫描期第一道分类保护闸：分类目录整棵跳过，不进报告。
+			// 位置在 pathEqualsActive 之前是刻意的 —— 分类根可能同时也是
+			// 某个 STRM 任务的根，两条保护都成立时先短路，省一次全树遍历。
+			if guard.Protected(path) {
 				continue
 			}
 			if pathEqualsActive(path, activePaths) {

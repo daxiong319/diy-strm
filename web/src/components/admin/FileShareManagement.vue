@@ -5,6 +5,7 @@ import { ApiError } from "@/api/client";
 import AppButton from "@/components/base/AppButton.vue";
 import BandMenuButton from "@/components/admin/band/BandMenuButton.vue";
 import SectionTabBar from "@/components/admin/SectionTabBar.vue";
+import LibrarySharePanel from "@/components/admin/LibrarySharePanel.vue";
 import WebDAVSettings from "@/components/admin/WebDAVSettings.vue";
 import AsyncErrorPanel from "@/components/common/AsyncErrorPanel.vue";
 // 本地挂载面板较大且非默认 tab，按需加载；type-only import 仅用于 ref 类型，不引入代码。
@@ -19,11 +20,13 @@ import { toast } from "@/composables/useToast";
 
 const WEBDAV_TAB = "webdav";
 const FUSE_TAB = "fuse";
-const VALID_TABS = [WEBDAV_TAB, FUSE_TAB] as const;
+const LIBRARY_TAB = "library";
+const VALID_TABS = [WEBDAV_TAB, FUSE_TAB, LIBRARY_TAB] as const;
 
 const tabs = [
   { key: WEBDAV_TAB, label: "WebDAV" },
   { key: FUSE_TAB, label: "本地挂载" },
+  { key: LIBRARY_TAB, label: "免登录分享" },
 ];
 
 const route = useRoute();
@@ -50,6 +53,8 @@ const pageDirty = computed(() => {
   const tab = currentShareTab();
   if (tab === WEBDAV_TAB) return webdavDirty.value;
   if (tab === FUSE_TAB) return fuseDirty.value;
+  // 免登录分享没有「设置表单」：它是逐条创建/修改的，改动即时生效，
+  // 所以永远不是脏状态，走下面的兜底 return false 即可。
   return false;
 });
 
@@ -62,7 +67,9 @@ function revertPageSettings() {
   if (tab === FUSE_TAB) {
     fuseMgmtRef.value?.revertDrawer?.();
     fuseMgmtRef.value?.closeSettingsDrawerSilent?.();
+    return;
   }
+  // library tab 没有待保存的设置，无需 revert。
 }
 
 const { confirmDiscardChanges } = useSettingsPageDirty(pageDirty, revertPageSettings);
@@ -73,6 +80,7 @@ const { activeTab, setActiveTab } = useSectionTabRoute(WEBDAV_TAB, VALID_TABS, {
     const leavingDirty =
       (from === WEBDAV_TAB && webdavDirty.value) ||
       (from === FUSE_TAB && fuseDirty.value);
+    // library tab 不参与：它没有脏状态可确认。
     if (!leavingDirty) return true;
     return confirmDiscardChanges(() => leavingDirty);
   },
@@ -122,6 +130,8 @@ async function saveWebdav() {
       <WebDAVSettings v-if="activeTab === WEBDAV_TAB" ref="webdavSettingsRef" accent="#10b981" />
 
       <FuseManagement v-else-if="activeTab === FUSE_TAB" ref="fuseMgmtRef" />
+
+      <LibrarySharePanel v-else-if="activeTab === LIBRARY_TAB" />
     </keep-alive>
   </div>
 </template>

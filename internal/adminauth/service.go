@@ -46,8 +46,19 @@ var passwordChangeExemptPaths = map[string]struct{}{
 }
 
 type Session struct {
-	IsAdmin              bool   `json:"is_admin"`
-	Username             string `json:"username"`
+	IsAdmin  bool   `json:"is_admin"`
+	Username string `json:"username"`
+	// UserID > 0 表示这是一个 RBAC 委托用户（T08 引入）。
+	// UserID == 0 表示系统本身那个配置项管理员，也就是超管。
+	//
+	// 放在会话里而不是每次查库，是因为权限判定要跑在每一个请求的中间件里，
+	// 每请求查一次用户表 + 组表 + 权限矩阵是三趟查询。
+	// 会话本身已经被签名与时效保护，读出来的值不会比数据库里的更旧。
+	UserID int64 `json:"user_id,omitempty"`
+	// IsSuper 只为 true 时绕过所有权限判定。
+	// 超管身份不是「rbac_users 里的一行」，而是由「本次会话的 Username
+	// 等于当前配置的 admin_username」推导出来的，所以它不占一个 UserID。
+	IsSuper              bool   `json:"is_super,omitempty"`
 	Generation           string `json:"generation,omitempty"`
 	MustChangePassword   bool   `json:"must_change_password"`
 	PasswordChangeReason string `json:"password_change_reason"`
@@ -68,6 +79,10 @@ type LoginResult struct {
 	IsAdmin              bool   `json:"is_admin"`
 	MustChangePassword   bool   `json:"must_change_password"`
 	PasswordChangeReason string `json:"password_change_reason,omitempty"`
+	// UserID / IsSuper 供前端区分「我是超管」和「我是委托用户」，
+	// 决定要不要去拉菜单过滤结果。
+	UserID  int64 `json:"user_id,omitempty"`
+	IsSuper bool  `json:"is_super,omitempty"`
 }
 
 type SystemConfig struct {
@@ -108,9 +123,26 @@ type UpdateCredentialsRequest struct {
 	AuthActiveRefreshEnabled   *bool    `json:"auth_active_refresh_enabled"`
 }
 
+// ExtraUserAuth 是 RBAC 用户表的可选接入点（T08）。
+//
+// 用「可选注入」而不是改造原来的登录分支，是为了让 mo_rbac_enabled=false 时
+// 的行为与本文件改动前**逐字一致**：没注入或者注入了但没启用，
+// Login 一行都不会走到委托用户那条路上。
+type ExtraUserAuth interface {
+	// Enabled 报告 RBAC 是否处于开启状态。
+	Enabled(ctx context.Context) bool
+	// Authenticate 校验用户名密码，成功返回会话身份。
+	//
+	// 返回 ok=false 时 Login 继续走原有的「用户名或密码错误」，
+	// 不区分「用户不存在」与「密码不对」，免得能被拿来枚举账号。
+	Authenticate(ctx context.Context, username, password string) (sess Session, ok bool, err error)
+}
+
 type Service struct {
-	configs      domain.ConfigRepository
-	secret       []byte
+	configs domain.ConfigRepository
+	secret  []byte
+	// extraUsers 为 nil 时本文件的行为与注入前完全一致。
+	extraUsers   ExtraUserAuth
 	log          *slog.Logger
 	configMu     sync.RWMutex
 	configLoaded bool
@@ -126,6 +158,16 @@ func New(configs domain.ConfigRepository, secret []byte, log *slog.Logger) *Serv
 		log = slog.Default()
 	}
 	return &Service{configs: configs, secret: secret, log: log, configValues: map[string]string{}}
+}
+
+// SetExtraUserAuth 注入 RBAC 委托用户认证（可为 nil，即关闭）。
+func (s *Service) SetExtraUserAuth(extra ExtraUserAuth) {
+	s.extraUsers = extra
+}
+
+// FoldEquivalent 比较两个登录名是否指向同一个账号（去首尾空白 + 忽略大小写）。
+func FoldEquivalent(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
 func (s *Service) serializer() *security.TimedSerializer {
@@ -233,10 +275,36 @@ func (s *Service) Status(ctx context.Context, r *http.Request) Status {
 }
 
 func (s *Service) Login(ctx context.Context, r *http.Request, w http.ResponseWriter, username, password string, remember bool) (*LoginResult, error) {
+	sess, result, err := s.authenticate(ctx, r, username, password)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.WriteSession(w, r, sess, remember); err != nil {
+		return nil, domain.Wrap(domain.CodeInternal, err)
+	}
+	return result, nil
+}
+
+// Authenticate 只校验凭据并返回会话，不落任何 cookie。
+//
+// T09 的求片站需要这个：求片跑在自己的端口上，而 cookie 不区分端口 ——
+// 如果求片站把登录结果写进 admin_session，一个只该出现在求片站的家人会话
+// 同时也是管理台名义上的有效会话。管理台那边还会再过一遍 RBAC，所以不构成越权，
+// 但排查登录问题时会在两个端口看到互相矛盾的「当前身份」。
+//
+// 所以求片站自己发自己的 cookie，凭据校验则复用这里，避免出现第二套密码逻辑
+// （第二套逻辑迟早会漏掉改密码后失效、临时密码这类边角，而漏掉的正是安全侧）。
+func (s *Service) Authenticate(ctx context.Context, r *http.Request, username, password string) (Session, *LoginResult, error) {
+	return s.authenticate(ctx, r, username, password)
+}
+
+// authenticate 凭据校验的唯一实现：先比超管账号，不匹配才走 RBAC 委托用户。
+func (s *Service) authenticate(ctx context.Context, r *http.Request, username, password string) (Session, *LoginResult, error) {
 	storedUsername, storedPassword := s.adminCredentials(ctx)
 	if username != storedUsername {
-		s.log.Warn("管理员登录失败", "username", username, "ip", clientIP(r))
-		return nil, domain.Errorf(domain.CodeAdminAuthRequired, "用户名或密码错误")
+		// 不是超管账号才尝试 RBAC 委托用户 —— 顺序反过来的话，
+		// 一个把 admin_username 改成委托用户同名的人就能顶替超管登录。
+		return s.loginDelegated(ctx, r, username, password, storedUsername)
 	}
 	state := security.AssessAdminCredentialState(storedUsername, storedPassword)
 	temp := s.tempPasswordState(ctx)
@@ -247,7 +315,7 @@ func (s *Service) Login(ctx context.Context, r *http.Request, w http.ResponseWri
 	}
 	if !passwordMatch && !tempMatch {
 		s.log.Warn("管理员登录失败", "username", username, "ip", clientIP(r))
-		return nil, domain.Errorf(domain.CodeAdminAuthRequired, "用户名或密码错误")
+		return Session{}, nil, domain.Errorf(domain.CodeAdminAuthRequired, "用户名或密码错误")
 	}
 	mustChange := state.MustChangePassword || tempMatch
 	reason := state.PasswordChangeReason
@@ -257,22 +325,64 @@ func (s *Service) Login(ctx context.Context, r *http.Request, w http.ResponseWri
 	sess := Session{
 		IsAdmin:              true,
 		Username:             username,
+		IsSuper:              true,
 		MustChangePassword:   mustChange,
 		PasswordChangeReason: reason,
 	}
-	if err := s.WriteSession(w, r, sess, remember); err != nil {
-		return nil, domain.Wrap(domain.CodeInternal, err)
-	}
 	s.log.Info("管理员登录成功", "username", username, "ip", clientIP(r))
-	return &LoginResult{
+	return sess, &LoginResult{
 		Username:             username,
 		IsAdmin:              true,
+		IsSuper:              true,
 		MustChangePassword:   mustChange,
 		PasswordChangeReason: reason,
 	}, nil
 }
 
+// loginDelegated 尝试用 RBAC 委托用户登录。
+//
+// 没注入、没启用、用户名不匹配，三种情况一律给出与超管登录完全相同的
+// 「用户名或密码错误」：少一个分支就少一处可以区分账号存在与否的差异。
+func (s *Service) loginDelegated(ctx context.Context, r *http.Request, username, password string, storedUsername string) (Session, *LoginResult, error) {
+	reject := func() (Session, *LoginResult, error) {
+		s.log.Warn("管理员登录失败", "username", username, "ip", clientIP(r))
+		return Session{}, nil, domain.Errorf(domain.CodeAdminAuthRequired, "用户名或密码错误")
+	}
+	if s.extraUsers == nil || !s.extraUsers.Enabled(ctx) {
+		return reject()
+	}
+	// 与超管账号同名一律拒绝：这个名字属于超管。
+	// 不这么做的话会出现「同一个用户名既是超管又是委托用户」，
+	// 到底是哪一个取决于 s.adminCredentials 的读取时序 —— 这种不确定不该存在。
+	if FoldEquivalent(username, storedUsername) {
+		return reject()
+	}
+	sess, ok, err := s.extraUsers.Authenticate(ctx, username, password)
+	if err != nil {
+		return Session{}, nil, domain.Wrap(domain.CodeInternal, err)
+	}
+	if !ok {
+		return reject()
+	}
+	sess.IsAdmin = true
+	s.log.Info("RBAC 用户登录成功", "username", username, "user_id", sess.UserID, "ip", clientIP(r))
+	return sess, &LoginResult{
+		Username: sess.Username,
+		IsAdmin:  true,
+		IsSuper:  sess.IsSuper,
+		UserID:   sess.UserID,
+	}, nil
+}
+
 func (s *Service) ResetPassword(ctx context.Context, r *http.Request) (map[string]any, error) {
+	// 这条路由是公开的（连未登录都能调，因为它是「忘了密码」的救命通道）。
+	// 它改的是**超管**的密码并把新密码打进容器日志，所以委托用户必须被挡住 ——
+	// 否则任何被授予了任意一个权限的账号，都能通过反复调用把超管踢出去，
+	// 或者自己拿到一个新的临时密码。
+	// 没有会话（真忘了密码）时照旧放行，救命通道不受影响。
+	if sess, ok := s.ReadSession(r); ok && sess.UserID > 0 {
+		return nil, domain.Errorf(domain.CodePermissionDenied, "重置管理员密码只能由超级管理员操作")
+	}
 	now := time.Now().Unix()
 	ip := clientIP(r)
 	if ip != "" {
@@ -327,6 +437,12 @@ func (s *Service) EnsureAdminAccess(ctx context.Context, r *http.Request, sess *
 	}
 	path := r.URL.Path
 	if _, exempt := passwordChangeExemptPaths[path]; exempt {
+		return nil
+	}
+	if sess.UserID > 0 {
+		// 委托用户的凭据状态与管理员密码无关：
+		// 上面已经把「已登录」和「来源可信」这两关过了。
+		// 继续往下走只会让改过管理员密码的站点把所有委托用户一起锁在门外。
 		return nil
 	}
 	state := s.credentialState(ctx)
@@ -428,6 +544,13 @@ type configUpdate struct {
 }
 
 func (s *Service) UpdateCredentials(ctx context.Context, r *http.Request, w http.ResponseWriter, req UpdateCredentialsRequest, sess *Session) error {
+	if sess != nil && sess.UserID > 0 {
+		// 委托用户即使拿到了 system.manage 也不能改超管凭据：
+		// 这个接口改的是 admin_username / admin_password，也就是超管本人。
+		// 在这里硬拦，而不是靠「不给 system.manage」来间接保护 ——
+		// 那条路一旦被绕过（比如权限矩阵写错），后果是超管被永久锁在门外。
+		return domain.Errorf(domain.CodePermissionDenied, "修改管理员凭据只能由超级管理员操作")
+	}
 	username, updates, err := s.prepareCredentialUpdates(ctx, req)
 	if err != nil {
 		return err

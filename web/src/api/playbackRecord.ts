@@ -4,14 +4,39 @@ import { http } from "@/api/client";
 export interface PlaybackRecord {
   id: number;
   rule_id: string;
-  user_id: string;
+  /** Emby 侧用户标识（字符串）。0043 起了双用户标识：这是 Emby 那边传来的，不是 RBAC 用户。 */
+  emby_user_id: string;
+  /** RBAC 用户 ID（数字）。0 = 未知（0028 遗留记录没有这个值）。 */
+  app_user_id: number;
   client: string;
   device_id: string;
   item_name: string;
   strm_path: string;
   provider: string;
   playback_at: string;
+  /** 三态：metered 计费中 / cdn CDN 直连 / lan 局域网。 */
+  state?: PlayState;
+  /** 是否计费（= state === "metered"）。 */
+  metered?: boolean;
+  app_source?: string;
+  item_scope?: string;
+  app_item_name?: string;
+  storage_slug?: string;
+  storage_type?: string;
+  request_type?: string;
+  request_url?: string;
+  original_url?: string;
+  client_ip?: string;
+  user_agent?: string;
+  response_status?: number;
+  /** 上行字节估算值（码率×时长）。只有计费中的记录才非 0。 */
+  uploaded_bytes?: number;
+  watched_seconds?: number;
+  timestamp?: string;
 }
+
+/** 三态判定结果（照搬 Muvyo）。 */
+export type PlayState = "metered" | "cdn" | "lan";
 
 /** 播放记录概览统计 */
 export interface PlaybackRecordStats {

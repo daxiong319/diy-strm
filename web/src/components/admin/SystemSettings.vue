@@ -38,6 +38,12 @@ const BackupRestorePanel = defineAsyncComponent({
   loader: () => import("@/components/admin/BackupRestorePanel.vue"),
   errorComponent: AsyncErrorPanel,
 });
+// T12：补发队列按需加载 —— 只有用户真的点开这个 Tab 时才有意义，
+// 跟 BackupRestorePanel 一样走异步组件，不拖慢系统设置的首屏。
+const NotifyRetryPanel = defineAsyncComponent({
+  loader: () => import("@/components/admin/NotifyRetryPanel.vue"),
+  errorComponent: AsyncErrorPanel,
+});
 
 const props = withDefaults(
   defineProps<{
@@ -54,6 +60,7 @@ const HOMEPAGE_TAB = "homepage";
 const SERVICE_TAB = "services";
 const API_KEYS_TAB = "apiKeys";
 const NOTIFY_CHANNEL_TAB = "notifyChannels";
+const NOTIFY_RETRY_TAB = "notifyRetries";
 
 const TASK_PANEL_SETTING_KEYS = new Set([
   "upload_task_concurrency",
@@ -148,6 +155,7 @@ const tabs = computed(() => [
   { key: SERVICE_TAB, label: "其他设置", disabled: props.forcePasswordChange },
   { key: API_KEYS_TAB, label: "API 秘钥", disabled: props.forcePasswordChange },
   { key: NOTIFY_CHANNEL_TAB, label: "通知渠道", disabled: props.forcePasswordChange },
+  { key: NOTIFY_RETRY_TAB, label: "补发队列", disabled: props.forcePasswordChange },
 ]);
 
 const systemItems = computed(() => items.value.filter((it) => it.category === "system"));
@@ -221,7 +229,7 @@ const settingsDirty = computed(
 );
 const { activeTab, setActiveTab } = useSectionTabRoute(
   SECURITY_TAB,
-  [SECURITY_TAB, HOMEPAGE_TAB, SERVICE_TAB, API_KEYS_TAB, NOTIFY_CHANNEL_TAB],
+  [SECURITY_TAB, HOMEPAGE_TAB, SERVICE_TAB, API_KEYS_TAB, NOTIFY_CHANNEL_TAB, NOTIFY_RETRY_TAB],
   {
     beforeTabChange: async (from, to) => {
       if (props.forcePasswordChange && to !== SECURITY_TAB) return false;
@@ -237,6 +245,7 @@ const isHomepageTab = computed(() => activeTab.value === HOMEPAGE_TAB);
 const isServicesTab = computed(() => activeTab.value === SERVICE_TAB);
 const isApiKeysTab = computed(() => activeTab.value === API_KEYS_TAB);
 const isNotifyChannelTab = computed(() => activeTab.value === NOTIFY_CHANNEL_TAB);
+const isNotifyRetryTab = computed(() => activeTab.value === NOTIFY_RETRY_TAB);
 const accentColor = computed(() => {
   if (isSecurityTab.value) return ACCENTS[0];
   if (isHomepageTab.value) return ACCENTS[1];
@@ -458,7 +467,7 @@ async function submit() {
           新增渠道
         </AppButton>
         <AppButton
-          v-else
+          v-else-if="!isNotifyRetryTab"
           type="button"
           variant="primary"
           :disabled="!canSave || saving"
@@ -466,6 +475,8 @@ async function submit() {
         >
           {{ saving ? "保存中…" : "保存改动" }}
         </AppButton>
+        <!-- 补发队列 Tab 不给「保存改动」：这一页没有草稿要提交，
+             面板自带刷新/清理/重投按钮，挂一个永远为假的保存按钮只会让人多点一次。 -->
       </template>
     </SectionTabBar>
 
@@ -821,6 +832,7 @@ async function submit() {
         ref="notifyChannelSettingsRef"
         :accent="accentColor"
       />
+      <NotifyRetryPanel v-else-if="isNotifyRetryTab" :accent="accentColor" />
     </template>
   </div>
 </template>

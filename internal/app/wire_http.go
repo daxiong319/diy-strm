@@ -33,6 +33,7 @@ import (
 	"litepan/internal/eventbus"
 	"litepan/internal/logx"
 	"litepan/internal/mcp"
+	"litepan/internal/mediarequest"
 	"litepan/internal/notification"
 	"litepan/internal/notifychannel"
 	"litepan/internal/offlinedownload"
@@ -42,7 +43,10 @@ import (
 	"litepan/internal/subtitle"
 )
 
-func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core *coreBundle, svc *servicesBundle, onRestart func()) (*http.Server, error) {
+func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core *coreBundle, svc *servicesBundle, reqCenter *requestCenterBundle, libShare *libraryShareBundle, onRestart func()) (*http.Server, *mediarequest.Listener, *notifychannel.RetryWorker, error) {
+	// retryRunner 提前声明，好把补发 worker 交给 API 层做「立即重试」。
+	var retryRunner *notifychannel.RetryWorker
+
 	notifySvc := notification.NewService(notification.Options{
 		Repo:     st.store.Notifications,
 		Accounts: st.store.Accounts,
@@ -56,6 +60,23 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	notifyDisp.Register(core.bus)
 	notifyChannelSvc := notifychannel.NewService(st.store.NotifyChannels, notifyDisp, logs.For(logx.ModuleAPI))
 	notifyDisp.Refresh(context.Background())
+
+	// T12 补发（outbox）：webhook 投递失败按 1m/5m/30m/2h/12h 五档退避重发。
+	//
+	// ⚠️ 注入必须发生在 dispatcher.Register 之后、worker.Start 之前：
+	// dispatcher 先订阅事件总线，一旦有通知进来而 retryQueue 还是 nil，
+	// 那条失败就永远进不了补发队列（静默丢，比报错更难查）。
+	// 用 setter 而不是构造函数参数，理由与 automation.SetNotifier 一致：
+	// 通知服务在 wireServices 之后才创建，字段注入会把装配顺序倒过来。
+	notifyRetryWorker := notifychannel.NewRetryWorker(
+		st.store.NotifyRetries,
+		logs.For(logx.ModuleSystem),
+		func(ctx context.Context, channelType, channelConfig string, msg notifychannel.Message) error {
+			return notifychannel.Send(ctx, channelType, decodeChannelConfig(channelConfig), msg)
+		},
+	)
+	notifyDisp.SetRetryQueue(st.store.NotifyRetries)
+	retryRunner = notifyRetryWorker
 
 	// CAS 运行器（扫描上传任务自动 CAS 化）：API 手动触发与定时调度共用同一实例。
 	casRunner := cas.NewRunner(svc.uploads)
@@ -109,7 +130,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 
 	// 影视发现板块：初始化 GORM 数据层（复用主库），桥接 TMDB 配置，建表并启动后台 Worker。
 	if err := discoverInit(cfg, st, core, svc, casRunner, notifySvc.Notify, logs); err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	apiKeySvc := apikey.New(apikey.Options{
@@ -141,7 +162,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		OnRestart: onRestart,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	coverExtractSvc, err := coverextract.New(coverextract.Options{
 		DataDir:    cfg.DataDir,
@@ -151,16 +172,29 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		Log:        logs.For(logx.ModuleSystem),
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	spaceCleanupSvc, err := spacecleanup.New(spacecleanup.Options{
-		DataDir:           cfg.DataDir,
-		StrmDir:           cfg.StrmDir,
-		DBPath:            cfg.DBPath,
-		StrmTasks:         st.store.StrmTasks,
-		Cache:             core.cache,
-		DB:                st.db,
-		Logs:              logs,
+		DataDir:   cfg.DataDir,
+		StrmDir:   cfg.StrmDir,
+		DBPath:    cfg.DBPath,
+		StrmTasks: st.store.StrmTasks,
+		Cache:     core.cache,
+		DB:        st.db,
+		Logs:      logs,
+		// 分类目录保护（C-8 消费者二）。分类根来自整理任务的 target_root，
+		// 所以要现取任务列表 —— 任务是可以运行期增删的。
+		CategoryProtection: func() *spacecleanup.CategoryGuard {
+			tasks, listErr := svc.mediaOrganize.ListTasks(context.Background())
+			if listErr != nil {
+				return nil
+			}
+			return classifyCategoryGuard(
+				context.Background(),
+				svc.classifyOrganize,
+				organizeTaskTargetRoots(tasks),
+			)
+		},
 		UploadActivePaths: svc.uploads.ActiveTempPaths,
 		OfflineTempRoots:  svc.offlineDownloads.BuiltinTempRoots,
 		OfflineActivePaths: func(ctx context.Context) []string {
@@ -214,51 +248,81 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		},
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
+	// 管理员鉴权服务要单独起变量：RBAC 的委托用户登录挂在它身上，
+	// 而注入（SetExtraUserAuth）必须发生在 New 之后 ——
+	// 内联在结构体字面量里的话 New 会把注入覆盖掉，
+	// 编译照过、单测照绿、生产上委托用户永远登不进来。
+	adminAuthSvc := adminauth.New(st.store.Configs, core.secret, logs.For(logx.ModuleAPI))
+	rbacSvc := wireRBAC(st, logs)
+	bindRBAC(adminAuthSvc, rbacSvc)
+	// 播放监控的排行用户名：RBAC 晚于监控器构造（它在 wireServices 里），
+	// 所以只能在这里补一次注入。注入失败只是排行显示"用户#12"，
+	// 不影响任何统计数字。
+	if svc.playMonitor != nil {
+		svc.playMonitor.SetUserResolver(playMonitorUserAdapter{svc: rbacSvc})
+	}
+
+	// 求片站会话签名与管理台**共用** core.secret，但用不同的 cookie 名
+	// （litepan_request vs admin_session）。
+	// 共用密钥是刻意的：既然共用一套账号密码，就该共用同一套密钥材料；
+	// 隔离靠 cookie 名和独立的 Session 载荷，而不是换一把密钥 ——
+	// 换密钥只会让「重启后所有求片会话一起失效」变成常态。
+	var reqSigner *mediarequest.SessionSigner
+	if reqCenter.Enabled() {
+		reqSigner = mediarequest.NewSessionSigner(core.secret)
+	}
+
 	router := api.NewRouter(api.Deps{
-		Logs:             logs,
-		AccountSvc:       svc.account,
-		AccountProfile:   svc.accountProfile,
-		Accounts:         st.store.Accounts,
-		Configs:          st.store.Configs,
-		Settings:         st.settings,
-		Cache:            core.cache,
-		ListHitTracker:   core.listHits,
-		Files:            svc.files,
-		Favorites:        svc.favorites,
-		Uploads:          svc.uploads,
-		CASRunner:        casRunner,
-		OfflineDownloads: svc.offlineDownloads,
-		Playback:         svc.playback,
-		Strm:             svc.strm,
-		CacheRetention:   svc.cacheRetention,
-		MediaOrganize:    svc.mediaOrganize,
-		MoviePilot:       svc.moviePilot,
-		AIOrganize:       svc.aiOrganize,
-		ClassifyOrganize: svc.classifyOrganize,
-		StrmScrape:       svc.strmScrape,
-		Automation:       svc.automation,
-		Fuse:             svc.fuse,
-		CrossTransfer:    svc.crossTransfer,
-		EmbyProxy:        svc.embyProxy,
-		EmbyWebhook:      svc.embyWebhook,
-		FnosProxy:        svc.fnosProxy,
-		QuarkTV:          svc.quarktv,
-		ApiKeys:          apiKeySvc,
-		Auth:             core.auth,
-		AuthSched:        core.sched,
-		AdminAuth:        adminauth.New(st.store.Configs, core.secret, logs.For(logx.ModuleAPI)),
-		Notifications:    notifySvc,
-		Announcement:     announcement.New(announcement.DefaultURL),
-		BackupRestore:    backupRestoreSvc,
-		SpaceCleanup:     spaceCleanupSvc,
-		CoverExtract:     coverExtractSvc,
-		NotifyChannels:   notifyChannelSvc,
-		PlaybackRecords:  st.store.PlaybackRecords,
-		Renames:          st.store.Renames,
-		MCPChat:          mcp.NewChatStore(st.store.DB.WriteHandle()),
-		SubtitleTasks:    subtitle.NewTaskStore(st.store.DB.WriteHandle(), st.store.DB.ReadHandle()),
+		Logs:              logs,
+		AccountSvc:        svc.account,
+		AccountProfile:    svc.accountProfile,
+		Accounts:          st.store.Accounts,
+		Configs:           st.store.Configs,
+		Settings:          st.settings,
+		Cache:             core.cache,
+		ListHitTracker:    core.listHits,
+		Files:             svc.files,
+		Favorites:         svc.favorites,
+		Uploads:           svc.uploads,
+		CASRunner:         casRunner,
+		OfflineDownloads:  svc.offlineDownloads,
+		Playback:          svc.playback,
+		Strm:              svc.strm,
+		CacheRetention:    svc.cacheRetention,
+		MediaOrganize:     svc.mediaOrganize,
+		MediaUpgrade:      svc.mediaUpgrade,
+		RBAC:              rbacSvc,
+		MoviePilot:        svc.moviePilot,
+		AIOrganize:        svc.aiOrganize,
+		ClassifyOrganize:  svc.classifyOrganize,
+		StrmScrape:        svc.strmScrape,
+		Automation:        svc.automation,
+		Fuse:              svc.fuse,
+		CrossTransfer:     svc.crossTransfer,
+		EmbyProxy:         svc.embyProxy,
+		EmbyWebhook:       svc.embyWebhook,
+		FnosProxy:         svc.fnosProxy,
+		QuarkTV:           svc.quarktv,
+		ApiKeys:           apiKeySvc,
+		Auth:              core.auth,
+		AuthSched:         core.sched,
+		AdminAuth:         adminAuthSvc,
+		Notifications:     notifySvc,
+		Announcement:      announcement.New(announcement.DefaultURL),
+		BackupRestore:     backupRestoreSvc,
+		SpaceCleanup:      spaceCleanupSvc,
+		CoverExtract:      coverExtractSvc,
+		NotifyChannels:    notifyChannelSvc,
+		NotifyRetries:     st.store.NotifyRetries,
+		NotifyRetryRunner: retryRunner,
+		PlaybackRecords:   st.store.PlaybackRecords,
+		PlayMonitor:       svc.playMonitor,
+		PlayTraffic:       st.store.PlayTraffic,
+		Renames:           st.store.Renames,
+		MCPChat:           mcp.NewChatStore(st.store.DB.WriteHandle()),
+		SubtitleTasks:     subtitle.NewTaskStore(st.store.DB.WriteHandle(), st.store.DB.ReadHandle()),
 		// 复用装配层构造的字幕服务单例：整理流程自动下载字幕与管理页手动操作
 		// 必须看到同一份配置快照，否则管理页改了设置、整理流程仍按旧配置跑。
 		SubtitleService:   svc.subtitleSvc,
@@ -266,14 +330,53 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		StrmDir:           cfg.StrmDir,
 		MediaRoots:        cfg.MediaRoots(),
 		OnSettingsUpdated: cacheSettingsHook(core.cache, st.settings, cfg.DataDir),
+		MediaRequest:      reqCenter.maybeService(),
+		RequestSigner:     reqSigner,
+		LibraryShare:      libShare.maybeService(),
 	})
+
+	// 求片站自己的路由树：与上面那棵**完全独立**，只注册求片站的路由。
+	//
+	// 独立树是「求片端口上没有后台接口」的根本保证 ——
+	// 管理台以后加多少条路由都不会自动出现在 7812 端口上。
+	var reqListener *mediarequest.Listener
+	if reqSigner != nil {
+		reqListener = &mediarequest.Listener{
+			Handler: api.NewRequestPortalRouter(api.Deps{
+				Logs:          logs,
+				Settings:      st.settings,
+				AdminAuth:     adminAuthSvc,
+				RBAC:          rbacSvc,
+				MediaRequest:  reqCenter.maybeService(),
+				RequestSigner: reqSigner,
+			}),
+			Cfg: st.settings,
+			Log: mediarequest.NewSlogLogger(logs.For(logx.ModuleAPI)),
+		}
+	}
 
 	return &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
-	}, nil
+	}, reqListener, retryRunner, nil
+}
+
+// decodeChannelConfig 解析补发队列里存的渠道配置快照（JSON 字符串）。
+//
+// 快照存在表里而不是 JOIN notify_channels 实时读，是为了「用户改完 webhook
+// 地址之后旧失败记录不按新地址重发」—— 那等于把一次失败的历史转嫁到用户
+// 可能压根不认识的接收端上。
+func decodeChannelConfig(raw string) map[string]string {
+	out := map[string]string{}
+	if strings.TrimSpace(raw) == "" {
+		return out
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return map[string]string{}
+	}
+	return out
 }
 
 // notifyFn 通知写入器（notification.Service.Notify 的方法值）。
@@ -303,6 +406,36 @@ func discoverInit(cfg config.Config, st *storeBundle, core *coreBundle, svc *ser
 		return err
 	}
 	dmodels.BindSettings(st.settings)
+	// 洗版服务与 discovery 共用同一个 GORM 句柄，必须在 ddb.Init 之后构造。
+	// 为 nil 时 /media-upgrade 接口返回「该操作不支持」。
+	svc.mediaUpgrade = wireMediaUpgrade(st, ddb.MustDb())
+	// ⚠️ 这里刻意**不**接分类引擎。分类范围是**每条洗版规则自己的**
+	// category_scope 列（internal/mediaupgrade/rules.go 的 RuleSet.CategoryNames），
+	// 在扫描时由 Scan 读该规则行得出。
+	//
+	// 曾经在这里注入「分类引擎配了哪些分类」作为全局范围，那是错的：
+	// 那等于让每条规则都按**全部**分类筛，用户在规则里填的
+	//「只管国产剧」完全不起作用，而扫描结果看起来完全正常 ——
+	// 判据是 ScopeFromNames 与 opts.Category 二选一：
+	// 规则列非空时用它，为空时才回落到注入的范围。
+	// 保留 SetCategorySource 这个口是为了让 ScanOptions.Category 仍是
+	// 一个可注入的覆盖点（调用方显式指定时不看规则列）。
+	// 订阅转存前的身份校验闸门要读全局设置（开关 + 纯度阈值），同 dmodels 一样注入。
+	discovery.BindSettings(st.settings)
+	// RSS 订阅源（T16）的两套仓储。必须在 StartDiscoveryWorkers 之前注入：
+	// 轮询 worker 起来后第一件事就是读启用源，仓储没接上会直接返回 nil 静默不跑。
+	//
+	// 落地执行器（转存/离线下载）不在这里注入 —— 它由下面的 bindDiscoveryTransfer
+	// 注入进 discovery.TransferShareFn / OfflineLinkFn，RSS 复用同两个函数，
+	// 不新增注入点（少一个注入点就少一处「忘了接」的空白）。
+	if st.store != nil {
+		discovery.RSSSourceStore = st.store.RSSSources
+		discovery.RSSHistoryStore = st.store.RSSHistory
+		// api 侧是独立的一份注入点（internal/api/rss_subscription.go 的
+		// BindRSSStores），不读 discovery 的包级变量 —— 那样 api 的单测就得
+		// 装上整个发现栈。两边指向同一对仓储实例。
+		api.BindRSSStores(st.store.RSSSources, st.store.RSSHistory)
+	}
 	// 观影等模块的本地敏感数据加解密密钥存于配置目录
 	dutil.ConfigDir = cfg.DataDir
 	if err := discovery.EnsureDiscoverySchema(); err != nil {

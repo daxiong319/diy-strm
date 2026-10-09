@@ -21,6 +21,15 @@ const routes: RouteRecordRaw[] = [
     component: () => import("@/views/AdminView.vue"),
     meta: { title: "管理后台", requiresAuth: true },
   },
+  {
+    // 免登录分享页。刻意放在 404 兜底之前、且**不带**任何 meta.title 之外的守卫：
+    // 访客没有会话，走 requiresAuth 会把他踢去 /login，页面上只剩一句「请登录」——
+    // 那就等于没有分享页。
+    path: "/share/:code",
+    name: "library-share",
+    component: () => import("@/views/share/SharePage.vue"),
+    meta: { title: "分享" },
+  },
   { path: "/:pathMatch(.*)*", redirect: "/" },
 ];
 

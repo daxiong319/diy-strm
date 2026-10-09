@@ -1,6 +1,11 @@
 package settings
 
-import "litepan/internal/domain"
+import (
+	"strconv"
+	"strings"
+
+	"litepan/internal/domain"
+)
 
 // 全局设置：默认值在代码，DB 仅存用户改过的项。
 
@@ -98,9 +103,223 @@ const (
 	KeyAIOrganizeModel         = "ai_organize_model"
 	KeyMOClassificationEnabled = "mo_classification_enabled"
 	KeyMOClassificationConfig  = "mo_classification_config"
+	// KeyMOClassificationSecondaryEnabled 二级维度目录开关（华语电影这类）。
+	// 关掉它会连带关掉三级目录与系列目录 —— 它们的父目录不存在，
+	// 单独留着只会让用户配了一个永远不生效的层级。
+	KeyMOClassificationSecondaryEnabled = "mo_classification_secondary_enabled"
+	// KeyMOClassificationTertiaryEnabled 三级目录开关（2000-2009 这类年份段）。
+	// 可以单独关，不影响二级与系列。
+	KeyMOClassificationTertiaryEnabled = "mo_classification_tertiary_enabled"
+	// KeyMOClassificationSeriesEnabled 系列目录开关（流浪地球系列这类）。
+	// 单独关：用户可能想要年份分段但不想要系列分组。
+	KeyMOClassificationSeriesEnabled = "mo_classification_series_enabled"
+	// KeyMOClassificationPrimaryEnabled 一级分类目录开关（T27 C-3）。
+	//
+	// 以前一级是写死的「电影/电视剧」两条且不可关闭，所以没有它的开关。
+	// 一级表化之后一级变成可配置的一层，别的层级都有对应的关闭办法而它没有，
+	// 用户想退回扁平结构时只能整体停用分类整理 —— 那等于把新功能也一起扔了。
+	KeyMOClassificationPrimaryEnabled = "mo_classification_primary_enabled"
 	// KeyDiscoverChannelCatchupHours TG 频道订阅停机追赶限制（小时）。
 	// 0 = 不限：停机多久都从旧游标一路回补（原行为）。
 	KeyDiscoverChannelCatchupHours = "discover_channel_catchup_hours"
+	// 订阅转存前的身份校验（参考实现 不变式：未通过身份校验，一律不转存）。
+	KeyMOSubscriptionIdentityEnabled = "mo_subscription_identity_enabled"
+	// KeyMOSubscriptionIdentityPurityRatio 纯度阈值（0~1，小数）。
+	// ⚠️ 默认 0.8 是**推测值**，不是从 参考实现 逆向确认的数值：参考实现 的阈值只存在于
+	// 编译后的 .so 里，读不到字面量。上线后应按实际误转存率校准。
+	KeyMOSubscriptionIdentityPurityRatio = "mo_subscription_identity_purity_ratio"
+	// KeyMOSubscriptionIdentityAllowUnavailable 保留的排查开关，默认关闭。
+	// 打开后「拿不到任何证据」的候选也会放行，会破坏不变式，界面必须标红警告。
+	KeyMOSubscriptionIdentityAllowUnavailable = "mo_subscription_identity_allow_unavailable"
+	// KeyMOSubscriptionTransferProtectHours 转存保护期（小时，0~24）。
+	// 刚转存完网盘写入有延迟、文件清单可能还没刷新，这段时间内不再动同一批内容；
+	// 同时它也是个限流器：媒体库索引不可用时，最多也只每 N 小时重转一次。
+	// 调成 0 = 立刻可重转（排查用，会导致反复转存）。
+	KeyMOSubscriptionTransferProtectHours = "mo_subscription_transfer_protect_hours"
+
+	// ---- T05 搜索连接器 ----
+
+	// KeyMOSubscriptionSearchSources 订阅默认使用的搜索源 key 列表（逗号分隔）。
+	// 默认只有 tgto123：这是接入连接器之前 litepan 唯一那个源，保证存量订阅行为不变。
+	KeyMOSubscriptionSearchSources = "mo_subscription_search_sources"
+	// KeyMOSubscriptionSearchSourcesDefault 上面这个 key 的默认值。
+	// 单独提成常量，是为了让「迁移 0036 的列默认值」和「运行时回落值」引用同一处，
+	// 避免两边各写一个字符串、改一个忘一个。
+	KeyMOSubscriptionSearchSourcesDefault = "tgto123"
+	// KeyMOConnectorTimeoutSeconds 单个搜索源的超时（秒，1~300，默认 30）。
+	KeyMOConnectorTimeoutSeconds = "mo_connector_timeout_seconds"
+	// KeyMOConnectorSearchBudgetSeconds 一条订阅检索所有源的总预算（秒，1~1800，默认 45）。
+	// 串行检索下每源各等一次超时，总时长会线性膨胀，这个上限是总的闸门。
+	KeyMOConnectorSearchBudgetSeconds = "mo_connector_search_budget_seconds"
+	// ---- 订阅执行护栏（T06）----
+	// KeyMOSubscriptionExecutionMode 执行强度四档（默认均衡）。
+	// 保守=1 次/45~65s，均衡=2 次/25~40s，激进=3 次/10~18s，自定义见下面三项。
+	// 这四个数字是 参考实现 官网 docs 逐字给定的，不是推测值。
+	KeyMOSubscriptionExecutionMode = "mo_subscription_execution_mode"
+	// KeyMOSubscriptionCustomAttempts 自定义档每轮最多转存几条（1~10，默认 2）。
+	KeyMOSubscriptionCustomAttempts = "mo_subscription_custom_attempts"
+	// KeyMOSubscriptionCustomIntervalSec 自定义档两次转存之间的间隔基准（秒，默认 30）。
+	KeyMOSubscriptionCustomIntervalSec = "mo_subscription_custom_interval_sec"
+	// KeyMOSubscriptionCustomJitterSec 自定义档在间隔基准上叠加的随机抖动上限（秒，默认 10）。
+	KeyMOSubscriptionCustomJitterSec = "mo_subscription_custom_jitter_sec"
+	// KeyMOSubscriptionTimeWindows 允许检索的时段，如 "00:00-08:00,23:00-06:00"，空=不限。
+	KeyMOSubscriptionTimeWindows = "mo_subscription_time_windows"
+	// KeyMOSubscriptionFinishedGraceDays 本季转存齐后的宽限天数（默认 7），0=立即停。
+	KeyMOSubscriptionFinishedGraceDays = "mo_subscription_finished_grace_days"
+	// KeyMOMediaParseResAliases 分辨率别名表，如 "超高清=2160p,蓝光原盘=2160p"。
+	KeyMOMediaParseResAliases = "mo_media_parse_res_aliases"
+	// KeyMOMediaParseHDRTexts / DVTexts / SDRTexts 特效识别文本，可追加站点自定义写法。
+	KeyMOMediaParseHDRTexts = "mo_media_parse_hdr_texts"
+	KeyMOMediaParseDVTexts  = "mo_media_parse_dv_texts"
+	KeyMOMediaParseSDRTexts = "mo_media_parse_sdr_texts"
+	// ---- 洗版（T07）----
+	// KeyMOMediaUpgradeEnabled 洗版总开关。
+	//
+	// ⚠️ 默认 false，且不打算默认打开。洗版会删用户文件：
+	// 一条「新版更好」的判定结论一旦配上 loser_action=delete，就等于删除磁盘上的文件。
+	// 升个版本不该顺带获得删用户文件的权力，所以必须显式开启。
+	KeyMOMediaUpgradeEnabled = "mo_media_upgrade_enabled"
+	// ---- RBAC（T08）----
+	// KeyMORBACEnabled 权限系统总开关。
+	//
+	// 默认 false：**开启前后行为必须完全一致**。
+	// 关着的时候不查用户表、不算权限、不裁导航，
+	// 管理员凭 admin_username/admin_password 进后台，和这个功能上线前一模一样。
+	KeyMORBACEnabled = "mo_rbac_enabled"
+	// KeyMORBACDefaultUserGroup 新建用户时自动加入的默认组名，留空表示不自动入组。
+	//
+	// 指向一个不存在的组名不报错：用户会落在一个「无权限」的状态，
+	// 界面上把该用户名显示出来让人去建组，比启动时报错把后台锁死强。
+	KeyMORBACDefaultUserGroup = "mo_rbac_default_user_group"
+	// ---- 求片中心（T09）----
+	// KeyMOMediaRequestEnabled 求片中心总开关。
+	//
+	// 默认 false：关着时求片端口根本不监听（不是「监听但返回 403」），
+	// 扫描这个端口的人连「这里有个东西」都探测不到。
+	// 之所以不做成「默认开着、登录后可用」，是因为它需要先有 RBAC 用户
+	// （没有用户的求片站等于一个无口令的公开搜索代理）。
+	KeyMOMediaRequestEnabled = "mo_media_request_enabled"
+	// KeyMOMediaRequestPort 求片站独立端口。
+	//
+	// 默认 7812，与 参考实现 对齐 —— 换端口会让「照着 参考实现 文档配 Docker 映射」
+	// 的用户直接踩空，而 7812 与 litepan 管理台默认端口 5211 也不冲突。
+	// 管理台端口本身可配（LISTEN_ADDR），所以真撞上了由 supervisor 报错并放弃起这个口，
+	// 而不是把整个后台拖死。
+	KeyMOMediaRequestPort = "mo_media_request_port"
+	// KeyMOMediaRequestRequireReview 是否需要管理员过审。
+	//
+	// 默认 true。关掉之后提交即建订阅，等于每个拿到求片站账号的家人
+	// 都能直接往订阅表里写东西 —— 这是「家里没人管」时想要的，
+	// 但默认值必须偏向多一道复核。
+	KeyMOMediaRequestRequireReview = "mo_media_request_require_review"
+	// KeyMOMediaRequestDailyLimit 每人每天可提交的求片条数，0=不限。
+	//
+	// 默认 5，对齐 参考实现 的 daily_new_request_limit。
+	// 存在的理由不是省配额，是防止一个人（或一个脚本）把订阅表刷爆。
+	KeyMOMediaRequestDailyLimit = "mo_media_request_daily_limit"
+	// KeyMOMediaRequestTagMaxPerUser 每人一部作品最多留多少个入库标签，0=不限。
+	//
+	// 默认 20，对齐 参考实现。标签是写进入库文件名的，超了会让文件名长得没法看。
+	KeyMOMediaRequestTagMaxPerUser = "mo_media_request_tag_max_per_user"
+	// KeyMOMediaRequestTagMaxLength 单个入库标签最长多少字，0=不限。
+	//
+	// 默认 100，对齐 参考实现。
+	KeyMOMediaRequestTagMaxLength = "mo_media_request_tag_max_length"
+	// ---- 免登录分享页（T10）----
+	// KeyMOLibraryShareEnabled 媒体库分享页总开关。
+	//
+	// 默认 false，且关闭时**整棵访客路由树都不注册**（不是「注册了但返回 403」）：
+	// 这类页面一旦挂上去就会被人到处转发，关着的时候连路由都不该存在。
+	// 分享本身也是「把媒体库里的东西公开给外部人」，默认值必须偏向关。
+	KeyMOLibraryShareEnabled = "mo_library_share_enabled"
+	// KeyMOLibraryShareDefaultExpireDays 新建分享的默认有效期（天），0=永久。
+	//
+	// 默认 7，对齐 参考实现 的分享有效期档位（1|3|7|30|0）。
+	// 新建时仍可以逐条选，默认值只决定「不选时按哪个算」。
+	KeyMOLibraryShareDefaultExpireDays = "mo_library_share_default_expire_days"
+	// KeyMOLibraryShareDefaultMaxDevices 新建分享的默认同时在线设备数上限。
+	//
+	// 默认 5。设备数按「最近 24 小时内出现过该分享的访客」去重计数，
+	// 所以「关掉页面走人」的设备会自己让出名额，不用手动清理。
+	KeyMOLibraryShareDefaultMaxDevices = "mo_library_share_default_max_devices"
+	// KeyMOLibraryShareDefaultPassword 新建分享时的默认访问口令，留空表示默认不带口令。
+	//
+	// 留空是默认值，理由是「不给口令」和「给口令」一样安全 ——
+	// 真正决定安全边界的是那条只有访客会话能拿到的令牌，
+	// 口令只是多挡一层「链接转发到群里」的情况。
+	// 想强制所有分享都带口令，可以在这个全局默认里填一个值。
+	KeyMOLibraryShareDefaultPassword = "mo_library_share_default_password"
+	// KeyMOPlayMonitorEnabled 播放监控总开关（默认关）。
+	KeyMOPlayMonitorEnabled = "mo_play_monitor_enabled"
+	// KeyMOPlayMonitorIdleSeconds 播放监控空闲判定（秒，默认 60）：
+	// 多久没有后续取流请求就认为停播、从实时列表消失。
+	KeyMOPlayMonitorIdleSeconds = "mo_play_monitor_idle_seconds"
+	// KeyMOPlayMonitorSampleSeconds 流量累计间隔（秒，默认 5）。
+	KeyMOPlayMonitorSampleSeconds = "mo_play_monitor_sample_seconds"
+	// KeyMOPlayReportEnabled 观影报告总开关（默认关）。
+	KeyMOPlayReportEnabled = "mo_play_report_enabled"
+	// KeyMOPlayReportMinSeconds 忽略播放时长低于 N 秒的记录（默认 0，不过滤）。
+	// 判定是「低于」——**等于阈值仍然保留**。
+	KeyMOPlayReportMinSeconds = "mo_play_report_min_seconds"
+	// KeyMOPlayReportGapMinutes 中断超过 N 分钟算新的一次播放（默认 30）。
+	KeyMOPlayReportGapMinutes = "mo_play_report_gap_minutes"
+	// KeyMORSSEnabled RSS 订阅源总开关（默认关）。
+	//
+	// 关着时**不启动轮询 worker**：这不是「同步会失败」的功能开关，
+	// 而是「这条链路要不要占用网络与 115 离线下载额度」的开关。
+	// 默认关的理由是 RSS 源的命中与否完全取决于用户自己贴的 feed，
+	// 没人贴源的时候白跑轮询只是浪费。
+	KeyMORSSEnabled = "mo_rss_enabled"
+	// KeyMORSSPollIntervalMinutes 轮询间隔（分钟，默认 30）。
+	//
+	// 这是「多久去看一次有哪些新条目」，不是「停机多久之后要放弃追赶」。
+	// 追赶窗口是另一个键（KeyMORSSCatchupGapHours）。
+	KeyMORSSPollIntervalMinutes = "mo_rss_poll_interval_minutes"
+	// KeyMORSSCatchupGapHours 停机超过 N 小时后放弃逐条补齐、改为「只取最新一页」。
+	//
+	// 默认 12，与 TG 频道位点的追赶窗口同值（internal/discover/dmodels/scrape.go
+	// 的 DefaultChannelCatchupHours），但**这是 RSS 自己的窗口**：参考实现 侧 RSS 没有位点，
+	// 也没有这个阈值，本仓是新增行为。
+	//
+	// 为什么要有：停机 3 天后启动，逐条补齐意味着把三天里的全部更新一次性塞进
+	// 115 离线下载队列 —— 用户要的是「现在追到哪了」，不是「补三天前就该错过的片」。
+	KeyMORSSCatchupGapHours = "mo_rss_catchup_gap_hours"
+	// KeyMORSSStaleAfterMinutes 条目发布时间早于「now - N 分钟」就直接跳过。
+	//
+	// 默认 60。就算轮询间隔调小或某次同步跑了很久，也不该把明显过期的条目
+	// 提交进离线下载。
+	KeyMORSSStaleAfterMinutes = "mo_rss_stale_after_minutes"
+	// KeyMORSSHTTPTimeoutSeconds 单个 feed 拉取超时（秒，默认 20）。
+	//
+	// 独立成一个键的理由：这是唯一一处「一个坏源能拖住整轮同步」的地方，
+	// 用户遇到某个站打不开时需要能单独调短它。
+	KeyMORSSHTTPTimeoutSeconds = "mo_rss_http_timeout_seconds"
+	// KeyMORSSMaxFeedBytes 单个 feed 响应体上限（字节，默认 4194304=4MiB）。
+	//
+	// 超限**直接报错不静默截断**：截断出来的半个 XML 要么解析失败，
+	// 要么悄悄丢掉尾部条目，而这两种情况用户都无从察觉。
+	KeyMORSSMaxFeedBytes = "mo_rss_max_feed_bytes"
+	// KeyMOMediaUpgradeSource 扫描源：local / emby / jellyfin。
+	// Plex 不支持洗版（参考实现 侧即如此），本仓也没有 Plex 索引，故无此选项。
+	KeyMOMediaUpgradeSource = "mo_media_upgrade_source"
+	// KeyMOMediaUpgradeLibraryRoot 媒体库根目录（被比较的「现版」所在处）。
+	KeyMOMediaUpgradeLibraryRoot = "mo_media_upgrade_library_root"
+	// KeyMOMediaUpgradeCandidateRoots 候选目录（新版出现的地方），逗号分隔。
+	KeyMOMediaUpgradeCandidateRoots = "mo_media_upgrade_candidate_roots"
+	// KeyMOMediaUpgradeMaxRecordsPerSeries 单部剧单次扫描最多产出多少条可执行记录，0=不限。
+	KeyMOMediaUpgradeMaxRecordsPerSeries = "mo_media_upgrade_max_records_per_series"
+	// KeyMOMediaUpgradeLoserAction 败方动作：keep / delete / move。
+	KeyMOMediaUpgradeLoserAction = "mo_media_upgrade_loser_action"
+	// KeyMOMediaUpgradeMoveDir 败方动作为 move 时的目标目录。
+	KeyMOMediaUpgradeMoveDir = "mo_media_upgrade_move_dir"
+	// KeyMOMediaUpgradeGroupPriority 制作组优先级，逗号分隔，越靠前越优先。
+	KeyMOMediaUpgradeGroupPriority = "mo_media_upgrade_group_priority"
+	// KeyMOMediaUpgradeMinResolution 最低分辨率门槛，低于它的候选不参与洗版。
+	KeyMOMediaUpgradeMinResolution = "mo_media_upgrade_min_resolution"
+	// KeyMOMediaUpgradeMinChannels 最低声道门槛，低于它的候选不参与洗版。
+	KeyMOMediaUpgradeMinChannels = "mo_media_upgrade_min_channels"
+	// KeyMOMediaUpgradeRequireSubtitle 是否只认带字幕标记的候选。
+	KeyMOMediaUpgradeRequireSubtitle = "mo_media_upgrade_require_subtitle"
 	// 界面偏好：信息条（仪表带）在各页的开合状态，随备份一起导入导出。
 	KeyUIBandHiddenStrm     = "ui_band_hidden_strm"
 	KeyUIBandHiddenCache    = "ui_band_hidden_cache"
@@ -210,6 +429,17 @@ func intSpec(key, category, label, description, def, unit string, min, max int) 
 
 func selectSpec(key, category, label, description, def string, options []Option) Spec {
 	return Spec{Key: key, Type: TypeSelect, Category: category, Label: label, Description: description, Default: def, Options: options}
+}
+
+// normalizePurityRatio 校验纯度阈值的输入：必须是 0~1 之间的小数，否则回落到
+// 默认值。设置项是 TypeString（registry 目前只有 string/int/bool/select 四种类型，
+// 没有浮点），所以合法性在这里兜住，读的时候再解析一次。
+func normalizePurityRatio(raw string) string {
+	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || v <= 0 || v > 1 {
+		return "0.8"
+	}
+	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
 func defaultSpecs() []Spec {
@@ -348,6 +578,25 @@ func defaultSpecs() []Spec {
 			Default: "",
 			Hidden:  true,
 		},
+		// 三个层级开关刻意可见（而不是跟着 KeyMOClassificationEnabled 一起 Hidden）：
+		// 用户升级后分类目录会多出「年份段」「系列目录」两层，如果不知道怎么关，
+		// 只能整体停用分类整理，那等于把新功能也一起扔了。
+		boolSpec(KeyMOClassificationSecondaryEnabled, "media_organize",
+			"二级维度目录",
+			"按地区/类型等维度再分一层（华语电影、科幻奇幻）。关闭后三级目录与系列目录会一起失效 —— 它们的父目录就是二级目录。",
+			"true"),
+		boolSpec(KeyMOClassificationTertiaryEnabled, "media_organize",
+			"三级目录（年份段）",
+			"在二级目录下再按年份分段（2000-2009）。只在这一层按年份切。",
+			"true"),
+		boolSpec(KeyMOClassificationSeriesEnabled, "media_organize",
+			"系列目录",
+			"把同一个系列的作品收进同一个目录（流浪地球系列）。目录名由系列规则决定。",
+			"true"),
+		boolSpec(KeyMOClassificationPrimaryEnabled, "media_organize",
+			"一级分类目录",
+			"电影 / 电视剧 这一层。关掉它所有影片会直接落到分类根目录，地区、类型、年份段、系列目录都跟着失效。",
+			"true"),
 		{
 			Key:         KeyOAuthServerURL,
 			Type:        TypeString,
@@ -433,6 +682,333 @@ func defaultSpecs() []Spec {
 		intSpec(KeyDiscoverChannelCatchupHours, "discover", "TG 频道停机追赶窗口",
 			"服务停机或频道长期拉取失败后重启，超过该时长就不再深翻积压历史，直接从频道最新一页开始处理，避免一次性补转存打爆网盘；被跳过的积压会冻结保存并在之后每轮回补一小段，直到追上。填 0 表示不限（停机多久都从头补）。",
 			"12", "小时", 0, 720),
+		boolSpec(KeyMOSubscriptionIdentityEnabled, "discover", "订阅转存前身份校验",
+			"总开关。开启后，订阅搜到的候选必须先通过身份校验（标题/类型/年份/季集/纯度）才会发起转存；"+
+				"拿不到任何可验证证据的候选（例如只有磁力或 ed2k 链接）一律不转存。这是 参考实现 的不变式，「未通过身份校验，一律不转存」。",
+			"true"),
+		{
+			Key:         KeyMOSubscriptionIdentityPurityRatio,
+			Type:        TypeString,
+			Category:    "discover",
+			Label:       "订阅身份校验纯度阈值",
+			Description: "分享里属于主标题的文件占比低于该值时，判为混拼并跳过转存。取值 0~1，例如 0.8 表示 80%。⚠️ 默认值 0.8 是推测值（参考实现 的阈值编译在 .so 里读不到字面量），上线后请按实际误转存率校准。调高更安全、调低更激进。",
+			Default:     "0.8",
+			normalize:   normalizePurityRatio,
+		},
+		boolSpec(KeyMOSubscriptionIdentityAllowUnavailable, "discover", "⚠️ 身份校验：证据缺失时仍转存",
+			"排查用的逃生阀，⚠️ 不建议开启。打开后，即使候选拿不到任何可验证证据（只有磁力/ed2k 链接、清单接口失败）也会照常转存，"+
+				"这会破坏「未通过身份校验，一律不转存」的不变式，可能把错误内容写进网盘。仅在排查「为什么某个来源一条都转不了」时临时打开。",
+			"false"),
+		intSpec(KeyMOSubscriptionTransferProtectHours, "discover", "订阅转存保护期",
+			"刚转存完的这段时间（小时）内不再动同一批内容，默认 3 小时。原因是网盘写入有延迟、文件清单可能还没刷新，"+
+				"立刻重复转存容易产生重复目录；它同时是个限流器——媒体库索引不可用时，同一批内容最多也只每 N 小时重转一次。"+
+				"设为 0 表示无保护期、转存完立刻可以再来（排查用，长期开启会导致反复转存）。",
+			"3", "小时", 0, 24),
+
+		// ---- 搜索连接器（T05）----
+		stringSpec(KeyMOSubscriptionSearchSources, "discover", "订阅搜索源",
+			"订阅检索默认走哪些搜索连接器，逗号分隔，按书写顺序串行检索、合并去重。"+
+				"默认只有 tgto123 —— 与接入连接器之前完全一致。"+
+				"⚠️ 写成未装配的 key 不会报错，该源会被静默跳过（运行日志里能看到原因），"+
+				"所以填完记得看一眼订阅运行日志确认每个源都真的搜了。",
+			KeyMOSubscriptionSearchSourcesDefault),
+		intSpec(KeyMOConnectorTimeoutSeconds, "discover", "单个搜索源超时",
+			"一个搜索源最多跑多久（秒）。超时只掐掉这一个源，其余源照常检索，"+
+				"该源失败会记进订阅运行日志。默认 30 秒；调小会让慢速源更容易被掐断。",
+			"30", "秒", 1, 300),
+		intSpec(KeyMOConnectorSearchBudgetSeconds, "discover", "订阅检索总预算",
+			"一条订阅检索所有搜索源的总时间上限（秒，默认 45）。"+
+				"超预算后剩余的源**不会发起请求**，直接跳过并记日志 —— 串行检索下每源各等一次超时，"+
+				"源多了总时长会线性膨胀，这个上限是总的闸门。应该 ≥ 单源超时的 1~2 倍；"+
+				"设成与单源超时相等则等于只搜第一个源。",
+			"45", "秒", 1, 1800),
+
+		// ---- 订阅执行护栏（T06）----
+		selectSpec(KeyMOSubscriptionExecutionMode, "discover", "订阅执行强度",
+			"一条订阅**每轮**最多自动转存几条，以及两次转存之间的间隔。间隔带随机抖动，避免固定节奏被风控识别。\n"+
+				"保守 1 条/45~65s，均衡 2 条/25~40s（默认），激进 3 条/10~18s。\n"+
+				"被画质、体积、重复、身份校验筛掉的候选**不占次数**；真正发起后失败的**照常计数**。\n"+
+				"默认「均衡」比改动前更保守：改动前一轮里所有命中的候选会连续转存，没有间隔。",
+			"balanced", []Option{
+				{Value: "conservative", Label: "保守（1 条 / 45~65s）"},
+				{Value: "balanced", Label: "均衡（2 条 / 25~40s）"},
+				{Value: "aggressive", Label: "激进（3 条 / 10~18s）"},
+				{Value: "custom", Label: "自定义"},
+			}),
+		intSpec(KeyMOSubscriptionCustomAttempts, "discover", "自定义档·每轮条数",
+			"仅在执行强度选「自定义」时生效：一条订阅每轮最多自动转存几条（1~10）。",
+			"2", "条", 1, 10),
+		intSpec(KeyMOSubscriptionCustomIntervalSec, "discover", "自定义档·间隔基准",
+			"仅在「自定义」时生效：两次转存之间的间隔基准（秒）。实际间隔 = 基准 + 随机抖动。",
+			"30", "秒", 1, 600),
+		intSpec(KeyMOSubscriptionCustomJitterSec, "discover", "自定义档·随机抖动",
+			"仅在「自定义」时生效：在间隔基准上叠加的随机上限（秒）。抖动是为了打散固定节奏；"+
+				"调成 0 会让转存严格等间隔。",
+			"10", "秒", 0, 600),
+		stringSpec(KeyMOSubscriptionTimeWindows, "discover", "允许检索的时段",
+			"形如 `00:00-08:00,23:00-06:00`，多个时段用逗号分隔；留空 = 不限。\n"+
+				"**结束早于开始表示跨午夜**（`23:00-06:00` = 夜里 23 点到次日 6 点）。\n"+
+				"时段外到点触发会**直接跳过、不补跑** —— 补跑会在恢复时段第一分钟把积压候选一起转存，"+
+				"这种突发流量最容易触发网盘风控。\n"+
+				"手动点「立即搜索」和新建订阅的首次搜索**不受时段限制**。",
+			""),
+		intSpec(KeyMOSubscriptionFinishedGraceDays, "discover", "完结宽限天数",
+			"一部剧的**本季全部集数转存齐**后，再等多少天才停止检索（默认 7 天）。\n"+
+				"宽限期内照常检索，但执行强度自动降到「保守」档 —— 常见的情况是刚转存完最后一集，"+
+				"站方随后补出更优的压制组版本。\n"+
+				"完结判据：本季已转存集号集合覆盖 1..总集数，且距**最后一集转存时刻**已超过这个天数。"+
+				"总集数从资源标题的「全N集」推；**推不出来就不判完结**，宁可继续搜也不会误杀。\n"+
+				"设为 0 表示转存齐后立即停止检索。",
+			"7", "天", 0, 3650),
+		stringSpec(KeyMOMediaParseResAliases, "mediaorganize", "分辨率别名表",
+			"解析资源名里的分辨率时，额外认这些写法。格式 `别名=标准值`，多个用逗号分隔，例如 "+
+				"`超高清=2160p,蓝光原盘=2160p,BD=1080p`。\n"+
+				"**默认表里的取值是推测值**（参考实现 的原始词表在编译产物里读不出来），"+
+				"按主流资源站命名习惯补齐；碰到没覆盖的写法在这里补一条即可，不用改代码发版。",
+			""),
+		stringSpec(KeyMOMediaParseHDRTexts, "mediaorganize", "HDR 识别文本（追加）",
+			"识别 HDR 用的文本，逗号分隔。这张表是**追加**到内置表上，不是替换。"+
+				"内置：hdr、hdr10、hdr10+、hlg。",
+			""),
+		stringSpec(KeyMOMediaParseDVTexts, "mediaorganize", "杜比视界识别文本（追加）",
+			"识别 Dolby Vision 用的文本，逗号分隔，追加到内置表。内置：dolby vision、dovi、dv、杜比视界。\n"+
+				"单个词的条目按**词边界**匹配，所以 DVDRip（DVD 压制）不会被误判成杜比视界。",
+			""),
+		stringSpec(KeyMOMediaParseSDRTexts, "mediaorganize", "SDR 识别文本（追加）",
+			"识别 SDR 用的文本，逗号分隔，追加到内置表。内置：sdr、standard dynamic range。",
+			""),
+
+		// ---- RBAC（T08）----
+		boolSpec(KeyMORBACEnabled, "system", "启用用户与权限",
+			"把后台从「一个管理员账号」变成「多用户 + 用户组 + 权限」。\n\n"+
+				"**默认关闭。关着的时候本系统不做任何权限判定**："+
+				"不查用户表、不算权限、不裁导航，后台行为与开启前完全一致。\n\n"+
+				"开启后：当前的管理员账号（配置里的 `admin_username`）**自动就是超级管理员**，"+
+				"绕过一切权限；其余账号要由你建出来并加入用户组才有相应权限。\n\n"+
+				"两件事永远是超管专属、不能下放：新增订阅、运行离线下载 —— 它们花的是站点账号的额度。",
+			"false"),
+		stringSpec(KeyMORBACDefaultUserGroup, "system", "新用户默认用户组",
+			"新建用户时自动加入的组名（对应权限矩阵里的组）。留空表示不自动入组，"+
+				"此时新用户登录后台后什么菜单都看不到。\n\n"+
+				"填一个还没建的组名不会报错，只会让新用户暂时没有权限 —— "+
+				"你建好组再把用户加进去即可。",
+			""),
+
+		// ---- 求片中心（T09）----
+		boolSpec(KeyMOMediaRequestEnabled, "system", "启用求片中心",
+			"把求片功能开到一个**独立端口**上（默认 7812），家人在手机上登录、搜片、提交求片。\n\n"+
+				"**默认关闭。关闭时这个端口根本不监听** —— 不是「监听但拒绝访问」。\n\n"+
+				"这个端口上只有登录页和求片页，任何管理接口都是 404：即使有人扫到这个端口，"+
+				"也拿不到后台的任何一个接口。\n\n"+
+				"**开启前请先启用用户与权限并建好家人账号**，否则求片站没有可登录的身份。",
+			"false"),
+		intSpec(KeyMOMediaRequestPort, "system", "求片站端口",
+			"求片站独立监听的端口号，1024~65535。默认 7812（与 参考实现 一致）。\n\n"+
+				"不要和管理台端口相同 —— 相同的话求片站会被管理台抢走，求片功能表现为「打开没反应」。",
+			"7812", "端口", 1024, 65535),
+		boolSpec(KeyMOMediaRequestRequireReview, "system", "求片需要审核",
+			"开启（默认）：家人提交后进入待审列表，管理员在后台「求片中心」通过后才建立订阅。\n\n"+
+				"关闭：提交即建立订阅，立刻生效。\n\n"+
+				"关闭后，任何能登录求片站的人都能直接往订阅表里写条目 —— 家里只有你一个人用、"+
+				"且不想多点一次鼠标时才建议关。",
+			"true"),
+		intSpec(KeyMOMediaRequestDailyLimit, "system", "每人每天求片上限",
+			"每个用户每天能提交的求片条数，0 表示不限。默认 5。\n\n"+
+				"存在的理由不是省配额，是防止一个人（或一段脚本）把订阅表刷爆。",
+			"5", "条", 0, 1000),
+		intSpec(KeyMOMediaRequestTagMaxPerUser, "system", "每人标签数上限",
+			"每个用户对同一部作品最多保留多少个入库标签，0 表示不限。默认 20。\n\n"+
+				"标签会写进入库文件名，超了会让文件名长到难以辨认。",
+			"20", "个", 0, 200),
+		intSpec(KeyMOMediaRequestTagMaxLength, "system", "单个标签字数上限",
+			"单个入库标签最长多少字，0 表示不限。默认 100。",
+			"100", "字", 0, 500),
+
+		// ---- 免登录分享页（T10）----
+		boolSpec(KeyMOLibraryShareEnabled, "system", "启用媒体库分享页",
+			"把媒体库里选中的影片/剧集做成一条**免登录**的分享链接，发给不需要账号的人直接看。\n\n"+
+				"**默认关闭。关闭时分享页、令牌接口、播放接口全部 404**，链接打不开。\n\n"+
+				"安全设计：链接里的短码只是门牌号（谁拿到都能打开页面），"+
+				"真正看片要凭一条**按访客签发、只存在访客浏览器里**的令牌，"+
+				"令牌 24 小时失效，超出「同时在线设备数」会被拒绝。\n\n"+
+				"开启后请先确认：你打算分享的这些内容确实可以给外部人看。",
+			"false"),
+		intSpec(KeyMOLibraryShareDefaultExpireDays, "system", "分享默认有效期",
+			"新建分享时默认的有效期天数，0 表示永久。默认 7。\n\n"+
+				"新建对话框里仍然可以逐条选择 1 / 3 / 7 / 30 天或永久，"+
+				"这个值只决定「没选时按哪个算」。\n\n"+
+				"永久分享只在「就是想长期挂着一条链接」时才用：一条永远不过期的链接，"+
+				"被转发出去之后就只能靠「撤销」收回。",
+			"7", "天", 0, 365),
+		intSpec(KeyMOLibraryShareDefaultMaxDevices, "system", "分享默认设备数上限",
+			"新建分享时默认的同时在线设备数上限，默认 5。\n\n"+
+				"按「最近 24 小时内访问过这条分享的不同访客」计数，"+
+				"所以关掉页面的设备会自己让出名额。\n\n"+
+				"这是防「一条链接被丢进群里、几百号人一起看」的闸门，"+
+				"填得太大就等于没有。",
+			"5", "台", 1, 100),
+		stringSpec(KeyMOLibraryShareDefaultPassword, "system", "分享默认访问口令",
+			"新建分享时默认带上的访问口令，访客要先输对才能看。留空表示新建时默认不带口令。\n\n"+
+				"口令只挡住「链接随手转发」这一层；它以哈希形式存储，不保存明文。\n\n"+
+				"如果你希望每条分享都必须带口令，在这里填一个全局默认值即可。",
+			""),
+
+		// ---- 播放监控与观影报告（T11）----
+		boolSpec(KeyMOPlayMonitorEnabled, "system", "启用播放监控",
+			"记录「此刻谁在放哪部片、走了哪条链路」，并按 **码率 × 时长** 估算上行流量。\n\n"+
+				"**默认关闭。关闭时监控既不建会话也不记流量**，实时列表永远是空的。\n\n"+
+				"三种播放状态只有一种计费：\n"+
+				"· **计费中** —— 外网播放、且字节流经过你自己的服务器（流代理）。这条才估算上行。\n"+
+				"· **CDN 直连** —— 走 115 等网盘的直链重定向，字节流**完全不经过**你的服务器，**计 0**。\n"+
+				"· **局域网** —— 内网播放，**不计费**。\n\n"+
+				"显示的数字是**估算值**（码率 × 时长，约每 5 秒累计一次），不是精确的上行字节数；\n"+
+				"面板里同时给出实测字节数供对照，两者偏离过大时会写日志告警。\n\n"+
+				"开启即表示你接受「估算值可能与实际账单有出入」这一点。",
+			"false"),
+		intSpec(KeyMOPlayMonitorIdleSeconds, "system", "播放监控空闲判定（秒）",
+			"多久没收到同一个会话的后续取流请求，就认为已经停播、把它从实时列表里移除。默认 60。\n\n"+
+				"调小会让「暂停中」的片很快消失（但不会被记成新的一次播放）；\n"+
+				"调大会让真正停播的片在列表里多挂一会儿。\n\n"+
+				"停播后从列表消失的时长由它决定，默认约一分钟。",
+			"60", "秒", 10, 3600),
+		intSpec(KeyMOPlayMonitorSampleSeconds, "system", "流量累计间隔（秒）",
+			"每隔多少秒把「码率 × 间隔」累进当日流量桶。默认 5。\n\n"+
+				"这是估算精度与写入频率的取舍：间隔越短越贴近真实曲线，写库也越频繁。\n\n"+
+				"一般不需要改。要改的话建议不低于 5 秒。",
+			"5", "秒", 1, 300),
+		boolSpec(KeyMOPlayReportEnabled, "system", "启用观影报告",
+			"按周期（7 / 14 / 30 天）汇总播放情况，生成排行图并通过通知渠道推送。\n\n"+
+				"**默认关闭。**\n\n"+
+				"统计口径（这几条不是可以自定义的，是口径本身）：\n"+
+				"· **统计从启用观影报告后开始累计，启用前的播放不会补算。**\n"+
+				"· 播放次数 = 关掉播放器重开，或**中断超过半小时**算新的一次。\n"+
+				"· 「忽略播放时长低于 N 秒」：**低于**阈值的记录不进入排行，**刚好等于**阈值的仍保留。\n"+
+				"· 上行字节**只统计计费中的播放**；CDN 直连与局域网都是 0。\n\n"+
+				"没有勾选通知渠道时会当场提示，不会假装已经发出去了。",
+			"false"),
+		intSpec(KeyMOPlayReportMinSeconds, "system", "忽略播放时长低于（秒）",
+			"播放时长**低于**这个秒数的记录不进入观影报告排行。默认 0，即不过滤。\n\n"+
+				"注意是「低于」：刚好等于这个秒数的记录**仍然保留**。\n\n"+
+				"用来挡掉误触后秒退的播放（比如手滑点开又关掉）。",
+			"0", "秒", 0, 86400),
+		intSpec(KeyMOPlayReportGapMinutes, "system", "中断多久算新一次播放（分钟）",
+			"同一用户同一部片，中断**超过**这么多分钟才算新的一次播放。默认 30。\n\n"+
+				"也就是说：中断 20 分钟仍算同一次播放，中断 35 分钟算新的一次。\n\n"+
+				"「关掉播放器重开」也是靠这个间隔来区分的 —— 间隔小于它的会被并进上一次。",
+			"30", "分钟", 1, 1440),
+
+		// ---- RSS 订阅源（T16）----
+		boolSpec(KeyMORSSEnabled, "discover", "启用 RSS 订阅",
+			"贴一个 RSS feed 地址，系统就会按固定间隔去拉新条目，"+
+				"自动把磁力/ed2k 链接提交到 115 离线下载。\n\n"+
+				"**默认关闭。** 关闭时轮询 worker 根本不启动，不占用网络，也不会消耗离线下载额度。\n\n"+
+				"支持 Mikan、dmhy、nyaa 等常见 BT RSS。自研解析器的支持范围：\n"+
+				"· RSS 2.0、Atom、RDF（RSS 1.0）\n"+
+				"· **仅 UTF-8**（含带 BOM 的 UTF-8）—— GBK/Big5 等非 UTF-8 feed 会**明确报「不支持」**，不会静默失败\n"+
+				"· 命名空间条目（`dc:creator`、`content:encoded`）\n"+
+				"· `<enclosure>` 与描述文本里的 `magnet:` / `ed2k:` 链接\n\n"+
+				"**不支持**：非 UTF-8 编码、需要登录或 Cookie 的站点、需要执行 JS 的动态页面。",
+			"false"),
+		intSpec(KeyMORSSPollIntervalMinutes, "discover", "RSS 轮询间隔（分钟）",
+			"多久去看一次每个启用的 RSS 源有没有新条目。默认 30。\n\n"+
+				"这是**看新条目的频率**，与「停机后追不追补」无关（那是另一个键）。\n\n"+
+				"调小会更快发现更新，但每个源都会更频繁地被访问一次。",
+			"30", "分钟", 1, 1440),
+		intSpec(KeyMORSSCatchupGapHours, "discover", "停机多久后放弃逐条追赶（小时）",
+			"距离上一次成功同步超过这么多小时，就**只取最新一页**，不再把停机期间的全部条目逐条补齐。\n\n"+
+				"默认 12。\n\n"+
+				"为什么不逐条补：停机三天后启动，逐条补齐意味着把三天里错过的更新一次性塞进离线下载队列，"+
+				"大部分是用户已经不需要的旧番。**你要的是「现在追到哪了」，不是「补三天前就该错过的片」。**\n\n"+
+				"⚠️ 这是本仓给 RSS 新增的行为 —— 参考实现 侧 RSS 没有位点、也没有这个阈值。",
+			"12", "小时", 0, 8760),
+		intSpec(KeyMORSSStaleAfterMinutes, "discover", "跳过多久以前的条目（分钟）",
+			"条目的发布时间早于「现在 - N 分钟」就直接跳过，不提交离线下载。默认 60。\n\n"+
+				"这是防止「一个发布时间格式解析错、显示成 1970 年的 feed」把整个历史全塞进队列。\n\n"+
+				"留 0 表示不按发布时间过滤。",
+			"60", "分钟", 0, 525600),
+		intSpec(KeyMORSSHTTPTimeoutSeconds, "discover", "单个 feed 拉取超时（秒）",
+			"拉一个 RSS feed 最多等多少秒，超时就当这个源这轮失败。默认 20。\n\n"+
+				"**一个源超时不会影响其它源** —— 每个源独立超时、独立记状态。\n\n"+
+				"遇到某个站打不开时，可以单独把它调短。",
+			"20", "秒", 1, 300),
+		intSpec(KeyMORSSMaxFeedBytes, "discover", "单个 feed 响应体上限（字节）",
+			"拉回来的 feed 超过这个大小就直接报错。默认 4194304（4 MiB）。\n\n"+
+				"**超限不截断** —— 截断出来的半个 XML 要么解析失败，要么悄悄丢掉尾部条目，"+
+				"这两种情况用户都无从察觉。报错至少能在同步结果里看到。",
+			"4194304", "字节", 65536, 67108864),
+
+		// ---- 洗版（T07）----
+		boolSpec(KeyMOMediaUpgradeEnabled, "discover", "启用洗版",
+			"⚠️ **这是一个会删用户文件的功能，默认关闭，且不打算默认打开。**\n\n"+
+				"洗版做的是：扫描媒体库，把每个版本槽位（分辨率/编码/制作组/音轨/字幕/容器）里"+
+				"被新版本比下去的文件标出来，然后按你配的「败方动作」处理（保留/删除/移到别处）。\n\n"+
+				"安全设计：扫描**只判定不删文件**，判定结果连同旧文件快照存进记录表；"+
+				"执行时重新枚举一次旧文件，对不上就整条作废标「判定已过期」，绝不按过期结论删。\n"+
+				"另外败方动作默认是「保留」—— 要删必须你自己显式改成「删除」。",
+			"false"),
+		selectSpec(KeyMOMediaUpgradeSource, "discover", "洗版扫描源",
+			"从哪里读媒体库文件列表。\n"+
+				"`local`：递归扫描本地目录，会**真实删除**本地文件。\n"+
+				"`emby` / `jellyfin`：从 Emby 媒体索引（`emby_media_items`）读文件列表。\n"+
+				"这两个源记的是网盘路径，执行时如果该路径在本机文件系统上不存在，会记「路径不可达」"+
+				"并**跳过、不删** —— 按一条可能不存在的路径删文件有误删风险。\n"+
+				"Plex 不支持洗版，本仓也没有 Plex 索引，故无此选项。",
+			"local", []Option{
+				{Value: "local", Label: "本地目录"},
+				{Value: "emby", Label: "Emby 索引"},
+				{Value: "jellyfin", Label: "Jellyfin 索引"},
+			}),
+		stringSpec(KeyMOMediaUpgradeLibraryRoot, "discover", "媒体库根目录",
+			"被比较的「现版」文件所在处，例如 `/media/已整理`。留空则扫描无法进行。\n"+
+				"`local` 源下这是扫描与执行两次枚举都使用的根目录 —— 提交前的快照复核就是"+
+				"重新走一遍这里，比对文件集合、大小与修改时间。",
+			""),
+		stringSpec(KeyMOMediaUpgradeCandidateRoots, "discover", "候选目录",
+			"新版出现的地方，逗号分隔，例如 `/media/待洗版`。留空 = 只用媒体库根目录内的文件做候选。\n\n"+
+				"注意：**媒体库目录内的文件本身也会被当作候选**。所以你把一个 2160p 版本直接丢进"+
+				"已整理目录，它同样会被识别成「新版」并与同槽位的旧版本比较。",
+			""),
+		intSpec(KeyMOMediaUpgradeMaxRecordsPerSeries, "discover", "单剧记录上限",
+			"一部剧在一次扫描里最多产出多少条**可执行**记录（默认 0 = 不限）。\n\n"+
+				"超限的判定**仍然入库**，只是状态标成 `skipped_limit` 不执行 —— 这样你在界面上"+
+				"能看到「系统认为这里有 316 集值得洗」，而不是什么都看不到。\n"+
+				"长剧（银魂 E001~E316 这类）建议设个几十到一百，避免一次扫描把整部剧洗掉。",
+			"0", "条", 0, 10000),
+		selectSpec(KeyMOMediaUpgradeLoserAction, "discover", "败方动作",
+			"比较中的**输家**怎么处理。新版赢时输家是旧文件，新版输时根本不会走到执行。\n\n"+
+				"`keep`（默认）：旧文件原样留着。最安全 —— 只是告诉你「这里有更好的版本」，动不改。\n"+
+				"`delete`：删掉输家文件。**这是真的会删磁盘文件。**\n"+
+				"`move`：把输家移到下方指定的目录，留个后悔药。\n\n"+
+				"与 参考实现 的差别：参考实现 是「被替换的旧文件恒删」。这里默认 keep，"+
+				"要删得显式改这项 —— 见变更说明里的偏差记录。",
+			"keep", []Option{
+				{Value: "keep", Label: "保留（默认，最安全）"},
+				{Value: "delete", Label: "删除败方文件（真删）"},
+				{Value: "move", Label: "移动到指定目录"},
+			}),
+		stringSpec(KeyMOMediaUpgradeMoveDir, "discover", "败方移动目标目录",
+			"败方动作选「移动」时的目标目录。不填会直接报错，不会退回删除。",
+			""),
+		stringSpec(KeyMOMediaUpgradeGroupPriority, "discover", "制作组优先级",
+			"同一分辨率同一编码时按哪个组优先，逗号分隔，越靠前越优先，例如 `Ocat,FRDS,CMCT`。\n\n"+
+				"未列出的组排在后面；大小写不敏感。留空表示所有组等价。",
+			""),
+		intSpec(KeyMOMediaUpgradeMinResolution, "discover", "最低分辨率门槛",
+			"低于这个分辨率的候选直接不参与洗版（不产生记录）。0 = 不限。\n"+
+				"这是**防误洗**的第一道闸：把 1080p 的片库保护起来，不让低码流版本去挑高码流版本的毛病。",
+			"0", "", 0, 4320),
+		intSpec(KeyMOMediaUpgradeMinChannels, "discover", "最低声道门槛",
+			"低于这个声道的候选直接不参与洗版。0 = 不限。\n\n"+
+				"⚠️ 这项对齐的是**声道数**，不是音轨数。参考实现 的字段名叫 `min_audio_tracks`（音轨数），"+
+				"但文件名里根本没有音轨信息 —— `Atmos` 是 8 声道、`DTS-HD MA` 也是 8 声道、"+
+				"`AAC 2.0` 是 2 声道，音轨数无从得知。所以本项与 参考实现 同名字段**不等价**，别按音轨数理解。",
+			"0", "声道", 0, 16),
+		boolSpec(KeyMOMediaUpgradeRequireSubtitle, "discover", "只认带字幕标记的候选",
+			"开启后，文件名里没有字幕标记的候选不参与洗版。默认关闭。\n\n"+
+				"⚠️ **字幕标记是从文件名猜的**（字幕/中字/中英/双语/简繁/CHS/CHT/BIG5）。"+
+				"参考实现 的槽位里「字幕」来自媒体服务器的轨道探针，本仓对本地文件没有探针，只能猜。\n"+
+				"猜不出来的文件会被判成「无字幕」，于是与「带字幕」的文件分属不同槽位 —— 两个都保留。这是安全的一侧。",
+			"false"),
 
 		// ---- 字幕智能处理 ----
 		boolSpec(KeySubtitleEnabled, "subtitle", "启用字幕智能处理",

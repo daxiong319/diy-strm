@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node scripts/compress-build.mjs",
+    "dev:request": "vite --config vite.request.config.ts",
+    "build": "vite build && node scripts/compress-build.mjs && npm run build:request",
+    "build:request": "vite build --config vite.request.config.ts",
     "preview": "vite preview",
     "type-check": "vue-tsc -b",
     "test:upload": "node scripts/test-upload-dispatcher.mjs"

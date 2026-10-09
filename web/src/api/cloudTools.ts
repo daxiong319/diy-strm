@@ -66,12 +66,42 @@ export interface AIOrganizeInstanceUpdate {
 
 export type ClassificationTemplateKind = "media" | "region" | "genre" | "custom";
 
+// 结构化条件字段（C-3）。与 condition 表达式并存：fields 为空时解析 condition，
+// 两边都填则以 fields 为准。值的语法统一是「普通=或 / +x=必须命中 / -x=命中即排除」，
+// year 额外支持闭区间 2000-2009。
+export interface ClassificationRuleFields {
+  media_types?: string[];
+  genre_ids?: number[];
+  origin_country?: string[];
+  original_language?: string[];
+  year?: { from: number; to: number };
+  keywords?: string[];
+  series_keywords?: string[];
+}
+
 export interface ClassificationRule {
   name: string;
   condition: string;
+  fields?: ClassificationRuleFields;
+  // 该规则命中后固定追加的系列目录名（T02 C-2）。
+  // 留空则改由全局 series 规则按 series_keywords 判定。
+  series?: string;
   fallback_mode?: "self" | "directory";
   fallback_dir?: string;
   children?: ClassificationRule[];
+}
+
+// 系列目录规则（C-2）。挂在 Config 级而不是某个模板下：同一个「流浪地球系列」
+// 在地区模板下是 国产/流浪地球系列、在类型模板下是 科幻奇幻/流浪地球系列，
+// 放进模板里就得配四份，改一次漏一处就会出现两个同名系列目录。
+export interface ClassificationSeriesRule {
+  name: string;
+  dir_name?: string;
+  media_type?: "movie" | "tv";
+  series_keywords?: string[];
+  keywords?: string[];
+  position?: number;
+  remark?: string;
 }
 
 export interface ClassificationTemplate {
@@ -84,7 +114,54 @@ export interface ClassificationConfig {
   enabled: boolean;
   selected_template: ClassificationTemplateKind;
   templates: ClassificationTemplate[];
+  series?: ClassificationSeriesRule[];
 }
+
+// 只读分类清单（C-8）。跨模块消费者（洗版规则筛选、清理保护）与前端的
+// 下拉框共用同一个数据源。
+//
+// ⚠️ items 是**规则里配了哪些分类目录**，不是**磁盘上存在哪些目录**：
+// 用户刚配了「电影/科幻」但还没影片被整理过去，磁盘上那个目录并不存在；
+// 反过来磁盘上有个同名目录但那一级配置早就删了，它也不会出现在这里。
+// 所以前端不能拿这个清单去判断"目录是不是已经建好了"。
+export interface ClassificationCategory {
+  /** 1 / 2 / 3。一级表化（C-3）之后层级是可配的，不要假设一定有三层。 */
+  level: number;
+  name: string;
+  /** 形如 "genre/电影/科幻"。跨模板同名目录靠它区分（region 与 genre 都有「国产」）。 */
+  slug: string;
+  template: string;
+  /** 一级分类的类型键（movie / tv）；二级三级为空串。 */
+  primary_key?: string;
+  /** 从模板根到本级的目录名路径，形如 "电影/国产"。 */
+  path: string;
+  enabled: boolean;
+  /** 用户自定义规则行的主键；内置模板目录为 0。 */
+  rule_id: number;
+}
+
+// 预览端点（C-7）：只算不写。回答「这个文件会被放到哪个目录」。
+export interface ClassificationPreviewResult {
+  path: string;
+  segments: string[];
+  matched_rule: string;
+  degraded_reason: string;
+  template: string;
+  category: string;
+  applied: boolean;
+  matched: boolean;
+  evidence?: Record<string, unknown>;
+}
+
+// 降级原因码（C-5）。tmdb_unavailable 与 no_rule_matched 必须分开看：
+// 前者是「我们还不知道它属于哪一类」，后者是「它不属于任何已配置类型」。
+export const CLASSIFICATION_DEGRADED_REASONS: Record<string, string> = {
+  tmdb_unavailable: "TMDB 暂时不可用，暂时沿用上一次判断",
+  tmdb_detail_failed: "TMDB 查询失败，已按不完整信息判断",
+  tmdb_detail_unavailable: "没有可用的 TMDB 信息（未配置 TMDB 或影片 ID）",
+  no_rule_matched: "没有匹配到任何分类规则",
+  ambiguous_rule_matched: "多条规则同分，未能确定分类",
+};
 
 export interface ClassificationTMDBGenre {
   id?: number;
@@ -229,6 +306,17 @@ export const classificationApi = {
   importRules: (payload: { yaml: string; mode?: "replace" | "append" }) =>
     http.post<ClassifyRulesImportResult>("/admin/tools/classification/rules/import", payload),
   exportRules: () => http.get<{ yaml: string }>("/admin/tools/classification/rules/export"),
+  categories: () =>
+    http.get<{ items: ClassificationCategory[]; levels: number[] }>(
+      "/admin/tools/classification/categories",
+    ),
+  preview: (payload: {
+    media_type: "movie" | "tv";
+    tmdb_id?: string;
+    title?: string;
+    year?: number;
+    raw?: Record<string, unknown>;
+  }) => http.post<ClassificationPreviewResult>("/admin/media-organize/classification/preview", payload),
 };
 
 export const quarkTVApi = {

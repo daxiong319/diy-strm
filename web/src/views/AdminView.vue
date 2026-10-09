@@ -25,6 +25,9 @@ const adminPageLoaders = {
   cas: () => import("@/components/admin/CasManagementPage.vue"),
   share: () => import("@/components/admin/FileShareManagement.vue"),
   discover: () => import("@/components/admin/DiscoveryPage.vue"),
+  "media-upgrade": () => import("@/components/admin/MediaUpgradePage.vue"),
+  rbac: () => import("@/components/admin/RbacManagementPage.vue"),
+  request: () => import("@/components/admin/RequestCenterPage.vue"),
   subtitle: () => import("@/components/admin/SubtitleSettings.vue"),
   mcp: () => import("@/components/admin/McpSettings.vue"),
   assistant: () => import("@/components/admin/McpAssistant.vue"),
@@ -41,10 +44,14 @@ const CrossDriveTransferPage = asyncPage(adminPageLoaders["cross-transfer"]);
 const CasManagementPage = asyncPage(adminPageLoaders.cas);
 const FileShareManagement = asyncPage(adminPageLoaders.share);
 const DiscoveryPage = asyncPage(adminPageLoaders.discover);
+const MediaUpgradePage = asyncPage(adminPageLoaders["media-upgrade"]);
+const RbacManagementPage = asyncPage(adminPageLoaders.rbac);
+const RequestCenterPage = asyncPage(adminPageLoaders.request);
 const SubtitleSettings = asyncPage(adminPageLoaders.subtitle);
 const McpSettings = asyncPage(adminPageLoaders.mcp);
 const McpAssistant = asyncPage(adminPageLoaders.assistant);
 import { logout, fetchSystemConfig } from "@/api/auth";
+import { fetchRbacMe } from "@/api/rbac";
 import { useAuthStore } from "@/stores/auth";
 import { provideAdminPageContext } from "@/composables/useAdminLoadingBar";
 import { useUnsavedChanges } from "@/composables/useUnsavedChanges";
@@ -64,11 +71,50 @@ const nav = [
   { key: "cas", label: "CAS 秒传", icon: "film" },
   { key: "share", label: "文件共享", icon: "share-alt" },
   { key: "discover", label: "影视发现", icon: "compass" },
+  { key: "media-upgrade", label: "洗版管理", icon: "sync" },
   { key: "subtitle", label: "字幕处理", icon: "closed-captioning-regular" },
   { key: "mcp", label: "MCP 服务", icon: "plug" },
   { key: "assistant", label: "智能助理", icon: "robot" },
+  { key: "rbac", label: "用户与权限", icon: "shield" },
+  { key: "request", label: "求片中心", icon: "hand-holding-heart" },
 ];
-const navKeys = nav.map((n) => n.key);
+// navKeys 是「系统里存在的一级页面」，权限过滤前的全集。
+// 真正决定渲染的是下面那个 visibleNav —— 它是「过滤后」的那一份，
+// normalize / 面包屑 / lockedKeys 全部走它，免得侧边栏藏了一个页面、
+// 地址栏却还能直接输进去的那种分叉。
+
+// visibleNav 是真正渲染到侧边栏的那一份。
+const visibleNav = computed(() =>
+  visibleMenuKeys.value ? nav.filter((n) => visibleMenuKeys.value!.has(n.key)) : nav,
+);
+// visibleNavKeys 供 normalize / lockedKeys 用，保证「看得见的页面集合」
+// 在整个文件里只有一个来源，不会出现「导航里没有但地址栏能进」的分叉。
+const visibleNavKeys = computed(() => visibleNav.value.map((n) => n.key));
+
+
+// ---- 菜单按权限过滤（验收④：菜单前后端一致）----
+//
+// 可见菜单由后端给（/auth/me 的 menus 或 /auth/menus），前端**不自己算**。
+// 在这里再写一份「菜单 → 权限项」的映射，等于把 internal/rbac/menus.go
+// 的 menuCatalog 抄一份到前端：后端加一个菜单而前端忘了加映射，
+// 那个菜单就会静默消失，而且两边测试都不会红。抄一份必然漂移，所以不抄。
+//
+// fail-open：拉不到就显示全部菜单。理由是这一层只是「少显示几个入口」，
+// 真正的拦截在后端的权限中间件上 —— 直接输网址一样进不去。
+// 反过来 fail-closed 的话，一次网络抖动就会让运维以为整个后台挂了。
+const visibleMenuKeys = ref<Set<string> | null>(null);
+
+async function loadVisibleMenus() {
+  try {
+    const me = await fetchRbacMe();
+    // 后端在开关关闭时会返回全量菜单并带 enabled=false，
+    // 这里照单全收即可，不需要再判 enabled。
+    visibleMenuKeys.value = new Set(me.menus ?? []);
+  } catch (err) {
+    visibleMenuKeys.value = null;
+    console.warn("[rbac] 拉取可见菜单失败，本次显示全部菜单：", err);
+  }
+}
 
 // 各页面 tab 结构：defaultTab 为点击父级面包屑时回落的默认 tab；tabs 为 key→label 映射。
 const PAGE_TABS: Record<string, { defaultTab: string; tabs: Record<string, string> }> = {
@@ -79,7 +125,15 @@ const PAGE_TABS: Record<string, { defaultTab: string; tabs: Record<string, strin
   },
   tasks: {
     defaultTab: "strm",
-    tabs: { strm: "STRM 任务", cache: "缓存任务", organize: "目录整理", automation: "自动联动", moviepilot: "MoviePilot" },
+    tabs: {
+      strm: "STRM 任务",
+      cache: "缓存任务",
+      organize: "目录整理",
+      automation: "自动联动",
+      "play-monitor": "播放监控",
+      playback: "播放记录",
+      moviepilot: "MoviePilot",
+    },
   },
   tools: {
     defaultTab: "scrape",
@@ -114,7 +168,7 @@ const passwordChangeMessage = computed(() => {
 
 // 面包屑：后台（可点回首页）/ 页面（有 tab 时可点回默认 tab）/ 当前 tab
 const crumbs = computed(() => {
-  const pageDef = nav.find((n) => n.key === page.value);
+  const pageDef = visibleNav.value.find((n) => n.key === page.value);
   const pageLabel = pageDef?.label ?? page.value;
   const tabCfg = PAGE_TABS[page.value];
   const items: { label: string; to?: { page: string; tab?: string } }[] = [
@@ -143,7 +197,7 @@ function normalize(value: unknown): string {
   const raw = String(value ?? "").trim();
   const v = raw;
   if (mustChangePassword.value && v !== "settings") return "settings";
-  return navKeys.includes(v) ? v : "dashboard";
+  return visibleNavKeys.value.includes(v) ? v : "dashboard";
 }
 
 const page = ref(normalize(route.query.page));
@@ -157,7 +211,7 @@ const cachedPageComponents: Record<string, Component> = {
 };
 const cachedPageComponent = computed(() => cachedPageComponents[page.value] ?? null);
 
-const pageTitle = computed(() => nav.find((n) => n.key === page.value)?.label ?? "后台");
+const pageTitle = computed(() => visibleNav.value.find((n) => n.key === page.value)?.label ?? "后台");
 
 function preloadAdminPage(key: string) {
   const loader = adminPageLoaders[key as keyof typeof adminPageLoaders];
@@ -270,12 +324,27 @@ watch(mustChangePassword, (locked) => {
   }
 });
 
+// 菜单加载完（含 fail-open 的 null）后重新校正当前页：
+// 用户可能带着一个无权访问的 ?page=... 直接进来（收藏的旧链接、别人发的地址）。
+// 这里把他送回第一个可见页面，而不是让他停在一个空白的页面上。
+watch(visibleNavKeys, (keys) => {
+  if (keys.includes(page.value)) return;
+  const fallback = keys[0] ?? "dashboard";
+  page.value = fallback;
+  if (String(route.query.page ?? "") !== fallback) {
+    void router.replace({ query: buildPageQuery(fallback) });
+  }
+});
+
 onMounted(async () => {
   // 守卫进入后台时已拉取过认证状态，有缓存则跳过，避免重复的 /auth/status 往返。
   if (!auth.loaded) await auth.load();
   // 后台 UI 配置只影响“返回首页”按钮样式，不在首屏关键路径上，后台并行拉取。
   void loadAdminUiConfig();
   void announcement.check();
+  // 菜单过滤晚于首屏渲染：先按全集显示，拉回来再裁。
+  // 反过来要先等接口才画侧边栏，会让每次进后台都多一个白屏往返。
+  void loadVisibleMenus();
   if (mustChangePassword.value) {
     page.value = "settings";
     router.replace({ query: buildPageQuery("settings") });
@@ -285,13 +354,13 @@ onMounted(async () => {
 
 <template>
   <AdminShell
-    :nav="nav"
+    :nav="visibleNav"
     :model-value="page"
     :page-title="pageTitle"
     :crumbs="crumbs"
     @navigate="navigateCrumb"
     :home-return-mode="adminHomeReturnMode"
-    :locked-keys="mustChangePassword ? navKeys.filter((k) => k !== 'settings') : []"
+    :locked-keys="mustChangePassword ? visibleNavKeys.filter((k) => k !== 'settings') : []"
     @update:model-value="changePage"
     @preload="preloadAdminPage"
     @go-home="goHome"
@@ -311,10 +380,10 @@ onMounted(async () => {
     <AdminEmptyState
       v-if="
         !cachedPageComponent &&
-        !['settings', 'cross-transfer', 'cas', 'share', 'discover', 'subtitle', 'mcp', 'assistant'].includes(page)
+        !['settings', 'cross-transfer', 'cas', 'share', 'discover', 'subtitle', 'mcp', 'assistant', 'request'].includes(page)
       "
       icon="screwdriver-wrench"
-      :title="`「${nav.find((n) => n.key === page)?.label}」功能开发中`"
+      :title="`「${visibleNav.find((n) => n.key === page)?.label}」功能开发中`"
     />
     <KeepAlive>
       <SystemSettings
@@ -328,6 +397,9 @@ onMounted(async () => {
       <CasManagementPage v-else-if="page === 'cas'" />
       <FileShareManagement v-else-if="page === 'share'" />
       <DiscoveryPage v-else-if="page === 'discover'" />
+      <MediaUpgradePage v-else-if="page === 'media-upgrade'" />
+      <RbacManagementPage v-else-if="page === 'rbac'" />
+      <RequestCenterPage v-else-if="page === 'request'" />
       <SubtitleSettings v-else-if="page === 'subtitle'" />
       <McpSettings v-else-if="page === 'mcp'" />
       <McpAssistant v-else-if="page === 'assistant'" />

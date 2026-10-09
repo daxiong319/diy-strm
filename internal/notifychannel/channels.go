@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -102,7 +103,7 @@ func init() {
 
 	// 8. 自定义 Webhook
 	register(ChannelMeta{
-		ID: "webhook", Title: "自定义 Webhook",
+		ID: ChannelWebhook, Title: "自定义 Webhook",
 		Required: []string{"url", "method"},
 		Note:     "URL 与 Body 支持 Go text/template 语法（含 {{ 即启用）；不含 {{ 的旧 $title/$content 写法继续可用。",
 		Fields: []FieldMeta{
@@ -267,13 +268,13 @@ func sendBark(ctx context.Context, cfg map[string]string, msg Message) error {
 	}
 	apiURL := fmt.Sprintf("https://api.day.app/%s", key)
 	payload := map[string]any{
-		"title":   msg.Title,
-		"body":    msg.Content,
-		"group":   cfg["group"],
-		"sound":   cfg["sound"],
-		"level":   cfg["level"],
-		"icon":    cfg["icon"],
-		"link":    cfg["link"],
+		"title": msg.Title,
+		"body":  msg.Content,
+		"group": cfg["group"],
+		"sound": cfg["sound"],
+		"level": cfg["level"],
+		"icon":  cfg["icon"],
+		"link":  cfg["link"],
 	}
 	if cfg["archiver"] == "true" {
 		payload["isArchive"] = "1"
@@ -380,20 +381,39 @@ func sendWebhook(ctx context.Context, cfg map[string]string, msg Message) error 
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		// 网络层失败（含超时、连接被拒、TLS 错误）一律算可重试。
+		return httpFailure(ChannelWebhook, 0, nil, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook HTTP %d", resp.StatusCode)
+		// ⚠️ 必须把响应体读出来：之前这里只返回状态码，
+		// 对方返回的错误描述（如 "missing X-Api-Key header"）全被丢掉，
+		// 补发队列回答不了「为什么失败」。
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return httpFailure(ChannelWebhook, resp.StatusCode, body, nil)
 	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return nil
 }
 
+// simpleTemplate 做 {{.Xxx}} 形式的字段替换。
+//
+// 为什么不用 text/template 引擎：这里是用户可配的字符串，引擎的语法错误会
+// panic，未定义字段会渲染成 "<no value>"，两个都可能变成 400 之外的意外面。
+// strings.NewReplacer 遇到没列出的字段原样保留，用户看得懂"你写的 {{.Foo}}
+// 我不认识"，而不是收到一坨 no value。
+//
+// ⚠️ 键必须写全前缀（{{.Title}}）而不是裸字段名：裸名会把用户正文里恰好
+// 出现的 "Title" 一并替换掉。
 func simpleTemplate(tmpl string, msg Message) string {
 	r := strings.NewReplacer(
 		"{{.Title}}", msg.Title,
 		"{{.Content}}", msg.Content,
 		"{{.Tone}}", msg.Tone,
+		// T12：场景字段。未知字段原样保留，所以只写了 Title 的老模板
+		// 不受影响；写了 {{.Scene}} 而该通知未归类时得到空串。
+		"{{.Scene}}", msg.Scene,
+		"{{.SceneLabel}}", msg.SceneLabel,
 	)
 	return r.Replace(tmpl)
 }

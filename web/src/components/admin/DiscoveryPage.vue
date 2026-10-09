@@ -18,6 +18,7 @@ const SubscriptionManagement = asyncPanel(() => import("@/components/admin/Subsc
 const ChannelManagement = asyncPanel(() => import("@/components/admin/ChannelManagement.vue"));
 const MonitorHistoryPanel = asyncPanel(() => import("@/components/admin/MonitorHistoryPanel.vue"));
 const EmbyMissingPanel = asyncPanel(() => import("@/components/admin/EmbyMissingPanel.vue"));
+const RssSubscriptionPanel = asyncPanel(() => import("@/components/admin/RssSubscriptionPanel.vue"));
 
 const EXPLORE_TAB = "explore";
 const RANKINGS_TAB = "rankings";
@@ -28,6 +29,7 @@ const SUBSCRIPTIONS_TAB = "subscriptions";
 const CHANNELS_TAB = "channels";
 const MONITOR_TAB = "monitor";
 const EMBY_MISSING_TAB = "emby-missing";
+const RSS_TAB = "rss";
 
 const tabs = [
   { key: EXPLORE_TAB, label: "影视探索" },
@@ -37,6 +39,7 @@ const tabs = [
   { key: RESOURCES_TAB, label: "资源搜索" },
   { key: SUBSCRIPTIONS_TAB, label: "订阅管理" },
   { key: CHANNELS_TAB, label: "频道管理" },
+  { key: RSS_TAB, label: "RSS 订阅" },
   { key: MONITOR_TAB, label: "监控历史" },
   { key: EMBY_MISSING_TAB, label: "缺集补档" },
 ];
@@ -51,6 +54,7 @@ const { activeTab, setActiveTab } = useSectionTabRoute(EXPLORE_TAB, [
   CHANNELS_TAB,
   MONITOR_TAB,
   EMBY_MISSING_TAB,
+  RSS_TAB,
 ]);
 </script>
 
@@ -83,6 +87,9 @@ const { activeTab, setActiveTab } = useSectionTabRoute(EXPLORE_TAB, [
     </div>
     <div v-show="activeTab === EMBY_MISSING_TAB" class="dp-pane">
       <EmbyMissingPanel />
+    </div>
+    <div v-show="activeTab === RSS_TAB" class="dp-pane">
+      <RssSubscriptionPanel />
     </div>
   </div>
 </template>

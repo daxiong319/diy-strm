@@ -32,6 +32,12 @@ type yamlImportResult struct {
 	Rules []ClassifyRule
 	// Warnings 记录被跳过/降级的内容（例如参考文件末尾被截断、无条件的目录）。
 	Warnings []string
+	// Series 是从 `series:` 段解析出的系列目录规则（C-8）。
+	//
+	// 与 Rules 分开而不是塞进 Rules：系列规则不是「影片命中它就放这里」的判定规则，
+	// 而是「命中后往目录末尾再挂一段」。两者的执行时机不同，塞进同一个列表的话
+	// 导入器就得在两次遍历里区分它们，而区分的依据只是「有没有 target_path」。
+	Series []SeriesRule
 }
 
 // importRulesFromYAML 解析规则文件文本为规则列表（保持文件顺序即为优先级）。
@@ -51,6 +57,8 @@ func importRulesFromYAML(text string) (yamlImportResult, error) {
 	pendingTarget := ""
 	stateLine := 0
 	lineNo := 0
+	seriesMode := false
+	seriesState := seriesYAMLState{}
 
 	flush := func(endLine int) {
 		if pendingTarget == "" {
@@ -100,11 +108,23 @@ func importRulesFromYAML(text string) (yamlImportResult, error) {
 			switch key {
 			case "movie", "tv":
 				mediaType = key
+				seriesMode = false
+			case seriesYAMLRoot:
+				// series 段用一套独立的缩进约定：目录名在缩进 2，字段在缩进 4。
+				// 与 Rules 的差别是它没有条件列表，目录名本身就是要产出的那一段。
+				mediaType = ""
+				seriesMode = true
 			default:
 				return yamlImportResult{}, domain.Errorf(domain.CodeValidation,
-					"第 %d 行顶层键只支持 movie / tv，实际为“%s”", lineNo, key)
+					"第 %d 行顶层键只支持 movie / tv / %s，实际为“%s”", lineNo, seriesYAMLRoot, key)
 			}
 			targetPath = ""
+			continue
+		}
+		if seriesMode {
+			if err := parseSeriesYAMLLine(&result, trimmed, indent, lineNo, &seriesState); err != nil {
+				return yamlImportResult{}, err
+			}
 			continue
 		}
 		if mediaType == "" {
@@ -164,10 +184,13 @@ func importRulesFromYAML(text string) (yamlImportResult, error) {
 		stateLine = lineNo
 	}
 	flush(lineNo)
+	if err := flushSeriesRule(&result, &seriesState, lineNo); err != nil {
+		return yamlImportResult{}, err
+	}
 
 	// 同一媒体类型下目标目录重复：保留先出现者（先出现优先级更高）。
 	result.Rules = dedupeRulesByTargetPath(result.Rules, &result.Warnings)
-	if len(result.Rules) == 0 {
+	if len(result.Rules) == 0 && len(result.Series) == 0 {
 		return yamlImportResult{}, domain.Errorf(domain.CodeValidation,
 			"未从文件解析出任何有效规则%s", warningSuffix(result.Warnings))
 	}
@@ -272,6 +295,14 @@ func splitYAMLPair(line string) (string, string, error) {
 
 // exportRulesToYAML 把规则导出为与参考文件同构的 YAML 文本。
 func exportRulesToYAML(rules []ClassifyRule) string {
+	return exportRulesToYAMLWithSeries(rules, nil)
+}
+
+// exportRulesToYAMLWithSeries 同时导出规则与系列目录规则（C-8）。
+//
+// 两者写在同一个文件里是刻意的：只导出一个会造成「用户的目录结构只迁移了一半」
+// —— 只导 Rules 会让 Config.Series 里残留的系列目录继续生效，只导 Series 则相反。
+func exportRulesToYAMLWithSeries(rules []ClassifyRule, series []SeriesRule) string {
 	grouped := map[string][]ClassifyRule{}
 	for _, rule := range rules {
 		key := rule.MediaType
@@ -286,6 +317,7 @@ func exportRulesToYAML(rules []ClassifyRule) string {
 	var builder strings.Builder
 	builder.WriteString("# 目录整理分类规则（由 LitePan 导出）\n")
 	builder.WriteString("# 规则按出现顺序评估，首个命中胜出。\n")
+	builder.WriteString("# series 段是系列目录规则，命中后会在目录末尾再挂一段。\n")
 	for _, mediaType := range []string{"movie", "tv"} {
 		items := grouped[mediaType]
 		if len(items) == 0 {
@@ -316,6 +348,7 @@ func exportRulesToYAML(rules []ClassifyRule) string {
 			}
 		}
 	}
+	builder.WriteString(exportSeriesToYAML(series))
 	return builder.String()
 }
 
@@ -425,6 +458,11 @@ func (s *Service) ImportRulesFromYAML(ctx context.Context, text string, replace 
 		if err != nil {
 			return nil, nil, err
 		}
+		// 系列规则与规则表一起替换：replace 的语义是「这份文件就是全部配置」，
+		// 只换一半会让旧系列规则残留在配置里，而界面上已经看不到它们了。
+		if err := s.replaceSeriesRules(ctx, parsed.Series); err != nil {
+			return nil, nil, err
+		}
 		return rules, parsed.Warnings, nil
 	}
 	for _, rule := range parsed.Rules {
@@ -445,5 +483,5 @@ func (s *Service) ExportRulesToYAML(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return exportRulesToYAML(rules), nil
+	return exportRulesToYAMLWithSeries(rules, s.Config().Series), nil
 }

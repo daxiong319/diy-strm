@@ -164,6 +164,15 @@ func (s *Service) cleanupStrmPath(ctx context.Context, item planItem) (CleanupIt
 	if target == root || !pathWithin(root, target) {
 		return result, fmt.Errorf("STRM 清理路径超出允许范围")
 	}
+	// 清理期第二道分类保护闸。扫描期那道挡不住这一种：
+	// 报告摊在屏幕上之后用户改了分类模板，点确认时这份名单已经是新的，
+	// 而报告里那条「未关联 STRM 目录」还在 —— 此时删下去就是删分类目录。
+	// 返回 skipped 而不是 error：它不是故障，是一次正常的拦截，
+	// 报 failed 会让用户以为清理出错并重试。
+	if s.categoryGuard().Protected(target) {
+		result.Status, result.Message = "skipped", "目标位于分类目录内，已按分类规则保护"
+		return result, nil
+	}
 	info, err := os.Lstat(target)
 	if os.IsNotExist(err) {
 		result.Status, result.Message = "skipped", "路径已不存在"

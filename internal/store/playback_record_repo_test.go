@@ -13,7 +13,7 @@ func TestPlaybackRecordInsertAndList(t *testing.T) {
 	s := newTestStore(t)
 
 	rec := &domain.PlaybackRecord{
-		UserID:     "user-1",
+		EmbyUserID: "user-1",
 		Client:     "Emby Theater",
 		DeviceID:   "dev-1",
 		ItemName:   "流浪地球2.mkv",
@@ -37,7 +37,7 @@ func TestPlaybackRecordInsertAndList(t *testing.T) {
 
 	// 更晚的一条应排在前面
 	if _, err := s.PlaybackRecords.Insert(ctx, &domain.PlaybackRecord{
-		UserID:     "user-2",
+		EmbyUserID: "user-2",
 		ItemName:   "沙丘2.mkv",
 		StrmPath:   "/media/电影/沙丘2.mkv",
 		Provider:   "123",
@@ -93,9 +93,9 @@ func TestPlaybackRecordListFilters(t *testing.T) {
 	s := newTestStore(t)
 
 	seed := []domain.PlaybackRecord{
-		{RuleID: "1", UserID: "u1", ItemName: "三体 第一季.mkv", StrmPath: "/115/剧集/三体 第一季.mkv", Provider: "115", PlaybackAt: "2024-05-03T00:00:00Z"},
-		{RuleID: "1", UserID: "u2", ItemName: "三体 第二季.mkv", StrmPath: "/123/剧集/三体 第二季.mkv", Provider: "123", PlaybackAt: "2024-05-04T00:00:00Z"},
-		{RuleID: "2", UserID: "u1", ItemName: "奥本海默.mkv", StrmPath: "/123/电影/奥本海默.mkv", Provider: "123", PlaybackAt: "2024-05-05T00:00:00Z"},
+		{RuleID: "1", EmbyUserID: "u1", ItemName: "三体 第一季.mkv", StrmPath: "/115/剧集/三体 第一季.mkv", Provider: "115", PlaybackAt: "2024-05-03T00:00:00Z"},
+		{RuleID: "1", EmbyUserID: "u2", ItemName: "三体 第二季.mkv", StrmPath: "/123/剧集/三体 第二季.mkv", Provider: "123", PlaybackAt: "2024-05-04T00:00:00Z"},
+		{RuleID: "2", EmbyUserID: "u1", ItemName: "奥本海默.mkv", StrmPath: "/123/电影/奥本海默.mkv", Provider: "123", PlaybackAt: "2024-05-05T00:00:00Z"},
 	}
 	for i := range seed {
 		if _, err := s.PlaybackRecords.Insert(ctx, &seed[i]); err != nil {
@@ -156,7 +156,7 @@ func TestPlaybackRecordListPaging(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		if _, err := s.PlaybackRecords.Insert(ctx, &domain.PlaybackRecord{
-			UserID:     "u1",
+			EmbyUserID: "u1",
 			ItemName:   "ep",
 			StrmPath:   "/p/ep",
 			PlaybackAt: "2024-05-0" + string(rune('1'+i)) + "T00:00:00Z",
@@ -205,9 +205,9 @@ func TestPlaybackRecordStats(t *testing.T) {
 	}
 
 	seed := []domain.PlaybackRecord{
-		{UserID: "u1", ItemName: "a.mkv", StrmPath: "/a.mkv", PlaybackAt: "2024-05-01T00:00:00Z"},
-		{UserID: "u1", ItemName: "a.mkv", StrmPath: "/a.mkv", PlaybackAt: "2024-05-03T00:00:00Z"},
-		{UserID: "u2", ItemName: "b.mkv", StrmPath: "/b.mkv", PlaybackAt: "2024-05-02T00:00:00Z"},
+		{EmbyUserID: "u1", ItemName: "a.mkv", StrmPath: "/a.mkv", PlaybackAt: "2024-05-01T00:00:00Z"},
+		{EmbyUserID: "u1", ItemName: "a.mkv", StrmPath: "/a.mkv", PlaybackAt: "2024-05-03T00:00:00Z"},
+		{EmbyUserID: "u2", ItemName: "b.mkv", StrmPath: "/b.mkv", PlaybackAt: "2024-05-02T00:00:00Z"},
 	}
 	for i := range seed {
 		if _, err := s.PlaybackRecords.Insert(ctx, &seed[i]); err != nil {
@@ -235,9 +235,9 @@ func TestPlaybackRecordDeleteAndClear(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	r1 := &domain.PlaybackRecord{RuleID: "1", UserID: "u1", ItemName: "a.mkv", StrmPath: "/a.mkv", PlaybackAt: "2024-05-01T00:00:00Z"}
-	r2 := &domain.PlaybackRecord{RuleID: "1", UserID: "u2", ItemName: "b.mkv", StrmPath: "/b.mkv", PlaybackAt: "2024-05-02T00:00:00Z"}
-	r3 := &domain.PlaybackRecord{RuleID: "2", UserID: "u1", ItemName: "c.mkv", StrmPath: "/c.mkv", PlaybackAt: "2024-05-03T00:00:00Z"}
+	r1 := &domain.PlaybackRecord{RuleID: "1", EmbyUserID: "u1", ItemName: "a.mkv", StrmPath: "/a.mkv", PlaybackAt: "2024-05-01T00:00:00Z"}
+	r2 := &domain.PlaybackRecord{RuleID: "1", EmbyUserID: "u2", ItemName: "b.mkv", StrmPath: "/b.mkv", PlaybackAt: "2024-05-02T00:00:00Z"}
+	r3 := &domain.PlaybackRecord{RuleID: "2", EmbyUserID: "u1", ItemName: "c.mkv", StrmPath: "/c.mkv", PlaybackAt: "2024-05-03T00:00:00Z"}
 	for _, rec := range []*domain.PlaybackRecord{r1, r2, r3} {
 		if _, err := s.PlaybackRecords.Insert(ctx, rec); err != nil {
 			t.Fatalf("seed: %v", err)
@@ -280,7 +280,7 @@ func TestPlaybackRecordDeleteAndClear(t *testing.T) {
 		t.Fatalf("expected 1 cleared, got %d", n)
 	}
 	// 无条件清空
-	if _, err := s.PlaybackRecords.Insert(ctx, &domain.PlaybackRecord{UserID: "u9", ItemName: "z.mkv", PlaybackAt: "2024-05-09T00:00:00Z"}); err != nil {
+	if _, err := s.PlaybackRecords.Insert(ctx, &domain.PlaybackRecord{EmbyUserID: "u9", ItemName: "z.mkv", PlaybackAt: "2024-05-09T00:00:00Z"}); err != nil {
 		t.Fatalf("seed again: %v", err)
 	}
 	n, err = s.PlaybackRecords.Clear(ctx, "", "")

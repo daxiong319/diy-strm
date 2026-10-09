@@ -235,56 +235,76 @@ onMounted(load);
       <!-- 服务设置 -->
       <SettingsCard v-if="activeTab === SERVICE_TAB" title="MCP 服务">
         <SettingsRow :changed="'enabled' in dirty">
-          <SettingsRowLabel
-            label="启用 MCP 服务"
-            :changed="'enabled' in dirty"
-            help-title="MCP 服务"
-            help-text="开启后外部 LLM 客户端（Claude Desktop、Cursor 等）可通过下方地址调用本工具集。"
-          />
-          <SettingsBoolSegment v-model="enabled" label="启用 MCP 服务" />
+          <template #info>
+            <SettingsRowLabel
+              label="启用 MCP 服务"
+              :changed="'enabled' in dirty"
+              help-title="MCP 服务"
+              help-text="开启后外部 LLM 客户端（Claude Desktop、Cursor 等）可通过下方地址调用本工具集。"
+            />
+          </template>
+          <template #control>
+            <SettingsBoolSegment v-model="enabled" label="启用 MCP 服务" />
+          </template>
         </SettingsRow>
 
         <SettingsRow>
-          <SettingsRowLabel
-            label="服务地址"
-            help-title="如何接入"
-            help-text="把该地址填入支持 MCP 的客户端，并在请求头 X-API-Key 中携带「API 秘钥」页签里创建的密钥。"
-          />
-          <div class="mcp-settings__url">
-            <code class="mcp-settings__code">{{ serverUrlText }}</code>
-            <AppButton variant="ghost" size="sm" @click="copyServerUrl">
-              <SvgIcon :name="copied ? 'check' : 'copy'" />
-              {{ copied ? "已复制" : "复制" }}
-            </AppButton>
-          </div>
+          <template #info>
+            <SettingsRowLabel
+              label="服务地址"
+              help-title="如何接入"
+              help-text="把该地址填入支持 MCP 的客户端，并在请求头 X-API-Key 中携带「API 秘钥」页签里创建的密钥。"
+            />
+          </template>
+          <template #control>
+            <div class="mcp-settings__url">
+              <code class="mcp-settings__code">{{ serverUrlText }}</code>
+              <AppButton variant="ghost" size="sm" @click="copyServerUrl">
+                <SvgIcon :name="copied ? 'check' : 'copy'" />
+                {{ copied ? "已复制" : "复制" }}
+              </AppButton>
+            </div>
+          </template>
         </SettingsRow>
 
         <SettingsRow :changed="'allow_write_tools' in dirty">
-          <SettingsRowLabel
-            label="允许写操作工具"
-            :changed="'allow_write_tools' in dirty"
-            help-title="写操作"
-            help-text="关闭后模型只能查询，无法执行网盘重命名、移动、新建目录与删除等不可逆操作。"
-          />
-          <SettingsBoolSegment v-model="allowWriteTools" label="允许写操作工具" />
+          <template #info>
+            <SettingsRowLabel
+              label="允许写操作工具"
+              :changed="'allow_write_tools' in dirty"
+              help-title="写操作"
+              help-text="关闭后模型只能查询，无法执行网盘重命名、移动、新建目录与删除等不可逆操作。"
+            />
+          </template>
+          <template #control>
+            <SettingsBoolSegment v-model="allowWriteTools" label="允许写操作工具" />
+          </template>
         </SettingsRow>
 
         <SettingsRow :changed="'max_tool_rounds' in dirty">
-          <SettingsRowLabel
-            label="单轮最大工具调用次数"
-            :changed="'max_tool_rounds' in dirty"
-            help-text="一次提问中模型最多可以连续调用多少次工具，次数越多越慢但能完成更复杂的任务。"
-          />
-          <AppInput v-model="maxToolRounds" type="number" class="mcp-settings__input" />
+          <template #info>
+            <SettingsRowLabel
+              label="单轮最大工具调用次数"
+              :changed="'max_tool_rounds' in dirty"
+              help-text="一次提问中模型最多可以连续调用多少次工具，次数越多越慢但能完成更复杂的任务。"
+            />
+          </template>
+          <template #control>
+            <AppInput v-model="maxToolRounds" type="number" class="mcp-settings__input" />
+          </template>
         </SettingsRow>
 
         <SettingsRow :changed="'timeout' in dirty">
-          <SettingsRowLabel
-            label="单次请求超时"
-            :changed="'timeout' in dirty"
-            help-text="单位秒。工具调用耗时较长时应适当放宽，避免长任务被提前中断。"
-          />
-          <AppInput v-model="timeout" type="number" class="mcp-settings__input" />
+          <template #info>
+            <SettingsRowLabel
+              label="单次请求超时"
+              :changed="'timeout' in dirty"
+              help-text="单位秒。工具调用耗时较长时应适当放宽，避免长任务被提前中断。"
+            />
+          </template>
+          <template #control>
+            <AppInput v-model="timeout" type="number" class="mcp-settings__input" />
+          </template>
         </SettingsRow>
       </SettingsCard>
 
@@ -310,12 +330,16 @@ onMounted(load);
       <!-- 智能助理 -->
       <SettingsCard v-else title="智能助理">
         <SettingsRow :changed="'assistant_enabled' in dirty">
-          <SettingsRowLabel
-            label="启用站内助理"
-            :changed="'assistant_enabled' in dirty"
-            help-text="关闭后，「智能助理」页面不可用（外部 MCP 客户端不受影响）。"
-          />
-          <SettingsBoolSegment v-model="assistantEnabled" label="启用站内助理" />
+          <template #info>
+            <SettingsRowLabel
+              label="启用站内助理"
+              :changed="'assistant_enabled' in dirty"
+              help-text="关闭后，「智能助理」页面不可用（外部 MCP 客户端不受影响）。"
+            />
+          </template>
+          <template #control>
+            <SettingsBoolSegment v-model="assistantEnabled" label="启用站内助理" />
+          </template>
         </SettingsRow>
 
         <div v-if="!assistantEnabled" class="mcp-settings__hint">
@@ -327,71 +351,87 @@ onMounted(load);
         </div>
 
         <SettingsRow :changed="'assistant_base_url' in dirty">
-          <SettingsRowLabel
-            label="接口地址"
-            :changed="'assistant_base_url' in dirty"
-            help-text="留空则复用「AI 识别设置」的接口地址。需兼容 OpenAI 的对话接口。"
-          />
-          <AppInput
-            v-model="assistantBaseUrl"
-            placeholder="https://api.openai.com/v1"
-            class="mcp-settings__input mcp-settings__input--wide"
-          />
+          <template #info>
+            <SettingsRowLabel
+              label="接口地址"
+              :changed="'assistant_base_url' in dirty"
+              help-text="留空则复用「AI 识别设置」的接口地址。需兼容 OpenAI 的对话接口。"
+            />
+          </template>
+          <template #control>
+            <AppInput
+              v-model="assistantBaseUrl"
+              placeholder="https://api.openai.com/v1"
+              class="mcp-settings__input mcp-settings__input--wide"
+            />
+          </template>
         </SettingsRow>
 
         <SettingsRow :changed="'assistant_model_name' in dirty">
-          <SettingsRowLabel
-            label="模型名称"
-            :changed="'assistant_model_name' in dirty"
-            help-text="留空则复用「AI 识别设置」的模型。需支持工具调用（Function Calling）。"
-          />
-          <AppInput
-            v-model="assistantModel"
-            placeholder="gpt-4o-mini"
-            class="mcp-settings__input"
-          />
+          <template #info>
+            <SettingsRowLabel
+              label="模型名称"
+              :changed="'assistant_model_name' in dirty"
+              help-text="留空则复用「AI 识别设置」的模型。需支持工具调用（Function Calling）。"
+            />
+          </template>
+          <template #control>
+            <AppInput
+              v-model="assistantModel"
+              placeholder="gpt-4o-mini"
+              class="mcp-settings__input"
+            />
+          </template>
         </SettingsRow>
 
         <SettingsRow :changed="'assistant_api_key' in dirty || clearApiKey">
-          <SettingsRowLabel
-            label="接口密钥"
-            :changed="'assistant_api_key' in dirty || clearApiKey"
-            help-text="留空则复用「AI 识别设置」的密钥。已保存的密钥不会回显。"
-          />
-          <div class="mcp-settings__key">
-            <AppInput
-              v-model="apiKeyInput"
-              type="password"
-              :placeholder="apiKeyConfigured ? '已配置（留空则不修改）' : '未配置'"
-              :disabled="clearApiKey"
-              class="mcp-settings__input mcp-settings__input--wide"
+          <template #info>
+            <SettingsRowLabel
+              label="接口密钥"
+              :changed="'assistant_api_key' in dirty || clearApiKey"
+              help-text="留空则复用「AI 识别设置」的密钥。已保存的密钥不会回显。"
             />
-            <AppButton
-              v-if="apiKeyConfigured && !clearApiKey"
-              variant="ghost"
-              size="sm"
-              @click="clearApiKey = true"
-            >
-              清除
-            </AppButton>
-            <AppButton v-else-if="clearApiKey" variant="ghost" size="sm" @click="clearApiKey = false">
-              取消清除
-            </AppButton>
-          </div>
+          </template>
+          <template #control>
+            <div class="mcp-settings__key">
+              <AppInput
+                v-model="apiKeyInput"
+                type="password"
+                :placeholder="apiKeyConfigured ? '已配置（留空则不修改）' : '未配置'"
+                :disabled="clearApiKey"
+                class="mcp-settings__input mcp-settings__input--wide"
+              />
+              <AppButton
+                v-if="apiKeyConfigured && !clearApiKey"
+                variant="ghost"
+                size="sm"
+                @click="clearApiKey = true"
+              >
+                清除
+              </AppButton>
+              <AppButton v-else-if="clearApiKey" variant="ghost" size="sm" @click="clearApiKey = false">
+                取消清除
+              </AppButton>
+            </div>
+          </template>
         </SettingsRow>
 
         <SettingsRow :changed="'assistant_prompt' in dirty">
-          <SettingsRowLabel
-            label="系统提示词"
-            :changed="'assistant_prompt' in dirty"
-            help-text="留空则使用内置默认提示词。"
-          />
-          <textarea
-            v-model="assistantPrompt"
-            rows="5"
-            class="mcp-settings__textarea"
-            placeholder="留空使用内置默认提示词"
-          />
+          <template #info>
+            <SettingsRowLabel
+              label="系统提示词"
+              :changed="'assistant_prompt' in dirty"
+              help-text="留空则使用内置默认提示词。"
+            />
+          </template>
+          <template #control>
+            <textarea
+              v-model="assistantPrompt"
+              rows="5"
+              class="mcp-settings__textarea"
+              placeholder="留空使用内置默认提示词"
+            />
+          </template>
         </SettingsRow>
 
         <div class="mcp-settings__actions">

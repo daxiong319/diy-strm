@@ -325,6 +325,10 @@ func FixGuessitAbsoluteEpisodeSplit(name string, parsed map[string]any) map[stri
 }
 
 func ParseFilenameStrict(name string) ParsedMedia {
+	// 全角 ASCII（Ｓ０１Ｅ０１）在所有 \d / [A-Za-z] 正则下都失配，
+	// 先归一化再走解析。映射只覆盖 U+FF01–FF5E 与全角空格，
+	// 不碰中文标点，避免改动既有整理规则的分组键（00-master 禁止项）。
+	name = NormalizeFullWidth(name)
 	sanitized := StripKnownIDTags(name)
 	sanitized = StripReleaseSitePrefix(sanitized)
 	sanitized = StripChineseBracketTags(sanitized)
@@ -379,7 +383,7 @@ func ParseFilenameStrict(name string) ParsedMedia {
 }
 
 func ParseDirName(name string) ParsedMedia {
-	raw := strings.TrimSpace(name)
+	raw := strings.TrimSpace(NormalizeFullWidth(name))
 	for _, ext := range strings.Split(DefaultMediaExtensions, ";") {
 		ext = strings.TrimSpace(ext)
 		if ext == "" {

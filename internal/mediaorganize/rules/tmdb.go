@@ -226,6 +226,14 @@ func strongTMDBTitleKey(title string) string {
 	}, strings.TrimSpace(title))
 }
 
+// NormalizeTitleKey 暴露 strongTMDBTitleKey 的归一化口径，供跨包（订阅身份校验）
+// 复用，保证「同一个标题在任何模块都得到同一个比较键」。
+// 口径：去掉所有非字母数字字符并转小写，因此 "House.of.Cards" 与
+// "House Of Cards" 得到同一个键，"流浪地球 (2009) 4K" 与 "流浪地球2009" 也相同。
+func NormalizeTitleKey(title string) string {
+	return strongTMDBTitleKey(title)
+}
+
 func absInt(v int) int {
 	if v < 0 {
 		return -v

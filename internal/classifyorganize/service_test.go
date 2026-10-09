@@ -192,7 +192,14 @@ func TestClassifyMediaUsesDirectTypeIndexWithoutTMDB(t *testing.T) {
 	}
 }
 
-func TestClassifyRegionAndGenreUseTMDBValueOrder(t *testing.T) {
+// TestClassifyUsesRuleOrderNotTMDBValueOrder 验收①的语义面：
+// 命中的是「模板里第一条命中的规则」，不是「命中值在 TMDB 列表里位置最靠前的规则」。
+//
+// 这条用例在 T02 之前断言的是相反的语义（按 TMDB 返回顺序命中）。改成
+// first-match-wins 是任务书 02-classification-v2.md 的硬要求：顺序即优先级，
+// 否则用户拖一下规则顺序完全不起作用，模板一级只有电影/电视剧两条时更没有
+// 任何办法表达「我先要电影、再要电视剧」以外的意图。
+func TestClassifyUsesRuleOrderNotTMDBValueOrder(t *testing.T) {
 	svc := newService(t, true)
 	cfg := svc.Config()
 	cfg.SelectedTemplate = TemplateRegion
@@ -209,6 +216,8 @@ func TestClassifyRegionAndGenreUseTMDBValueOrder(t *testing.T) {
 	if !region.Matched || region.Category != "欧美" {
 		t.Fatalf("地区分类结果异常: %+v", region)
 	}
+	// US 在 TMDB 列表里排第一，但模板里 CN 排在前面，所以命中国产。
+	// 这是 first-match-wins 的直接体现：US;GB;FR;DE;IT;ES 那条永远轮不到。
 
 	cfg = svc.Config()
 	cfg.SelectedTemplate = TemplateGenre
@@ -224,8 +233,10 @@ func TestClassifyRegionAndGenreUseTMDBValueOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !genre.Matched || genre.Category != "喜剧" {
-		t.Fatalf("应按 TMDB 首个可匹配值优先命中喜剧: %+v", genre)
+	// 模板里「综艺」排在「喜剧」前面且 genres 含真人秀，所以先命中综艺 ——
+	// 即使 TMDB 把喜剧排在返回列表第一位。
+	if !genre.Matched || genre.Category != "综艺" {
+		t.Fatalf("应按模板规则顺序命中综艺: %+v", genre)
 	}
 
 	movieGenre, err := svc.Classify(context.Background(), classification.Request{
@@ -234,8 +245,9 @@ func TestClassifyRegionAndGenreUseTMDBValueOrder(t *testing.T) {
 			{"name": "科幻"}, {"name": "动作"},
 		}},
 	})
-	if err != nil || !movieGenre.Matched || movieGenre.Category != "科幻奇幻" {
-		t.Fatalf("应按 TMDB 返回顺序优先命中科幻: decision=%+v err=%v", movieGenre, err)
+	// 动作冒险排在科幻奇幻之前，所以命中动作冒险。
+	if err != nil || !movieGenre.Matched || movieGenre.Category != "动作冒险" {
+		t.Fatalf("应按模板规则顺序命中动作冒险: decision=%+v err=%v", movieGenre, err)
 	}
 }
 

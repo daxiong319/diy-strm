@@ -41,13 +41,18 @@ import (
 	"litepan/internal/fusemount"
 	"litepan/internal/logx"
 	"litepan/internal/mcp"
+	"litepan/internal/medialibshare"
 	"litepan/internal/mediaorganize"
+	"litepan/internal/mediarequest"
+	"litepan/internal/mediaupgrade"
 	"litepan/internal/moviepilot"
 	"litepan/internal/notification"
 	"litepan/internal/notifychannel"
 	"litepan/internal/offlinedownload"
 	"litepan/internal/playback"
+	"litepan/internal/playmonitor"
 	"litepan/internal/quarktv"
+	"litepan/internal/rbac"
 	"litepan/internal/settings"
 	"litepan/internal/share/dav"
 	"litepan/internal/spacecleanup"
@@ -99,9 +104,18 @@ type Deps struct {
 	SpaceCleanup     *spacecleanup.Service
 	CoverExtract     *coverextract.Service
 	NotifyChannels   *notifychannel.Service
-	CASRunner        *cas.Runner
+	// NotifyRetries 补发队列仓储：webhook 投递失败的记录与手动重投。
+	NotifyRetries domain.NotifyRetryRepository
+	// NotifyRetryRunner 补发 worker。API 手动重投时立刻跑一轮，
+	// 否则用户点了按钮要等最多 30 秒才看到结果，会以为按钮坏了。
+	NotifyRetryRunner *notifychannel.RetryWorker
+	CASRunner         *cas.Runner
 	// PlaybackRecords 播放记录仓储：面板只读与清理用它，写入由 playbackrecord.Service 负责。
 	PlaybackRecords domain.PlaybackRecordRepository
+	// PlayMonitor 播放监控服务：三态实时会话 + 观影报告生成。
+	PlayMonitor *playmonitor.Service
+	// PlayTraffic 日流量桶仓储：今日/本月/累计与排行。
+	PlayTraffic domain.PlayTrafficRepository
 	// Renames 批量重命名历史与常用组合仓储：文件操作类接口直接用仓储，与 PlaybackRecords 同风格。
 	Renames domain.RenameRepository
 	// MCPChat MCP 助理对话历史仓储。为 nil 时对话历史不落库（只做无状态单轮问答），
@@ -110,14 +124,50 @@ type Deps struct {
 	// SubtitleTasks 字幕任务历史仓储。为 nil 时字幕检索/下载/校正照常工作，
 	// 只是不落任务历史。
 	SubtitleTasks *subtitle.TaskStore
-	// SubtitleService 字幕服务实例（Muvyo 移植③）。
+	// SubtitleService 字幕服务实例（参考实现 移植③）。
 	//
 	// 由装配层构造并注入，使「整理流程自动下载字幕」与「管理页手动操作」
 	// 共用同一个实例与同一份配置快照；为 nil 时路由层按需自行惰性构造，
 	// 保证单独测试 Handler 时不依赖装配层。
 	SubtitleService *subtitle.Service
-	DataDir         string
-	StrmDir         string
+	// MediaUpgrade 洗版服务（参考实现 移植⑦）。
+	//
+	// 为 nil 时 /media-upgrade 下所有接口返回「该操作不支持」，
+	// 而不是让管理页出现一个点开就报错的入口。
+	MediaUpgrade *mediaupgrade.Service
+	// RBAC 用户与权限服务（参考实现 移植⑧）。
+	//
+	// 为 nil 或 mo_rbac_enabled=false 时所有 RequirePermission 中间件直接放行，
+	// 与本功能上线前的行为逐字一致（验收①）。
+	RBAC *rbac.Service
+	// MediaRequest 求片中心服务（参考实现 移植⑨）。
+	//
+	// 为 nil 时求片中心整体不可用：管理台接口返回「该操作不支持」，
+	// 求片站端口不起（见 mediarequest.Listener）。求片中心是可选项，
+	// 不装配它不应该让管理台出现任何异常。
+	MediaRequest *mediarequest.Service
+	// RequestSigner 求片站会话签发器。
+	//
+	// 与 MediaRequest 分开传：签发器只需要 core secret，不需要数据库。
+	// 分开之后单测可以只测签名而不必装配整个服务。
+	RequestSigner *mediarequest.SessionSigner
+	// RequestPortalFS 求片站构建产物（request.html + assets）。
+	//
+	// 为 nil 时求片站页面返回一段「前端未构建」的提示，
+	// 而不是 500 —— 排查「端口通了但页面空白」时这条提示直接指明原因。
+	RequestPortalFS fs.FS
+	// RequestPortalHTML 求片站入口 HTML（RequestPortalFS 里的 request.html）。
+	RequestPortalHTML []byte
+	// LibraryShare 免登录分享页服务（参考实现 移植⑩）。
+	//
+	// 为 nil 时分享相关端点**一个都不注册**：访客路由 404、管理端 404。
+	// 这里不注册「拒绝中间件」是有意的 —— 一个不存在的分享功能，
+	// 在路由表里应该表现为根本没有这条路径，而不是有一个专门回 403 的路径。
+	// 装配层不装它时管理台不出现任何异常入口（见 AdminView 的功能开发中白名单）。
+	LibraryShare *medialibshare.Service
+	DataDir      string
+	StrmDir      string
+
 	// MediaRoots 本地媒体根目录白名单，供 POST /admin/cas/generate-local 校验本地路径。
 	// 为空切片表示该功能未启用。
 	MediaRoots        []string
@@ -142,6 +192,13 @@ type Handler struct {
 	strm                 *strm.Service
 	cacheRetention       *cacheretention.Service
 	mediaOrganize        *mediaorganize.Service
+	mediaUpgrade         *mediaupgrade.Service
+	rbac                 *rbac.Service
+	mediaRequest         *mediarequest.Service
+	requestSigner        *mediarequest.SessionSigner
+	portalFS             fs.FS
+	portalHTML           []byte
+	libraryShare         *medialibshare.Service
 	moviePilot           *moviepilot.Service
 	aiOrganize           *aiorganize.Service
 	classifyOrganize     *classifyorganize.Service
@@ -163,8 +220,12 @@ type Handler struct {
 	spaceCleanup         *spacecleanup.Service
 	coverExtract         *coverextract.Service
 	notifyChannels       *notifychannel.Service
+	notifyRetries        domain.NotifyRetryRepository
+	notifyRetryRunner    *notifychannel.RetryWorker
 	casRunner            *cas.Runner
 	storePlaybackRecords domain.PlaybackRecordRepository
+	playMonitor          *playmonitor.Service
+	playTraffic          domain.PlayTrafficRepository
 	renames              domain.RenameRepository
 	mcpChat              *mcp.ChatStore
 	subtitleTasks        *subtitle.TaskStore
@@ -180,11 +241,26 @@ type Handler struct {
 	slowLogs    slowRequestLogs
 }
 
-// NewRouter 装配并返回 HTTP 路由（含内嵌管理页面）。
-func NewRouter(d Deps) http.Handler {
+// newHandler 由 Deps 装配 Handler。
+//
+// 单独抽出来是因为现在有**两棵**互不相干的路由树共用同一份 Deps：
+// 管理台（NewRouter）和求片站（NewRequestPortalRouter）。
+// 求片站必须能从同一份依赖里拿到 mediaRequest / requestSigner / adminAuth / rbac ——
+// 它要自己算 Principal、自己校验凭据；
+// 如果另起一个 Handler 手工挑字段，两边就会各有一份「我以为装上了」的清单，
+// 而那正是这个仓库最常见的那类假接线。
+func newHandler(d Deps) *Handler {
 	apiLog := slog.Default()
 	if d.Logs != nil {
 		apiLog = d.Logs.For(logx.ModuleAPI)
+	}
+	// 求片站前端产物默认从内嵌 embed 里取，装配层显式注入时才让注入值生效。
+	//
+	// 默认值放在这里而不是塞进 Deps 由装配层填，是为了少两处「必须记得赋值」的义务：
+	// 这两个字段漏赋值的后果不是编译错误，而是求片站打开是一片空白页提示，
+	// 属于那种只有真机点开才会发现的坑。
+	if d.RequestPortalFS == nil && d.RequestPortalHTML == nil {
+		d.RequestPortalFS, d.RequestPortalHTML = LoadPortalFS(EmbeddedWebFS())
 	}
 	h := &Handler{
 		bootID:               uuid.NewString(),
@@ -203,6 +279,13 @@ func NewRouter(d Deps) http.Handler {
 		strm:                 d.Strm,
 		cacheRetention:       d.CacheRetention,
 		mediaOrganize:        d.MediaOrganize,
+		mediaUpgrade:         d.MediaUpgrade,
+		rbac:                 d.RBAC,
+		mediaRequest:         d.MediaRequest,
+		requestSigner:        d.RequestSigner,
+		portalFS:             d.RequestPortalFS,
+		portalHTML:           d.RequestPortalHTML,
+		libraryShare:         d.LibraryShare,
 		moviePilot:           d.MoviePilot,
 		aiOrganize:           d.AIOrganize,
 		classifyOrganize:     d.ClassifyOrganize,
@@ -224,8 +307,12 @@ func NewRouter(d Deps) http.Handler {
 		spaceCleanup:         d.SpaceCleanup,
 		coverExtract:         d.CoverExtract,
 		notifyChannels:       d.NotifyChannels,
+		notifyRetries:        d.NotifyRetries,
+		notifyRetryRunner:    d.NotifyRetryRunner,
 		casRunner:            d.CASRunner,
 		storePlaybackRecords: d.PlaybackRecords,
+		playMonitor:          d.PlayMonitor,
+		playTraffic:          d.PlayTraffic,
 		renames:              d.Renames,
 		mcpChat:              d.MCPChat,
 		subtitleTasks:        d.SubtitleTasks,
@@ -235,6 +322,16 @@ func NewRouter(d Deps) http.Handler {
 		mediaRoots:           d.MediaRoots,
 		onSettingsUpdated:    d.OnSettingsUpdated,
 	}
+	return h
+}
+
+// NewRouter 装配并返回管理台路由树（含内嵌管理页面）。
+func NewRouter(d Deps) http.Handler {
+	apiLog := slog.Default()
+	if d.Logs != nil {
+		apiLog = d.Logs.For(logx.ModuleAPI)
+	}
+	h := newHandler(d)
 
 	r := chi.NewRouter()
 	r.Use(trackResponseCommit)
@@ -252,6 +349,18 @@ func NewRouter(d Deps) http.Handler {
 	r.Head("/cas/play", h.casPlay)
 	r.Get("/cas/play/*", h.casPlay)
 	r.Head("/cas/play/*", h.casPlay)
+
+	// 免登录分享页访客侧（参考实现 移植⑩）：换令牌 / 上报事件 / 取流。
+	//
+	// 刻意挂在 /api 之外、也不在下面的 requireAdmin 组里 ——
+	// 访客没有账号会话，唯一的凭证是 X-Share-Token 头。
+	// 这组路由由 medialibshare.Service 为 nil 时整体不注册（⇒ 全 404）。
+	//
+	// ⚠️ GET /share/{code} 必须注册在文件末尾 r.Handle("/*", spaHandler(sub))
+	// **之前**：chi 会优先匹配更具体的 pattern，但写在兜底之前
+	// 一眼就能看出「分享页是有意抢在 SPA 兜底前面的」，
+	// 将来有人把注册顺序调换过去时 review 一眼能看出问题。
+	h.RegisterLibraryShareGuestRoutes(r)
 
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/internal/cover-source/{token}", h.coverExtractSource)
@@ -300,6 +409,12 @@ func NewRouter(d Deps) http.Handler {
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(h.requireAdmin)
+			// 用户与权限（RBAC，参考实现 移植⑧）：注册在 requireAdmin 组内，
+			// 所以它自己只管权限、不重复管会话。
+			h.RegisterRBACRoutes(r)
+			// 求片中心管理台（参考实现 移植⑨）：审核、规则、统计。
+			// 与 RBAC 同理，函数内部只管权限、不重复管会话。
+			h.RegisterRequestCenterRoutes(r)
 			// MCP 站内设置与助理对话端点：走管理员会话鉴权。
 			h.RegisterMcpAdminRoutes(r)
 			// 字幕智能处理端点：本函数内部自带 requireAdmin。
@@ -350,19 +465,31 @@ func NewRouter(d Deps) http.Handler {
 				r.Get("/drivers", h.listDrivers)
 				r.Get("/dev/state", h.getDevState)
 				r.Post("/dev/unlock", h.unlockDevMode)
-				r.Get("/accounts", h.listAccounts)
 				r.Get("/overview", h.dashboardOverview)
-				r.Post("/accounts", h.createAccount)
-				r.Get("/accounts/{id}", h.getAccount)
-				r.Put("/accounts/{id}", h.updateAccount)
-				r.Delete("/accounts/{id}", h.deleteAccount)
-				r.Post("/accounts/{id}/toggle", h.toggleAccount)
-				r.Post("/accounts/{id}/set-default", h.setDefaultAccount)
-				r.Post("/accounts/{id}/refresh-auth", h.refreshAccountAuth)
-				r.Post("/accounts/{id}/refresh-profile", h.refreshAccountProfile)
-				r.Get("/settings", h.getSettings)
-				r.Put("/settings", h.updateSettings)
+				// 账号与系统设置都在这组里：任一单独授权都能用，
+				// 但改密码、删账号这类改的是全局凭据，所以与系统设置同级。
+				r.Group(func(r chi.Router) {
+					r.Use(h.requirePermission(rbac.PermAccountManage))
+					r.Get("/accounts", h.listAccounts)
+					r.Post("/accounts", h.createAccount)
+					r.Get("/accounts/{id}", h.getAccount)
+					r.Put("/accounts/{id}", h.updateAccount)
+					r.Delete("/accounts/{id}", h.deleteAccount)
+					r.Post("/accounts/{id}/toggle", h.toggleAccount)
+					r.Post("/accounts/{id}/set-default", h.setDefaultAccount)
+					r.Post("/accounts/{id}/refresh-auth", h.refreshAccountAuth)
+					r.Post("/accounts/{id}/refresh-profile", h.refreshAccountProfile)
+				})
+				// 系统设置：mo_* 全部改在这里，所以 system.manage 是一把万能钥匙，
+				// 也是洗版开关与 RBAC 开关自己所在的地方。
+				r.Group(func(r chi.Router) {
+					r.Use(h.requirePermission(rbac.PermSystemManage))
+					r.Get("/settings", h.getSettings)
+					r.Put("/settings", h.updateSettings)
+				})
 				r.Route("/api-keys", func(r chi.Router) {
+					// API Key 是绕过会话的长期凭据，权限与系统设置同级。
+					r.Use(h.requirePermission(rbac.PermSystemManage))
 					r.Get("/", h.listApiKeys)
 					r.Post("/", h.createApiKey)
 					r.Post("/strm/rotate", h.rotateStrmKey)
@@ -401,7 +528,23 @@ func NewRouter(d Deps) http.Handler {
 					r.Put("/{id}", h.updateNotifyChannel)
 					r.Delete("/{id}", h.deleteNotifyChannel)
 				})
+				r.Route("/notify-scenes", func(r chi.Router) {
+					r.Get("/", h.notifySceneList)
+				})
+				r.Route("/notify-retries", func(r chi.Router) {
+					r.Get("/", h.notifyRetryList)
+					r.Post("/clear", h.notifyRetryClear)
+					r.Post("/{id}/redrive", h.notifyRetryRedrive)
+					r.Get("/{id}", h.notifyRetryDetail)
+				})
+				r.Route("/dir-refs", func(r chi.Router) {
+					// 目录配置防呆提示（T32）。只读接口，但要读洗版规则和
+					// 自动化规则 —— 这两处的配置管理权限不同，所以放在
+					// /admin 平级而不是塞进 media-upgrade/automation 的子树。
+					r.Get("/", h.resolveDirRef)
+				})
 				r.Route("/discovery", func(r chi.Router) {
+					r.Use(h.requirePermission(rbac.PermDiscoverView))
 					r.Get("/meta", h.discoverMeta)
 					r.Get("/cover", h.discoveryCoverProxy)
 					r.Get("/explore", h.discoverExplore)
@@ -438,11 +581,22 @@ func NewRouter(d Deps) http.Handler {
 						r.Post("/search", h.searchMediaResources)
 						r.Post("/copy-link", h.copyRe0ResourceLink)
 						r.Post("/transfer", h.transferMediaResource)
-						r.Post("/offline", h.offlineMediaResource)
+						// 这条路也会花配额，绕过上面的 /offline-download 组，
+						// 所以必须单独再圈一次，否则从求片页就能绕过去下东西。
+						r.Group(func(r chi.Router) {
+							r.Use(h.requirePermission(rbac.PermOfflineDownloadRun))
+							r.Post("/offline", h.offlineMediaResource)
+						})
 					})
 					r.Route("/subscriptions", func(r chi.Router) {
+						// 新增订阅要花钱，所以是超管专属。判定只读 rbac 里的
+						// superOnlyPermissions，这两项永远不下放 ——
+						// permission.manage 拿到手也不能勾。
+						r.Group(func(r chi.Router) {
+							r.Use(h.requirePermission(rbac.PermSubscriptionCreate))
+							r.Post("/", h.subscriptionSave)
+						})
 						r.Get("/", h.subscriptionList)
-						r.Post("/", h.subscriptionSave)
 						r.Get("/by-key", h.subscriptionByKey)
 						r.Post("/preview", h.subscriptionPreviewMatch)
 						r.Post("/run-due", h.subscriptionRunDue)
@@ -483,6 +637,7 @@ func NewRouter(d Deps) http.Handler {
 					})
 				})
 				r.Route("/cas", func(r chi.Router) {
+					r.Use(h.requirePermission(rbac.PermCASManage))
 					r.Get("/records", h.casListRecords)
 					r.Get("/records/{id}", h.casGetRecord)
 					r.Delete("/records/{id}", h.casDeleteRecord)
@@ -547,6 +702,11 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/rules/reorder", h.reorderClassificationRules)
 					r.Post("/rules/import", h.importClassificationRules)
 					r.Get("/rules/export", h.exportClassificationRules)
+					// C-8 只读出口：给洗版筛选、清理保护等跨模块消费者
+					// 一个"当前配了哪些分类目录"的查询口。它挂在 tools 下
+					// 而不是分类规则编辑口旁边，是为了让消费者不必先知道
+					// 分类模板存在哪里——它们只关心清单。
+					r.Get("/categories", h.listClassificationCategories)
 				})
 				r.Route("/tools/quarktv", func(r chi.Router) {
 					r.Get("/status", h.getQuarkTVStatus)
@@ -601,6 +761,26 @@ func NewRouter(d Deps) http.Handler {
 					r.Get("/fallbacks", h.listMoviePilotFallbacks)
 					r.Get("/fallbacks/summary", h.getMoviePilotFallbackSummary)
 				})
+				r.Route("/media-upgrade", func(r chi.Router) {
+					// 洗版会删用户文件，权限与它自己那个开关分开：
+					// 开关决定「这个功能开不开启」，权限决定「这个人能不能用」。
+					r.Use(h.requirePermission(rbac.PermMediaUpgradeManage))
+					// 扫描（只判定，不动文件）
+					r.Get("/scans", h.listMediaUpgradeScans)
+					r.Post("/scans", h.createMediaUpgradeScan)
+					r.Get("/scans/{id}", h.getMediaUpgradeScan)
+					r.Post("/scans/{id}/execute", h.executeMediaUpgradeScan)
+					// 判定记录
+					r.Get("/records", h.listMediaUpgradeRecords)
+					r.Get("/records/{id}", h.getMediaUpgradeRecord)
+					// 规则
+					r.Get("/rules", h.listMediaUpgradeRules)
+					r.Post("/rules", h.createMediaUpgradeRule)
+					r.Put("/rules/{id}", h.updateMediaUpgradeRule)
+					r.Delete("/rules/{id}", h.deleteMediaUpgradeRule)
+					// 规则试算：纯函数、只读、无副作用。
+					r.Post("/rule-trial", h.mediaUpgradeRuleTrial)
+				})
 				r.Route("/media-organize", func(r chi.Router) {
 					r.Get("/tasks", h.listMediaOrganizeTasks)
 					r.Post("/tasks", h.createMediaOrganizeTask)
@@ -623,6 +803,11 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/test-tmdb", h.testMediaOrganizeTMDB)
 					r.Get("/search-tmdb", h.searchMediaOrganizeTMDB)
 					r.Post("/tasks/{id}/bindings", h.setMediaOrganizeBinding)
+					// C-7 分类预览：只算不写。挂在 media-organize 下而不是
+					// tools/classification 下，是因为它回答的是「这个文件会被
+					// 放到哪个目录」这个整理计划的问题，而它是媒体整理页上的一行提示。
+					// 分类规则的增删改仍然留在 tools/classification。
+					r.Post("/classification/preview", h.previewClassification)
 				})
 				r.Route("/strm-scrape", func(r chi.Router) {
 					r.Get("/settings", h.getStrmScrapeSettings)
@@ -659,6 +844,49 @@ func NewRouter(d Deps) http.Handler {
 					r.Delete("/{id}", h.playbackRecordDelete)
 					r.Post("/clear", h.playbackRecordsClear)
 				})
+				// 播放监控 + 观影报告（计费中 / CDN 直连 / 局域网 三态）。
+				//
+				// 挂在 /admin 子树**里面**，真实路径是 /api/admin/play-monitor/*，
+				// 与前端 web/src/api/playMonitor.ts 一致。理由同上：
+				// library-share 挂到 /admin 之外时，前端按 /admin/ 写，
+				// 五个操作全部 404。不在前面再挂一份重复路由 ——
+				// 两套路径都能访问同一功能，日后改一处漏一处。
+				r.Route("/play-monitor", func(r chi.Router) {
+					r.Get("/sessions", h.playMonitorSessions)
+					r.Get("/traffic", h.playMonitorTraffic)
+					r.Post("/traffic/clear", h.playMonitorTrafficClear)
+					r.Get("/report", h.playReport)
+					r.Get("/report/chart", h.playReportChart)
+					r.Get("/options", h.playMonitorOptions)
+				})
+				// RSS 订阅源（T16）。真实路径 /api/admin/rss-*。
+				//
+				// 挂在 /admin 子树**里面**（理由同上：library-share 挂到 /admin
+				// 之外时前端按 /admin/ 写，五个操作全部 404）。因为前缀是
+				// /rss-sources 而不是 /discovery/rss-sources，所以权限闸要自己
+				// 包一层，复用发现板块的 PermDiscoverView —— RSS 就是发现板块的
+				// 第三个入口，不给它单开一个权限位。
+				//
+				// ⚠️ /preview、/sync 这类字面量路径必须排在 /{id} 之前：
+				// chi 逐段匹配，/{id} 会把 "preview" 当成 id 吃掉。
+				r.Group(func(r chi.Router) {
+					r.Use(h.requirePermission(rbac.PermDiscoverView))
+					r.Route("/rss-sources", func(r chi.Router) {
+						r.Get("/", h.rssSources)
+						r.Post("/", h.rssSourceCreate)
+						r.Get("/{id}", h.rssSourceDetail)
+						r.Put("/{id}", h.rssSourceUpdate)
+						r.Delete("/{id}", h.rssSourceDelete)
+						r.Post("/{id}/sync", h.rssSourceSync)
+					})
+					r.Route("/rss-history", func(r chi.Router) {
+						r.Get("/", h.rssHistory)
+						r.Delete("/{id}", h.rssHistoryDelete)
+					})
+					r.Post("/rss-preview", h.rssPreview)
+					r.Post("/rss-sync", h.rssSyncAll)
+					r.Get("/rss-options", h.rssOptions)
+				})
 				r.Route("/fuse", func(r chi.Router) {
 					r.Get("/status", h.fuseStatus)
 					r.Put("/config", h.updateFuseConfig)
@@ -672,6 +900,20 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/mounts/{id}/mount", h.mountFuse)
 					r.Post("/mounts/{id}/unmount", h.unmountFuse)
 				})
+				// 免登录分享页管理端（参考实现 移植⑩）：创建/列表/改期/撤销/统计。
+				//
+				// 挂在 /admin 子树**里面**，真实路径是 /api/admin/library-shares/*，
+				// 与 T10 任务书 §2 和前端 web/src/api/libraryShare.ts 一致。
+				//
+				// 它曾经挂在上面那个 requireAdmin 组里、也就是 /admin 之外，
+				// 于是真实路径变成 /api/library-shares/*，而前端按 /admin/ 写 ——
+				// 分享管理页五个操作全部 404。T29 的前后端路径一致性守卫查出来的，
+				// 当时按 T29 的「只报告不修」约定记在白名单里。
+				//
+				// 不在前端去掉 /admin 来迁就错误的注册位置，也不在这儿再挂一份
+				// /library-shares 重复路由：两套路径都能访问同一功能，
+				// 日后改一处漏一处，是新的假接线来源。
+				h.RegisterLibraryShareRoutes(r)
 			})
 			r.Post("/oauth/start", h.startOAuth)
 			r.Get("/oauth/status/{session_id}", h.oauthStatus)
@@ -688,7 +930,11 @@ func NewRouter(d Deps) http.Handler {
 				r.Head("/download", h.downloadFile)
 			})
 			r.Group(func(r chi.Router) {
+				// 这一组全是「改动文件」的动作：删、改名、移动、建目录。
+				// 只圈写操作、不圈上面那组只读接口（浏览、下载），
+				// 这样「只能看不能动」的账号还能当只读运维用。
 				r.Use(h.requireAdmin)
+				r.Use(h.requirePermission(rbac.PermFileManage))
 				r.Delete("/delete", h.deleteFiles)
 				r.Post("/move", h.moveFiles)
 				r.Post("/copy", h.copyFiles)
@@ -705,7 +951,11 @@ func NewRouter(d Deps) http.Handler {
 				r.Post("/batch-rename/presets", h.saveBatchRenamePreset)
 				r.Delete("/batch-rename/presets", h.deleteBatchRenamePreset)
 				r.Post("/create-folder", h.createFolder)
-				r.Post("/upload-task", h.createUploadTask)
+				// 离线下载要花配额，同样超管专属（理由见上面 subscriptionSave）。
+				r.Group(func(r chi.Router) {
+					r.Use(h.requirePermission(rbac.PermOfflineDownloadRun))
+					r.Post("/upload-task", h.createUploadTask)
+				})
 				r.Get("/upload/runtime", h.getUploadRuntime)
 				r.Put("/upload/runtime", h.updateUploadRuntime)
 				r.Get("/upload/tasks", h.listUploadTasks)
@@ -718,9 +968,14 @@ func NewRouter(d Deps) http.Handler {
 				r.Post("/upload/tasks/batch-delete", h.batchDeleteUploadTasks)
 				r.Route("/offline-download", func(r chi.Router) {
 					r.Get("/capabilities", h.offlineDownloadCapabilities)
-					r.Post("/urls", h.addOfflineURLs)
-					r.Post("/torrent/prepare", h.prepareOfflineTorrent)
-					r.Post("/torrent", h.addOfflineTorrent)
+					// 只圈住「真正花配额」的三个端点，任务列表仍然可读 ——
+					// 一个只能看不能下的运维角色需要知道任务跑成什么样。
+					r.Group(func(r chi.Router) {
+						r.Use(h.requirePermission(rbac.PermOfflineDownloadRun))
+						r.Post("/urls", h.addOfflineURLs)
+						r.Post("/torrent/prepare", h.prepareOfflineTorrent)
+						r.Post("/torrent", h.addOfflineTorrent)
+					})
 					r.Get("/tasks", h.listOfflineDownloadTasks)
 					r.Post("/tasks/refresh", h.refreshOfflineDownloadTasks)
 					r.Post("/tasks/batch-delete", h.batchDeleteOfflineDownloadTasks)
@@ -750,6 +1005,9 @@ func NewRouter(d Deps) http.Handler {
 	if err != nil {
 		panic(err) // 编译期内嵌，理论上不会失败
 	}
+	// 访客分享页 HTML（/share/{code}）：与上面 RegisterLibraryShareGuestRoutes
+	// 成对，两处都在这一行之前 —— 见那里的注释。
+	h.RegisterLibrarySharePageRoutes(r)
 	r.Handle("/*", spaHandler(sub))
 
 	return davBypass(davSrv, r)

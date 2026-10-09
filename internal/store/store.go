@@ -22,10 +22,14 @@ type Store struct {
 	AutomationRuns      domain.AutomationRunRepository
 	QuarkTVBindings     domain.QuarkTVBindingRepository
 	NotifyChannels      domain.NotifyChannelRepository
+	NotifyRetries       domain.NotifyRetryRepository
 	EmbyRefreshTasks    domain.EmbyRefreshTaskRepository
 	EmbyIndex           domain.EmbyIndexRepository
 	MoviePilot          domain.MoviePilotRepository
 	PlaybackRecords     domain.PlaybackRecordRepository
+	PlayTraffic         domain.PlayTrafficRepository
+	RSSSources          domain.RSSSourceRepository
+	RSSHistory          domain.RSSHistoryRepository
 	Renames             domain.RenameRepository
 }
 
@@ -50,10 +54,14 @@ func New(db *DB) *Store {
 		AutomationRuns:      &automationRunRepo{db: db},
 		QuarkTVBindings:     &quarktvBindingRepo{db: db},
 		NotifyChannels:      &notifyChannelRepo{db: db},
+		NotifyRetries:       &notifyRetryRepo{db: db},
 		EmbyRefreshTasks:    &embyRefreshTaskRepo{db: db},
 		EmbyIndex:           &embyIndexRepo{db: db},
 		MoviePilot:          &moviePilotRepo{db: db},
 		PlaybackRecords:     &playbackRecordRepo{db: db},
+		PlayTraffic:         &playTrafficRepo{db: db},
+		RSSSources:          &rssSourceRepo{db: db},
+		RSSHistory:          &rssHistoryRepo{db: db},
 		Renames:             &renameRepo{db: db},
 	}
 }

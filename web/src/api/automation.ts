@@ -1,6 +1,15 @@
 import { http } from "./client";
 
-export type AutomationTriggerType = "daily" | "interval" | "advanced" | "webhook" | "offline_download" | "cas_autosave";
+// play_report 是 T11 新增的排期型触发器：语义与 advanced 一致（每周星期 / 每月日期 + 触发时间），
+// 区别是它先生成观影报告排行，再交给后面的动作去推送。
+export type AutomationTriggerType =
+  | "daily"
+  | "interval"
+  | "advanced"
+  | "play_report"
+  | "webhook"
+  | "offline_download"
+  | "cas_autosave";
 export type AutomationStatus = "running" | "paused";
 export type AutomationCondition = "always" | "prev_success" | "prev_failed";
 export type AutomationActionType = "cache_clear" | "organize" | "strm" | "strm_scrape" | "delay" | "emby_refresh" | "emby_complete_media_info" | "fnos_scan" | "fnos_refresh_metadata" | "notify";

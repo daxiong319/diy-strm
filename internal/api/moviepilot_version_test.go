@@ -11,7 +11,7 @@ import (
 
 // TestMoviePilotVersionHandlerShape 锁定 /api/moviepilot/version 的响应形状。
 //
-// 该端点是 Muvyo 移植①（MoviePilot 版本探测）的对外消费者：前端据 major_version/display
+// 该端点是 参考实现 移植①（MoviePilot 版本探测）的对外消费者：前端据 major_version/display
 // 展示版本、据 degraded 提示「探测失败，已回退 v1/v2 行为」。探测失败必须是 200 + degraded=true，
 // 而不是错误响应 —— 否则「MoviePilot 没起」会让整个设置页报错，而这恰恰是最常见的状态。
 //

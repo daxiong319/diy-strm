@@ -466,7 +466,7 @@
               <div class="field-tip">CAS 清单转存到该目录或其任意子目录后触发；不选则任意账号、任意目录的转存都会触发。</div>
             </div>
           </template>
-          <template v-else-if="form.trigger_type === 'advanced'">
+          <template v-else-if="form.trigger_type === 'advanced' || form.trigger_type === 'play_report'">
             <div class="cfg-row">
               <label>执行周期</label>
               <AutomationAdvancedSchedule
@@ -769,7 +769,8 @@ const triggerGroups = [
     items: [
       { value: 'daily', label: '每天定时', icon: 'clock', desc: '每天在指定时间自动启动联动' },
       { value: 'interval', label: '时间 + 间隔', icon: 'rotate', desc: '从指定时间开始，按小时周期循环执行' },
-      { value: 'advanced', label: '高级定时', icon: 'clock-rotate-left', desc: '按每周星期或每月日期，在指定时间执行' }
+      { value: 'advanced', label: '高级定时', icon: 'clock-rotate-left', desc: '按每周星期或每月日期，在指定时间执行' },
+      { value: 'play_report', label: '观影报告', icon: 'chart-column', desc: '按每周星期或每月日期生成观影报告排行，并推送到通知渠道' }
     ]
   },
   {
@@ -1076,6 +1077,9 @@ const triggerNodeTitle = computed(() => {
   if (form.trigger_type === 'cas_autosave') {
     return triggerReady.value ? `CAS 转存完成：${casAutoSaveDirectoryLabel.value}` : 'CAS 转存完成'
   }
+  if (form.trigger_type === 'play_report') {
+    return form.trigger_config.time ? `观影报告：${advancedScheduleLabel(form.trigger_config)}` : '观影报告'
+  }
   return form.trigger_config.time ? `每天 ${form.trigger_config.time}` : '每天定时'
 })
 
@@ -1092,6 +1096,8 @@ const triggerNodeSub = computed(() => (
     ? '任务目标位于所选目录或其子目录时触发'
     : form.trigger_type === 'cas_autosave'
     ? 'CAS 转存到所选目录或其子目录时触发'
+    : form.trigger_type === 'play_report'
+    ? '按选择的星期或日期生成观影报告排行'
     : '每天到点自动启动联动'
 ))
 
@@ -1319,6 +1325,10 @@ const setTriggerType = (type) => {
     form.trigger_config.start_time = ''
   } else if (type === 'cas_autosave') {
     form.trigger_config.time = ''
+    form.trigger_config.start_time = ''
+  } else if (type === 'play_report') {
+    // 观影报告是排期型触发器：复用高级定时的 weekday / month_days 语义，
+    // 所以这里**不能**像 daily / interval 那样清掉它们。
     form.trigger_config.start_time = ''
   }
 }
@@ -1966,6 +1976,11 @@ const triggerLabel = (rule) => {
     const accountName = String(config.account_name || '').trim() || '任意账号'
     return `CAS 转存完成：${accountName} · ${config.path || '任意目录'}`
   }
+  if (rule.trigger_type === 'play_report') {
+    // 观影报告复用高级定时的排期语义（weekday / month_days + time），
+    // 所以文案也复用同一个格式化函数，不另写一套。
+    return `观影报告：${advancedScheduleLabel(config)}`
+  }
   return `每天 ${config.time || '00:00'}`
 }
 
@@ -2122,6 +2137,7 @@ const runSourceLabel = (source) => {
   if (source === 'external_event' || source === 'webhook') return '第三方'
   if (source === 'offline_download') return '离线下载'
   if (source === 'cas_autosave') return 'CAS 转存'
+  if (source === 'play_report') return '观影报告'
   return '定时'
 }
 

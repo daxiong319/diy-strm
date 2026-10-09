@@ -29,6 +29,7 @@ type Service struct {
 	files        *filesvc.Service
 	notify       Notifier
 	refreshQueue RefreshQueue
+	playReport   PlayReportGenerator
 	log          *slog.Logger
 
 	mu            sync.Mutex

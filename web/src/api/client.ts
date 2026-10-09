@@ -133,6 +133,9 @@ export const http = {
   postWithTimeout: <T>(path: string, body: unknown, timeoutMs: number, signal?: AbortSignal) =>
     request<T>("POST", path, { body, signal, timeoutMs }),
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, { body }),
+  // PATCH 只在「部分更新」语义下用（改有效期），不能用 PUT 顶替 ——
+  // PUT 的语义是整体替换，后端按 PATCH 写的 handler 收 PUT 会 405。
+  patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, { body }),
   del: <T>(path: string, body?: unknown, query?: Query) =>
     request<T>("DELETE", path, { body, query }),
   form: <T>(path: string, form: URLSearchParams | FormData) =>

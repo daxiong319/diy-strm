@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1
+#
+# 仅打包运行时（不含构建阶段）。
+#
+# 为什么不用主 Dockerfile：主 Dockerfile 的 web 阶段要在容器内跑 node/npm，
+# 而本机是 aarch64，目标 NAS 是 amd64，docker build --platform linux/amd64
+# 会走 QEMU 模拟。Node 20 在 QEMU 下必然崩溃：
+#   Fatal process OOM in Failed to reserve virtual memory for CodeRange
+#   qemu: uncaught target signal 5 (Trace/breakpoint trap)
+# 实测连 `node -e "console.log(1)"` 都会挂死，与本项目代码无关。
+#
+# 因此改为「拆开在两个原生架构上分别构建」：
+#   1) 前端 + 后端都在本机 aarch64 原生执行（Go 用 GOARCH=amd64 交叉编译，
+#      Go 自带交叉编译，不经过 QEMU，产出真正的 x86-64 静态 ELF）；
+#   2) 本文件只负责把已构建好的二进制和运行时依赖装进 amd64 基础镜像。
+#
+# 构建前置（由 scripts/make-amd64-image.sh 自动完成）：
+#   cd web && npm run build            → 产物写入 ../internal/api/web（被 go:embed 打包）
+#   GOOS=linux GOARCH=amd64 go build -tags fuse -o dist/litepan-amd64 ./cmd/litepan
+
+FROM --platform=linux/amd64 debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata fuse3 \
+    && sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf 2>/dev/null || true \
+    && grep -q '^user_allow_other' /etc/fuse.conf || echo user_allow_other >> /etc/fuse.conf \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN mkdir -p /app/data/log /app/strm /app/mounts
+
+COPY dist/litepan-amd64 /app/litepan
+RUN chmod +x /app/litepan
+
+ENV LITEPAN_DATA_DIR=/app/data \
+    LITEPAN_STRM_DIR=/app/strm \
+    LITEPAN_LISTEN=:5211 \
+    LITEPAN_LOG_LEVEL=info \
+    TZ=Asia/Shanghai
+
+EXPOSE 5211 42069/tcp 42069/udp
+
+VOLUME ["/app/data", "/app/strm", "/app/mounts"]
+
+ENTRYPOINT ["/app/litepan"]

@@ -49,6 +49,32 @@ func (s *Service) runRuleWithBatch(id int64, triggerSource string, batch *casTri
 		s.log.Warn("读取自动化规则失败", "rule_id", id, "err", err)
 		return
 	}
+	// 观影报告是**触发器**：报告本身在规则跑之前就该生成好，
+	// 这样规则里的 notify 动作才能把它当普通通知推出去。
+	// 参数挂在触发配置上（days/top/source/min_seconds/gap_minutes）。
+	// 生成失败也继续跑动作：动作里可能有用户自己的补救动作（例如把
+	// "报告没生成"这件事通知出去），整条规则直接中止会把失败原因吞掉。
+	preSteps := make([]map[string]any, 0, 1)
+	previousSuccess := true
+	if rule.TriggerType == domain.AutomationTriggerPlayReport {
+		s.setRunningStep(id, 0, "生成观影报告", domain.AutomationTriggerPlayReport)
+		result := s.runPlayReport(ctx, decodeMap(rule.TriggerConfig))
+		stepStatus := domain.AutomationRunSuccess
+		if result["success"] != true {
+			stepStatus = domain.AutomationRunFailed
+		}
+		preSteps = append(preSteps, map[string]any{
+			"index":     0,
+			"type":      domain.AutomationTriggerPlayReport,
+			"name":      "生成观影报告",
+			"condition": domain.AutomationConditionAlways,
+			"status":    stepStatus,
+			"success":   result["success"] == true,
+			"message":   anyString(result["message"]),
+		})
+		previousSuccess = result["success"] == true
+	}
+
 	actions := decodeActions(rule.Actions)
 	run := &domain.AutomationRun{
 		RuleID:        id,
@@ -64,8 +90,8 @@ func (s *Service) runRuleWithBatch(id int64, triggerSource string, batch *casTri
 	}
 	run.ID = runID
 
-	steps := make([]map[string]any, 0, len(actions))
-	previousSuccess := true
+	steps := make([]map[string]any, 0, len(actions)+1)
+	steps = append(steps, preSteps...)
 	message := "执行完成"
 	status := domain.AutomationRunSuccess
 	for i, action := range actions {

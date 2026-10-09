@@ -181,6 +181,10 @@ export interface SubtitleSyncCheck {
   ffprobe: { available: boolean; message: string };
 }
 
+// 注意：字幕端点挂在 /api/subtitle 下，没有 /admin 段。
+// router.go 里 RegisterSubtitleRoutes 虽然在 requireAdmin 组内，但该组挂在
+// /api 分组下（与 RegisterMcpAdminRoutes 同级），而不是 /api/admin。
+// 写成 "/admin/subtitle" 会让所有请求打到 /api/admin/subtitle/* 并得到 404。
 const base = "/subtitle";
 
 export const subtitleApi = {

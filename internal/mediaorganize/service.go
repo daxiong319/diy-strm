@@ -59,7 +59,7 @@ type ServiceOptions struct {
 	Log      *slog.Logger
 	Planner  PlannerBuilder
 	Executor ExecutorApplier
-	// Subtitle 整理完成后的字幕自动处理回调（Muvyo 移植③）。
+	// Subtitle 整理完成后的字幕自动处理回调（参考实现 移植③）。
 	// 用接口注入而非直接 import subtitle，避免 mediaorganize → subtitle 的依赖；
 	// 为 nil 时整理流程完全不受影响（字幕模块可独立启用/关闭）。
 	Subtitle SubtitleProcessor
@@ -257,6 +257,13 @@ func (s *Service) PlanTask(ctx context.Context, taskID string) (map[string]any, 
 	s.appendLog(taskID, "[MediaOrganize] 生成计划开始")
 
 	settingsDict := SettingsDict(s.settings)
+
+	// 前置校验已过、任务已占坑，从这里往后的规划工作是后台长任务：
+	// 切换到脱离请求生命周期的 ctx，浏览器刷新 / 客户端断连不再中断规划。
+	// 停止按钮仍以 s.checkStop 为唯一权威通道，这里只是把停止信号转成 ctx 取消兜底。
+	runCtx, cancelRun := s.detachRunContext(ctx, taskID)
+	defer cancelRun()
+	ctx = runCtx
 	ctx = s.withAPIDelay(ctx)
 
 	task.Status = domain.MediaOrganizeStatusPlanning
@@ -689,7 +696,7 @@ func (s *Service) applyPlanRunner(ctx context.Context, taskID string, plan *Plan
 		"account_id", accountID,
 		"result", formatSummaryZh(summary),
 	)
-	// 字幕自动处理（Muvyo 移植③）：只在动作真正成功时触发，且在汇总落库之后，
+	// 字幕自动处理（参考实现 移植③）：只在动作真正成功时触发，且在汇总落库之后，
 	// 保证字幕失败绝不会改变整理任务本身的成功/失败判定。
 	s.processSubtitlesForPlan(ctx, taskID, task, plan)
 }
@@ -811,6 +818,43 @@ func intFromActionMeta(action *PlanAction, key string) int {
 		return n
 	default:
 		return 0
+	}
+}
+
+// stopSignalWatchInterval 是停止信号轮询间隔。停止按钮本身由 checkStop 立即生效，
+// 这个 goroutine 只是把停止信号转成 ctx 取消，兜住只认 ctx 取消的代码路径，不追求实时。
+const stopSignalWatchInterval = 500 * time.Millisecond
+
+// detachRunContext 为已经占坑的后台长任务返回一个脱离调用方生命周期的上下文。
+//
+// context.WithoutCancel 保留 ctx 上的取值（trace、日志字段）但切断取消传播，
+// 因此浏览器刷新或客户端断连后规划仍能在服务端跑完，而不是留下半截计划和卡住的 planning 状态。
+// 随后再包一层 WithCancel，由 stopSignal 把停止信号转成 ctx 取消作为兜底；
+// 停止的权威来源始终是 checkStop，不在这里重复实现停止逻辑。
+func (s *Service) detachRunContext(parent context.Context, taskID string) (context.Context, context.CancelFunc) {
+	base := parent
+	if base == nil {
+		base = context.Background()
+	}
+	ctx, cancel := context.WithCancel(context.WithoutCancel(base))
+	go s.stopSignal(ctx, cancel, taskID)
+	return ctx, cancel
+}
+
+// stopSignal 轮询停止信号，命中后取消 ctx 后退出；ctx 自身结束时一并退出，不泄漏 goroutine。
+func (s *Service) stopSignal(ctx context.Context, cancel context.CancelFunc, taskID string) {
+	ticker := time.NewTicker(stopSignalWatchInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if s.checkStop(taskID) != nil {
+				cancel()
+				return
+			}
+		}
 	}
 }
 
