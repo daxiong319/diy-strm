@@ -8,7 +8,7 @@
 //      而访客路由挂在 `/share-play/*`（不在 /api 下），所以访客这层
 //      自己发 fetch，不复用 http —— 免得哪天 client.ts 加个前缀把免登录路由打死。
 //   3. **访客侧不缓存任何带凭证的东西**。令牌放 localStorage，
-//      键名与 muvyo 一致（vyo-playback-token），方便同一套运维习惯。
+//      键名与参考实现一致（vyo-playback-token），方便同一套运维习惯。
 //      ⚠️ 但 visitor_id 单独一个键：换令牌时要用它，
 //      丢了会退化成「每次刷新都算新访客」，把 24 小时去重刷穿。
 

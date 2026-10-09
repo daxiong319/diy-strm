@@ -35,7 +35,7 @@ export interface PlaybackRecord {
   timestamp?: string;
 }
 
-/** 三态判定结果（照搬 Muvyo）。 */
+/** 三态判定结果（照搬参考实现）。 */
 export type PlayState = "metered" | "cdn" | "lan";
 
 /** 播放记录概览统计 */
