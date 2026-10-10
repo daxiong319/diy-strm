@@ -2137,3 +2137,45 @@ func callBefore(t *testing.T, file, first, second string) bool {
 	}
 	return firstPos < secondPos
 }
+
+// TestTelegramBotWiring 钉住 T18 的三道接线。
+//
+// 这三条里任何一条断了，症状都是同一个 ——「Bot 不回话」—— 而用户查不到原因：
+// 装配层忘了注入时 tgbot.Service 是 nil，端点会 500；
+// 权限闸挪到副作用之后时，一个陌生人就能把链接转进你的网盘。
+func TestTelegramBotWiring(t *testing.T) {
+	t.Run("装配层注入 Bot", func(t *testing.T) {
+		if !callsInNonTestFile(t, "../app", "wire_services.go", "wireTelegramBot") {
+			t.Error("internal/app/wire_services.go 没有构造 Bot —— api.Deps.TgBot 会是 nil，webhook 端点直接 500")
+		}
+	})
+
+	t.Run("webhook 端点在管理员会话之外", func(t *testing.T) {
+		// Telegram 没有浏览器会话。端点若挂在 requireAdmin 组内，
+		// 症状是「配置都对，一条消息都收不到」，而日志里看不到任何鉴权失败 ——
+		// 因为请求根本没进到处理函数。
+		have := map[string]bool{}
+		for _, rt := range adminRoutePatterns(t) {
+			have[rt.Method+" "+rt.Pattern] = true
+		}
+		for _, want := range []string{
+			"POST /api/telegram/webhook",
+			"GET /api/admin/telegram/bot",
+			"PUT /api/admin/telegram/bot",
+		} {
+			if !have[want] {
+				t.Errorf("路由表里没有 %s", want)
+			}
+		}
+	})
+
+	t.Run("权限闸在副作用之前", func(t *testing.T) {
+		// 白名单判据必须先于 HandleUpdate：否则陌生人的消息已经进了分发逻辑。
+		if !callsInNonTestFile(t, "../tgbot", "service.go", "CheckAccess") {
+			t.Error("internal/tgbot/service.go 没有调用 CheckAccess —— 白名单形同虚设")
+		}
+		if !callBefore(t, "../tgbot/service.go", "CheckAccess", "HandleUpdate") {
+			t.Error("internal/tgbot/service.go 里 CheckAccess 不在 HandleUpdate 之前 —— 权限闸跑在副作用后面了")
+		}
+	})
+}

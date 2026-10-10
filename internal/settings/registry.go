@@ -198,6 +198,22 @@ const (
 	KeyMOPlayModeProxy = "proxy"
 	// KeyMOPlayModeRedirect KeyMOPlayMode 的 302 直连取值。
 	KeyMOPlayModeRedirect = "redirect"
+
+	// KeyMOTelegramBotEnabled 是否启用入站 Telegram Bot。
+	// 默认 false：Bot 是外部入口，开了就等于把网盘账号挂到一个公网 webhook 上。
+	KeyMOTelegramBotEnabled = "mo_telegram_bot_enabled"
+	// KeyMOTelegramBotToken Telegram Bot 的凭证。
+	// **凭证语义：可写不可读**（Sensitive），Snapshot 只会回打码值。
+	KeyMOTelegramBotToken = "mo_telegram_bot_token"
+	// KeyMOTelegramBotAllowedUsers 允许使用 Bot 的 TG user id 白名单，逗号分隔。
+	// 空 = 拒绝一切私聊。刻意不做「空 = 不限制」：外部入口的默认值必须是关。
+	KeyMOTelegramBotAllowedUsers = "mo_telegram_bot_allowed_users"
+	// KeyMOTelegramBotAllowedChats 允许使用 Bot 的群 id 白名单，逗号分隔。
+	// 群 id 是负数（超群常见的 -100… 前缀）。
+	KeyMOTelegramBotAllowedChats = "mo_telegram_bot_allowed_chats"
+	// KeyMOTelegramBotGroupLinkEnabled 允许群里直接发链接/磁力就转存。
+	// 默认 false：允许群里发命令 ≠ 允许群里发链接就动用你的网盘账号。
+	KeyMOTelegramBotGroupLinkEnabled = "mo_telegram_bot_group_link_enabled"
 	// CrossAccountFallbackMax 转存等待分钟数的上限。
 	CrossAccountFallbackMax = 1440
 
@@ -649,6 +665,23 @@ func defaultSpecs() []Spec {
 				{Value: KeyMOPlayModeProxy, Label: "本站流代理"},
 				{Value: KeyMOPlayModeRedirect, Label: "302 直连"},
 			}),
+		boolSpec(KeyMOTelegramBotEnabled, "telegram", "启用 Telegram Bot",
+			"开启后需要在 BotFather 里 /setwebhook 指向本机的 /api/telegram/webhook。"+
+				"Bot 是外部入口：私聊与群聊都受白名单保护，白名单为空时拒绝一切。", "false"),
+		stringSpec(KeyMOTelegramBotAllowedUsers, "telegram", "允许使用的 TG 用户 ID",
+			"逗号分隔的数字 ID。留空 = 拒绝所有私聊。用 @userinfobot 可以查到自己的 ID。", ""),
+		stringSpec(KeyMOTelegramBotAllowedChats, "telegram", "允许使用的群 ID",
+			"逗号分隔的数字 ID，超群一般是 -100 开头。留空 = 拒绝所有群。", ""),
+		boolSpec(KeyMOTelegramBotGroupLinkEnabled, "telegram", "允许群里的裸链接/磁力自动转存",
+			"关闭时群里只有 / 命令、@提及和回复会触发 Bot（这也是 Telegram 隐私模式的行为）。"+
+				"打开后还需要在 BotFather 里把 Group Privacy 关掉，否则收不到普通群消息。", "false"),
+		{
+			Key:       KeyMOTelegramBotToken,
+			Type:      TypeString,
+			Default:   "",
+			Sensitive: true,
+			Hidden:    true,
+		},
 		boolSpec(KeyMOCrossAccountPlaybackEnabled, "playback", "账号失效时跨账户转存播放",
 			"开启后，STRM 播放遇到源账号持续不可用时，自动把该文件转存到另一个可用账号再播。转存期间播放请求返回「正在准备，请稍后」。源文件不会被删除。", "false"),
 		intSpec(KeyMOCrossAccountFallbackMinutes, "playback", "跨账户转存等待时长",
@@ -1211,6 +1244,8 @@ func categories() []Category {
 		// 独立成组而不是并进 strm，是因为它们决定的是「请求进来之后怎么走」，
 		// 与 STRM 令牌、签名、文件名模板是两回事。
 		{ID: "playback", Label: "播放行为设置"},
+		// 独立成组而不是并进 strm：Telegram Bot 是另一个功能的开关，而且要一张自己的配置页。
+		{ID: "telegram", Label: "Telegram Bot"},
 		{ID: "media_organize", Label: "媒体整理设置"},
 		{ID: "emby", Label: "Emby 设置"},
 		{ID: "discover", Label: "影视发现设置"},

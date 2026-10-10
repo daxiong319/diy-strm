@@ -62,6 +62,7 @@ import (
 	"litepan/internal/strm"
 	"litepan/internal/strmscrape"
 	"litepan/internal/subtitle"
+	"litepan/internal/tgbot"
 	"litepan/internal/upload"
 )
 
@@ -138,6 +139,9 @@ type Deps struct {
 	PlayPath *playpath.Service
 	// CrossAccount 跨账户播放转移（T17）。为 nil 时不发生任何切换。
 	CrossAccount *playbackfallback.Service
+	// TgBot 入站 Telegram Bot。webhook 端点挂在 requireAdmin 组之外，
+	// 鉴权走 Telegram 自带的 secret token（见 Handler.telegramWebhook）。
+	TgBot *tgbot.Service
 	// MediaUpgrade 洗版服务（参考实现 移植⑦）。
 	//
 	// 为 nil 时 /media-upgrade 下所有接口返回「该操作不支持」，
@@ -199,6 +203,7 @@ type Handler struct {
 	playback             *playback.Service
 	playPath             *playpath.Service
 	crossAccount         *playbackfallback.Service
+	tgbot                *tgbot.Service
 	strm                 *strm.Service
 	cacheRetention       *cacheretention.Service
 	mediaOrganize        *mediaorganize.Service
@@ -289,6 +294,7 @@ func newHandler(d Deps) *Handler {
 		playback:             d.Playback,
 		playPath:             d.PlayPath,
 		crossAccount:         d.CrossAccount,
+		tgbot:                d.TgBot,
 		strm:                 d.Strm,
 		cacheRetention:       d.CacheRetention,
 		mediaOrganize:        d.MediaOrganize,
@@ -420,6 +426,10 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/system-config", h.publicSystemConfig)
 			r.Get("/cache/hit-rate", h.publicCacheHitRate)
 		})
+		// Telegram Bot webhook：必须在 requireAdmin 组之外。
+		// Telegram 是外部服务，没有浏览器会话；它带自己的 secret token 头，
+		// 鉴权在处理器内部完成（tgbot.Service.Handler）。
+		r.Post("/telegram/webhook", h.telegramWebhook)
 		// MCP 外部客户端入口：必须在 requireAdmin 组之外。
 		// 它用独立 API Key 鉴权（见 mcp.go 的 requireMcpAPIKey），
 		// 若挂在 requireAdmin 组内，无浏览器的 MCP 客户端会先被会话中间件拦掉。
@@ -679,6 +689,15 @@ func NewRouter(d Deps) http.Handler {
 				})
 				r.Get("/announcement", h.getAnnouncement)
 				r.Post("/announcement/read", h.markAnnouncementRead)
+				// Bot 配置单独挂一道 telegram.manage：它是外部入口的凭证，
+				// 能改白名单就等于能让任意被加进白名单的人用本站网盘账号转存。
+				// 不跟「系统设置」共用一道闸 —— 那会把拿到 Bot 的运维
+				// 顺带升成能改全站设置的人。
+				r.Route("/telegram", func(r chi.Router) {
+					r.Use(h.requirePermission(rbac.PermTelegramManage))
+					r.Get("/bot", h.telegramBotConfigGet)
+					r.Put("/bot", h.telegramBotConfigUpdate)
+				})
 				r.Route("/strm", func(r chi.Router) {
 					r.Get("/startup", h.strmStartupRemaining)
 					r.Get("/tasks", h.listStrmTasks)

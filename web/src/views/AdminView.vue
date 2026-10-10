@@ -33,6 +33,7 @@ const adminPageLoaders = {
   request: () => import("@/components/admin/RequestCenterPage.vue"),
   subtitle: () => import("@/components/admin/SubtitleSettings.vue"),
   mcp: () => import("@/components/admin/McpSettings.vue"),
+  telegram: () => import("@/components/admin/TelegramBotSettings.vue"),
   assistant: () => import("@/components/admin/McpAssistant.vue"),
 };
 // 后台页面全部为异步 chunk，加载失败时统一落到错误兜底，避免整页静默空白。
@@ -52,6 +53,7 @@ const RbacManagementPage = asyncPage(adminPageLoaders.rbac);
 const RequestCenterPage = asyncPage(adminPageLoaders.request);
 const SubtitleSettings = asyncPage(adminPageLoaders.subtitle);
 const McpSettings = asyncPage(adminPageLoaders.mcp);
+const TelegramBotSettings = asyncPage(adminPageLoaders.telegram);
 const McpAssistant = asyncPage(adminPageLoaders.assistant);
 import { logout, fetchSystemConfig } from "@/api/auth";
 import { fetchRbacMe } from "@/api/rbac";
@@ -89,6 +91,7 @@ const nav = [
   { key: "media-upgrade", label: "洗版管理", icon: "sync" },
   { key: "subtitle", label: "字幕处理", icon: "closed-captioning-regular" },
   { key: "mcp", label: "MCP 服务", icon: "plug" },
+  { key: "telegram", label: "Telegram Bot", icon: "paper-plane" },
   { key: "assistant", label: "智能助理", icon: "robot" },
   { key: "rbac", label: "用户与权限", icon: "shield" },
   { key: "request", label: "求片中心", icon: "hand-holding-heart" },
@@ -525,6 +528,7 @@ onMounted(async () => {
       <RequestCenterPage v-else-if="page === 'request'" />
       <SubtitleSettings v-else-if="page === 'subtitle'" />
       <McpSettings v-else-if="page === 'mcp'" />
+      <TelegramBotSettings v-else-if="page === 'telegram'" />
       <McpAssistant v-else-if="page === 'assistant'" />
       <component :is="cachedPageComponent" v-else-if="cachedPageComponent" :key="page" />
     </KeepAlive>

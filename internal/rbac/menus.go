@@ -39,6 +39,7 @@ var menuCatalog = []Menu{
 	{Key: "media-upgrade", Permissions: []string{PermMediaUpgradeManage}},
 	{Key: "subtitle", Permissions: []string{PermSubtitleManage}},
 	{Key: "mcp", Permissions: []string{PermMCPManage}},
+	{Key: "telegram", Permissions: []string{PermTelegramManage}},
 	{Key: "assistant", Permissions: []string{PermAssistantUse}},
 	// 用户与权限：user.manage（管人）与 permission.manage（管矩阵）任一即可见。
 	{Key: "rbac", Permissions: []string{PermUserManage, PermPermissionManage}, Any: true},

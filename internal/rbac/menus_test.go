@@ -24,6 +24,12 @@ var adminNavSnapshot = []string{
 	// 把求片交给自己管的人只要 request.center.view 也该进得来 ——
 	// 两个角色只拿其中一个，用「全部满足」的话两边都进不去。
 	"request",
+	// T18 新增的：Telegram Bot。
+	//
+	// 这页管的是 token 和「谁能跟 Bot 说话」的白名单。拿到它等于拿到
+	// 一个能用本站网盘账号转存的入口，所以只给单一权限，不做任何角色捆绑 ——
+	// 跟通知渠道那种「多个角色共用的日常配置」不是一回事。
+	"telegram",
 }
 
 func TestMenuCatalogCoversAdminNavigation(t *testing.T) {

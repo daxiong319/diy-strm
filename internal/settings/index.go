@@ -79,6 +79,7 @@ var categoryRoutes = map[string]categoryRoute{
 	// T17 的播放路径映射 / 302 直连 / 跨账户转移配在 STRM 设置页，
 	// 所以走 tasks→strm 这条路，而不是 organize 分组（那是整理页）。
 	"playback":       {Page: "tasks", Tab: "strm", Anchored: false},
+	"telegram":       {Page: "telegram", Anchored: false},
 	"media_organize": {Page: "tasks", Tab: "organize", Anchored: false},
 	"emby":           {Page: "dashboard", Anchored: false},
 	"performance":    {Page: "dashboard", Anchored: false},

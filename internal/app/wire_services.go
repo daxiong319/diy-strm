@@ -38,6 +38,7 @@ import (
 	"litepan/internal/strm"
 	"litepan/internal/strmscrape"
 	"litepan/internal/subtitle"
+	"litepan/internal/tgbot"
 	"litepan/internal/upload"
 )
 
@@ -64,6 +65,7 @@ type servicesBundle struct {
 	crossTransfer    *crosstransfer.Service
 	playPath         *playpath.Service
 	crossAccount     *playbackfallback.Service
+	tgbot            *tgbot.Service
 	embyProxy        *embyproxy.Service
 	embyRefresh      *embyrefresh.Service
 	embyIndex        *embyindex.Service
@@ -236,6 +238,11 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 	})
 	playPathSvc := wirePlayPath(st, logs)
 	crossAccountSvc := wireCrossAccount(st, fileSvc, crossTransferSvc, core.bus, logs)
+	// Bot 依赖 mediaOrganizeSvc 做 /organize 与 /cancel。
+	// 不必等到 discoverInit 之后：Bot 只在**命令被调用时**才读 discovery 的包级注入变量
+	// （TransferShareFn / OfflineLinkFn），而那时 discoverInit 早就跑完了。
+	// 在这里装配的优点是「构造期就报得出配置缺失」，不必等用户敲第一条命令。
+	tgbotSvc := wireTelegramBot(st, mediaOrganizeSvc, logs)
 	embyProxySvc := embyproxy.New(embyproxy.Options{
 		Settings: st.settings,
 		Playback: playbackSvc,
@@ -364,6 +371,7 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 		crossTransfer:    crossTransferSvc,
 		playPath:         playPathSvc,
 		crossAccount:     crossAccountSvc,
+		tgbot:            tgbotSvc,
 		embyProxy:        embyProxySvc,
 		embyRefresh:      embyRefreshSvc,
 		embyIndex:        embyIndexSvc,

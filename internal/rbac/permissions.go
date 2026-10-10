@@ -42,6 +42,11 @@ const (
 	PermMCPManage = "mcp.manage"
 	// PermAssistantUse 智能助理对话。
 	PermAssistantUse = "assistant.use"
+	// PermTelegramManage 入站 Telegram Bot 配置。
+	//
+	// Bot 是外部入口：拿到这个权限的人等于拿到了「用自己的网盘账号转存」的能力，
+	// 所以它独立于通知渠道的通知权限（PermSystemManage），不下放给普通运维。
+	PermTelegramManage = "telegram.manage"
 	// PermFileManage 文件管理（浏览、上传、重命名、删除、收藏）。
 	PermFileManage = "file.manage"
 
@@ -126,6 +131,7 @@ var catalog = []PermissionMeta{
 	{Key: PermSubtitleManage, Label: "字幕处理", Category: CategoryConsole, SortOrder: 110},
 	{Key: PermMCPManage, Label: "MCP 服务", Category: CategoryConsole, SortOrder: 120},
 	{Key: PermAssistantUse, Label: "智能助理", Category: CategoryConsole, SortOrder: 130},
+	{Key: PermTelegramManage, Label: "Telegram Bot", Category: CategoryConsole, SortOrder: 135},
 	{Key: PermFileManage, Label: "文件管理", Category: CategoryConsole, SortOrder: 140},
 
 	// 用户与权限

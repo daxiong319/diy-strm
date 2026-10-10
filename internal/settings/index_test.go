@@ -200,6 +200,7 @@ func TestWiringSettingsIndexPointsAtRealPages(t *testing.T) {
 		"tools": true, "cross-transfer": true, "cas": true, "share": true,
 		"discover": true, "media-upgrade": true, "subtitle": true,
 		"mcp": true, "assistant": true, "rbac": true, "request": true,
+		"telegram": true,
 	}
 	for _, it := range settings.BuildIndex().Items {
 		if it.Page == "" {
@@ -257,7 +258,7 @@ func TestWiringSettingsIndexRegistryHasNotSilentlyShrunk(t *testing.T) {
 	// 196 → 202 是 T15 加的 6 个风控阈值
 	//（mo_scrape_max_calls_per_window / mo_scrape_call_window_seconds / mo_scrape_call_pause_seconds /
 	//  mo_scrape_max_work_minutes / mo_scrape_work_pause_minutes / mo_min_media_size_bytes）。
-	const wantTotal = 210
+	const wantTotal = 215
 	if len(specs) != wantTotal {
 		t.Errorf("注册表条目数 = %d，期望 %d（新增设置请同步改这个数；"+
 			"若真的少了条目，说明 AllSpecs 漏导出或 defaultSpecs 被改坏）",
