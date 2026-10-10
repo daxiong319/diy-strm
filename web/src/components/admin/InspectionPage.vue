@@ -217,7 +217,7 @@ onMounted(loadCheckers);
       <AdminStatusPill
         v-for="c in registeredCheckers"
         :key="c.key"
-        tone="info"
+        tone="muted"
       >
         {{ c.label }}
         <template v-if="checkerByKey.get(c.key)">

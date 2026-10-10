@@ -18,6 +18,8 @@ export interface InspectionChecker {
   findings: number;
   skipped: boolean;
   kinds: string[];
+  /** 该检查器本轮执行出错时的错误信息；正常时缺省。 */
+  error?: string;
 }
 
 export interface InspectionPreviewLine {

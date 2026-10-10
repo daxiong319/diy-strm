@@ -92,6 +92,7 @@ const tagGhostStyle = computed(() => ({
 
 const {
   settings,
+  original: settingsBaseline,
   isDirty: settingsChanged,
   isFieldChanged,
   snapshotBaseline,
@@ -314,7 +315,7 @@ async function loadSettings(options?: { silent?: boolean }) {
 // 一个不同的问题——「你知不知道下一次整理就会开始搬文件」，和勾选框
 // 表达的「我承认有这回事」不是一回事。
 async function confirmQuarantineIfTurningOn() {
-  const prevMin = Number(snapshotBaseline.value.min_media_size_bytes ?? 0) || 0;
+  const prevMin = Number(settingsBaseline.min_media_size_bytes ?? 0) || 0;
   const nextMin = Number(settings.min_media_size_bytes ?? 0) || 0;
   if (nextMin <= 0 || prevMin > 0) return true;
   const dir = settings.quarantine_dir.trim() || "每个整理根目录下的 _隔离 子目录";
