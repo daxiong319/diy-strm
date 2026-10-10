@@ -174,6 +174,33 @@ const (
 	// 默认 false：不勾选就只报告不动手，避免「打开阈值 = 静默搬走文件」。
 	KeyMOSmallFileAcked = "mo_small_file_acked"
 
+	// ---- T17 播放路径映射 / STRM 重定向 / 跨账户播放转移 ----
+
+	// KeyMOPlayPathMappingEnabled 播放路径映射总开关。
+	// 默认 false：映射是「静默改写路径」的功能，误开一次就能让所有 STRM 播不出来，
+	// 所以不开时不碰任何路径。
+	KeyMOPlayPathMappingEnabled = "mo_play_path_mapping_enabled"
+	// KeyMOPathMappingRules 路径映射规则表（playpath.Encode 的 JSON）。
+	// 存 JSON 而不是拆多张表：规则整体读写、顺序即语义，不需要按条查询。
+	KeyMOPathMappingRules = "mo_path_mapping_rules"
+	// KeyMOStrmRedirectEnabled 是否允许 STRM 播放走 302 直连。
+	// 默认 false。注意：开了它，播放监控就只记一次「CDN 直连」且计 0 流量。
+	KeyMOStrmRedirectEnabled = "mo_strm_redirect_enabled"
+	// KeyMOPlayMode 播放模式：proxy=本站流代理（计流量、可统计）/ redirect=302 直连。
+	KeyMOPlayMode = "mo_play_mode"
+	// KeyMOCrossAccountPlaybackEnabled 源账号失效时是否自动转存到另一个账号再播。
+	// 默认 false：转存会产生真实流量与存储占用，必须由用户显式开启。
+	KeyMOCrossAccountPlaybackEnabled = "mo_cross_account_playback_enabled"
+	// KeyMOCrossAccountFallbackMinutes 账号「连续不可用」多久才触发转存。
+	// 默认 30 分钟：短暂限流/网络抖动不该引发一次几十 GB 的转存。
+	KeyMOCrossAccountFallbackMinutes = "mo_cross_account_fallback_minutes"
+	// KeyMOPlayModeProxy KeyMOPlayMode 的默认值。
+	KeyMOPlayModeProxy = "proxy"
+	// KeyMOPlayModeRedirect KeyMOPlayMode 的 302 直连取值。
+	KeyMOPlayModeRedirect = "redirect"
+	// CrossAccountFallbackMax 转存等待分钟数的上限。
+	CrossAccountFallbackMax = 1440
+
 	// ---- T05 搜索连接器 ----
 
 	// KeyMOSubscriptionSearchSources 订阅默认使用的搜索源 key 列表（逗号分隔）。
@@ -611,6 +638,21 @@ func defaultSpecs() []Spec {
 			"低于「媒体文件最小体积」的文件被移到这里而不是删除。留空则用整理根目录下的「_隔离」子目录。文件随时可以搬回去。", ""),
 		boolSpec(KeyMOSmallFileAcked, "media_organize", "已确认小文件会被移走",
 			"打开「媒体文件最小体积」前需要先勾这一项表示知情。取消勾选即刻停止隔离，已有文件不受影响。", "false"),
+		boolSpec(KeyMOPlayPathMappingEnabled, "playback", "启用播放路径映射",
+			"播放前按「自上而下第一条命中即生效」的规则改写本地路径，例如 /mnt/media → /media。规则按顺序匹配、区分大小写，匹配不上就原样放行不报错——所以规则写错了不会立刻被发现，请用规则旁的「测试路径」按钮确认。", "false"),
+		{Key: KeyMOPathMappingRules, Type: TypeString, Default: "{\"rules\":[]}", Hidden: true, Sensitive: true},
+		boolSpec(KeyMOStrmRedirectEnabled, "playback", "允许 STRM 302 直连",
+			"开启后，即使播放模式为「本站流代理」，遇到网盘给了直链的播放请求也会返回 302 让播放器自己拉。注意：302 直连的流量不会计入播放监控（显示为「CDN 直连」、流量记 0）。", "false"),
+		selectSpec(KeyMOPlayMode, "playback", "播放模式",
+			"proxy=本站流代理（转发字节、计入播放监控与流量）；redirect=302 跳转播放器直连（省本站带宽，播放监控只记「CDN 直连」、流量计 0）。",
+			KeyMOPlayModeProxy, []Option{
+				{Value: KeyMOPlayModeProxy, Label: "本站流代理"},
+				{Value: KeyMOPlayModeRedirect, Label: "302 直连"},
+			}),
+		boolSpec(KeyMOCrossAccountPlaybackEnabled, "playback", "账号失效时跨账户转存播放",
+			"开启后，STRM 播放遇到源账号持续不可用时，自动把该文件转存到另一个可用账号再播。转存期间播放请求返回「正在准备，请稍后」。源文件不会被删除。", "false"),
+		intSpec(KeyMOCrossAccountFallbackMinutes, "playback", "跨账户转存等待时长",
+			"源账号连续不可用超过这个时长才触发转存，避免一次网络抖动就引发大文件转存。", "分钟", "30", 1, 1440),
 		boolSpec(KeyMOOverwriteExisting, "media_organize", "同名冲突时覆盖", "目标位置已有同名文件时覆盖，默认跳过。", "false"),
 		{
 			Key:     KeyAIOrganizeEnabled,
@@ -1165,6 +1207,10 @@ func categories() []Category {
 		{ID: "account_display", Label: "网盘账号显示"},
 		{ID: "performance", Label: "性能设置"},
 		{ID: "strm", Label: "STRM 设置"},
+		// T17 新增：播放路径映射 / 302 直连 / 跨账户转存共用的分组。
+		// 独立成组而不是并进 strm，是因为它们决定的是「请求进来之后怎么走」，
+		// 与 STRM 令牌、签名、文件名模板是两回事。
+		{ID: "playback", Label: "播放行为设置"},
 		{ID: "media_organize", Label: "媒体整理设置"},
 		{ID: "emby", Label: "Emby 设置"},
 		{ID: "discover", Label: "影视发现设置"},

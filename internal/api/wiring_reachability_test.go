@@ -2019,3 +2019,121 @@ func TestGuardrailAndInspectionWiring(t *testing.T) {
 		t.Log("巡检与空间清理各自独立注册，符合预期")
 	}
 }
+
+// TestPlayPathRedirectAndCrossAccountWiring 钉住 T17 三块能力的接线。
+//
+// 三块能力都是「造得出服务、用不上也不报错」的高危形状：
+//   - wirePlayPath / wireCrossAccount 是零调用函数时，规则和开关全部静默失效；
+//   - 302 端点没注册时，用户点了「切换到 302 直连」只是少了个按钮，毫无提示；
+//   - 路径映射调在 ResolvePath 之后时，规则永远命不中，且页面上的「测试路径」
+//     仍显示命中 —— 用户会得出「规则是对的，是系统坏了」的错误结论。
+//
+// 顺序断言是这里最要紧的一条：映射必须在解析路径**之前**，在副作用之前。
+func TestPlayPathRedirectAndCrossAccountWiring(t *testing.T) {
+	t.Run("wirePlayPath 被装配层调用", func(t *testing.T) {
+		// 构造函数在 wire_playback_policy.go 里，调用点在 wire_services.go；
+		// 断言调用点，否则「服务存在但没人拿它」这种形状照样绿。
+		if !callsInNonTestFile(t, "../app", "wire_services.go", "wirePlayPath") {
+			t.Fatal("wirePlayPath 是零调用函数 —— 播放路径映射服务造得出来但没有任何入口能拿到它。")
+		}
+	})
+	t.Run("wireCrossAccount 被装配层调用", func(t *testing.T) {
+		if !callsInNonTestFile(t, "../app", "wire_services.go", "wireCrossAccount") {
+			t.Fatal("wireCrossAccount 是零调用函数 —— 账号失效时不会发生任何跨账户转存。")
+		}
+	})
+	t.Run("路径映射在解析路径之前", func(t *testing.T) {
+		if !callsInNonTestFile(t, ".", "strm_play.go", "mapPlayPath") {
+			t.Fatal("strm_play.go 里没有任何地方调 mapPlayPath —— 按路径播放不会做映射。")
+		}
+		if !callsInNonTestFile(t, ".", "strm_playback_admin.go", "mapPlayPath") {
+			t.Fatal("strm_playback_admin.go 里没有调 mapPlayPath —— 302 直连端点绕过了映射。")
+		}
+		// 顺序断言：mapPlayPath 必须排在 ResolvePath 之前。
+		if !callBefore(t, "strm_play.go", "mapPlayPath", "ResolvePath") {
+			t.Fatal("strmPathPlay 里 mapPlayPath 必须排在 ResolvePath 之前 —— " +
+				"先拿挂载路径去网盘里解析再映射，规则永远命不中，而「测试路径」仍显示命中。")
+		}
+		if !callBefore(t, "strm_playback_admin.go", "mapPlayPath", "ResolvePath") {
+			t.Fatal("strmPathRedirectPlay 里 mapPlayPath 必须排在 ResolvePath 之前 —— 同上。")
+		}
+	})
+	t.Run("跨账户转存决策在取流之前", func(t *testing.T) {
+		if !callsInNonTestFile(t, ".", "strm_play.go", "applyCrossAccountFallback") {
+			t.Fatal("strm_play.go 里没有任何地方调 applyCrossAccountFallback —— 账号失效时不会切号。")
+		}
+		// 跨账户闸门必须在鉴权之后：鉴权没过就转存，等于任何持 token 的请求
+		// 都能反复触发大文件转存。
+		if !callBefore(t, "strm_play.go", "applyCrossAccountFallback", "ServeHTTP") {
+			t.Fatal("applyCrossAccountFallback 必须排在 ServeHTTP 之前 —— 转存决策要在取流之前。")
+		}
+		if !callsInNonTestFile(t, ".", "strm_play.go", "authorizeSTRMPlay") {
+			t.Fatal("strm_play.go 里没有 authorizeSTRMPlay —— 播放入口的鉴权没了。")
+		}
+	})
+	// 路由可达性：302 端点 ×2 组 + 路径映射管理端点 ×3。
+	have := map[string]bool{}
+	for _, rt := range adminRoutePatterns(t) {
+		have[rt.Method+" "+rt.Pattern] = true
+	}
+	for _, want := range []string{
+		"GET /api/strm/redirect/{account_id}/{file_key}/t/{token}/n/{filename}",
+		"GET /api/strm/redirect/{account_id}/{file_key}/t/{token}/n/{filename}/s/{signature}",
+		"GET /api/strm/path-redirect/{account_id}/{root_key}/{path_key}/t/{token}/n/{filename}",
+		"GET /api/strm/path-redirect/{account_id}/{root_key}/{path_key}/t/{token}/n/{filename}/s/{signature}",
+		"GET /api/admin/strm/path-mapping",
+		"PUT /api/admin/strm/path-mapping",
+		"POST /api/admin/strm/path-mapping/test",
+	} {
+		if !have[want] {
+			t.Errorf("管理台路由表里没有 %s —— T17 端点没注册", want)
+		}
+	}
+}
+
+// callBefore 断言 file 里 first 的调用位置早于 second。
+//
+// 只断言「两处都出现过」是不够的：顺序反了照样编译通过、照样有端点，
+// 而功能是静默失效的 —— 所以顺序必须被钉住。
+func callBefore(t *testing.T, file, first, second string) bool {
+	t.Helper()
+	path := filepath.Join(".", file)
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读取 %s 失败：%v", path, err)
+	}
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, path, src, 0)
+	if err != nil {
+		t.Fatalf("解析 %s 失败：%v", path, err)
+	}
+	firstPos, secondPos := token.NoPos, token.NoPos
+	ast.Inspect(parsed, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		var name string
+		switch fn := call.Fun.(type) {
+		case *ast.Ident:
+			name = fn.Name
+		case *ast.SelectorExpr:
+			name = fn.Sel.Name
+		}
+		switch name {
+		case first:
+			if firstPos == token.NoPos {
+				firstPos = call.Pos()
+			}
+		case second:
+			if secondPos == token.NoPos {
+				secondPos = call.Pos()
+			}
+		}
+		return true
+	})
+	if firstPos == token.NoPos || secondPos == token.NoPos {
+		return false
+	}
+	return firstPos < secondPos
+}

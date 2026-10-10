@@ -304,6 +304,8 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		Automation:        svc.automation,
 		Fuse:              svc.fuse,
 		CrossTransfer:     svc.crossTransfer,
+		PlayPath:          svc.playPath,
+		CrossAccount:      svc.crossAccount,
 		EmbyProxy:         svc.embyProxy,
 		EmbyWebhook:       svc.embyWebhook,
 		FnosProxy:         svc.fnosProxy,

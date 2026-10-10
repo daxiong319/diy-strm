@@ -296,3 +296,68 @@ export function replaceStrmBaseURL(newBaseURL: string) {
     new_base_url: newBaseURL,
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T17 播放路径映射
+//
+// 这套规则是**静默改写路径**的：匹配不上不报错、写反了也不报错。
+// 所以前端除了编辑规则，还必须给两处能说真话的地方 ——
+// 每条规则的命中统计，和一个走服务端同一段逻辑的「测试路径」。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PlayPathRule {
+  id: string;
+  source: string;
+  target: string;
+  note?: string;
+}
+
+/** 命中统计。重启归零是刻意的：它回答的是「刚才这一小时有没有生效过」。 */
+export interface PlayPathRuleReport extends PlayPathRule {
+  hits: number;
+  last_hit: string;
+  /** 后两段只在服务端带上时才出现（omitempty），所以是可选的。 */
+  last_from?: string;
+  last_to?: string;
+}
+
+/** 被更靠前的规则盖住、永远不会生效的条目。 */
+export interface PlayPathConflict {
+  id: string;
+  source: string;
+  reason: string;
+}
+
+export interface PlayPathMappingState {
+  enabled: boolean;
+  rules: PlayPathRuleReport[];
+  conflicts: PlayPathConflict[];
+}
+
+export interface PlayPathMappingSaveResult extends PlayPathMappingState {
+  saved: number;
+}
+
+/** 服务端用来区分「命中 / 被遮蔽 / 从未命中」的三态结论。 */
+export interface PlayPathTestResult {
+  matched: boolean;
+  rule_id: string;
+  source: string;
+  from: string;
+  to: string;
+  result: string;
+  candidates: PlayPathRule[];
+  message: string;
+}
+
+export function fetchPlayPathMapping() {
+  return http.get<PlayPathMappingState>("/admin/strm/path-mapping");
+}
+
+export function savePlayPathMapping(enabled: boolean, rules: PlayPathRule[]) {
+  return http.put<PlayPathMappingSaveResult>("/admin/strm/path-mapping", { enabled, rules });
+}
+
+export function testPlayPathMapping(path: string) {
+  return http.post<PlayPathTestResult>("/admin/strm/path-mapping/test", { path });
+}

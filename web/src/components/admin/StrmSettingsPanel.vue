@@ -13,6 +13,7 @@ import AppDropdown from "@/components/base/AppDropdown.vue";
 import AppInput from "@/components/base/AppInput.vue";
 import AppSelect from "@/components/base/AppSelect.vue";
 import InputActionField from "@/components/admin/InputActionField.vue";
+import PlayPathMappingPanel from "@/components/admin/PlayPathMappingPanel.vue";
 import SettingsBoolSegment from "@/components/admin/SettingsBoolSegment.vue";
 import SettingsCard from "@/components/admin/SettingsCard.vue";
 import SettingsHelpTooltip from "@/components/admin/SettingsHelpTooltip.vue";
@@ -459,6 +460,10 @@ defineExpose(
           </template>
         </SettingsRow>
       </SettingsCard>
+
+      <!-- T17 播放路径映射：独立加载自己的规则与统计，
+           因此不并进上面的 settingsChanged 脏检查里单独保存。 -->
+      <PlayPathMappingPanel @loading="emit('loading', $event)" />
     </template>
   </div>
 </template>

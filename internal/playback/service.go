@@ -336,3 +336,58 @@ func (s *Service) InvalidateAll() {
 		s.cache.InvalidatePrefix(string(cache.TypeDownloadURL) + ":")
 	}
 }
+
+// ServeRedirect 只解析出真实直链并 302 出去，绝不吐字节。
+//
+// 为什么单独一个入口而不是让 /strm/play 带个 query 就完事：
+// 302 直连是一条**用户显式选择的交付方式**（省本站带宽），
+// 它和「同一个文件，本站在线转着播」是两件事，值得有一个能被
+// 直接写进 .strm 文件的固定 URL —— 播放器/剪辑软件里手填这个地址就能直连，
+// 不必经过任何带会话态的播放页。
+//
+// 网盘没给直链时**必须报错而不是退回流代理**：这个端点的全部意义就是
+// 「给你直链」，悄悄改成转发字节会让调用方以为自己拿到了直链，
+// 却在实测带宽时才发现流量又回到了本站。
+func (s *Service) ServeRedirect(w http.ResponseWriter, r *http.Request, req Request, intent Intent) error {
+	if err := s.exec.Check(r.Context(), req.AccountID); err != nil {
+		return err
+	}
+	// refresh=false：直链有时效，但同一次播放的多次请求共用一份，
+	// 每次都重新解析只会更快地把并发打满网盘接口。
+	res, err := s.Resolve(r.Context(), req.AccountID, req.FileID, r.UserAgent(), false, intent.allowsPlaybackResolve())
+	if err != nil {
+		return err
+	}
+	return s.serveRedirectResolved(w, r, req, res, intent)
+}
+
+// serveRedirectResolved 是「已解析完成，直接 302」的那一段，
+// 单独成方法是为了让测试能跑生产这一段的字节（Resolve 需要 exec 与驱动栈，测试造不出来）。
+func (s *Service) serveRedirectResolved(w http.ResponseWriter, r *http.Request, req Request, res Resolved, intent Intent) error {
+	if res.File.IsDir {
+		return domain.Errorf(domain.CodeValidation, "不能下载目录")
+	}
+	if res.Link.URL == "" || res.Link.ForceProxy {
+		return domain.Errorf(domain.CodeValidation, "网盘没有给出直链，无法 302 直连；请改用「本站流代理」或等网盘给出直链后再试")
+	}
+	s.logAction("redirect_endpoint", res.Mode, res.Link.URL, r.UserAgent())
+	if s.redirectObserver != nil {
+		s.redirectObserver(r, req.AccountID, res, intent)
+	}
+	// 与 serveResolved 的 302 分支保持同一口径：只建监控会话、绝不上行，
+	// 流量恒 0 —— 字节流后面直接从网盘发给播放器，本站一个字节都没吐。
+	if s.streamMonitor != nil {
+		s.streamMonitor.OnRedirectOpen(r, streamEvent(r, req, res, intent, firstNonEmpty(intent.FileName, res.File.Name)))
+	}
+	writeRedirect(w, r, res, intent)
+	return nil
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}

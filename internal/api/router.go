@@ -51,7 +51,9 @@ import (
 	"litepan/internal/notifychannel"
 	"litepan/internal/offlinedownload"
 	"litepan/internal/playback"
+	"litepan/internal/playbackfallback"
 	"litepan/internal/playmonitor"
+	"litepan/internal/playpath"
 	"litepan/internal/quarktv"
 	"litepan/internal/rbac"
 	"litepan/internal/settings"
@@ -132,6 +134,10 @@ type Deps struct {
 	// 共用同一个实例与同一份配置快照；为 nil 时路由层按需自行惰性构造，
 	// 保证单独测试 Handler 时不依赖装配层。
 	SubtitleService *subtitle.Service
+	// PlayPath 播放路径映射（T17）。为 nil 时路径原样透传。
+	PlayPath *playpath.Service
+	// CrossAccount 跨账户播放转移（T17）。为 nil 时不发生任何切换。
+	CrossAccount *playbackfallback.Service
 	// MediaUpgrade 洗版服务（参考实现 移植⑦）。
 	//
 	// 为 nil 时 /media-upgrade 下所有接口返回「该操作不支持」，
@@ -191,6 +197,8 @@ type Handler struct {
 	uploads              *upload.Manager
 	offlineDownloads     *offlinedownload.Service
 	playback             *playback.Service
+	playPath             *playpath.Service
+	crossAccount         *playbackfallback.Service
 	strm                 *strm.Service
 	cacheRetention       *cacheretention.Service
 	mediaOrganize        *mediaorganize.Service
@@ -279,6 +287,8 @@ func newHandler(d Deps) *Handler {
 		uploads:              d.Uploads,
 		offlineDownloads:     d.OfflineDownloads,
 		playback:             d.Playback,
+		playPath:             d.PlayPath,
+		crossAccount:         d.CrossAccount,
 		strm:                 d.Strm,
 		cacheRetention:       d.CacheRetention,
 		mediaOrganize:        d.MediaOrganize,
@@ -392,6 +402,14 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/cas/play/*", h.casPlay)
 		r.Head("/cas/play/*", h.casPlay)
 		r.Head("/strm/play/{account_id}/{file_key}/t/{token}/n/{filename}/s/{signature}", h.strmPlay)
+		r.Get("/strm/redirect/{account_id}/{file_key}/t/{token}/n/{filename}", h.strmRedirectPlay)
+		r.Head("/strm/redirect/{account_id}/{file_key}/t/{token}/n/{filename}", h.strmRedirectPlay)
+		r.Get("/strm/redirect/{account_id}/{file_key}/t/{token}/n/{filename}/s/{signature}", h.strmRedirectPlay)
+		r.Head("/strm/redirect/{account_id}/{file_key}/t/{token}/n/{filename}/s/{signature}", h.strmRedirectPlay)
+		r.Get("/strm/path-redirect/{account_id}/{root_key}/{path_key}/t/{token}/n/{filename}", h.strmPathRedirectPlay)
+		r.Head("/strm/path-redirect/{account_id}/{root_key}/{path_key}/t/{token}/n/{filename}", h.strmPathRedirectPlay)
+		r.Get("/strm/path-redirect/{account_id}/{root_key}/{path_key}/t/{token}/n/{filename}/s/{signature}", h.strmPathRedirectPlay)
+		r.Head("/strm/path-redirect/{account_id}/{root_key}/{path_key}/t/{token}/n/{filename}/s/{signature}", h.strmPathRedirectPlay)
 		r.Get("/strm/path/{account_id}/{root_key}/{path_key}/t/{token}/n/{filename}", h.strmPathPlay)
 		r.Head("/strm/path/{account_id}/{root_key}/{path_key}/t/{token}/n/{filename}", h.strmPathPlay)
 		r.Get("/strm/path/{account_id}/{root_key}/{path_key}/t/{token}/n/{filename}/s/{signature}", h.strmPathPlay)
@@ -675,6 +693,10 @@ func NewRouter(d Deps) http.Handler {
 					r.Put("/tasks/{id}/branches/{branch_id}", h.updateStrmBranch)
 					r.Delete("/tasks/{id}/branches/{branch_id}", h.deleteStrmBranch)
 					r.Get("/settings", h.getStrmSettings)
+					// T17 播放路径映射：规则读写与「测试路径」。
+					r.Get("/path-mapping", h.strmPathMappingRules)
+					r.Put("/path-mapping", h.strmPathMappingSave)
+					r.Post("/path-mapping/test", h.strmPathMappingTest)
 					r.Put("/settings", h.updateStrmSettings)
 					r.Post("/replace-base-url", h.replaceStrmBaseURL)
 					r.Post("/tasks/precheck-account-repair", h.precheckStrmAccountRepair)

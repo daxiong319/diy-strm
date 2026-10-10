@@ -29,8 +29,10 @@ import (
 	"litepan/internal/moviepilot"
 	"litepan/internal/offlinedownload"
 	"litepan/internal/playback"
+	"litepan/internal/playbackfallback"
 	"litepan/internal/playbackrecord"
 	"litepan/internal/playmonitor"
+	"litepan/internal/playpath"
 	"litepan/internal/quarktv"
 	"litepan/internal/settings"
 	"litepan/internal/strm"
@@ -60,6 +62,8 @@ type servicesBundle struct {
 	fuseReadCache    *fusereadcache.Service
 	cacheRetention   *cacheretention.Service
 	crossTransfer    *crosstransfer.Service
+	playPath         *playpath.Service
+	crossAccount     *playbackfallback.Service
 	embyProxy        *embyproxy.Service
 	embyRefresh      *embyrefresh.Service
 	embyIndex        *embyindex.Service
@@ -230,6 +234,8 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 		Uploads: uploadSvc,
 		Log:     logs.For(logx.ModuleAPI),
 	})
+	playPathSvc := wirePlayPath(st, logs)
+	crossAccountSvc := wireCrossAccount(st, fileSvc, crossTransferSvc, core.bus, logs)
 	embyProxySvc := embyproxy.New(embyproxy.Options{
 		Settings: st.settings,
 		Playback: playbackSvc,
@@ -356,6 +362,8 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 		fuseReadCache:    fuseReadCache,
 		cacheRetention:   retentionSvc,
 		crossTransfer:    crossTransferSvc,
+		playPath:         playPathSvc,
+		crossAccount:     crossAccountSvc,
 		embyProxy:        embyProxySvc,
 		embyRefresh:      embyRefreshSvc,
 		embyIndex:        embyIndexSvc,

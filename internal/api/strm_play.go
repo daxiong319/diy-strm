@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strings"
@@ -9,6 +10,8 @@ import (
 
 	"litepan/internal/domain"
 	"litepan/internal/playback"
+	"litepan/internal/playbackfallback"
+	"litepan/internal/settings"
 	"litepan/internal/strm"
 )
 
@@ -34,12 +37,19 @@ func (h *Handler) strmPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fileName, _ := url.PathUnescape(chi.URLParam(r, "filename"))
-	if err := h.playback.ServeHTTP(w, r, playback.Request{
-		AccountID: accountID,
-		FileID:    fileID,
-	}, playback.Intent{FileName: fileName}); err != nil {
-		writeErr(w, err)
+	// 跨账户转移放在鉴权之后、真正取流之前：鉴权没过就没有转存的必要
+	// （否则任何人都能拿一个合法 token 反复触发转存），而取流之前才谈得上
+	// 「换一条路再试」。这一步只读不写，副作用只有可能的后台转存。
+	req := playback.Request{AccountID: accountID, FileID: fileID}
+	if h.applyCrossAccountFallback(w, r, req, fileName) {
+		return
 	}
+	if err := h.playback.ServeHTTP(w, r, req, h.playIntent(fileName)); err != nil {
+		h.noteCrossAccountFailure(r.Context(), accountID, err)
+		writeErr(w, err)
+		return
+	}
+	h.noteCrossAccountSuccess(accountID)
 }
 
 func (h *Handler) strmPathPlay(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +78,10 @@ func (h *Handler) strmPathPlay(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// T17 播放路径映射：改写**本地挂载路径**之后再去网盘上找这个文件。
+	// 顺序不能反 —— 规则的用户脑子里是「我挂载在哪」，不是「网盘上有什么」；
+	// 先解析再映射等于拿挂载路径去网盘里找，永远找不到。
+	relativePath = h.mapPlayPath(relativePath)
 	item, err := h.files.ResolvePath(r.Context(), accountID, rootID, relativePath)
 	if err != nil {
 		writeErr(w, err)
@@ -77,8 +91,101 @@ func (h *Handler) strmPathPlay(w http.ResponseWriter, r *http.Request) {
 	if fileName == "" {
 		fileName = item.Name
 	}
-	if err := h.playback.ServeHTTP(w, r, playback.Request{AccountID: accountID, FileID: item.ID}, playback.Intent{FileName: fileName}); err != nil {
+	req := playback.Request{AccountID: accountID, FileID: item.ID}
+	if h.applyCrossAccountFallback(w, r, req, fileName) {
+		return
+	}
+	if err := h.playback.ServeHTTP(w, r, req, h.playIntent(fileName)); err != nil {
+		h.noteCrossAccountFailure(r.Context(), accountID, err)
 		writeErr(w, err)
+		return
+	}
+	h.noteCrossAccountSuccess(accountID)
+}
+
+// mapPlayPath 按用户配置的规则改写本地挂载路径。
+//
+// 没配映射服务时原样返回：映射功能默认关闭（mo_play_path_mapping_enabled），
+// 关闭状态必须与「一条规则都没有」完全等价，否则关掉开关反而会改变行为。
+func (h *Handler) mapPlayPath(relativePath string) string {
+	if h.playPath == nil {
+		return relativePath
+	}
+	return h.playPath.Map(relativePath).Path
+}
+
+// playIntent 依据「播放模式」与「是否允许 302 直连」两个设置拼出本次播放意图。
+//
+// 两个开关都默认关闭，即默认行为与 T17 之前逐字一致（流代理、计入监控）。
+func (h *Handler) playIntent(fileName string) playback.Intent {
+	intent := playback.Intent{FileName: fileName}
+	if h.settings == nil {
+		return intent
+	}
+	// mo_play_mode=redirect 是显式选择；mo_strm_redirect_enabled 是「即使驱动
+	// 判成代理也允许 302」的额外许可。两个都开才给 ForceRedirect。
+	if h.settings.String(settings.KeyMOPlayMode) == settings.KeyMOPlayModeRedirect &&
+		h.settings.Bool(settings.KeyMOStrmRedirectEnabled) {
+		intent.ForceRedirect = true
+	}
+	return intent
+}
+
+// applyCrossAccountFallback 在真正取流前决定要不要换账号。
+// 返回 true 表示已经答复了客户端，调用方不该再取流。
+func (h *Handler) applyCrossAccountFallback(w http.ResponseWriter, r *http.Request, req playback.Request, fileName string) bool {
+	fb := h.crossAccount
+	if fb == nil {
+		return false
+	}
+	d := fb.Resolve(r.Context(), playbackfallback.Request{
+		AccountID: req.AccountID,
+		FileID:    req.FileID,
+		FileName:  fileName,
+	})
+	if !d.Switched {
+		return false
+	}
+	if !d.Preparing {
+		// 理论上 Resolve 不会返回 Switched 且 Preparing=false 的组合；
+		// 真出现了也只能照常播，绝不能拿一个空账号去取流。
+		return false
+	}
+	if d.FileID == "" {
+		// 目标文件还在上传队列里。此时**不能**拿空 fileID 去取流
+		// （会是一个语焉不详的 404），也不该把「正在准备」当成错误 ——
+		// 播放器会自己重试，返 503 会让一部分播放器直接放弃。
+		w.Header().Set("Retry-After", "10")
+		writeJSON(w, http.StatusServiceUnavailable, Resp{
+			Success:   false,
+			Message:   d.Reason,
+			ErrorType: string(domain.CodeValidation),
+		})
+		return true
+	}
+	// 秒传命中：目标文件已经在目标账号里，可以直接改走目标账号取流。
+	req = playback.Request{AccountID: d.AccountID, FileID: d.FileID}
+	if err := h.playback.ServeHTTP(w, r, req, h.playIntent(fileName)); err != nil {
+		writeErr(w, err)
+		return true
+	}
+	return true
+}
+
+// noteCrossAccountFailure 把一次取流失败喂给跨账户转移服务，
+// 让它据此维护「连续不可用」的起点。
+func (h *Handler) noteCrossAccountFailure(ctx context.Context, accountID int64, err error) {
+	if h.crossAccount == nil {
+		return
+	}
+	h.crossAccount.Observe(accountID, false, err.Error())
+}
+
+// noteCrossAccountSuccess 成功一次就清掉观察，否则「坏过一次」的账号
+// 会在下次刚出故障时立刻被判定为长期失效。
+func (h *Handler) noteCrossAccountSuccess(accountID int64) {
+	if h.crossAccount != nil {
+		h.crossAccount.Forget(accountID)
 	}
 }
 
