@@ -361,11 +361,11 @@ func inspectionTMDBItems(st *storeBundle) func(ctx context.Context) ([]inspectio
 			}
 			seen[key] = true
 			out = append(out, inspection.TMDBCheckItem{
-				Kind:       inspectionTMDBKind(h.MediaType),
-				TMDBID:     h.TmdbId,
-				LocalName:  h.Title,
-				LocalPath:  h.TargetPath,
-				RefID:      h.ID,
+				Kind:      inspectionTMDBKind(h.MediaType),
+				TMDBID:    h.TmdbId,
+				LocalName: h.Title,
+				LocalPath: h.TargetPath,
+				RefID:     h.ID,
 			})
 		}
 		return out, nil
