@@ -518,25 +518,48 @@ func sendSynologyChat(ctx context.Context, cfg map[string]string, msg Message) e
 	return httpPostForm(ctx, client, cfg["url"], form)
 }
 
+// weComAPIBaseHost 是企业微信 API 根地址。
+//
+// 做成变量而不是散在两处硬编码字面量：出站与可信 IP 自维护都要用它，
+// 且测试需要把它指向本地桩 —— 硬编码 host 的话，「60020 会不会被上报」
+// 这条断言就只能靠读代码确认，没有办法跑出来。
+var weComAPIBaseHost = "https://qyapi.weixin.qq.com"
+
+// weComAPIBaseHostForTest 仅供测试替换用（见 wecom_trustedip_test.go）。
+var weComAPIBaseHostForTest = weComAPIBaseHost
+
+// weComHost 返回当前生效的 API 根地址。
+func weComHost() string {
+	if weComAPIBaseHostForTest != weComAPIBaseHost {
+		return weComAPIBaseHostForTest
+	}
+	return weComAPIBaseHost
+}
+
 func sendWecomApp(ctx context.Context, cfg map[string]string, msg Message) error {
 	// 获取 access_token
-	tokenURL := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s",
-		cfg["corp_id"], cfg["corp_secret"])
+	tokenURL := fmt.Sprintf("%s/cgi-bin/gettoken?corpid=%s&corpsecret=%s",
+		weComHost(), cfg["corp_id"], cfg["corp_secret"])
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, tokenURL, nil)
 	r, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("企微获取 token 失败: %w", err)
+		werr := fmt.Errorf("企微获取 token 失败: %w", err)
+		reportWeComAPIError(ctx, "gettoken", werr)
+		return werr
 	}
 	defer r.Body.Close()
 	var tr struct {
 		AccessToken string `json:"access_token"`
 		ErrCode     int    `json:"errcode"`
+		ErrMsg      string `json:"errmsg"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&tr); err != nil || tr.AccessToken == "" {
-		return fmt.Errorf("企微获取 token 失败: errcode=%d", tr.ErrCode)
+		werr := &WeComAPIError{ErrCode: tr.ErrCode, ErrMsg: orDefault(tr.ErrMsg, "access_token 为空")}
+		reportWeComAPIError(ctx, "gettoken", werr)
+		return werr
 	}
 
-	sendURL := "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=" + tr.AccessToken
+	sendURL := weComHost() + "/cgi-bin/message/send?access_token=" + tr.AccessToken
 	payload := map[string]any{
 		"agentid": cfg["agent_id"],
 		"msgtype": "text",
@@ -547,7 +570,29 @@ func sendWecomApp(ctx context.Context, cfg map[string]string, msg Message) error
 	} else {
 		payload["touser"] = "@all"
 	}
-	return httpPostJSON(ctx, httpClient, sendURL, payload)
+	if err := httpPostJSON(ctx, httpClient, sendURL, payload); err != nil {
+		reportWeComAPIError(ctx, "message/send", err)
+		return err
+	}
+	return nil
+}
+
+// reportWeComAPIError 把企微错误交给装配层注入的回调。
+//
+// 回调 panic 不应该拖垮一条通知：装配层注入的是可选的可选功能
+// （可信 IP 自维护可以没开、回调可以没注入），让它把发送流程带崩没有意义。
+// 发送失败时把错误交给可信 IP 自维护看一眼。
+//
+// **gettoken 这一步也上报**：60020 最早就在这里抛（gettoken 同样受可信 IP 约束），
+// 只在 message/send 上报的话，用户会先看到一次 token 失败才等到修复。
+func reportWeComAPIError(ctx context.Context, op string, err error) {
+	if WeComAPIErrorObserver == nil {
+		return
+	}
+	defer func() {
+		_ = recover()
+	}()
+	WeComAPIErrorObserver(ctx, op, err)
 }
 
 func orDefault(v, def string) string {

@@ -40,6 +40,7 @@ import (
 	"litepan/internal/subtitle"
 	"litepan/internal/tgbot"
 	"litepan/internal/upload"
+	"litepan/internal/wecom"
 )
 
 type servicesBundle struct {
@@ -66,6 +67,8 @@ type servicesBundle struct {
 	playPath         *playpath.Service
 	crossAccount     *playbackfallback.Service
 	tgbot            *tgbot.Service
+	wecomBot         *wecom.Bot
+	wecomTrustedIP   *wecom.TrustedIPService
 	embyProxy        *embyproxy.Service
 	embyRefresh      *embyrefresh.Service
 	embyIndex        *embyindex.Service
@@ -243,6 +246,8 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 	// （TransferShareFn / OfflineLinkFn），而那时 discoverInit 早就跑完了。
 	// 在这里装配的优点是「构造期就报得出配置缺失」，不必等用户敲第一条命令。
 	tgbotSvc := wireTelegramBot(st, mediaOrganizeSvc, logs)
+	wecomBotSvc := wireWeComBot(st, mediaOrganizeSvc, logs)
+	wecomTrustedIPSvc := wireWeComTrustedIP(st, logs)
 	embyProxySvc := embyproxy.New(embyproxy.Options{
 		Settings: st.settings,
 		Playback: playbackSvc,
@@ -372,6 +377,8 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 		playPath:         playPathSvc,
 		crossAccount:     crossAccountSvc,
 		tgbot:            tgbotSvc,
+		wecomBot:         wecomBotSvc,
+		wecomTrustedIP:   wecomTrustedIPSvc,
 		embyProxy:        embyProxySvc,
 		embyRefresh:      embyRefreshSvc,
 		embyIndex:        embyIndexSvc,

@@ -110,7 +110,7 @@ func (r *botOrganizeRunner) Start(ctx context.Context, actor tgbot.Actor, kind s
 	if _, err := r.organize.RunTask(ctx, chosen.ID); err != nil {
 		return "", err
 	}
-	r.watch(chosen.ID, actor.TGChatID)
+	r.watch(chosen.ID, actor.ChatID)
 	return chosen.ID, nil
 }
 

@@ -2179,3 +2179,50 @@ func TestTelegramBotWiring(t *testing.T) {
 		}
 	})
 }
+
+// TestWeComBotWiring 断言 T24 的两个端点与两个装配点真的在生产路径上。
+//
+// 单独列出来而不是并进上面的表，是因为企微入站有个 Telegram 没有的性质：
+// 它的回调端点**必须挂在 requireAdmin 之外**（企微没有浏览器会话，鉴权是签名）。
+// 挂错组的症状是「配置全对但机器人永远不回话」，而且没有任何报错。
+func TestWeComBotWiring(t *testing.T) {
+	t.Run("装配层注入", func(t *testing.T) {
+		for _, callee := range []string{"wireWeComBot", "wireWeComTrustedIP"} {
+			if !callsInNonTestFile(t, "../app", "wire_services.go", callee) {
+				t.Errorf("wire_services.go 中未发现对 %s 的调用", callee)
+			}
+		}
+	})
+	t.Run("回调端点已注册", func(t *testing.T) {
+		patterns := adminRoutePatterns(t)
+		want := []adminRoutePattern{
+			{Method: "GET", Pattern: "/api/wecom/callback"},
+			{Method: "POST", Pattern: "/api/wecom/callback"},
+			{Method: "GET", Pattern: "/api/admin/telegram/wecom-bot"},
+			{Method: "PUT", Pattern: "/api/admin/telegram/wecom-bot"},
+		}
+		for _, w := range want {
+			found := false
+			for _, p := range patterns {
+				if p.Method == w.Method && p.Pattern == w.Pattern {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("路由 %s %s 未注册", w.Method, w.Pattern)
+			}
+		}
+	})
+	t.Run("可信IP观察者已注入", func(t *testing.T) {
+		if !callsInNonTestFile(t, "../app", "wire_http.go", "SetWeComAPIErrorObserver") {
+			t.Error("wire_http.go 中未注入 WeComAPIErrorObserver：60020 不会触发自动修复")
+		}
+	})
+	t.Run("校验在解密之前", func(t *testing.T) {
+		// 顺序反了的话，未授权方可以用一条伪造的 encrypt 探出「签名到底怎么算」。
+		if !callBefore(t, filepath.Join("..", "wecom", "botservice.go"), "VerifySignature", "DecryptMessage") {
+			t.Error("wecom/botservice.go：VerifySignature 必须早于 DecryptMessage")
+		}
+	})
+}

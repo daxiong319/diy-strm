@@ -214,6 +214,41 @@ const (
 	// KeyMOTelegramBotGroupLinkEnabled 允许群里直接发链接/磁力就转存。
 	// 默认 false：允许群里发命令 ≠ 允许群里发链接就动用你的网盘账号。
 	KeyMOTelegramBotGroupLinkEnabled = "mo_telegram_bot_group_link_enabled"
+	// ---- T24 企业微信可信 IP 自维护 ----
+
+	// KeyMOWecomTrustedIPEnabled 开启企微自建应用可信 IP 自维护。
+	// 关掉时本包所有方法彻底 no-op：不发请求、不报错，行为与 T24 之前完全一致。
+	KeyMOWecomTrustedIPEnabled = "mo_wecom_trusted_ip_enabled"
+	// KeyMOWecomTrustedIPAuto 自动把出口 IP 写进白名单。
+	// 单独拆一个开关是因为「能读白名单」和「能改白名单」是两回事：
+	// 只读可以只用来排查，手改则需要有人明确授权。
+	KeyMOWecomTrustedIPAuto = "mo_wecom_trusted_ip_auto"
+
+	// ---- T24 企业微信智能机器人入站 ----
+
+	// KeyMOWecomBotEnabled 开启企微智能机器人的入站回调。
+	// 关掉时回调地址直接 404，用户能区分「Bot 没开」与「这个地址不存在」。
+	KeyMOWecomBotEnabled = "mo_wecom_bot_enabled"
+	// KeyMOWecomBotToken 自建应用的 Secret，用于算回调签名（**不是 access_token**）。
+	KeyMOWecomBotToken = "mo_wecom_bot_token"
+	// KeyMOWecomBotAESKey 回调加解密的 EncodingAESKey。
+	KeyMOWecomBotAESKey = "mo_wecom_bot_aes_key"
+	// KeyMOWecomBotAllowedChats 允许使用的群 chatid（逗号分隔）。
+	//
+	// 群判据用 chatid 而不是成员 id：企微在「机器人创建者不是超管」的企业里给出的
+	// from.userid 是加密 open_userid，照抄原值没人能配出白名单。
+	KeyMOWecomBotAllowedChats = "mo_wecom_bot_allowed_chats"
+	// KeyMOWecomBotAllowedUsers 允许使用的成员 id（逗号分隔），单聊判据。
+	// 留空 = 拒绝一切，不是「不限制」。
+	KeyMOWecomBotAllowedUsers = "mo_wecom_bot_allowed_users"
+	// KeyMOWecomBotGroupLinkEnabled 允许已放行的群里直接发分享链接就转存。
+	// 与 Telegram 侧同名开关同义：允许群发命令 ≠ 允许群里发链接就动用网盘账号。
+	KeyMOWecomBotGroupLinkEnabled = "mo_wecom_bot_group_link_enabled"
+	// KeyMOWecomBotCorpID 企业 ID（corpid）。
+	KeyMOWecomBotCorpID = "mo_wecom_bot_corp_id"
+	// KeyMOWecomBotAgentID 自建应用 AgentId。
+	KeyMOWecomBotAgentID = "mo_wecom_bot_agent_id"
+
 	// CrossAccountFallbackMax 转存等待分钟数的上限。
 	CrossAccountFallbackMax = 1440
 
@@ -684,6 +719,54 @@ func defaultSpecs() []Spec {
 		},
 		boolSpec(KeyMOCrossAccountPlaybackEnabled, "playback", "账号失效时跨账户转存播放",
 			"开启后，STRM 播放遇到源账号持续不可用时，自动把该文件转存到另一个可用账号再播。转存期间播放请求返回「正在准备，请稍后」。源文件不会被删除。", "false"),
+		boolSpec(KeyMOWecomTrustedIPEnabled, "wecom", "企业微信可信 IP 自维护",
+			"自建应用换出口网络后企微会返回 60020「不安全的访问IP」，通知全部静默失败。开启后遇到 60020 会自动把当前出口 IP 合并进可信 IP 白名单"+
+				"（合并而不是覆盖，你手工加过的条目会保留），并记录变更前后的完整列表。关闭时行为与之前完全一致。", "false"),
+		boolSpec(KeyMOWecomTrustedIPAuto, "wecom", "可信 IP 自动写回",
+			"关闭时只检测不写回，只在日志里提醒你手工把出口 IP 加进白名单。企微改完白名单约 1 分钟才生效。", "true"),
+		boolSpec(KeyMOWecomBotEnabled, "wecom_bot", "企业微信机器人入站",
+			"开启后按企微智能机器人的 Webhook 模式接收消息（需公网 HTTPS 地址）。"+
+				"未配置 Secret / EncodingAESKey 时所有消息都会被拒绝。", "false"),
+		{
+			Key:       KeyMOWecomBotToken,
+			Type:      TypeString,
+			Default:   "",
+			Sensitive: true,
+			Hidden:    true,
+		},
+		{
+			Key:       KeyMOWecomBotAESKey,
+			Type:      TypeString,
+			Default:   "",
+			Sensitive: true,
+			Hidden:    true,
+		},
+		{
+			Key:     KeyMOWecomBotAllowedChats,
+			Type:    TypeString,
+			Default: "",
+			Hidden:  true,
+		},
+		{
+			Key:     KeyMOWecomBotAllowedUsers,
+			Type:    TypeString,
+			Default: "",
+			Hidden:  true,
+		},
+		boolSpec(KeyMOWecomBotGroupLinkEnabled, "wecom_bot", "允许群内分享链接直接转存",
+			"关闭时群里只能用命令，收到裸链接/磁力一律忽略。即使打开，发言人也必须在成员白名单里。", "false"),
+		{
+			Key:     KeyMOWecomBotCorpID,
+			Type:    TypeString,
+			Default: "",
+			Hidden:  true,
+		},
+		{
+			Key:     KeyMOWecomBotAgentID,
+			Type:    TypeString,
+			Default: "",
+			Hidden:  true,
+		},
 		intSpec(KeyMOCrossAccountFallbackMinutes, "playback", "跨账户转存等待时长",
 			"源账号连续不可用超过这个时长才触发转存，避免一次网络抖动就引发大文件转存。", "分钟", "30", 1, 1440),
 		boolSpec(KeyMOOverwriteExisting, "media_organize", "同名冲突时覆盖", "目标位置已有同名文件时覆盖，默认跳过。", "false"),
@@ -1246,6 +1329,8 @@ func categories() []Category {
 		{ID: "playback", Label: "播放行为设置"},
 		// 独立成组而不是并进 strm：Telegram Bot 是另一个功能的开关，而且要一张自己的配置页。
 		{ID: "telegram", Label: "Telegram Bot"},
+		{ID: "wecom", Label: "企业微信可信 IP"},
+		{ID: "wecom_bot", Label: "企业微信机器人"},
 		{ID: "media_organize", Label: "媒体整理设置"},
 		{ID: "emby", Label: "Emby 设置"},
 		{ID: "discover", Label: "影视发现设置"},

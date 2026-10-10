@@ -126,6 +126,28 @@ func Send(ctx context.Context, channelID string, cfg map[string]string, msg Mess
 }
 
 // httpPostJSON 发 JSON POST
+// ---------------------------------------------------------------------------
+// 企业微信可信 IP 自维护（T24 / N-4-a）
+//
+// 用包级变量而不是给每个渠道都塞一个依赖：17 个渠道的签名都被固定成
+// `func(ctx, map[string]string, Message) error`，为企微一个渠道改所有签名不划算，
+// 而这里要的东西只有一个「企微接口报错时的回调」。
+//
+// 装配层（internal/app）负责注入；没注入时 notifychannel 的行为与 T24 之前完全一致。
+// ---------------------------------------------------------------------------
+
+// WeComAPIErrorObserver 在企微自建应用调用出错时被调用一次。
+//
+// **只观察不接管**：回调返回后原始错误照原样返回给发送流程，
+// 因为修复白名单最多让下一次调用成功，这一条消息已经丢了 ——
+// 让上游重试才有机会把它补发出去。
+var WeComAPIErrorObserver func(ctx context.Context, op string, err error)
+
+// SetWeComAPIErrorObserver 注入回调（装配层用；传 nil 表示取消）。
+func SetWeComAPIErrorObserver(fn func(ctx context.Context, op string, err error)) {
+	WeComAPIErrorObserver = fn
+}
+
 func httpPostJSON(ctx context.Context, client *http.Client, rawURL string, payload any) error {
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -141,12 +163,62 @@ func httpPostJSON(ctx context.Context, client *http.Client, rawURL string, paylo
 		return err
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateForErr(raw))
+	}
+	// 企微的错误全部体现在 body 的 errcode 上，HTTP 状态码几乎总是 200。
+	// 原来这里直接丢弃 body，于是 60020（出口 IP 不在可信列表）会被当成成功 ——
+	// 用户看到「通知已发送」，实际一条也没到，而且没有任何地方会报错。
+	if wecomErr := parseWeComErr(raw); wecomErr != nil {
+		return wecomErr
 	}
 	return nil
+}
+
+// truncateForErr 截断错误响应体，避免把整页 HTML 塞进错误信息。
+func truncateForErr(raw []byte) string {
+	s := strings.TrimSpace(string(raw))
+	if len(s) > 512 {
+		return s[:512] + "…"
+	}
+	return s
+}
+
+// parseWeComErr 把企微响应体解析成错误；errcode 为 0 或不是 JSON 时返回 nil。
+func parseWeComErr(raw []byte) error {
+	trimmed := strings.TrimSpace(string(raw))
+	if !strings.HasPrefix(trimmed, "{") {
+		return nil
+	}
+	var body struct {
+		ErrCode int    `json:"errcode"`
+		ErrMsg  string `json:"errmsg"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil
+	}
+	if body.ErrCode == 0 {
+		return nil
+	}
+	return &WeComAPIError{ErrCode: body.ErrCode, ErrMsg: body.ErrMsg, Body: truncateForErr(raw)}
+}
+
+// WeComAPIError 是企业微信接口的业务错误。
+//
+// 单独一个类型而不是裸 fmt.Errorf：可信 IP 自维护要靠 **errcode 字段**
+// 判断是不是 60020，用字符串匹配错误文案是脆的 —— 企微随时可能改文案。
+type WeComAPIError struct {
+	ErrCode int
+	ErrMsg  string
+	Body    string
+}
+
+func (e *WeComAPIError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("企业微信接口返回 errcode=%d errmsg=%q", e.ErrCode, e.ErrMsg)
 }
 
 // httpPostForm 发 form POST

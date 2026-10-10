@@ -10,7 +10,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"litepan/internal/inboundbot"
 )
+
+// errLinkNotWired 是「没配网盘账号」。
+var errLinkNotWired = fmt.Errorf("转存能力尚未接入，请先在管理台配置网盘账号")
 
 // Logger 是 Bot 的日志出口。
 type Logger interface {
@@ -20,20 +25,15 @@ type Logger interface {
 
 // Service 是入站 Bot 的核心：消息进来 → 准入 → 命令路由 → 调现有 service → 回话。
 type Service struct {
-	cfg        Config
-	registry   *Registry
-	client     *Client
-	runner     Runner
-	search     Searcher
-	link       LinkTransferer
-	status     StatusProvider
-	duplicate  DuplicateChecker
-	recognizer Recognizer
-	categories CategoryLister
-	strm       StrmRunner
-	subscriber Subscriber
-	log        Logger
-	tasks      *taskStore
+	cfg      Config
+	registry *Registry
+	client   *Client
+	log      Logger
+	// deps 是业务能力集合（internal/inboundbot.Deps）。
+	//
+	// Service 不再自己持有 runner/search/link/... 十来个窄接口：
+	// 它们整体搬进了共用层，Bot 侧只保留「消息怎么进来、怎么回话」这部分。
+	deps inboundbot.Deps
 	// pushOverride 只在测试里替换，用于断言「完成后主动推送」。
 	superLookup  SuperLookup
 	pushOverride func(ctx context.Context, chatID int64, text string) error
@@ -49,22 +49,6 @@ type Service struct {
 	// 所有消息都会被 401 拒掉，而且从 Telegram 的角度看毫无异常。
 	secretMu sync.RWMutex
 	secret   string
-}
-
-// Searcher 是 `/search` 需要的资源搜索能力。
-//
-// 定义成接口而不是直接依赖 discover 的具体 service：Bot 只需要「关键词 → 结果行」，
-// 绑定到具体实现会让这层在每次搜索服务重构时都要跟着改。
-type Searcher interface {
-	Search(ctx context.Context, keyword string, limit int) ([]SearchHit, error)
-}
-
-// SearchHit 是一条搜索结果。Bot 只展示它，不解释它从哪来。
-type SearchHit struct {
-	Title    string
-	Source   string
-	Size     string
-	ShareURL string
 }
 
 // Options 是 Bot 的装配选项。
@@ -92,20 +76,23 @@ type Options struct {
 // New 建 Bot 服务。
 func New(opts Options) *Service {
 	s := &Service{
-		cfg:        opts.Config,
-		client:     opts.Client,
-		runner:     opts.Runner,
-		search:     opts.Search,
-		link:       opts.Link,
-		status:     opts.Status,
-		duplicate:  opts.Duplicate,
-		recognizer: opts.Recognizer,
-		categories: opts.Categories,
-		strm:       opts.Strm,
-		subscriber: opts.Subscriber,
-		log:        opts.Log,
-		tasks:      newTaskStore(),
-		now:        opts.Now,
+		cfg:    opts.Config,
+		client: opts.Client,
+		log:    opts.Log,
+		deps: inboundbot.Deps{
+			Title:      "Telegram Bot",
+			Runner:     opts.Runner,
+			Search:     opts.Search,
+			Link:       opts.Link,
+			Status:     opts.Status,
+			Duplicate:  opts.Duplicate,
+			Recognizer: opts.Recognizer,
+			Categories: opts.Categories,
+			Strm:       opts.Strm,
+			Subscriber: opts.Subscriber,
+			Now:        opts.Now,
+		},
+		now: opts.Now,
 	}
 	s.pushOverride = func(ctx context.Context, chatID int64, text string) error {
 		if s.client == nil {
@@ -127,11 +114,27 @@ func New(opts Options) *Service {
 		register = registerAll
 	}
 	register(s.registry)
+	s.syncDeps()
 	return s
 }
 
+// syncDeps 把命令表与时钟挂进共用层的 Deps，并保证任务表存在。
+//
+// 每次装配相关字段变更后都要重跑一次：命令表在 New 里才建好，
+// 漏了这一步的话 /help 会拿到一张空表。
+func (s *Service) syncDeps() {
+	s.deps.Registry = s.registry
+	s.deps.Now = s.now
+	if s.deps.Tasks == nil {
+		s.deps.Tasks = inboundbot.NewTaskStore()
+	}
+}
+
 // SetRunner 回填任务执行器。装配层需要 Bot 的 push 能力，所以 runner 晚于 New 构造。
-func (s *Service) SetRunner(r Runner) { s.runner = r }
+func (s *Service) SetRunner(r Runner) {
+	s.deps.Runner = r
+	s.syncDeps()
+}
 
 // Registry 暴露命令表，供 /help 与设置页展示。
 func (s *Service) Registry() *Registry { return s.registry }
@@ -283,13 +286,13 @@ func (s *Service) HandleUpdate(ctx context.Context, u Update) bool {
 	}
 
 	actor := Actor{
-		TGUserID:     msg.From.ID,
-		TGChatID:     msg.Chat.ID,
+		UserID:       msg.From.ID,
+		ChatID:       msg.Chat.ID,
 		ChatType:     msg.Chat.Type,
 		Username:     msg.From.Username,
 		IsSuperAdmin: s.isSuperAdmin(ctx, msg),
 	}
-	if !checkTier(spec.Tier, actor) {
+	if !inboundbot.CheckTier(spec.Tier, actor) {
 		s.reply(ctx, msg.Chat.ID, forbiddenReply(spec.Name))
 		return false
 	}
@@ -299,7 +302,7 @@ func (s *Service) HandleUpdate(ctx context.Context, u Update) bool {
 	}
 
 	s.debugf("执行命令 /%s tier=%s user=%s chat=%d", spec.Name, spec.Tier, actor.Username, msg.Chat.ID)
-	text, err := spec.Handler(s, ctx, u, p.Args)
+	text, err := spec.Handler(&s.deps, ctx, actor, p.Args)
 	if err != nil {
 		s.reply(ctx, msg.Chat.ID, errorReply(err))
 		return true
@@ -308,19 +311,6 @@ func (s *Service) HandleUpdate(ctx context.Context, u Update) bool {
 		s.reply(ctx, msg.Chat.ID, text)
 	}
 	return true
-}
-
-// checkTier 判定权限档位。
-//
-// 超管档始终只有超管：Bot 里没有「谁创建了这个 Bot」的概念，
-// 所以权限只能由站内 RBAC 注入，而不是由 TG 的身份推断。
-func checkTier(t Tier, actor Actor) bool {
-	switch t {
-	case TierSuper:
-		return actor.IsSuperAdmin
-	default:
-		return true
-	}
 }
 
 // isSuperAdmin 读站内 RBAC 判定。默认没有注入任何判据时一律当普通用户 ——
@@ -347,8 +337,14 @@ func (s *Service) handleBareLink(ctx context.Context, msg Message, body string) 
 	if !ok {
 		return false
 	}
-	actor := Actor{TGUserID: msg.From.ID, TGChatID: msg.Chat.ID, ChatType: msg.Chat.Type}
-	text, err := s.startLinkTransfer(ctx, actor, link)
+	actor := Actor{UserID: msg.From.ID, ChatID: msg.Chat.ID, ChatType: msg.Chat.Type}
+	// 没接转存能力时**明确报错而不是静默成功**：Bot 收到链接回一句「已转存」、
+	// 实际什么都没发生，用户过十分钟才会发现，而那时候他大概已经忘了。
+	if s.deps.Link == nil {
+		s.reply(ctx, msg.Chat.ID, errorReply(errLinkNotWired))
+		return true
+	}
+	text, err := s.deps.Link.StartLinkTransfer(ctx, actor, link)
 	if err != nil {
 		s.reply(ctx, msg.Chat.ID, errorReply(err))
 		return true
@@ -358,79 +354,11 @@ func (s *Service) handleBareLink(ctx context.Context, msg Message, body string) 
 }
 
 // ExtractTransferLink 从一段文本里提取分享链接或磁力。
+//
+// 实现搬到了共用层：企微侧的裸链接判定与 Telegram 一字不差是刻意的 ——
+// 两个平台对「什么算一条可以转存的链接」有不同理解，用户会立刻踩到。
 func ExtractTransferLink(body string) (string, bool) {
-	for _, field := range strings.Fields(body) {
-		field = strings.Trim(field, "，。！!？?、,.;；:：\"'()（）[]【】<>")
-		if field == "" {
-			continue
-		}
-		if strings.HasPrefix(field, "magnet:") {
-			return field, true
-		}
-		if !strings.HasPrefix(field, "http://") && !strings.HasPrefix(field, "https://") {
-			continue
-		}
-		// 只认看起来像分享的链接：网盘域名或带提取码参数的。
-		if looksLikeShareLink(field) {
-			return field, true
-		}
-	}
-	return "", false
-}
-
-// knownShareHosts 是 litepan 已支持转存的网盘域名片段。
-//
-// 白名单而不是「任意 http 链接都转存」：Bot 在群里是个外部入口，
-// 见到 URL 就去调网盘 API，等于给任何能发言的人一个无鉴权的下载器。
-var knownShareHosts = []string{
-	"115.com", "115cdn.com", "123pan.com", "123684.com", "123865.com",
-	"139.com", "yun.139.com", "189.cn", "cloud.189.cn",
-	"baidu.com", "pan.baidu.com", "quark.cn", "pan.quark.cn",
-	"aliyundrive.com", "alipan.com", "xunlei.com",
-}
-
-// looksLikeShareLink 判断一个 URL 像不像网盘分享链接。
-func looksLikeShareLink(raw string) bool {
-	lower := strings.ToLower(raw)
-	// 只看 host 部分：路径里的 query（提取码）不该影响域名判断。
-	if i := strings.IndexByte(lower, '?'); i >= 0 {
-		host := lower[:i]
-		for _, h := range knownShareHosts {
-			if strings.Contains(host, h) {
-				return true
-			}
-		}
-	}
-	for _, h := range knownShareHosts {
-		if strings.Contains(lower, h) {
-			return true
-		}
-	}
-	return false
-}
-
-// errorReply 把错误翻成人话。
-func errorReply(err error) string {
-	if err == nil {
-		return ""
-	}
-	if strings.Contains(err.Error(), "暂未支持") {
-		return err.Error()
-	}
-	return "执行失败：" + err.Error()
-}
-
-// unknownCommandReply 是没注册的命令的回话。
-func unknownCommandReply(name string) string {
-	return fmt.Sprintf("不认识「/%s」。\n用 /help 看当前支持的命令。", name)
-}
-
-// forbiddenReply 是权限不足的回话。
-//
-// 刻意不区分「命令不存在」和「你不能用」：这两者在探测者眼里是一回事，
-// 但在普通用户眼里必须分开 —— 他要知道是自己级别不够，而不是 Bot 坏了。
-func forbiddenReply(name string) string {
-	return fmt.Sprintf("「/%s」只有管理员可以使用。\n你的权限由站内角色决定，Telegram 这边不做独立配置。", name)
+	return inboundbot.ExtractTransferLink(body)
 }
 
 // Handler 返回 HTTP 处理器：Telegram webhook 的入口。
@@ -481,6 +409,5 @@ func actorOf(u Update) Actor {
 	if msg == nil {
 		return Actor{}
 	}
-	actor := Actor{TGUserID: msg.From.ID, TGChatID: msg.Chat.ID, ChatType: msg.Chat.Type, Username: msg.From.Username}
-	return actor
+	return Actor{UserID: msg.From.ID, ChatID: msg.Chat.ID, ChatType: msg.Chat.Type, Username: msg.From.Username}
 }

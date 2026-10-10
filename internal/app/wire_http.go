@@ -78,6 +78,21 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	notifyDisp.SetRetryQueue(st.store.NotifyRetries)
 	retryRunner = notifyRetryWorker
 
+	// T24 N-4-a：企微自建应用返回 60020「不安全的访问IP」时自动修复可信 IP 白名单。
+	//
+	// 挂在 dispatcher 之后、worker.Start 之前：观察者是可选增强，
+	// 装配顺序错了最坏结果是「自动修复没生效」，不会影响通知发送本身。
+	//
+	// ⚠️ 失败一律只记日志、可信 IP 修复不了也**不能阻断通知** ——
+	// 那是给通知加的一个便利功能，让它把通知链路带崩是本末倒置。
+	notifychannel.SetWeComAPIErrorObserver(func(ctx context.Context, op string, err error) {
+		if svc.wecomTrustedIP == nil {
+			return
+		}
+		// ReportAPIError 内部按错误码分流：不是 60020 就原样返回，不做任何事。
+		_ = svc.wecomTrustedIP.ReportAPIError(ctx, op, err)
+	})
+
 	// CAS 运行器（扫描上传任务自动 CAS 化）：API 手动触发与定时调度共用同一实例。
 	casRunner := cas.NewRunner(svc.uploads)
 	casRunner.Log = logs.For(logx.ModuleSystem)
@@ -307,6 +322,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		PlayPath:          svc.playPath,
 		CrossAccount:      svc.crossAccount,
 		TgBot:             svc.tgbot,
+		WeComBot:          svc.wecomBot,
 		EmbyProxy:         svc.embyProxy,
 		EmbyWebhook:       svc.embyWebhook,
 		FnosProxy:         svc.fnosProxy,

@@ -12,9 +12,9 @@ import (
 // Service 对外提供通知渠道的配置管理（CRUD）与单渠道测试发送。
 // 投递由 Dispatcher 负责；这里只做配置持久化与触发刷新。
 type Service struct {
-	repo  domain.NotifyChannelRepository
-	disp  *Dispatcher
-	log   *slog.Logger
+	repo domain.NotifyChannelRepository
+	disp *Dispatcher
+	log  *slog.Logger
 }
 
 func NewService(repo domain.NotifyChannelRepository, disp *Dispatcher, log *slog.Logger) *Service {
@@ -36,10 +36,10 @@ func (s *Service) List(ctx context.Context) ([]*domain.NotifyChannel, error) {
 
 // TestPayload 测试发送请求体。
 type TestPayload struct {
-	Type   string            `json:"type"`
-	Config map[string]string `json:"config"`
-	Title  string            `json:"title"`
-	Content string           `json:"content"`
+	Type    string            `json:"type"`
+	Config  map[string]string `json:"config"`
+	Title   string            `json:"title"`
+	Content string            `json:"content"`
 }
 
 // Test 用给定（未必已保存的）配置试发一条通知，返回错误便于前端提示。

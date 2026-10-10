@@ -78,8 +78,12 @@ var categoryRoutes = map[string]categoryRoute{
 	"strm":            {Page: "tasks", Tab: "strm", Anchored: false},
 	// T17 的播放路径映射 / 302 直连 / 跨账户转移配在 STRM 设置页，
 	// 所以走 tasks→strm 这条路，而不是 organize 分组（那是整理页）。
-	"playback":       {Page: "tasks", Tab: "strm", Anchored: false},
-	"telegram":       {Page: "telegram", Anchored: false},
+	"playback": {Page: "tasks", Tab: "strm", Anchored: false},
+	"telegram": {Page: "telegram", Anchored: false},
+	"wecom":    {Page: "telegram", Anchored: false},
+	// 企微机器人的配置与 Telegram Bot 是同一类东西（同为入站 Bot、同一套命令），
+	// 所以落在同一页、同一张权限闸下面，而不是再开一个一级导航。
+	"wecom_bot":      {Page: "telegram", Anchored: false},
 	"media_organize": {Page: "tasks", Tab: "organize", Anchored: false},
 	"emby":           {Page: "dashboard", Anchored: false},
 	"performance":    {Page: "dashboard", Anchored: false},

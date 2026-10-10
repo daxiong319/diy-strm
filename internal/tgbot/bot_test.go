@@ -182,7 +182,7 @@ func TestSubIsSuperAdminOnly(t *testing.T) {
 	h := newHarness(t, testCfg())
 	h.svc.SetSuperLookup(func(ctx context.Context, m *Message) bool { return false })
 	sub := &fakeSubscriber{}
-	h.svc.subscriber = sub
+	h.svc.deps.Subscriber = sub
 
 	h.svc.HandleUpdate(context.Background(), msg(1001, "private", 1001, "/sub 流浪地球"))
 	if len(sub.got) != 0 {
@@ -215,8 +215,8 @@ func TestOrganizeReturnsTaskIDImmediately(t *testing.T) {
 
 func TestStrmReturnsTaskIDAndHonoursCategory(t *testing.T) {
 	h := newHarness(t, testCfg())
-	fs := h.svc.strm.(*fakeStrm)
-	h.svc.categories = &fakeCategories{list: []string{"国产剧", "综艺"}}
+	fs := h.svc.deps.Strm.(*fakeStrm)
+	h.svc.deps.Categories = &fakeCategories{list: []string{"国产剧", "综艺"}}
 
 	h.svc.HandleUpdate(context.Background(), msg(1001, "private", 1001, "/strm 国产剧"))
 	if len(fs.got) != 1 || fs.got[0] != "国产剧" {
@@ -270,7 +270,7 @@ func TestLinkInUnlistedGroupDoesNothing(t *testing.T) {
 	h := newHarness(t, testCfg())
 	h.svc.cfg.GroupLinkEnabled = true
 	link := &fakeLink{}
-	h.svc.link = link
+	h.svc.deps.Link = link
 
 	h.svc.HandleUpdate(context.Background(), msg(-100999, "supergroup", 1001, "https://115.com/s/abc"))
 	if len(link.starts) != 0 {
@@ -285,7 +285,7 @@ func TestLinkInListedGroupFromUnlistedUserIsIgnored(t *testing.T) {
 	h := newHarness(t, testCfg())
 	h.svc.cfg.GroupLinkEnabled = true
 	link := &fakeLink{}
-	h.svc.link = link
+	h.svc.deps.Link = link
 
 	// 群在白名单里，但发消息的人不在。
 	h.svc.HandleUpdate(context.Background(), msg(-100500, "supergroup", 9999, "https://115.com/s/abc"))
@@ -305,7 +305,7 @@ func TestLinkInListedGroupFromUnlistedUserIsIgnored(t *testing.T) {
 func TestGroupLinkRequiresBothSwitchAndPrivacyMode(t *testing.T) {
 	h := newHarness(t, testCfg())
 	link := &fakeLink{}
-	h.svc.link = link
+	h.svc.deps.Link = link
 
 	// 群链接开关关着 → 不响应（Telegram 隐私模式下本来就收不到这条消息，
 	// 这里防的是「用户关了开关但 Bot 其实收得到」的情况）。
@@ -475,7 +475,7 @@ func TestMentionedCommandReachesHandlerInsteadOfNotSupported(t *testing.T) {
 	h := newHarness(t, testCfg())
 	h.svc.SetSuperLookup(func(ctx context.Context, m *Message) bool { return true })
 	sub := &fakeSubscriber{}
-	h.svc.subscriber = sub
+	h.svc.deps.Subscriber = sub
 	h.svc.HandleUpdate(context.Background(), msg(-100500, "supergroup", 1001, "/sub@MyBot 流浪地球"))
 	if len(sub.got) != 1 || sub.got[0] != "流浪地球" {
 		t.Fatalf("带 @提及的命令没走到 handler：%v", sub.got)

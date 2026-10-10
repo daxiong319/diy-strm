@@ -64,6 +64,7 @@ import (
 	"litepan/internal/subtitle"
 	"litepan/internal/tgbot"
 	"litepan/internal/upload"
+	"litepan/internal/wecom"
 )
 
 //go:embed web
@@ -142,6 +143,8 @@ type Deps struct {
 	// TgBot 入站 Telegram Bot。webhook 端点挂在 requireAdmin 组之外，
 	// 鉴权走 Telegram 自带的 secret token（见 Handler.telegramWebhook）。
 	TgBot *tgbot.Service
+	// WeComBot 是企业微信智能机器人的入站服务。
+	WeComBot *wecom.Bot
 	// MediaUpgrade 洗版服务（参考实现 移植⑦）。
 	//
 	// 为 nil 时 /media-upgrade 下所有接口返回「该操作不支持」，
@@ -204,6 +207,7 @@ type Handler struct {
 	playPath             *playpath.Service
 	crossAccount         *playbackfallback.Service
 	tgbot                *tgbot.Service
+	wecomBot             *wecom.Bot
 	strm                 *strm.Service
 	cacheRetention       *cacheretention.Service
 	mediaOrganize        *mediaorganize.Service
@@ -295,6 +299,7 @@ func newHandler(d Deps) *Handler {
 		playPath:             d.PlayPath,
 		crossAccount:         d.CrossAccount,
 		tgbot:                d.TgBot,
+		wecomBot:             d.WeComBot,
 		strm:                 d.Strm,
 		cacheRetention:       d.CacheRetention,
 		mediaOrganize:        d.MediaOrganize,
@@ -430,6 +435,11 @@ func NewRouter(d Deps) http.Handler {
 		// Telegram 是外部服务，没有浏览器会话；它带自己的 secret token 头，
 		// 鉴权在处理器内部完成（tgbot.Service.Handler）。
 		r.Post("/telegram/webhook", h.telegramWebhook)
+		// 企微智能机器人回调：同样必须在 requireAdmin 组之外（没有浏览器会话），
+		// 但鉴权机制不同 —— 核 sha1 签名 + 消息必须能解密，不是核 secret 头。
+		// GET 是企微配回调地址时的探测（要求原样返回解密后的 echostr）。
+		r.Get("/wecom/callback", h.wecomCallback)
+		r.Post("/wecom/callback", h.wecomCallback)
 		// MCP 外部客户端入口：必须在 requireAdmin 组之外。
 		// 它用独立 API Key 鉴权（见 mcp.go 的 requireMcpAPIKey），
 		// 若挂在 requireAdmin 组内，无浏览器的 MCP 客户端会先被会话中间件拦掉。
@@ -697,6 +707,12 @@ func NewRouter(d Deps) http.Handler {
 					r.Use(h.requirePermission(rbac.PermTelegramManage))
 					r.Get("/bot", h.telegramBotConfigGet)
 					r.Put("/bot", h.telegramBotConfigUpdate)
+					// 企微机器人的配置与 Telegram 同一档权限：它同样是
+					// 外部入口的凭证，能改白名单就等于能让任意被加进白名单的人
+					// 用本站网盘账号转存。挂在同一道闸下而不是新开一个 ——
+					// 两者的风险等级一样，拆开只会让人以为其中之一更宽松。
+					r.Get("/wecom-bot", h.wecomBotConfigGet)
+					r.Put("/wecom-bot", h.wecomBotConfigUpdate)
 				})
 				r.Route("/strm", func(r chi.Router) {
 					r.Get("/startup", h.strmStartupRemaining)

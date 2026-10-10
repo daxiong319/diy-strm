@@ -12,6 +12,7 @@ import AppButton from "@/components/base/AppButton.vue";
 import AppInput from "@/components/base/AppInput.vue";
 import AppStateBlock from "@/components/base/AppStateBlock.vue";
 import AdminEmptyState from "@/components/admin/AdminEmptyState.vue";
+import WeComBotSettings from "@/components/admin/WeComBotSettings.vue";
 import SettingsBoolSegment from "@/components/admin/SettingsBoolSegment.vue";
 import SettingsCard from "@/components/admin/SettingsCard.vue";
 import SettingsHelpTooltip from "@/components/admin/SettingsHelpTooltip.vue";
@@ -270,6 +271,13 @@ onMounted(load);
           </tbody>
         </table>
       </SettingsCard>
+
+      <!--
+        企业微信机器人与可信 IP 自维护挂在同一页，而不是新开一个一级导航：
+        它们与 Telegram Bot 共享同一份命令表、同一套白名单语义和一个权限位
+        （telegram.manage），拆成两个页面只会让用户以为权限也是分开的。
+      -->
+      <WeComBotSettings />
     </template>
   </div>
 </template>

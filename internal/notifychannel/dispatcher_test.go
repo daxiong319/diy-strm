@@ -43,7 +43,7 @@ func TestToneFromLevel(t *testing.T) {
 		"error": "error", "danger": "error",
 		"warn": "warn", "warning": "warn",
 		"success": "success",
-		"info": "info", "": "info", "weird": "info",
+		"info":    "info", "": "info", "weird": "info",
 	}
 	for in, want := range cases {
 		if got := toneFromLevel(in); got != want {
